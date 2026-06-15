@@ -538,6 +538,47 @@ Scope reviewed:
 - `cargo test`
 - `coderabbit review --agent --fast --base main`
 
+## 2026-06-15: LSP Capability Registry
+
+Scope reviewed:
+
+- PHPactor initialize-result capability extraction
+- typed runtime `Running` status capabilities
+- frontend capability helpers and status label display
+- tests for provider capability normalization
+- serde contract tests for frontend runtime-status event fields
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Capability parsing stays in the process/session layer where initialize responses are handled; frontend helpers only expose normalized status data.
+- Open/Closed: acceptable for this foundation. New provider capabilities can be added to `LanguageServerCapabilities` and consumed through domain helpers without changing Tauri event transport.
+- Liskov Substitution: acceptable. Runtime gateways and test sinks receive the same typed status shape as production.
+- Interface Segregation: maintained. Capability data extends runtime status only; document sync and diagnostics ports remain separate.
+- Dependency Inversion: maintained. UI consumes capability data through the runtime gateway/domain helper boundary, not direct JSON-RPC payloads.
+
+### Pattern Review
+
+- Adapter pattern: Tauri runtime gateway continues to adapt typed backend status events to the frontend port.
+- Observer pattern: capability data travels with the runtime status event already observed by the workbench.
+- Registry pattern: `LanguageServerCapabilities` is now the normalized provider-feature registry for later hover, completion, and definition routing.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+- `coderabbit review --agent --fast --base main`
+
+### Subagent Review
+
+Valid findings addressed:
+
+- Added explicit `sessionId` serialization tests for runtime status events.
+- Rejected malformed initialize results that omit valid server capabilities instead of silently reporting an all-false registry.
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

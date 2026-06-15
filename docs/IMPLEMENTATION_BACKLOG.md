@@ -81,7 +81,7 @@ Scale:
 | P4-04 | Diagnostics display | L | Done | Diagnostics appear in the Problems panel. |
 | P4-05 | Hover/completion | L | Pending | Monaco requests route through LSP. |
 | P4-06 | Go to definition | M | Pending | Definition opens target location. |
-| P4-07 | Capability registry | M | Pending | Commands reflect provider capabilities. |
+| P4-07 | Capability registry | M | Partial | Runtime status exposes normalized hover/completion/definition capabilities; feature routing still needs to consume them. |
 | P4-08 | Intelephense skeleton | M | Pending | User-configured binary can be selected. |
 
 ## Phase 5: Index Service

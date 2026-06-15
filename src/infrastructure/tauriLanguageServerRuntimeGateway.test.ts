@@ -33,7 +33,15 @@ describe("TauriLanguageServerRuntimeGateway", () => {
   });
 
   it("delegates commands and status events inside Tauri", async () => {
-    const running: LanguageServerRuntimeStatus = { kind: "running", sessionId: 1 };
+    const running: LanguageServerRuntimeStatus = {
+      kind: "running",
+      sessionId: 1,
+      capabilities: {
+        completion: true,
+        definition: true,
+        hover: true,
+      },
+    };
     const invokeCommand = vi.fn<InvokeCommand>(async () => running);
     const listenToEvent = vi.fn<ListenToEvent>(async (_event, handler) => {
       handler({ payload: running });

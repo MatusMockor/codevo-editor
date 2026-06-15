@@ -1,6 +1,16 @@
+export interface LanguageServerCapabilities {
+  hover: boolean;
+  completion: boolean;
+  definition: boolean;
+}
+
 export type LanguageServerRuntimeStatus =
   | { kind: "starting"; sessionId: number }
-  | { kind: "running"; sessionId: number }
+  | {
+      kind: "running";
+      sessionId: number;
+      capabilities: LanguageServerCapabilities;
+    }
   | { kind: "stopped" }
   | { kind: "crashed"; message: string };
 
@@ -55,4 +65,43 @@ export function isLanguageServerActive(
   }
 
   return status.kind === "starting" || status.kind === "running";
+}
+
+export function languageServerCapabilities(
+  status: LanguageServerRuntimeStatus | null,
+): LanguageServerCapabilities {
+  if (status?.kind !== "running") {
+    return emptyLanguageServerCapabilities();
+  }
+
+  return status.capabilities;
+}
+
+export function languageServerCapabilityLabels(
+  status: LanguageServerRuntimeStatus | null,
+): string[] {
+  const capabilities = languageServerCapabilities(status);
+  const labels: string[] = [];
+
+  if (capabilities.hover) {
+    labels.push("hover");
+  }
+
+  if (capabilities.completion) {
+    labels.push("completion");
+  }
+
+  if (capabilities.definition) {
+    labels.push("definition");
+  }
+
+  return labels;
+}
+
+export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
+  return {
+    completion: false,
+    definition: false,
+    hover: false,
+  };
 }

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  emptyLanguageServerCapabilities,
   isLanguageServerActive,
+  languageServerCapabilityLabels,
+  languageServerCapabilities,
   languageServerCrashMessage,
   languageServerStatusLabel,
   type LanguageServerRuntimeStatus,
@@ -39,10 +42,47 @@ describe("isLanguageServerActive", () => {
   });
 });
 
+describe("languageServerCapabilities", () => {
+  it("returns running capabilities or an empty registry", () => {
+    expect(languageServerCapabilities(status("running"))).toEqual({
+      completion: true,
+      definition: true,
+      hover: true,
+    });
+    expect(languageServerCapabilities(status("starting"))).toEqual(
+      emptyLanguageServerCapabilities(),
+    );
+    expect(languageServerCapabilities(null)).toEqual(
+      emptyLanguageServerCapabilities(),
+    );
+  });
+
+  it("returns labels for enabled capabilities", () => {
+    expect(languageServerCapabilityLabels(status("running"))).toEqual([
+      "hover",
+      "completion",
+      "definition",
+    ]);
+    expect(languageServerCapabilityLabels(status("starting"))).toEqual([]);
+  });
+});
+
 function status(
   kind: Exclude<LanguageServerRuntimeStatus["kind"], "crashed">,
 ): LanguageServerRuntimeStatus {
   if (kind === "starting" || kind === "running") {
+    if (kind === "running") {
+      return {
+        kind,
+        sessionId: 1,
+        capabilities: {
+          completion: true,
+          definition: true,
+          hover: true,
+        },
+      };
+    }
+
     return { kind, sessionId: 1 };
   }
 

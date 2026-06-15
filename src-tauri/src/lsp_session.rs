@@ -18,10 +18,27 @@ const DIAGNOSTICS_EVENT: &str = "language-server://diagnostics";
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LanguageServerRuntimeStatus {
-    Starting { session_id: u64 },
-    Running { session_id: u64 },
+    Starting {
+        #[serde(rename = "sessionId")]
+        session_id: u64,
+    },
+    Running {
+        #[serde(rename = "sessionId")]
+        session_id: u64,
+        capabilities: LanguageServerCapabilities,
+    },
     Stopped,
-    Crashed { message: String },
+    Crashed {
+        message: String,
+    },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerCapabilities {
+    pub hover: bool,
+    pub completion: bool,
+    pub definition: bool,
 }
 
 pub trait StatusSink: Send + Sync {
@@ -125,7 +142,7 @@ impl ProcessKiller for ChildKiller {
 }
 
 enum HandshakeOutcome {
-    Ready,
+    Ready(LanguageServerCapabilities),
     Failed(String),
     Disconnected,
 }
@@ -237,7 +254,7 @@ impl LanguageServerSupervisor {
         }
 
         match handshake_rx.recv_timeout(HANDSHAKE_TIMEOUT) {
-            Ok(HandshakeOutcome::Ready) => {
+            Ok(HandshakeOutcome::Ready(capabilities)) => {
                 if stop_requested.load(Ordering::SeqCst) {
                     return Ok(LanguageServerRuntimeStatus::Stopped);
                 }
@@ -249,7 +266,12 @@ impl LanguageServerSupervisor {
                     return Err(message);
                 }
 
-                self.publish_running_if_starting(status_sink.as_ref(), &stop_requested, session_id)
+                self.publish_running_if_starting(
+                    status_sink.as_ref(),
+                    &stop_requested,
+                    session_id,
+                    capabilities,
+                )
             }
             Ok(HandshakeOutcome::Failed(message)) => {
                 let was_stopped = stop_requested.load(Ordering::SeqCst);
@@ -368,6 +390,7 @@ impl LanguageServerSupervisor {
         sink: &dyn StatusSink,
         stop_requested: &Arc<AtomicBool>,
         session_id: u64,
+        capabilities: LanguageServerCapabilities,
     ) -> Result<LanguageServerRuntimeStatus, String> {
         let mut status = self.status.lock().map_err(|error| error.to_string())?;
 
@@ -385,9 +408,18 @@ impl LanguageServerSupervisor {
             return Ok(status.clone());
         }
 
-        *status = LanguageServerRuntimeStatus::Running { session_id };
-        sink.emit_status(LanguageServerRuntimeStatus::Running { session_id });
-        Ok(LanguageServerRuntimeStatus::Running { session_id })
+        *status = LanguageServerRuntimeStatus::Running {
+            session_id,
+            capabilities: capabilities.clone(),
+        };
+        sink.emit_status(LanguageServerRuntimeStatus::Running {
+            session_id,
+            capabilities: capabilities.clone(),
+        });
+        Ok(LanguageServerRuntimeStatus::Running {
+            session_id,
+            capabilities,
+        })
     }
 
     fn terminate_stale_session(&self) {
@@ -551,8 +583,16 @@ fn spawn_reader(
                     }
 
                     if value.get("result").is_some() {
+                        let Ok(capabilities) = parse_capabilities(&value) else {
+                            let _ = handshake_tx.send(HandshakeOutcome::Failed(
+                                "PHPactor initialize response did not include valid server capabilities."
+                                    .to_string(),
+                            ));
+                            return;
+                        };
+
                         handshake_done = true;
-                        let _ = handshake_tx.send(HandshakeOutcome::Ready);
+                        let _ = handshake_tx.send(HandshakeOutcome::Ready(capabilities));
                         continue;
                     }
 
@@ -587,11 +627,43 @@ fn spawn_reader(
     })
 }
 
+fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, String> {
+    let Some(capabilities) = value
+        .get("result")
+        .and_then(|result| result.get("capabilities"))
+    else {
+        return Err("missing server capabilities".to_string());
+    };
+
+    if !capabilities.is_object() {
+        return Err("server capabilities must be an object".to_string());
+    }
+
+    Ok(LanguageServerCapabilities {
+        hover: is_capability_enabled(capabilities.get("hoverProvider")),
+        completion: is_capability_enabled(capabilities.get("completionProvider")),
+        definition: is_capability_enabled(capabilities.get("definitionProvider")),
+    })
+}
+
+fn is_capability_enabled(value: Option<&Value>) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+
+    if let Some(enabled) = value.as_bool() {
+        return enabled;
+    }
+
+    value.is_object()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        DiagnosticsSink, LanguageServerRuntimeStatus, LanguageServerSupervisor, ProcessKiller,
-        ServerProcessSpawner, SpawnedServer, StatusSink,
+        parse_capabilities, DiagnosticsSink, LanguageServerCapabilities,
+        LanguageServerRuntimeStatus, LanguageServerSupervisor, ProcessKiller, ServerProcessSpawner,
+        SpawnedServer, StatusSink,
     };
     use crate::lsp::{JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
@@ -667,6 +739,116 @@ mod tests {
             serde_json::from_slice(&read_message(&mut reader).unwrap().unwrap()).unwrap();
 
         assert_eq!(notification["method"], "textDocument/didSave");
+    }
+
+    #[test]
+    fn initialize_result_capabilities_are_reported_on_running_status() {
+        let spawner = FakeSpawner::new(ready_script_with_capabilities(), true);
+        let (sink, rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        let status = supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+
+        assert_eq!(
+            status,
+            LanguageServerRuntimeStatus::Running {
+                session_id: 1,
+                capabilities: LanguageServerCapabilities {
+                    hover: true,
+                    completion: true,
+                    definition: true,
+                },
+            }
+        );
+        wait_for(&rx, &starting_status());
+        wait_for(&rx, &status);
+    }
+
+    #[test]
+    fn runtime_status_serializes_session_id_for_frontend_events() {
+        let status = LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: LanguageServerCapabilities {
+                hover: true,
+                completion: false,
+                definition: true,
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_value(status).expect("serialize status"),
+            json!({
+                "kind": "running",
+                "sessionId": 1,
+                "capabilities": {
+                    "hover": true,
+                    "completion": false,
+                    "definition": true,
+                },
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(LanguageServerRuntimeStatus::Starting { session_id: 2 })
+                .expect("serialize starting"),
+            json!({
+                "kind": "starting",
+                "sessionId": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn capability_values_are_normalized() {
+        let capabilities = parse_capabilities(&json!({
+            "result": {
+                "capabilities": {
+                    "hoverProvider": false,
+                    "completionProvider": null,
+                    "definitionProvider": {},
+                }
+            }
+        }))
+        .expect("capabilities");
+
+        assert_eq!(
+            capabilities,
+            LanguageServerCapabilities {
+                hover: false,
+                completion: false,
+                definition: true,
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_initialize_result_reports_crashed_and_errors() {
+        let spawner = FakeSpawner::new(malformed_initialize_result_script(), true);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        let error = supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect_err("malformed initialize result should fail");
+
+        assert!(error.contains("valid server capabilities"));
+        assert!(matches!(
+            supervisor.status(),
+            LanguageServerRuntimeStatus::Crashed { .. }
+        ));
     }
 
     #[test]
@@ -972,6 +1154,28 @@ mod tests {
         }))
     }
 
+    fn ready_script_with_capabilities() -> Vec<u8> {
+        framed(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "capabilities": {
+                    "hoverProvider": true,
+                    "completionProvider": { "triggerCharacters": [">"] },
+                    "definitionProvider": true,
+                }
+            },
+        }))
+    }
+
+    fn malformed_initialize_result_script() -> Vec<u8> {
+        framed(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {},
+        }))
+    }
+
     fn framed(value: Value) -> Vec<u8> {
         let mut buffer = Vec::new();
         write_message(&mut buffer, &serde_json::to_vec(&value).unwrap()).unwrap();
@@ -997,7 +1201,10 @@ mod tests {
     }
 
     fn running_status() -> LanguageServerRuntimeStatus {
-        LanguageServerRuntimeStatus::Running { session_id: 1 }
+        LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: LanguageServerCapabilities::default(),
+        }
     }
 
     fn noop_diagnostics_sink() -> Arc<dyn DiagnosticsSink> {

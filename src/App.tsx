@@ -10,7 +10,10 @@ import { ProblemsPanel } from "./components/ProblemsPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
-import { languageServerStatusLabel } from "./domain/languageServerRuntime";
+import {
+  languageServerCapabilityLabels,
+  languageServerStatusLabel,
+} from "./domain/languageServerRuntime";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { TauriLanguageServerDiagnosticsGateway } from "./infrastructure/tauriLanguageServerDiagnosticsGateway";
@@ -84,6 +87,14 @@ function App() {
     );
 
     if (runtimeLabel) {
+      const enabledCapabilities = languageServerCapabilityLabels(
+        workbench.languageServerRuntimeStatus,
+      );
+
+      if (enabledCapabilities.length > 0) {
+        return `${runtimeLabel} · ${enabledCapabilities.join(", ")}`;
+      }
+
       return runtimeLabel;
     }
 
