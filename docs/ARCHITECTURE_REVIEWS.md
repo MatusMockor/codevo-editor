@@ -347,6 +347,47 @@ Scope reviewed:
 - `cargo test`
 - `npm run tauri build -- --debug --bundles app`
 
+## 2026-06-15: PHPactor LSP Initialize Planning
+
+Scope reviewed:
+
+- Rust `LanguageServerPlanner` and `InitializeRequestFactory`
+- `PhpactorLanguageServerPlanner`
+- Tauri `plan_php_language_server` command
+- frontend `LanguageServerGateway`
+- workbench LSP readiness status label
+
+### SOLID Review
+
+- Single Responsibility: acceptable. LSP planning builds launch/initialize data only; it does not start, supervise, or sync documents.
+- Open/Closed: acceptable. Additional language server planners can implement `LanguageServerPlanner` without changing PHPactor-specific logic.
+- Liskov Substitution: acceptable. Initialize request factories are swappable, which keeps protocol payload generation testable.
+- Interface Segregation: acceptable. Frontend language-server planning uses its own gateway instead of expanding workspace or smart-mode ports.
+- Dependency Inversion: acceptable. Workbench depends on `LanguageServerGateway`; Tauri IPC remains in infrastructure.
+
+### Pattern Review
+
+- Strategy pattern: `LanguageServerPlanner` defines provider planning behavior.
+- Factory pattern: `InitializeRequestFactory` creates JSON-RPC initialize payloads.
+- Adapter pattern: Tauri command and frontend gateway adapt backend planning to UI state.
+- Supervisor pattern: intentionally deferred until a real process transport is introduced.
+
+### CodeRabbit Review
+
+Valid finding addressed:
+
+- Removed frontend-provided trust input from `plan_php_language_server`; the command now reads authoritative trust from `WorkspaceTrustService`.
+- Final rerun returned 0 findings.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke passed after clean dev-server restart.
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

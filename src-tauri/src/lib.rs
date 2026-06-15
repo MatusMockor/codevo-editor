@@ -1,3 +1,4 @@
+mod lsp;
 mod project;
 mod search;
 mod smart_mode;
@@ -5,6 +6,7 @@ mod tools;
 mod trust;
 mod workspace;
 
+use lsp::{LanguageServerPlan, LanguageServerPlanner, PhpactorLanguageServerPlanner};
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
@@ -73,6 +75,29 @@ fn get_workspace_trust(
 ) -> Result<WorkspaceTrustState, String> {
     let service = service.lock().map_err(|error| error.to_string())?;
     Ok(service.get(&root_path))
+}
+
+#[tauri::command]
+fn plan_php_language_server(
+    root_path: String,
+    service: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<LanguageServerPlan, String> {
+    let root = PathBuf::from(&root_path);
+    let trusted = {
+        let service = service.lock().map_err(|error| error.to_string())?;
+        service.get(&root_path).trusted
+    };
+    let workspace_detector = ComposerWorkspaceDetector;
+    let tool_detector = LocalPhpToolDetector;
+    let planner = PhpactorLanguageServerPlanner::new();
+    let descriptor = workspace_detector
+        .detect(&root)
+        .map_err(|error| error.to_string())?;
+    let tools = tool_detector
+        .detect(Some(&root))
+        .map_err(|error| error.to_string())?;
+
+    Ok(planner.plan(&root, trusted, &descriptor, &tools))
 }
 
 #[tauri::command]
@@ -168,6 +193,7 @@ pub fn run() {
             detect_workspace,
             get_smart_mode_state,
             get_workspace_trust,
+            plan_php_language_server,
             read_directory,
             read_text_file,
             rename_path,

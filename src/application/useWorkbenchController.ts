@@ -7,6 +7,10 @@ import {
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { SmartModeGateway } from "../domain/intelligence";
+import type {
+  LanguageServerGateway,
+  LanguageServerPlan,
+} from "../domain/languageServer";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
   detectLanguage,
@@ -42,6 +46,7 @@ export function useWorkbenchController(
   workspaceGateways: WorkbenchWorkspaceGateways,
   smartModeGateway: SmartModeGateway,
   workspaceTrustGateway: WorkspaceTrustGateway,
+  languageServerGateway: LanguageServerGateway,
   prompter: WorkbenchPrompter,
 ) {
   const {
@@ -57,6 +62,8 @@ export function useWorkbenchController(
   const [workspaceTrust, setWorkspaceTrust] =
     useState<WorkspaceTrustState | null>(null);
   const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
+  const [languageServerPlan, setLanguageServerPlan] =
+    useState<LanguageServerPlan | null>(null);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -105,6 +112,21 @@ export function useWorkbenchController(
     ]);
   }, []);
 
+  const refreshLanguageServerPlan = useCallback(
+    async (rootPath: string) => {
+      try {
+        const plan = await languageServerGateway.planPhpLanguageServer(rootPath);
+        setLanguageServerPlan(plan);
+        return plan;
+      } catch (error) {
+        setLanguageServerPlan(null);
+        reportError("Language Server", error);
+        return null;
+      }
+    },
+    [languageServerGateway, reportError],
+  );
+
   const loadDirectory = useCallback(
     async (path: string) => {
       setLoadingDirectories((current) => new Set(current).add(path));
@@ -141,6 +163,7 @@ export function useWorkbenchController(
       setWorkspaceDescriptor(null);
       setPhpTools(null);
       setWorkspaceTrust(null);
+      setLanguageServerPlan(null);
       localStorage.setItem(RECENT_WORKSPACE_KEY, path);
       await loadDirectory(path);
 
@@ -151,11 +174,13 @@ export function useWorkbenchController(
         setWorkspaceDescriptor(descriptor);
 
         if (!descriptor.php) {
+          setLanguageServerPlan(null);
           return;
         }
 
         const tools = await phpToolGateway.detectPhpTools(path);
         setPhpTools(tools);
+        await refreshLanguageServerPlan(path);
       } catch (error) {
         reportError("Workspace Detection", error);
       }
@@ -163,6 +188,7 @@ export function useWorkbenchController(
     [
       loadDirectory,
       phpToolGateway,
+      refreshLanguageServerPlan,
       reportError,
       workspaceDetection,
       workspaceTrustGateway,
@@ -493,10 +519,23 @@ export function useWorkbenchController(
       setMessage(
         trust.trusted ? "Workspace trusted." : "Workspace trust revoked.",
       );
+
+      if (!workspaceDescriptor?.php) {
+        return;
+      }
+
+      await refreshLanguageServerPlan(workspaceRoot);
     } catch (error) {
       reportError("Workspace Trust", error);
     }
-  }, [reportError, workspaceRoot, workspaceTrust, workspaceTrustGateway]);
+  }, [
+    refreshLanguageServerPlan,
+    reportError,
+    workspaceDescriptor,
+    workspaceRoot,
+    workspaceTrust,
+    workspaceTrustGateway,
+  ]);
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -791,6 +830,7 @@ export function useWorkbenchController(
     expandedDirectories,
     intelligenceMode,
     loadingDirectories,
+    languageServerPlan,
     message,
     openDocuments,
     openFile,

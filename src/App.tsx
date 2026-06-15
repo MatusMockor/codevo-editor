@@ -11,6 +11,7 @@ import { StatusBar } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
+import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
@@ -26,6 +27,7 @@ const workspaceGateways = {
 };
 const smartModeGateway = new TauriSmartModeGateway();
 const workspaceTrustGateway = new TauriWorkspaceTrustGateway();
+const languageServerGateway = new TauriLanguageServerGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
@@ -33,6 +35,7 @@ function App() {
     workspaceGateways,
     smartModeGateway,
     workspaceTrustGateway,
+    languageServerGateway,
     workbenchPrompter,
   );
   const activeDocumentDirty = Boolean(
@@ -62,6 +65,23 @@ function App() {
 
     return `${packageName} · PHP tools missing`;
   }, [workbench.phpTools, workbench.workspaceDescriptor]);
+  const languageServerLabel = useMemo(() => {
+    const plan = workbench.languageServerPlan;
+
+    if (!plan) {
+      return null;
+    }
+
+    if (plan.status === "ready") {
+      return "PHPactor LSP ready";
+    }
+
+    if (plan.status === "blocked") {
+      return "LSP blocked";
+    }
+
+    return "LSP unavailable";
+  }, [workbench.languageServerPlan]);
 
   return (
     <main className="app-shell">
@@ -140,6 +160,7 @@ function App() {
         message={workbench.message}
         workspaceRoot={workbench.workspaceRoot}
         workspaceLabel={workspaceLabel}
+        languageServerLabel={languageServerLabel}
         workspaceTrustLabel={
           workbench.workspaceRoot
             ? workbench.workspaceTrust?.trusted
