@@ -1,0 +1,387 @@
+:root {
+  color: #d8dee9;
+  background: #15181d;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-size: 14px;
+  font-synthesis: none;
+  line-height: 1.4;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+.app-shell {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: 46px minmax(220px, 300px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 25px;
+  background: #15181d;
+}
+
+.activity-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 5px;
+  border-right: 1px solid #272d35;
+  background: #111418;
+}
+
+.activity-bar button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #aeb7c3;
+  cursor: pointer;
+}
+
+.activity-bar button:hover:not(:disabled) {
+  background: #252b33;
+  color: #f3f6f8;
+}
+
+.activity-bar button:disabled {
+  color: #58606b;
+  cursor: not-allowed;
+}
+
+.sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid #272d35;
+  background: #1b1f26;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid #272d35;
+  color: #f3f6f8;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.sidebar-header button {
+  height: 26px;
+  border: 1px solid #384150;
+  border-radius: 6px;
+  background: #242b34;
+  color: #d8dee9;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 9px;
+}
+
+.sidebar-header button:hover {
+  border-color: #4e9f8f;
+}
+
+.file-tree {
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0 10px;
+}
+
+.empty-tree,
+.empty-editor {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  place-items: center;
+  color: #8f9aaa;
+}
+
+.empty-tree p,
+.empty-editor p {
+  margin: 0;
+}
+
+.tree-row-group {
+  min-width: 0;
+}
+
+.tree-row {
+  display: grid;
+  width: 100%;
+  min-height: 28px;
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: #bec7d3;
+  cursor: pointer;
+  padding: 0 8px 0 calc(8px + var(--tree-level) * 16px);
+  text-align: left;
+}
+
+.tree-row:hover {
+  background: #242a32;
+  color: #f3f6f8;
+}
+
+.tree-row.active {
+  background: #26363c;
+  color: #ffffff;
+}
+
+.tree-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row small {
+  color: #8f9aaa;
+}
+
+.tree-chevron {
+  opacity: 1;
+  transition: transform 0.12s ease;
+}
+
+.tree-chevron.placeholder {
+  opacity: 0;
+}
+
+.tree-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.editor-workbench {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: #15181d;
+}
+
+.editor-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.editor-tabs {
+  display: flex;
+  min-height: 38px;
+  max-height: 38px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid #272d35;
+  background: #181c22;
+}
+
+.editor-tabs.empty {
+  overflow: hidden;
+}
+
+.editor-tab {
+  display: grid;
+  min-width: 132px;
+  max-width: 220px;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  border-right: 1px solid #272d35;
+  background: #1d222a;
+  color: #aeb7c3;
+}
+
+.editor-tab.active {
+  background: #222832;
+  color: #f3f6f8;
+}
+
+.tab-main,
+.tab-close {
+  height: 38px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tab-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  text-align: left;
+}
+
+.tab-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dirty-dot {
+  color: #e6b15d;
+  fill: currentColor;
+  flex: 0 0 auto;
+}
+
+.tab-close {
+  display: grid;
+  place-items: center;
+  color: #788392;
+}
+
+.tab-close:hover {
+  color: #f3f6f8;
+}
+
+.status-bar {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  border-top: 1px solid #272d35;
+  background: #0f1418;
+  color: #aeb7c3;
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+.status-bar span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-message {
+  color: #9ed0c5;
+}
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  background: rgba(8, 10, 13, 0.55);
+  padding-top: 8vh;
+  z-index: 10;
+}
+
+.command-palette {
+  width: min(640px, calc(100vw - 36px));
+  max-height: min(520px, calc(100vh - 80px));
+  overflow: hidden;
+  border: 1px solid #384150;
+  border-radius: 8px;
+  background: #1c222a;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.palette-search {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  border-bottom: 1px solid #303846;
+  color: #8f9aaa;
+  padding: 0 12px;
+}
+
+.palette-search input {
+  height: 46px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #f3f6f8;
+}
+
+.palette-results {
+  max-height: 470px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.palette-command {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #d8dee9;
+  cursor: pointer;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.palette-command:hover:not(:disabled) {
+  background: #26313b;
+}
+
+.palette-command:disabled {
+  color: #657080;
+  cursor: not-allowed;
+}
+
+.palette-command span {
+  display: grid;
+  min-width: 0;
+}
+
+.palette-command strong,
+.palette-command small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-command small {
+  color: #8f9aaa;
+}
+
+kbd {
+  flex: 0 0 auto;
+  border: 1px solid #414b58;
+  border-radius: 5px;
+  background: #15191f;
+  color: #aeb7c3;
+  font-size: 11px;
+  padding: 2px 6px;
+}
