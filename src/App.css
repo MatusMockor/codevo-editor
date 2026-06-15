@@ -392,7 +392,8 @@ button {
 
 .command-palette,
 .quick-open,
-.text-search {
+.text-search,
+.language-server-setup {
   width: min(640px, calc(100vw - 36px));
   max-height: min(520px, calc(100vh - 80px));
   overflow: hidden;
@@ -521,6 +522,91 @@ button {
 
 .quick-open-state {
   padding: 14px 12px;
+}
+
+.setup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  border-bottom: 1px solid #303846;
+  color: #f3f6f8;
+  font-weight: 700;
+  padding: 0 10px 0 14px;
+}
+
+.setup-header button,
+.setup-command button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8f9aaa;
+  cursor: pointer;
+}
+
+.setup-header button {
+  width: 26px;
+  height: 26px;
+}
+
+.setup-command button {
+  width: 28px;
+  height: 28px;
+}
+
+.setup-header button:hover,
+.setup-command button:hover {
+  background: #252b33;
+  color: #f3f6f8;
+}
+
+.setup-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.setup-body p {
+  margin: 0 0 4px;
+  color: #aeb7c3;
+}
+
+.setup-command {
+  display: grid;
+  min-height: 54px;
+  grid-template-columns: 22px minmax(0, 1fr) 32px auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  background: #20262e;
+  color: #d8dee9;
+  padding: 7px 9px;
+}
+
+.setup-command span {
+  display: grid;
+  min-width: 0;
+}
+
+.setup-command strong,
+.setup-command code,
+.setup-command small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-command code {
+  color: #9ed0c5;
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.setup-command small {
+  color: #9ed0c5;
 }
 
 kbd {

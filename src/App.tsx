@@ -5,6 +5,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileTree } from "./components/FileTree";
+import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { ProblemsPanel } from "./components/ProblemsPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
@@ -196,6 +197,12 @@ function App() {
         onOpen={workbench.openTextSearchResult}
         query={workbench.textSearchQuery}
         results={workbench.textSearchResults}
+      />
+
+      <LanguageServerSetup
+        isOpen={workbench.languageServerSetupOpen}
+        onClose={() => workbench.setLanguageServerSetupOpen(false)}
+        plan={workbench.languageServerPlan}
       />
     </main>
   );

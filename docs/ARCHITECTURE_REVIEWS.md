@@ -388,6 +388,40 @@ Valid finding addressed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke passed after clean dev-server restart.
 
+## 2026-06-15: PHPactor Setup Guidance UI
+
+Scope reviewed:
+
+- `createPhpactorSetupGuide` domain helper
+- `LanguageServerSetup` modal
+- command-palette action for non-ready PHPactor plans
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Setup decision logic is in the domain helper; the modal renders a guide and copy actions only.
+- Open/Closed: acceptable. Additional provider setup guides can be added beside the PHPactor helper without changing the command registry shape.
+- Liskov Substitution: not heavily exercised; the guide model is plain data and easy to render from alternate sources.
+- Interface Segregation: acceptable. No existing gateway or workspace contracts were expanded.
+- Dependency Inversion: acceptable. UI depends on `LanguageServerPlan` data, not direct PHPactor detection logic.
+
+### Pattern Review
+
+- View model pattern: setup content is shaped before rendering.
+- Command pattern: setup opens through the existing command registry.
+- Adapter pattern: unchanged.
+
+### CodeRabbit Review
+
+- `coderabbit review --agent --base main`: 0 findings on the first pass.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `coderabbit review --agent --base main`
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

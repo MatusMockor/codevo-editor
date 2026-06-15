@@ -75,6 +75,7 @@ Scale:
 | P4-01 | LSP transport prototype | XL | Partial | PHPactor command and LSP initialize request plan exist; process transport pending. |
 | P4-00 | PHP workspace detection | M | Done | Composer package and PSR-4 roots are detected as data. |
 | P4-01A | PHP tool detection | M | Done | PHPactor/Intelephense are detected from workspace vendor bin and PATH. |
+| P4-01B | PHPactor setup guidance | S | Done | Non-ready PHPactor plans can show setup commands from the command palette. |
 | P4-02 | PHPactor provider | L | Pending | PHPactor starts for trusted PHP workspace. |
 | P4-03 | Document sync | L | Pending | Open/change/save/close notifications work. |
 | P4-04 | Diagnostics display | L | Pending | Diagnostics appear in editor/problems panel. |

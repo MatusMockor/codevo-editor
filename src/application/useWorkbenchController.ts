@@ -11,6 +11,7 @@ import type {
   LanguageServerGateway,
   LanguageServerPlan,
 } from "../domain/languageServer";
+import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
   detectLanguage,
@@ -64,6 +65,7 @@ export function useWorkbenchController(
   const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
   const [languageServerPlan, setLanguageServerPlan] =
     useState<LanguageServerPlan | null>(null);
+  const [languageServerSetupOpen, setLanguageServerSetupOpen] = useState(false);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -644,6 +646,14 @@ export function useWorkbenchController(
       run: toggleSmartMode,
     });
 
+    registry.register({
+      id: "smart.phpactorSetup",
+      title: "Show PHPactor Setup",
+      category: "Smart Mode",
+      isEnabled: () => Boolean(createPhpactorSetupGuide(languageServerPlan)),
+      run: () => setLanguageServerSetupOpen(true),
+    });
+
     return registry;
   }, [
     createDirectory,
@@ -655,6 +665,7 @@ export function useWorkbenchController(
     saveActiveDocument,
     toggleSmartMode,
     toggleWorkspaceTrust,
+    languageServerPlan,
     workspaceTrust,
   ]);
 
@@ -831,6 +842,7 @@ export function useWorkbenchController(
     intelligenceMode,
     loadingDirectories,
     languageServerPlan,
+    languageServerSetupOpen,
     message,
     openDocuments,
     openFile,
@@ -851,6 +863,7 @@ export function useWorkbenchController(
     setQuickOpenQuery,
     setTextSearchOpen,
     setTextSearchQuery,
+    setLanguageServerSetupOpen,
     textSearchLoading,
     textSearchOpen,
     textSearchQuery,

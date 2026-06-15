@@ -41,17 +41,18 @@ Completed:
 - Split frontend workspace gateway into focused file, detection, tool, file-search, and text-search ports.
 - Added PHPactor LSP planning command that builds a launch command and JSON-RPC initialize request without starting a process.
 - Added frontend language-server gateway and status label for PHPactor LSP readiness.
+- Added PHPactor setup guidance modal and command-palette action for non-ready LSP plans.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 7 frontend tests
+- `npm test`: passing, 10 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
 - `cargo test`: passing, 18 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, and command palette
-- `coderabbit review --agent --base main`: passing; valid trust rollback and server-side LSP trust findings addressed, final rerun returned 0 findings.
+- `coderabbit review --agent --base main`: passing; PHPactor setup guidance slice returned 0 findings on the first pass.
 
 Known issues:
 
@@ -61,7 +62,7 @@ Known issues:
 Next implementation slice:
 
 1. Add persisted settings beyond recent workspace.
-2. Add PHPactor process setup guidance UI.
-3. Add supervised JSON-RPC process transport.
-4. Add diagnostics/problems bridge.
-5. Add document sync notifications.
+2. Add supervised JSON-RPC process transport.
+3. Add diagnostics/problems bridge.
+4. Add document sync notifications.
+5. Add navigation stack.
