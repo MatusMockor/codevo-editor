@@ -42,17 +42,19 @@ Completed:
 - Added PHPactor LSP planning command that builds a launch command and JSON-RPC initialize request without starting a process.
 - Added frontend language-server gateway and status label for PHPactor LSP readiness.
 - Added PHPactor setup guidance modal and command-palette action for non-ready LSP plans.
+- Added supervised JSON-RPC process transport that frames LSP messages, starts/stops PHPactor, performs the initialize handshake, and reports runtime status through Tauri events.
+- Added frontend language-server runtime gateway, runtime status helpers, command-palette Start/Stop actions, and crash notices.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 10 frontend tests
+- `npm test`: passing, 15 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 18 Rust tests
+- `cargo test`: passing, 33 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
-- Browser smoke test: passing for shell, empty states, and command palette
-- `coderabbit review --agent --base main`: passing; PHPactor setup guidance slice returned 0 findings on the first pass.
+- Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after lifecycle cleanup fixes.
 
 Known issues:
 
@@ -62,7 +64,7 @@ Known issues:
 Next implementation slice:
 
 1. Add persisted settings beyond recent workspace.
-2. Add supervised JSON-RPC process transport.
+2. Add document sync notifications.
 3. Add diagnostics/problems bridge.
-4. Add document sync notifications.
-5. Add navigation stack.
+4. Add navigation stack.
+5. Add PHPactor capability registry.

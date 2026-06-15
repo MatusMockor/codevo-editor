@@ -1,4 +1,6 @@
 mod lsp;
+mod lsp_session;
+mod lsp_transport;
 mod project;
 mod search;
 mod smart_mode;
@@ -6,13 +8,20 @@ mod tools;
 mod trust;
 mod workspace;
 
-use lsp::{LanguageServerPlan, LanguageServerPlanner, PhpactorLanguageServerPlanner};
+use lsp::{
+    JsonRpcRequest, LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus,
+    LanguageServerPlanner, PhpactorLanguageServerPlanner,
+};
+use lsp_session::{
+    AppHandleEventSink, ChildServerProcessSpawner, EventSink, LanguageServerRuntimeStatus,
+    LanguageServerSupervisor,
+};
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::path::PathBuf;
-use std::sync::Mutex;
-use tauri::{Manager, State};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Manager, State};
 use tools::{LocalPhpToolDetector, PhpToolAvailability, PhpToolDetector};
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
@@ -77,27 +86,31 @@ fn get_workspace_trust(
     Ok(service.get(&root_path))
 }
 
+fn build_php_language_server_plan(
+    root_path: &str,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<LanguageServerPlan, String> {
+    let root = PathBuf::from(root_path);
+    let trusted = {
+        let service = trust.lock().map_err(|error| error.to_string())?;
+        service.get(root_path).trusted
+    };
+    let descriptor = ComposerWorkspaceDetector
+        .detect(&root)
+        .map_err(|error| error.to_string())?;
+    let tools = LocalPhpToolDetector
+        .detect(Some(&root))
+        .map_err(|error| error.to_string())?;
+
+    Ok(PhpactorLanguageServerPlanner::new().plan(&root, trusted, &descriptor, &tools))
+}
+
 #[tauri::command]
 fn plan_php_language_server(
     root_path: String,
     service: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<LanguageServerPlan, String> {
-    let root = PathBuf::from(&root_path);
-    let trusted = {
-        let service = service.lock().map_err(|error| error.to_string())?;
-        service.get(&root_path).trusted
-    };
-    let workspace_detector = ComposerWorkspaceDetector;
-    let tool_detector = LocalPhpToolDetector;
-    let planner = PhpactorLanguageServerPlanner::new();
-    let descriptor = workspace_detector
-        .detect(&root)
-        .map_err(|error| error.to_string())?;
-    let tools = tool_detector
-        .detect(Some(&root))
-        .map_err(|error| error.to_string())?;
-
-    Ok(planner.plan(&root, trusted, &descriptor, &tools))
+    build_php_language_server_plan(&root_path, &service)
 }
 
 #[tauri::command]
@@ -166,6 +179,49 @@ fn set_workspace_trust(
 }
 
 #[tauri::command]
+fn get_php_language_server_status(
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<LanguageServerRuntimeStatus, String> {
+    Ok(supervisor.status())
+}
+
+#[tauri::command]
+fn start_php_language_server(
+    root_path: String,
+    app: AppHandle,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<LanguageServerRuntimeStatus, String> {
+    let plan = build_php_language_server_plan(&root_path, &trust)?;
+
+    if !matches!(plan.status, LanguageServerPlanStatus::Ready) {
+        return Err(plan.message);
+    }
+
+    let command: LanguageServerCommand = plan
+        .command
+        .ok_or_else(|| "Language server plan is missing a launch command.".to_string())?;
+    let initialize_request: JsonRpcRequest = plan
+        .initialize_request
+        .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
+    let sink: Arc<dyn EventSink> = Arc::new(AppHandleEventSink::new(app));
+
+    supervisor.start(
+        &command,
+        &initialize_request,
+        &ChildServerProcessSpawner,
+        sink,
+    )
+}
+
+#[tauri::command]
+fn stop_php_language_server(
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<LanguageServerRuntimeStatus, String> {
+    Ok(supervisor.stop())
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;
     repository
@@ -177,6 +233,7 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(SmartModeService::new()))
+        .manage(LanguageServerSupervisor::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -191,6 +248,7 @@ pub fn run() {
             delete_path,
             detect_php_tools,
             detect_workspace,
+            get_php_language_server_status,
             get_smart_mode_state,
             get_workspace_trust,
             plan_php_language_server,
@@ -201,6 +259,8 @@ pub fn run() {
             search_text,
             set_smart_mode,
             set_workspace_trust,
+            start_php_language_server,
+            stop_php_language_server,
             write_text_file
         ])
         .run(tauri::generate_context!())

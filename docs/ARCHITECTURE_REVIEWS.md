@@ -422,6 +422,55 @@ Scope reviewed:
 - `cargo test`
 - `coderabbit review --agent --base main`
 
+## 2026-06-15: LSP Process Transport
+
+Scope reviewed:
+
+- `lsp_transport` Content-Length framing codec
+- `LanguageServerSupervisor`
+- `ServerProcessSpawner`, `ProcessKiller`, and `EventSink` boundaries
+- Tauri start/stop/status commands
+- frontend language-server runtime gateway and status helpers
+- workbench Start/Stop commands and crash notices
+- workspace/trust runtime stop policy
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Framing, process lifecycle, Tauri command glue, frontend runtime adapter, and UI orchestration are separated.
+- Open/Closed: acceptable. Additional process spawners or event sinks can be introduced behind traits without changing supervisor logic.
+- Liskov Substitution: acceptable. Tests use in-memory spawner/sink implementations against the same supervisor contract used by production.
+- Interface Segregation: acceptable. Runtime status uses a dedicated frontend gateway and does not expand planning, workspace, or smart-mode ports.
+- Dependency Inversion: strong. `LanguageServerSupervisor` depends on `ServerProcessSpawner`, `ProcessKiller`, and `EventSink` abstractions, not directly on Tauri or tests.
+
+### Pattern Review
+
+- Adapter pattern: Tauri runtime gateway adapts invoke/listen to a focused frontend port.
+- Observer pattern: runtime status is published through `EventSink` and Tauri events.
+- Strategy/boundary pattern: process spawning is behind `ServerProcessSpawner`.
+- Supervisor pattern: `LanguageServerSupervisor` owns start/stop/handshake/crash status for one managed PHPactor process.
+
+### Lifecycle Review
+
+- Running sessions retain the server stdin writer so the LSP process does not see client EOF after initialize.
+- `ProcessKiller::terminate` kills and waits for child processes to avoid zombies.
+- `LanguageServerSupervisor` now owns its own internal session lock, so status and stop commands are not blocked by the full handshake timeout.
+- Start/stop races during the initialize handshake are covered by tests and resolve to `Stopped` instead of false crashes.
+- Workspace changes and trust revocation stop the runtime before showing the next workspace state.
+
+### CodeRabbit Review
+
+- Initial valid cleanup findings around spawned-process cleanup were addressed before the final pass.
+- Final `coderabbit review --agent --fast --base main` returned 0 findings.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke passed for shell and runtime event subscription wiring.
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

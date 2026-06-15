@@ -10,9 +10,11 @@ import { ProblemsPanel } from "./components/ProblemsPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
+import { languageServerStatusLabel } from "./domain/languageServerRuntime";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
+import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
@@ -29,6 +31,7 @@ const workspaceGateways = {
 const smartModeGateway = new TauriSmartModeGateway();
 const workspaceTrustGateway = new TauriWorkspaceTrustGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
+const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
@@ -37,6 +40,7 @@ function App() {
     smartModeGateway,
     workspaceTrustGateway,
     languageServerGateway,
+    languageServerRuntimeGateway,
     workbenchPrompter,
   );
   const activeDocumentDirty = Boolean(
@@ -67,6 +71,14 @@ function App() {
     return `${packageName} · PHP tools missing`;
   }, [workbench.phpTools, workbench.workspaceDescriptor]);
   const languageServerLabel = useMemo(() => {
+    const runtimeLabel = languageServerStatusLabel(
+      workbench.languageServerRuntimeStatus,
+    );
+
+    if (runtimeLabel) {
+      return runtimeLabel;
+    }
+
     const plan = workbench.languageServerPlan;
 
     if (!plan) {
@@ -82,7 +94,7 @@ function App() {
     }
 
     return "LSP unavailable";
-  }, [workbench.languageServerPlan]);
+  }, [workbench.languageServerPlan, workbench.languageServerRuntimeStatus]);
 
   return (
     <main className="app-shell">

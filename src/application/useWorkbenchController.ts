@@ -11,6 +11,13 @@ import type {
   LanguageServerGateway,
   LanguageServerPlan,
 } from "../domain/languageServer";
+import {
+  isLanguageServerActive,
+  languageServerCrashMessage,
+  type LanguageServerRuntimeGateway,
+  type LanguageServerRuntimeStatus,
+  type UnsubscribeFn,
+} from "../domain/languageServerRuntime";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
@@ -48,6 +55,7 @@ export function useWorkbenchController(
   smartModeGateway: SmartModeGateway,
   workspaceTrustGateway: WorkspaceTrustGateway,
   languageServerGateway: LanguageServerGateway,
+  languageServerRuntimeGateway: LanguageServerRuntimeGateway,
   prompter: WorkbenchPrompter,
 ) {
   const {
@@ -66,6 +74,8 @@ export function useWorkbenchController(
   const [languageServerPlan, setLanguageServerPlan] =
     useState<LanguageServerPlan | null>(null);
   const [languageServerSetupOpen, setLanguageServerSetupOpen] = useState(false);
+  const [languageServerRuntimeStatus, setLanguageServerRuntimeStatus] =
+    useState<LanguageServerRuntimeStatus | null>(null);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -98,6 +108,7 @@ export function useWorkbenchController(
   const [intelligenceMode, setIntelligenceMode] =
     useState<IntelligenceMode>("basic");
   const hasRestoredRef = useRef(false);
+  const lastLanguageServerCrashRef = useRef<string | null>(null);
 
   const activeDocument = activePath ? documents[activePath] || null : null;
   const openDocuments = openPaths
@@ -110,6 +121,21 @@ export function useWorkbenchController(
     setMessage(nextMessage);
     setNotices((current) => [
       createWorkbenchNotice("error", source, nextMessage),
+      ...current,
+    ]);
+  }, []);
+
+  const reportLanguageServerError = useCallback((error: unknown) => {
+    const nextMessage = String(error);
+    setMessage(nextMessage);
+
+    if (lastLanguageServerCrashRef.current === nextMessage) {
+      return;
+    }
+
+    lastLanguageServerCrashRef.current = nextMessage;
+    setNotices((current) => [
+      createWorkbenchNotice("error", "Language Server", nextMessage),
       ...current,
     ]);
   }, []);
@@ -128,6 +154,33 @@ export function useWorkbenchController(
     },
     [languageServerGateway, reportError],
   );
+
+  const handleLanguageServerRuntimeStatus = useCallback(
+    (status: LanguageServerRuntimeStatus) => {
+      setLanguageServerRuntimeStatus(status);
+      const crash = languageServerCrashMessage(status);
+
+      if (!crash) {
+        lastLanguageServerCrashRef.current = null;
+        return;
+      }
+
+      reportLanguageServerError(crash);
+    },
+    [reportLanguageServerError],
+  );
+
+  const stopLanguageServerRuntime = useCallback(async () => {
+    try {
+      const status = await languageServerRuntimeGateway.stop();
+      setLanguageServerRuntimeStatus(status);
+      lastLanguageServerCrashRef.current = null;
+      return status;
+    } catch (error) {
+      reportLanguageServerError(error);
+      return null;
+    }
+  }, [languageServerRuntimeGateway, reportLanguageServerError]);
 
   const loadDirectory = useCallback(
     async (path: string) => {
@@ -155,6 +208,7 @@ export function useWorkbenchController(
 
   const openWorkspacePath = useCallback(
     async (path: string) => {
+      await stopLanguageServerRuntime();
       setWorkspaceRoot(path);
       setEntriesByDirectory({});
       setExpandedDirectories(new Set([path]));
@@ -192,6 +246,7 @@ export function useWorkbenchController(
       phpToolGateway,
       refreshLanguageServerPlan,
       reportError,
+      stopLanguageServerRuntime,
       workspaceDetection,
       workspaceTrustGateway,
     ],
@@ -522,6 +577,10 @@ export function useWorkbenchController(
         trust.trusted ? "Workspace trusted." : "Workspace trust revoked.",
       );
 
+      if (!trust.trusted) {
+        await stopLanguageServerRuntime();
+      }
+
       if (!workspaceDescriptor?.php) {
         return;
       }
@@ -533,11 +592,34 @@ export function useWorkbenchController(
   }, [
     refreshLanguageServerPlan,
     reportError,
+    stopLanguageServerRuntime,
     workspaceDescriptor,
     workspaceRoot,
     workspaceTrust,
     workspaceTrustGateway,
   ]);
+
+  const startLanguageServer = useCallback(async () => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    try {
+      const status = await languageServerRuntimeGateway.start(workspaceRoot);
+      handleLanguageServerRuntimeStatus(status);
+    } catch (error) {
+      reportLanguageServerError(error);
+    }
+  }, [
+    handleLanguageServerRuntimeStatus,
+    languageServerRuntimeGateway,
+    reportLanguageServerError,
+    workspaceRoot,
+  ]);
+
+  const stopLanguageServer = useCallback(async () => {
+    await stopLanguageServerRuntime();
+  }, [stopLanguageServerRuntime]);
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -654,6 +736,24 @@ export function useWorkbenchController(
       run: () => setLanguageServerSetupOpen(true),
     });
 
+    registry.register({
+      id: "smart.startLanguageServer",
+      title: "Start PHP Language Server",
+      category: "Smart Mode",
+      isEnabled: () =>
+        languageServerPlan?.status === "ready" &&
+        !isLanguageServerActive(languageServerRuntimeStatus),
+      run: startLanguageServer,
+    });
+
+    registry.register({
+      id: "smart.stopLanguageServer",
+      title: "Stop PHP Language Server",
+      category: "Smart Mode",
+      isEnabled: () => isLanguageServerActive(languageServerRuntimeStatus),
+      run: stopLanguageServer,
+    });
+
     return registry;
   }, [
     createDirectory,
@@ -663,9 +763,12 @@ export function useWorkbenchController(
     refreshWorkspace,
     renameActiveDocument,
     saveActiveDocument,
+    startLanguageServer,
+    stopLanguageServer,
     toggleSmartMode,
     toggleWorkspaceTrust,
     languageServerPlan,
+    languageServerRuntimeStatus,
     workspaceTrust,
   ]);
 
@@ -830,6 +933,50 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: UnsubscribeFn | null = null;
+
+    languageServerRuntimeGateway
+      .getStatus()
+      .then((status) => {
+        if (!active) {
+          return;
+        }
+
+        setLanguageServerRuntimeStatus(status);
+      })
+      .catch((error) => reportError("Language Server", error));
+
+    languageServerRuntimeGateway
+      .subscribeStatus((status) => {
+        if (!active) {
+          return;
+        }
+
+        handleLanguageServerRuntimeStatus(status);
+      })
+      .then((dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+
+        unsubscribe = dispose;
+      })
+      .catch((error) => reportLanguageServerError(error));
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [
+    handleLanguageServerRuntimeStatus,
+    languageServerRuntimeGateway,
+    reportLanguageServerError,
+    reportError,
+  ]);
+
   return {
     activeDocument,
     activePath,
@@ -842,6 +989,7 @@ export function useWorkbenchController(
     intelligenceMode,
     loadingDirectories,
     languageServerPlan,
+    languageServerRuntimeStatus,
     languageServerSetupOpen,
     message,
     openDocuments,
@@ -864,6 +1012,8 @@ export function useWorkbenchController(
     setTextSearchOpen,
     setTextSearchQuery,
     setLanguageServerSetupOpen,
+    startLanguageServer,
+    stopLanguageServer,
     textSearchLoading,
     textSearchOpen,
     textSearchQuery,
