@@ -142,6 +142,45 @@ Scope reviewed:
 - `cargo test`
 - `npm run tauri build -- --debug --bundles app`
 
+## 2026-06-15: Workspace Trust State
+
+Scope reviewed:
+
+- Rust `WorkspaceTrustService`
+- JSON trust storage under the app config directory
+- Tauri trust commands
+- frontend `WorkspaceTrustGateway`
+- Trust Workspace command
+- status bar trust label
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Trust state and persistence are isolated from smart mode, PHP detection, and workspace file operations.
+- Open/Closed: acceptable. Alternate trust stores can replace the current JSON-backed service behind the same command/gateway boundary.
+- Liskov Substitution: acceptable. `WorkspaceTrustGateway` can be replaced by persisted or remote implementations.
+- Interface Segregation: acceptable. Trust operations are separate from workspace file operations.
+- Dependency Inversion: acceptable. Workbench depends on trust abstraction, not raw IPC.
+
+### Pattern Review
+
+- State service: persistent JSON-backed trust service with normalized roots.
+- Adapter pattern: Tauri gateway adapts host trust commands.
+- Command pattern: Trust Workspace command integrates with existing command registry.
+
+### CodeRabbit Review
+
+Valid finding addressed:
+
+- Added rollback logic so `WorkspaceTrustService` restores in-memory trust state when persistence fails.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+
 ## 2026-06-15: PHP Workspace Detection
 
 Scope reviewed:
@@ -205,13 +244,108 @@ Scope reviewed:
 - `cargo test`
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke confirmed panel geometry and empty state.
+
+## 2026-06-15: Ripgrep Text Search
+
+Scope reviewed:
+
+- Rust `TextSearcher` trait
+- `RipgrepTextSearcher` adapter
+- Tauri `search_text` command
+- Frontend `TextSearch` modal
+- Cmd+Shift+F command registration
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Ripgrep process execution and JSON parsing live in `search.rs`; UI only renders results.
+- Open/Closed: acceptable. A future indexed text search provider can implement the same text-search contract.
+- Liskov Substitution: acceptable for `TextSearcher`; tests cover parser behavior without invoking external process.
+- Interface Segregation: acceptable. Text search remains separate from file search and workspace detection.
+- Dependency Inversion: acceptable. Frontend uses `WorkspaceGateway.searchText`; only infrastructure knows Tauri IPC.
+
+### Pattern Review
+
+- Adapter pattern: `RipgrepTextSearcher` adapts an external local tool into domain-shaped results.
+- Command pattern: `search.text` fits the existing command registry.
+- Pipeline pattern: not introduced yet; streaming search can become a pipeline later.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke confirmed Search Text command registration and disabled state without workspace.
+
+## 2026-06-15: PHP Tool Detection
+
+Scope reviewed:
+
+- Rust `PhpToolDetector`
+- workspace `vendor/bin` lookup
+- PATH lookup
+- Tauri `detect_php_tools` command
+- frontend tool availability model
+- status bar provider label
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Tool discovery is isolated in `tools.rs`.
+- Open/Closed: acceptable. New PHP tools can be added to the detector without touching workspace parsing or UI rendering.
+- Liskov Substitution: acceptable. `PhpToolDetector` can be replaced by a configured-path detector later.
+- Interface Segregation: acceptable. Tool availability is separate from composer workspace detection.
+- Dependency Inversion: acceptable. Frontend sees a gateway method, not PATH scanning logic.
+
+### Pattern Review
+
+- Strategy-ready detector: trait introduced before provider selection becomes more complex.
+- Adapter pattern: Tauri command adapts host tool discovery to frontend status.
+- Strategy pattern: full provider strategy remains for PHPactor/Intelephense LSP integration.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
 - Browser smoke confirmed command registration and disabled state without workspace.
 
 ### Known Follow-ups
 
 - Browser cannot execute the full Tauri quick-open filesystem flow.
-- Search is recursive host scanning with default ignores. Replace or augment with indexed/ripgrep-backed search in later phases.
-- CodeRabbit review for this slice was delayed by free CLI rate limit and must run before committing this slice.
+- File quick-open search is recursive host scanning with default ignores. Replace or augment it with indexed search in later phases.
+
+## 2026-06-15: Workspace Gateway Interface Split
+
+Scope reviewed:
+
+- frontend workspace domain ports
+- `TauriWorkspaceGateway` adapter declarations
+- `useWorkbenchController` dependency usage
+
+### SOLID Review
+
+- Single Responsibility: improved. File operations, project detection, PHP tool discovery, file search, and text search now have separate contracts.
+- Open/Closed: improved. Future indexed search, configured PHP tool lookup, or alternative workspace detection can replace one port without changing unrelated consumers.
+- Liskov Substitution: improved. Each focused gateway can be substituted independently in tests or future adapters.
+- Interface Segregation: improved. Workbench dependencies no longer require consumers to implement a broad workspace gateway when they only need one capability.
+- Dependency Inversion: maintained. `TauriWorkspaceGateway` remains an infrastructure adapter; controller code depends on domain ports.
+
+### Pattern Review
+
+- Adapter pattern: one Tauri adapter implements multiple narrow ports.
+- Facade composition: `App.tsx` composes the Tauri adapter into a `WorkbenchWorkspaceGateways` dependency object.
+- Command pattern: unchanged; commands still invoke controller actions rather than infrastructure directly.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
 
 ## 2026-06-15: Smart Mode State Service
 

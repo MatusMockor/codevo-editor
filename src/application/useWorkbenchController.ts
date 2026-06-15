@@ -7,6 +7,7 @@ import {
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { SmartModeGateway } from "../domain/intelligence";
+import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
   detectLanguage,
   getFileName,
@@ -16,21 +17,46 @@ import {
   type EditorDocument,
   type FileEntry,
   type FileSearchResult,
+  type FileSearchGateway,
   type IntelligenceMode,
+  type PhpToolGateway,
+  type PhpToolAvailability,
+  type TextSearchResult,
+  type TextSearchGateway,
   type WorkspaceDescriptor,
-  type WorkspaceGateway,
+  type WorkspaceDetectionGateway,
+  type WorkspaceFileGateway,
 } from "../domain/workspace";
 
 const RECENT_WORKSPACE_KEY = "editor.recentWorkspace";
 
+export interface WorkbenchWorkspaceGateways {
+  detection: WorkspaceDetectionGateway;
+  fileSearch: FileSearchGateway;
+  files: WorkspaceFileGateway;
+  phpTools: PhpToolGateway;
+  textSearch: TextSearchGateway;
+}
+
 export function useWorkbenchController(
-  workspaceGateway: WorkspaceGateway,
+  workspaceGateways: WorkbenchWorkspaceGateways,
   smartModeGateway: SmartModeGateway,
+  workspaceTrustGateway: WorkspaceTrustGateway,
   prompter: WorkbenchPrompter,
 ) {
+  const {
+    detection: workspaceDetection,
+    fileSearch,
+    files: workspaceFiles,
+    phpTools: phpToolGateway,
+    textSearch,
+  } = workspaceGateways;
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [workspaceDescriptor, setWorkspaceDescriptor] =
     useState<WorkspaceDescriptor | null>(null);
+  const [workspaceTrust, setWorkspaceTrust] =
+    useState<WorkspaceTrustState | null>(null);
+  const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -50,6 +76,12 @@ export function useWorkbenchController(
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [quickOpenLoading, setQuickOpenLoading] = useState(false);
   const [quickOpenResults, setQuickOpenResults] = useState<FileSearchResult[]>(
+    [],
+  );
+  const [textSearchOpen, setTextSearchOpen] = useState(false);
+  const [textSearchQuery, setTextSearchQuery] = useState("");
+  const [textSearchLoading, setTextSearchLoading] = useState(false);
+  const [textSearchResults, setTextSearchResults] = useState<TextSearchResult[]>(
     [],
   );
   const [message, setMessage] = useState<string | null>(null);
@@ -78,7 +110,7 @@ export function useWorkbenchController(
       setLoadingDirectories((current) => new Set(current).add(path));
 
       try {
-        const entries = await workspaceGateway.readDirectory(path);
+        const entries = await workspaceFiles.readDirectory(path);
         setEntriesByDirectory((current) => ({
           ...current,
           [path]: entries,
@@ -94,7 +126,7 @@ export function useWorkbenchController(
         });
       }
     },
-    [workspaceGateway],
+    [reportError, workspaceFiles],
   );
 
   const openWorkspacePath = useCallback(
@@ -107,17 +139,34 @@ export function useWorkbenchController(
       setActivePath(null);
       setIntelligenceMode("basic");
       setWorkspaceDescriptor(null);
+      setPhpTools(null);
+      setWorkspaceTrust(null);
       localStorage.setItem(RECENT_WORKSPACE_KEY, path);
       await loadDirectory(path);
 
       try {
-        const descriptor = await workspaceGateway.detectWorkspace(path);
+        const trust = await workspaceTrustGateway.getTrust(path);
+        setWorkspaceTrust(trust);
+        const descriptor = await workspaceDetection.detectWorkspace(path);
         setWorkspaceDescriptor(descriptor);
+
+        if (!descriptor.php) {
+          return;
+        }
+
+        const tools = await phpToolGateway.detectPhpTools(path);
+        setPhpTools(tools);
       } catch (error) {
         reportError("Workspace Detection", error);
       }
     },
-    [loadDirectory, workspaceGateway],
+    [
+      loadDirectory,
+      phpToolGateway,
+      reportError,
+      workspaceDetection,
+      workspaceTrustGateway,
+    ],
   );
 
   const openWorkspace = useCallback(async () => {
@@ -182,7 +231,7 @@ export function useWorkbenchController(
       }
 
       try {
-        const content = await workspaceGateway.readTextFile(entry.path);
+        const content = await workspaceFiles.readTextFile(entry.path);
         const document: EditorDocument = {
           path: entry.path,
           name: entry.name,
@@ -199,7 +248,7 @@ export function useWorkbenchController(
         reportError("Open File", error);
       }
     },
-    [documents, workspaceGateway],
+    [documents, reportError, workspaceFiles],
   );
 
   const saveActiveDocument = useCallback(async () => {
@@ -208,7 +257,7 @@ export function useWorkbenchController(
     }
 
     try {
-      await workspaceGateway.writeTextFile(
+      await workspaceFiles.writeTextFile(
         activeDocument.path,
         activeDocument.content,
       );
@@ -223,7 +272,7 @@ export function useWorkbenchController(
     } catch (error) {
       reportError("Save File", error);
     }
-  }, [activeDocument, workspaceGateway]);
+  }, [activeDocument, reportError, workspaceFiles]);
 
   const closeDocument = useCallback(
     (path: string) => {
@@ -283,7 +332,7 @@ export function useWorkbenchController(
     const path = joinWorkspacePath(workspaceRoot, relativePath);
 
     try {
-      await workspaceGateway.createTextFile(path);
+      await workspaceFiles.createTextFile(path);
       const parentPath = getParentPath(path);
       setExpandedDirectories((current) => new Set(current).add(parentPath));
       await refreshDirectory(parentPath);
@@ -291,12 +340,34 @@ export function useWorkbenchController(
     } catch (error) {
       reportError("Create File", error);
     }
-  }, [openFile, prompter, refreshDirectory, workspaceGateway, workspaceRoot]);
+  }, [
+    openFile,
+    prompter,
+    refreshDirectory,
+    reportError,
+    workspaceFiles,
+    workspaceRoot,
+  ]);
 
   const openSearchResult = useCallback(
     async (result: FileSearchResult) => {
       await openFile({ kind: "file", name: result.name, path: result.path });
       setQuickOpenOpen(false);
+    },
+    [openFile],
+  );
+
+  const openTextSearchResult = useCallback(
+    async (result: TextSearchResult) => {
+      await openFile({
+        kind: "file",
+        name: getFileName(result.path),
+        path: result.path,
+      });
+      setTextSearchOpen(false);
+      setMessage(
+        `Opened ${result.relativePath}:${result.lineNumber}:${result.column}`,
+      );
     },
     [openFile],
   );
@@ -315,7 +386,7 @@ export function useWorkbenchController(
     const path = joinWorkspacePath(workspaceRoot, relativePath);
 
     try {
-      await workspaceGateway.createDirectory(path);
+      await workspaceFiles.createDirectory(path);
       const parentPath = getParentPath(path);
       setExpandedDirectories((current) => new Set(current).add(parentPath));
       await refreshDirectory(parentPath);
@@ -323,7 +394,7 @@ export function useWorkbenchController(
     } catch (error) {
       reportError("Create Folder", error);
     }
-  }, [prompter, refreshDirectory, workspaceGateway, workspaceRoot]);
+  }, [prompter, refreshDirectory, reportError, workspaceFiles, workspaceRoot]);
 
   const renameActiveDocument = useCallback(async () => {
     if (!activeDocument) {
@@ -340,7 +411,7 @@ export function useWorkbenchController(
     const nextPath = joinWorkspacePath(parentPath, nextName);
 
     try {
-      await workspaceGateway.renamePath(activeDocument.path, nextPath);
+      await workspaceFiles.renamePath(activeDocument.path, nextPath);
       const renamedDocument = {
         ...activeDocument,
         language: detectLanguage(nextPath),
@@ -363,7 +434,7 @@ export function useWorkbenchController(
     } catch (error) {
       reportError("Rename File", error);
     }
-  }, [activeDocument, prompter, refreshDirectory, workspaceGateway]);
+  }, [activeDocument, prompter, refreshDirectory, reportError, workspaceFiles]);
 
   const deleteActiveDocument = useCallback(async () => {
     if (!activeDocument) {
@@ -377,7 +448,7 @@ export function useWorkbenchController(
     const parentPath = getParentPath(activeDocument.path);
 
     try {
-      await workspaceGateway.deletePath(activeDocument.path);
+      await workspaceFiles.deletePath(activeDocument.path);
       closeDocument(activeDocument.path);
       await refreshDirectory(parentPath);
       setMessage(`Deleted ${activeDocument.name}`);
@@ -389,7 +460,8 @@ export function useWorkbenchController(
     closeDocument,
     prompter,
     refreshDirectory,
-    workspaceGateway,
+    reportError,
+    workspaceFiles,
   ]);
 
   const toggleSmartMode = useCallback(async () => {
@@ -406,7 +478,25 @@ export function useWorkbenchController(
     } catch (error) {
       reportError("Smart Mode", error);
     }
-  }, [intelligenceMode, smartModeGateway, workspaceRoot]);
+  }, [intelligenceMode, reportError, smartModeGateway, workspaceRoot]);
+
+  const toggleWorkspaceTrust = useCallback(async () => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    const trusted = !workspaceTrust?.trusted;
+
+    try {
+      const trust = await workspaceTrustGateway.setTrust(workspaceRoot, trusted);
+      setWorkspaceTrust(trust);
+      setMessage(
+        trust.trusted ? "Workspace trusted." : "Workspace trust revoked.",
+      );
+    } catch (error) {
+      reportError("Workspace Trust", error);
+    }
+  }, [reportError, workspaceRoot, workspaceTrust, workspaceTrustGateway]);
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -429,6 +519,16 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "workspace.trust",
+      title: workspaceTrust?.trusted
+        ? "Revoke Workspace Trust"
+        : "Trust Workspace",
+      category: "Workspace",
+      isEnabled: (context) => context.hasWorkspace,
+      run: toggleWorkspaceTrust,
+    });
+
+    registry.register({
       id: "file.new",
       title: "New File",
       category: "File",
@@ -443,6 +543,15 @@ export function useWorkbenchController(
       shortcut: "Cmd+P",
       isEnabled: (context) => context.hasWorkspace,
       run: () => setQuickOpenOpen(true),
+    });
+
+    registry.register({
+      id: "search.text",
+      title: "Search Text",
+      category: "Search",
+      shortcut: "Cmd+Shift+F",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => setTextSearchOpen(true),
     });
 
     registry.register({
@@ -506,6 +615,8 @@ export function useWorkbenchController(
     renameActiveDocument,
     saveActiveDocument,
     toggleSmartMode,
+    toggleWorkspaceTrust,
+    workspaceTrust,
   ]);
 
   const commandContext = {
@@ -545,6 +656,14 @@ export function useWorkbenchController(
         if (workspaceRoot) {
           setQuickOpenOpen(true);
         }
+        return;
+      }
+
+      if (event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        if (workspaceRoot) {
+          setTextSearchOpen(true);
+        }
       }
     }
 
@@ -578,7 +697,7 @@ export function useWorkbenchController(
     setQuickOpenLoading(true);
 
     const timeout = window.setTimeout(() => {
-      workspaceGateway
+      fileSearch
         .searchFiles(workspaceRoot, quickOpenQuery, 80)
         .then((results) => {
           if (!active) {
@@ -609,7 +728,57 @@ export function useWorkbenchController(
       active = false;
       window.clearTimeout(timeout);
     };
-  }, [quickOpenOpen, quickOpenQuery, workspaceGateway, workspaceRoot]);
+  }, [fileSearch, quickOpenOpen, quickOpenQuery, reportError, workspaceRoot]);
+
+  useEffect(() => {
+    if (!textSearchOpen || !workspaceRoot || !textSearchQuery.trim()) {
+      setTextSearchResults([]);
+      setTextSearchLoading(false);
+      return;
+    }
+
+    let active = true;
+    setTextSearchLoading(true);
+
+    const timeout = window.setTimeout(() => {
+      textSearch
+        .searchText(workspaceRoot, textSearchQuery, 100)
+        .then((results) => {
+          if (!active) {
+            return;
+          }
+
+          setTextSearchResults(results);
+          setMessage(null);
+        })
+        .catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setTextSearchResults([]);
+          reportError("Text Search", error);
+        })
+        .finally(() => {
+          if (!active) {
+            return;
+          }
+
+          setTextSearchLoading(false);
+        });
+    }, 180);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    reportError,
+    textSearchOpen,
+    textSearchQuery,
+    textSearch,
+    workspaceRoot,
+  ]);
 
   return {
     activeDocument,
@@ -627,6 +796,7 @@ export function useWorkbenchController(
     openFile,
     openWorkspace,
     paletteOpen,
+    phpTools,
     quickOpenLoading,
     quickOpenOpen,
     quickOpenQuery,
@@ -639,11 +809,19 @@ export function useWorkbenchController(
     setPaletteOpen,
     setQuickOpenOpen,
     setQuickOpenQuery,
+    setTextSearchOpen,
+    setTextSearchQuery,
+    textSearchLoading,
+    textSearchOpen,
+    textSearchQuery,
+    textSearchResults,
     toggleDirectory,
     toggleSmartMode,
     updateActiveDocument,
     openSearchResult,
+    openTextSearchResult,
     workspaceDescriptor,
     workspaceRoot,
+    workspaceTrust,
   };
 }

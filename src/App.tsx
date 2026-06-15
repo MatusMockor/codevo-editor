@@ -8,20 +8,31 @@ import { FileTree } from "./components/FileTree";
 import { ProblemsPanel } from "./components/ProblemsPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
+import { TextSearch } from "./components/TextSearch";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
+import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import "./App.css";
 
 const workspaceGateway = new TauriWorkspaceGateway();
+const workspaceGateways = {
+  detection: workspaceGateway,
+  fileSearch: workspaceGateway,
+  files: workspaceGateway,
+  phpTools: workspaceGateway,
+  textSearch: workspaceGateway,
+};
 const smartModeGateway = new TauriSmartModeGateway();
+const workspaceTrustGateway = new TauriWorkspaceTrustGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
   const workbench = useWorkbenchController(
-    workspaceGateway,
+    workspaceGateways,
     smartModeGateway,
+    workspaceTrustGateway,
     workbenchPrompter,
   );
   const activeDocumentDirty = Boolean(
@@ -39,8 +50,18 @@ function App() {
       return null;
     }
 
-    return php.packageName || "PHP Composer";
-  }, [workbench.workspaceDescriptor]);
+    const packageName = php.packageName || "PHP Composer";
+
+    if (workbench.phpTools?.phpactor) {
+      return `${packageName} · PHPactor`;
+    }
+
+    if (workbench.phpTools?.intelephense) {
+      return `${packageName} · Intelephense`;
+    }
+
+    return `${packageName} · PHP tools missing`;
+  }, [workbench.phpTools, workbench.workspaceDescriptor]);
 
   return (
     <main className="app-shell">
@@ -119,6 +140,13 @@ function App() {
         message={workbench.message}
         workspaceRoot={workbench.workspaceRoot}
         workspaceLabel={workspaceLabel}
+        workspaceTrustLabel={
+          workbench.workspaceRoot
+            ? workbench.workspaceTrust?.trusted
+              ? "Trusted"
+              : "Untrusted"
+            : null
+        }
       />
 
       <CommandPalette
@@ -137,6 +165,16 @@ function App() {
         onOpen={workbench.openSearchResult}
         query={workbench.quickOpenQuery}
         results={workbench.quickOpenResults}
+      />
+
+      <TextSearch
+        isLoading={workbench.textSearchLoading}
+        isOpen={workbench.textSearchOpen}
+        onChangeQuery={workbench.setTextSearchQuery}
+        onClose={() => workbench.setTextSearchOpen(false)}
+        onOpen={workbench.openTextSearchResult}
+        query={workbench.textSearchQuery}
+        results={workbench.textSearchResults}
       />
     </main>
   );

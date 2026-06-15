@@ -391,7 +391,8 @@ button {
 }
 
 .command-palette,
-.quick-open {
+.quick-open,
+.text-search {
   width: min(640px, calc(100vw - 36px));
   max-height: min(520px, calc(100vh - 80px));
   overflow: hidden;
@@ -466,13 +467,15 @@ button {
   color: #8f9aaa;
 }
 
-.quick-open-results {
+.quick-open-results,
+.text-search-results {
   max-height: 470px;
   overflow: auto;
   padding: 6px;
 }
 
-.quick-open-result {
+.quick-open-result,
+.text-search-result {
   display: grid;
   width: 100%;
   min-height: 52px;
@@ -489,23 +492,29 @@ button {
 }
 
 .quick-open-result:hover,
-.quick-open-result.active {
+.quick-open-result.active,
+.text-search-result:hover,
+.text-search-result.active {
   background: #26313b;
 }
 
-.quick-open-result span {
+.quick-open-result span,
+.text-search-result span {
   display: grid;
   min-width: 0;
 }
 
 .quick-open-result strong,
-.quick-open-result small {
+.quick-open-result small,
+.text-search-result strong,
+.text-search-result small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .quick-open-result small,
+.text-search-result small,
 .quick-open-state {
   color: #8f9aaa;
 }

@@ -12,6 +12,14 @@ export interface FileSearchResult {
   relativePath: string;
 }
 
+export interface TextSearchResult {
+  path: string;
+  relativePath: string;
+  lineNumber: number;
+  column: number;
+  lineText: string;
+}
+
 export interface WorkspaceDescriptor {
   rootPath: string;
   php: PhpProjectDescriptor | null;
@@ -29,6 +37,17 @@ export interface Psr4Root {
   dev: boolean;
 }
 
+export interface PhpToolAvailability {
+  phpactor: ToolLocation | null;
+  intelephense: ToolLocation | null;
+}
+
+export interface ToolLocation {
+  executable: string;
+  path: string;
+  source: "workspaceVendorBin" | "path";
+}
+
 export interface EditorDocument {
   path: string;
   name: string;
@@ -39,16 +58,38 @@ export interface EditorDocument {
 
 export type IntelligenceMode = "basic" | "lightSmart" | "fullSmart";
 
-export interface WorkspaceGateway {
+export interface WorkspaceFileGateway {
   createDirectory(path: string): Promise<void>;
   createTextFile(path: string): Promise<void>;
   deletePath(path: string): Promise<void>;
-  detectWorkspace(path: string): Promise<WorkspaceDescriptor>;
   readDirectory(path: string): Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
   renamePath(from: string, to: string): Promise<void>;
-  searchFiles(root: string, query: string, limit: number): Promise<FileSearchResult[]>;
   writeTextFile(path: string, content: string): Promise<void>;
+}
+
+export interface WorkspaceDetectionGateway {
+  detectWorkspace(path: string): Promise<WorkspaceDescriptor>;
+}
+
+export interface PhpToolGateway {
+  detectPhpTools(workspaceRoot: string | null): Promise<PhpToolAvailability>;
+}
+
+export interface FileSearchGateway {
+  searchFiles(
+    root: string,
+    query: string,
+    limit: number,
+  ): Promise<FileSearchResult[]>;
+}
+
+export interface TextSearchGateway {
+  searchText(
+    root: string,
+    query: string,
+    limit: number,
+  ): Promise<TextSearchResult[]>;
 }
 
 export function getFileName(path: string): string {

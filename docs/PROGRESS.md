@@ -35,6 +35,10 @@ Completed:
 - Added backend-visible Smart mode state service and Tauri smart mode gateway.
 - Added PHP/Composer workspace detection from `composer.json`.
 - Added Problems panel and workbench notice model for future diagnostics/status events.
+- Added ripgrep-backed text search command and modal.
+- Added PHPactor/Intelephense tool detection from workspace `vendor/bin` and `PATH`.
+- Added persistent backend-visible workspace trust state and Trust Workspace command.
+- Split frontend workspace gateway into focused file, detection, tool, file-search, and text-search ports.
 
 Current verification:
 
@@ -42,10 +46,10 @@ Current verification:
 - `npm test`: passing, 7 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 9 Rust tests
+- `cargo test`: passing, 14 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, and command palette
-- `coderabbit review --agent --base main`: completed for this diff; valid findings addressed. Extra final sanity attempt hit free CLI rate limit.
+- `coderabbit review --agent --base main`: passing; valid trust rollback finding addressed and final rerun returned 0 findings.
 
 Known issues:
 
@@ -55,7 +59,7 @@ Known issues:
 Next implementation slice:
 
 1. Add persisted settings beyond recent workspace.
-2. Add ripgrep-backed text search.
-3. Prototype PHPactor provider detection.
-4. Add workspace trust state.
-5. Start LSP transport prototype.
+2. Start LSP transport prototype.
+3. Add PHPactor process setup guidance UI.
+4. Add PHPactor initialization prototype.
+5. Add diagnostics/problems bridge.

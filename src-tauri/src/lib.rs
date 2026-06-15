@@ -1,12 +1,18 @@
 mod project;
+mod search;
 mod smart_mode;
+mod tools;
+mod trust;
 mod workspace;
 
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
+use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
+use tools::{LocalPhpToolDetector, PhpToolAvailability, PhpToolDetector};
+use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
     FileEntry, FileSearchResult, LocalWorkspaceFileRepository, WorkspaceFileRepository,
 };
@@ -44,11 +50,29 @@ fn detect_workspace(path: String) -> Result<WorkspaceDescriptor, String> {
 }
 
 #[tauri::command]
+fn detect_php_tools(workspace_root: Option<String>) -> Result<PhpToolAvailability, String> {
+    let detector = LocalPhpToolDetector;
+    let workspace_root = workspace_root.map(PathBuf::from);
+    detector
+        .detect(workspace_root.as_deref())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn get_smart_mode_state(
     service: State<'_, Mutex<SmartModeService>>,
 ) -> Result<SmartModeState, String> {
     let service = service.lock().map_err(|error| error.to_string())?;
     Ok(service.state())
+}
+
+#[tauri::command]
+fn get_workspace_trust(
+    root_path: String,
+    service: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<WorkspaceTrustState, String> {
+    let service = service.lock().map_err(|error| error.to_string())?;
+    Ok(service.get(&root_path))
 }
 
 #[tauri::command]
@@ -88,12 +112,32 @@ fn search_files(
 }
 
 #[tauri::command]
+fn search_text(root: String, query: String, limit: usize) -> Result<Vec<TextSearchResult>, String> {
+    let searcher = RipgrepTextSearcher;
+    searcher
+        .search(&PathBuf::from(root), &query, limit)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn set_smart_mode(
     mode: IntelligenceMode,
     service: State<'_, Mutex<SmartModeService>>,
 ) -> Result<SmartModeState, String> {
     let mut service = service.lock().map_err(|error| error.to_string())?;
     Ok(service.set_mode(mode))
+}
+
+#[tauri::command]
+fn set_workspace_trust(
+    root_path: String,
+    trusted: bool,
+    service: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<WorkspaceTrustState, String> {
+    let mut service = service.lock().map_err(|error| error.to_string())?;
+    service
+        .set(&root_path, trusted)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -110,17 +154,27 @@ pub fn run() {
         .manage(Mutex::new(SmartModeService::new()))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
+            let trust_service = WorkspaceTrustService::load(trust_path)?;
+            app.manage(Mutex::new(trust_service));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             create_directory,
             create_text_file,
             delete_path,
+            detect_php_tools,
             detect_workspace,
             get_smart_mode_state,
+            get_workspace_trust,
             read_directory,
             read_text_file,
             rename_path,
             search_files,
+            search_text,
             set_smart_mode,
+            set_workspace_trust,
             write_text_file
         ])
         .run(tauri::generate_context!())

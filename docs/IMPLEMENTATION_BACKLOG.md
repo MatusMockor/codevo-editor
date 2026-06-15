@@ -54,7 +54,7 @@ Scale:
 | P2-01 | Command registry | M | Done | Commands have id/title/category/enabled state. |
 | P2-02 | Command palette | M | Done | Commands can be searched/executed. |
 | P2-03 | File quick-open | L | Done | User can search files by path and open results. |
-| P2-04 | Text search | L | Pending | Search respects ignores and streams results. |
+| P2-04 | Text search | L | Partial | Ripgrep-backed modal search exists; streaming results pending. |
 | P2-05 | Navigation stack | M | Pending | Back/forward works across files/positions. |
 | P2-06 | Status service | S | Partial | Status bar and Problems notice surface exist; backend event stream pending. |
 
@@ -63,7 +63,7 @@ Scale:
 | ID | Task | Size | Status | Acceptance |
 | --- | --- | --- | --- | --- |
 | P3-01 | Smart mode state machine | M | Partial | Backend-visible state service exists; real service lifecycle pending. |
-| P3-02 | Workspace trust model | M | Pending | Untrusted workspaces cannot execute project code. |
+| P3-02 | Workspace trust model | M | Partial | Persistent backend trust state and command exist; settings UI pending. |
 | P3-03 | Service supervisor | L | Pending | Services start/stop/restart and report health. |
 | P3-04 | Background event bus | M | Pending | UI receives service status/log events. |
 | P3-05 | Smart mode status UI | M | Partial | Status bar shows mode; detailed health pending. |
@@ -74,6 +74,7 @@ Scale:
 | --- | --- | --- | --- | --- |
 | P4-01 | LSP transport prototype | XL | Pending | App can initialize local language server. |
 | P4-00 | PHP workspace detection | M | Done | Composer package and PSR-4 roots are detected as data. |
+| P4-01A | PHP tool detection | M | Done | PHPactor/Intelephense are detected from workspace vendor bin and PATH. |
 | P4-02 | PHPactor provider | L | Pending | PHPactor starts for trusted PHP workspace. |
 | P4-03 | Document sync | L | Pending | Open/change/save/close notifications work. |
 | P4-04 | Diagnostics display | L | Pending | Diagnostics appear in editor/problems panel. |

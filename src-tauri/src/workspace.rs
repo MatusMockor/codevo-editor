@@ -101,17 +101,10 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
                 continue;
             }
 
-            let metadata = entry.metadata()?;
-            let kind = if metadata.is_dir() {
-                FileEntryKind::Directory
-            } else {
-                FileEntryKind::File
-            };
-
             entries.push(FileEntry {
                 name,
                 path: entry.path().to_string_lossy().to_string(),
-                kind,
+                kind: file_entry_kind(&entry.metadata()?),
             });
         }
 
@@ -227,6 +220,14 @@ fn should_hide_entry(name: &str) -> bool {
             | ".cache"
             | "coverage"
     )
+}
+
+fn file_entry_kind(metadata: &fs::Metadata) -> FileEntryKind {
+    if metadata.is_dir() {
+        return FileEntryKind::Directory;
+    }
+
+    FileEntryKind::File
 }
 
 fn collect_file_results(

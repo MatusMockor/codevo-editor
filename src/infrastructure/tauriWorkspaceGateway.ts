@@ -1,12 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   FileEntry,
+  FileSearchGateway,
   FileSearchResult,
+  PhpToolGateway,
+  PhpToolAvailability,
+  TextSearchGateway,
+  TextSearchResult,
   WorkspaceDescriptor,
-  WorkspaceGateway,
+  WorkspaceDetectionGateway,
+  WorkspaceFileGateway,
 } from "../domain/workspace";
 
-export class TauriWorkspaceGateway implements WorkspaceGateway {
+export class TauriWorkspaceGateway
+  implements
+    FileSearchGateway,
+    PhpToolGateway,
+    TextSearchGateway,
+    WorkspaceDetectionGateway,
+    WorkspaceFileGateway
+{
   createDirectory(path: string): Promise<void> {
     return invoke<void>("create_directory", { path });
   }
@@ -17,6 +30,10 @@ export class TauriWorkspaceGateway implements WorkspaceGateway {
 
   deletePath(path: string): Promise<void> {
     return invoke<void>("delete_path", { path });
+  }
+
+  detectPhpTools(workspaceRoot: string | null): Promise<PhpToolAvailability> {
+    return invoke<PhpToolAvailability>("detect_php_tools", { workspaceRoot });
   }
 
   detectWorkspace(path: string): Promise<WorkspaceDescriptor> {
@@ -41,6 +58,14 @@ export class TauriWorkspaceGateway implements WorkspaceGateway {
     limit: number,
   ): Promise<FileSearchResult[]> {
     return invoke<FileSearchResult[]>("search_files", { root, query, limit });
+  }
+
+  searchText(
+    root: string,
+    query: string,
+    limit: number,
+  ): Promise<TextSearchResult[]> {
+    return invoke<TextSearchResult[]>("search_text", { root, query, limit });
   }
 
   writeTextFile(path: string, content: string): Promise<void> {
