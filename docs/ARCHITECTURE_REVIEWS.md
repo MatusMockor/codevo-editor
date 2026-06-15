@@ -709,6 +709,39 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: Navigation Stack
+
+Scope reviewed:
+
+- pure navigation history reducer
+- tab/file/search/definition navigation recording
+- command-palette Back/Forward commands
+- Cmd/Ctrl+Alt+Left/Right keyboard routing
+- editor reveal target reuse for restored locations
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Navigation history mutation is isolated in `navigation.ts`; the workbench controller only coordinates recording and target application.
+- Open/Closed: acceptable. Future breadcrumbs or richer jump sources can record `NavigationLocation` values without changing stack behavior.
+- Liskov Substitution: acceptable. Navigation domain functions are pure and can be reused by alternate controller implementations.
+- Interface Segregation: acceptable. Navigation does not expand workspace, settings, or language-server gateways.
+- Dependency Inversion: maintained. The stack stores domain locations and applies them through existing file/editor abstractions.
+
+### Pattern Review
+
+- Command pattern: Back/Forward are registered through `CommandRegistry`.
+- Memento/history pattern: previous editor locations are stored as lightweight path/position snapshots.
+- Guard pattern: empty back/forward stacks disable commands and no-op safely.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

@@ -51,17 +51,18 @@ Completed:
 - Registered PHPactor-backed Monaco hover and completion providers gated by runtime capabilities.
 - Added app-native PHPactor go-to-definition command that opens target files and reveals target positions.
 - Added app/workspace settings gateway with persisted recent workspace and per-workspace Smart mode.
+- Added navigation back/forward stack with command-palette actions and keyboard shortcuts.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 50 frontend tests
+- `npm test`: passing, 53 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
 - `cargo test`: passing, 52 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after settings persistence fixes.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after navigation stack.
 
 Known issues:
 
@@ -70,4 +71,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add navigation stack.
+1. Add SQLite index service foundation.

@@ -55,7 +55,7 @@ Scale:
 | P2-02 | Command palette | M | Done | Commands can be searched/executed. |
 | P2-03 | File quick-open | L | Done | User can search files by path and open results. |
 | P2-04 | Text search | L | Partial | Ripgrep-backed modal search exists; streaming results pending. |
-| P2-05 | Navigation stack | M | Pending | Back/forward works across files/positions. |
+| P2-05 | Navigation stack | M | Done | Back/forward works across files/positions. |
 | P2-06 | Status service | S | Partial | Status bar and Problems notice surface exist; backend event stream pending. |
 
 ## Phase 3: Smart Mode Foundation

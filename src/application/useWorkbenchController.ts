@@ -44,6 +44,14 @@ import {
   type UnsubscribeFn,
 } from "../domain/languageServerRuntime";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
+import {
+  createNavigationHistory,
+  navigateBack,
+  navigateForward,
+  recordNavigationLocation,
+  type NavigationHistory,
+  type NavigationLocation,
+} from "../domain/navigation";
 import { defaultWorkspaceSettings, type SettingsGateway } from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
@@ -106,6 +114,8 @@ export function useWorkbenchController(
     useState<LanguageServerRuntimeStatus | null>(null);
   const [editorRevealTarget, setEditorRevealTarget] =
     useState<EditorRevealTarget | null>(null);
+  const [navigationHistory, setNavigationHistory] =
+    useState<NavigationHistory>(createNavigationHistory);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -179,6 +189,28 @@ export function useWorkbenchController(
       ...current,
     ]);
   }, []);
+
+  const currentNavigationLocation =
+    useCallback((): NavigationLocation | null => {
+      if (!activeDocument) {
+        return null;
+      }
+
+      return {
+        path: activeDocument.path,
+        position: activeEditorPositionRef.current || {
+          column: 1,
+          lineNumber: 1,
+        },
+      };
+    }, [activeDocument]);
+
+  const recordCurrentNavigationLocation = useCallback(() => {
+    const location = currentNavigationLocation();
+    setNavigationHistory((current) =>
+      recordNavigationLocation(current, location),
+    );
+  }, [currentNavigationLocation]);
 
   const clearLanguageServerDiagnostics = useCallback(() => {
     setNotices((current) =>
@@ -536,6 +568,7 @@ export function useWorkbenchController(
       setDocuments({});
       setOpenPaths([]);
       setActivePath(null);
+      setNavigationHistory(createNavigationHistory());
       setIntelligenceMode(workspaceSettings.intelligenceMode);
       setWorkspaceDescriptor(null);
       setPhpTools(null);
@@ -619,6 +652,18 @@ export function useWorkbenchController(
     await refreshDirectory(workspaceRoot);
   }, [refreshDirectory, workspaceRoot]);
 
+  const activateDocument = useCallback(
+    (path: string) => {
+      if (activePath === path) {
+        return;
+      }
+
+      recordCurrentNavigationLocation();
+      setActivePath(path);
+    },
+    [activePath, recordCurrentNavigationLocation],
+  );
+
   const toggleDirectory = useCallback(
     async (path: string) => {
       const isExpanded = expandedDirectories.has(path);
@@ -645,10 +690,19 @@ export function useWorkbenchController(
   );
 
   const openFile = useCallback(
-    async (entry: FileEntry) => {
+    async (
+      entry: FileEntry,
+      options: { recordNavigation?: boolean } = {},
+    ) => {
+      const shouldRecordNavigation = options.recordNavigation !== false;
+
       if (documents[entry.path]) {
+        if (shouldRecordNavigation && activePath !== entry.path) {
+          recordCurrentNavigationLocation();
+        }
+
         setActivePath(entry.path);
-        return;
+        return true;
       }
 
       try {
@@ -661,15 +715,21 @@ export function useWorkbenchController(
           language: detectLanguage(entry.path),
         };
 
+        if (shouldRecordNavigation) {
+          recordCurrentNavigationLocation();
+        }
+
         setDocuments((current) => ({ ...current, [entry.path]: document }));
         setOpenPaths((current) => [...current, entry.path]);
         setActivePath(entry.path);
         setMessage(null);
+        return true;
       } catch (error) {
         reportError("Open File", error);
+        return false;
       }
     },
-    [documents, reportError, workspaceFiles],
+    [activePath, documents, recordCurrentNavigationLocation, reportError, workspaceFiles],
   );
 
   const saveActiveDocument = useCallback(async () => {
@@ -848,16 +908,21 @@ export function useWorkbenchController(
         return;
       }
 
+      recordCurrentNavigationLocation();
+
       if (documents[targetPath]) {
         setActivePath(targetPath);
       }
 
       if (!documents[targetPath]) {
-        await openFile({
-          kind: "file",
-          name: getFileName(targetPath),
-          path: targetPath,
-        });
+        await openFile(
+          {
+            kind: "file",
+            name: getFileName(targetPath),
+            path: targetPath,
+          },
+          { recordNavigation: false },
+        );
       }
 
       const targetPosition = toEditorPosition(target.range.start);
@@ -878,8 +943,54 @@ export function useWorkbenchController(
     languageServerFeaturesGateway,
     languageServerRuntimeStatus,
     openFile,
+    recordCurrentNavigationLocation,
     reportLanguageServerError,
   ]);
+
+  const applyNavigationLocation = useCallback(
+    async (location: NavigationLocation) => {
+      if (!documents[location.path]) {
+        const opened = await openFile(
+          {
+            kind: "file",
+            name: getFileName(location.path),
+            path: location.path,
+          },
+          { recordNavigation: false },
+        );
+
+        if (!opened) {
+          return;
+        }
+      }
+
+      setActivePath(location.path);
+      setEditorRevealTarget(location);
+    },
+    [documents, openFile],
+  );
+
+  const navigateBackward = useCallback(async () => {
+    const next = navigateBack(navigationHistory, currentNavigationLocation());
+
+    if (!next.target) {
+      return;
+    }
+
+    setNavigationHistory(next.history);
+    await applyNavigationLocation(next.target);
+  }, [applyNavigationLocation, currentNavigationLocation, navigationHistory]);
+
+  const navigateForwardInHistory = useCallback(async () => {
+    const next = navigateForward(navigationHistory, currentNavigationLocation());
+
+    if (!next.target) {
+      return;
+    }
+
+    setNavigationHistory(next.history);
+    await applyNavigationLocation(next.target);
+  }, [applyNavigationLocation, currentNavigationLocation, navigationHistory]);
 
   const createDirectory = useCallback(async () => {
     if (!workspaceRoot) {
@@ -1121,6 +1232,24 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "navigation.back",
+      title: "Go Back",
+      category: "Navigation",
+      shortcut: "Cmd+Alt+Left",
+      isEnabled: () => navigationHistory.backStack.length > 0,
+      run: navigateBackward,
+    });
+
+    registry.register({
+      id: "navigation.forward",
+      title: "Go Forward",
+      category: "Navigation",
+      shortcut: "Cmd+Alt+Right",
+      isEnabled: () => navigationHistory.forwardStack.length > 0,
+      run: navigateForwardInHistory,
+    });
+
+    registry.register({
       id: "folder.new",
       title: "New Folder",
       category: "File",
@@ -1218,6 +1347,9 @@ export function useWorkbenchController(
     createFile,
     deleteActiveDocument,
     goToDefinition,
+    navigateBackward,
+    navigateForwardInHistory,
+    navigationHistory,
     openWorkspace,
     refreshWorkspace,
     renameActiveDocument,
@@ -1257,6 +1389,18 @@ export function useWorkbenchController(
         return;
       }
 
+      if (event.altKey && event.key === "ArrowLeft") {
+        event.preventDefault();
+        void navigateBackward();
+        return;
+      }
+
+      if (event.altKey && event.key === "ArrowRight") {
+        event.preventDefault();
+        void navigateForwardInHistory();
+        return;
+      }
+
       if (event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPaletteOpen(true);
@@ -1287,7 +1431,14 @@ export function useWorkbenchController(
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goToDefinition, openWorkspace, saveActiveDocument, workspaceRoot]);
+  }, [
+    goToDefinition,
+    navigateBackward,
+    navigateForwardInHistory,
+    openWorkspace,
+    saveActiveDocument,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (hasRestoredRef.current) {
@@ -1574,7 +1725,7 @@ export function useWorkbenchController(
     reportCommandError: (error: unknown) => reportError("Command", error),
     reportLanguageServerError,
     saveActiveDocument,
-    setActivePath,
+    setActivePath: activateDocument,
     setPaletteOpen,
     setQuickOpenOpen,
     setQuickOpenQuery,
