@@ -18,6 +18,7 @@ import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { TauriLanguageServerDiagnosticsGateway } from "./infrastructure/tauriLanguageServerDiagnosticsGateway";
 import { TauriLanguageServerDocumentSyncGateway } from "./infrastructure/tauriLanguageServerDocumentSyncGateway";
+import { TauriLanguageServerFeaturesGateway } from "./infrastructure/tauriLanguageServerFeaturesGateway";
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
 import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
@@ -41,6 +42,7 @@ const languageServerDocumentSyncGateway =
   new TauriLanguageServerDocumentSyncGateway();
 const languageServerDiagnosticsGateway =
   new TauriLanguageServerDiagnosticsGateway();
+const languageServerFeaturesGateway = new TauriLanguageServerFeaturesGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
@@ -177,7 +179,13 @@ function App() {
         />
         <EditorSurface
           activeDocument={workbench.activeDocument}
+          flushPendingLanguageServerDocument={
+            workbench.flushPendingLanguageServerDocument
+          }
+          languageServerFeaturesGateway={languageServerFeaturesGateway}
+          languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
           onChange={workbench.updateActiveDocument}
+          onLanguageServerError={workbench.reportLanguageServerError}
         />
         <ProblemsPanel
           notices={workbench.notices}

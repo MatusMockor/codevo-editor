@@ -610,6 +610,39 @@ Scope reviewed:
 - `npm test`
 - `cargo test`
 
+## 2026-06-15: LSP Monaco Hover And Completion
+
+Scope reviewed:
+
+- `languageServerMonacoProviders` adapter
+- `EditorSurface` Monaco provider lifecycle
+- capability-gated hover/completion requests
+- pending document-change flush before LSP feature requests
+- frontend tests for provider registration and response mapping
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Provider registration and Monaco response mapping are isolated from `EditorSurface`; the surface owns mounting/lifecycle only.
+- Open/Closed: acceptable. New Monaco-backed LSP providers can be added beside hover/completion without changing the Tauri gateway or document sync queue.
+- Liskov Substitution: acceptable. The provider adapter depends on the `LanguageServerFeaturesGateway` port, so tests and future providers can substitute implementations.
+- Interface Segregation: maintained. Feature requests use a dedicated gateway; document sync remains responsible only for didOpen/change/save/close.
+- Dependency Inversion: maintained. Monaco provider logic depends on domain ports and helpers, not direct Tauri `invoke`.
+
+### Pattern Review
+
+- Adapter pattern: Monaco providers adapt editor calls into domain feature requests.
+- Observer/lifecycle pattern: `EditorSurface` registers providers on Monaco mount and disposes them when the editor surface unmounts.
+- Guard pattern: providers return empty/null results unless the active document is PHP, the runtime is running, and the capability is enabled.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:
