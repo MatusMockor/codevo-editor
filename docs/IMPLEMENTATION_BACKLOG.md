@@ -79,8 +79,8 @@ Scale:
 | P4-02 | PHPactor provider | L | Partial | PHPactor starts for trusted PHP workspaces when installed; provider features pending capabilities/navigation/completion. |
 | P4-03 | Document sync | L | Done | Open/change/save/close notifications work. |
 | P4-04 | Diagnostics display | L | Done | Diagnostics appear in the Problems panel. |
-| P4-05 | Hover/completion | L | Pending | Monaco requests route through LSP. |
-| P4-06 | Go to definition | M | Pending | Definition opens target location. |
+| P4-05 | Hover/completion | L | Partial | Backend request/IPC path exists; Monaco providers still need to route through it. |
+| P4-06 | Go to definition | M | Partial | Backend request/IPC path exists; app-native target opening still pending. |
 | P4-07 | Capability registry | M | Partial | Runtime status exposes normalized hover/completion/definition capabilities; feature routing still needs to consume them. |
 | P4-08 | Intelephense skeleton | M | Pending | User-configured binary can be selected. |
 

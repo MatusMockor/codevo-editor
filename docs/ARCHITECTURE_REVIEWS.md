@@ -579,6 +579,37 @@ Valid findings addressed:
 - Added explicit `sessionId` serialization tests for runtime status events.
 - Rejected malformed initialize results that omit valid server capabilities instead of silently reporting an all-false registry.
 
+## 2026-06-15: LSP Feature Request Core
+
+Scope reviewed:
+
+- `LanguageServerSupervisor::send_request` request-response coordinator
+- pending request registry with timeout, stop, and crash cleanup
+- `lsp_features` request factories and response parsers
+- Tauri commands for hover, completion, and definition requests
+- frontend feature gateway port and Tauri adapter
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Process request correlation remains in the supervisor; feature payload construction and parsing live in `lsp_features`; frontend IPC remains in a gateway adapter.
+- Open/Closed: acceptable. Additional LSP text-document features can add factories/parsers without changing document sync, diagnostics, or runtime status ports.
+- Liskov Substitution: acceptable. The frontend `LanguageServerFeaturesGateway` can be replaced by a fake or future non-Tauri implementation with the same behavior.
+- Interface Segregation: maintained. Runtime lifecycle, document sync, diagnostics, and feature requests are separate ports.
+- Dependency Inversion: maintained. UI-facing code depends on feature gateway/domain types, while Rust feature commands depend on supervisor abstractions rather than direct process handles.
+
+### Pattern Review
+
+- Adapter pattern: Tauri feature gateway and Tauri commands adapt between UI/domain types and backend LSP requests.
+- Factory pattern: `LspTextDocumentFeatureRequestFactory` builds protocol request payloads.
+- Request coordinator pattern: supervisor tracks pending JSON-RPC requests by id and routes reader responses to waiting callers.
+- Parser boundary: hover, completion, and definition response normalization is isolated from transport lifecycle.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

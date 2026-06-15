@@ -3,6 +3,7 @@ use crate::lsp_diagnostics::{parse_publish_diagnostics, LanguageServerDiagnostic
 use crate::lsp_transport::{read_message, write_message};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::io::{self, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -12,8 +13,12 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_EVENT: &str = "language-server://status";
 const DIAGNOSTICS_EVENT: &str = "language-server://diagnostics";
+type PendingRequestResult = Result<Value, String>;
+type PendingRequestSender = mpsc::Sender<PendingRequestResult>;
+type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -150,12 +155,14 @@ enum HandshakeOutcome {
 struct RunningSession {
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Box<dyn ProcessKiller>,
+    pending_requests: PendingRequests,
     reader: Option<JoinHandle<()>>,
     status_sink: Arc<dyn StatusSink>,
     stop_requested: Arc<AtomicBool>,
 }
 
 pub struct LanguageServerSupervisor {
+    next_request_id: AtomicU64,
     next_session_id: AtomicU64,
     session: Mutex<Option<RunningSession>>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
@@ -164,6 +171,7 @@ pub struct LanguageServerSupervisor {
 impl LanguageServerSupervisor {
     pub fn new() -> Self {
         Self {
+            next_request_id: AtomicU64::new(2),
             next_session_id: AtomicU64::new(1),
             session: Mutex::new(None),
             status: Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped)),
@@ -199,10 +207,12 @@ impl LanguageServerSupervisor {
         };
 
         let stdin = Arc::new(Mutex::new(spawned.stdin));
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
         let stop_requested = Arc::new(AtomicBool::new(false));
         let mut session = Some(RunningSession {
             stdin: Arc::clone(&stdin),
             killer: spawned.killer,
+            pending_requests: Arc::clone(&pending_requests),
             reader: None,
             status_sink: Arc::clone(&status_sink),
             stop_requested: Arc::clone(&stop_requested),
@@ -238,6 +248,7 @@ impl LanguageServerSupervisor {
             spawned.stdout,
             Arc::clone(&self.status),
             diagnostics_sink,
+            pending_requests,
             Arc::clone(&status_sink),
             Arc::clone(&stop_requested),
             handshake_tx,
@@ -338,6 +349,57 @@ impl LanguageServerSupervisor {
 
         write_with_session_stdin(&stdin, &bytes)
             .map_err(|error| format!("Failed to send LSP notification: {error}"))
+    }
+
+    pub fn send_request(&self, method: &str, params: Value) -> Result<Option<Value>, String> {
+        self.send_request_with_timeout(method, params, REQUEST_TIMEOUT)
+    }
+
+    fn send_request_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Option<Value>, String> {
+        if !matches!(self.status(), LanguageServerRuntimeStatus::Running { .. }) {
+            return Ok(None);
+        }
+
+        let Some((stdin, pending_requests)) = self.session_request_parts() else {
+            return Ok(None);
+        };
+        let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id,
+            method: method.to_string(),
+            params,
+        };
+        let bytes = serde_json::to_vec(&request)
+            .map_err(|error| format!("Failed to serialize LSP request: {error}"))?;
+        let (tx, rx) = mpsc::channel();
+
+        {
+            let mut pending = pending_requests.lock().map_err(|error| error.to_string())?;
+            pending.insert(id, tx);
+        }
+
+        if let Err(error) = write_with_session_stdin(&stdin, &bytes) {
+            remove_pending_request(&pending_requests, id);
+            return Err(format!("Failed to send LSP request `{method}`: {error}"));
+        }
+
+        match rx.recv_timeout(timeout) {
+            Ok(Ok(result)) => Ok(Some(result)),
+            Ok(Err(message)) => Err(message),
+            Err(RecvTimeoutError::Timeout) => {
+                remove_pending_request(&pending_requests, id);
+                Err(format!("Language server request `{method}` timed out."))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                Err(format!("Language server request `{method}` was cancelled."))
+            }
+        }
     }
 
     fn begin_start(&self, sink: &dyn StatusSink, session_id: u64) -> Result<(), String> {
@@ -466,6 +528,32 @@ impl LanguageServerSupervisor {
             .as_ref()
             .map(|session| Arc::clone(&session.stdin))
     }
+
+    fn session_request_parts(
+        &self,
+    ) -> Option<(Arc<Mutex<Box<dyn Write + Send>>>, PendingRequests)> {
+        self.session.lock().ok()?.as_ref().map(|session| {
+            (
+                Arc::clone(&session.stdin),
+                Arc::clone(&session.pending_requests),
+            )
+        })
+    }
+
+    #[cfg(test)]
+    fn pending_request_count(&self) -> usize {
+        let Ok(session) = self.session.lock() else {
+            return 0;
+        };
+        let Some(session) = session.as_ref() else {
+            return 0;
+        };
+        let Ok(pending) = session.pending_requests.lock() else {
+            return 0;
+        };
+
+        pending.len()
+    }
 }
 
 impl Default for LanguageServerSupervisor {
@@ -506,11 +594,64 @@ fn write_with_session_stdin(
 
 fn terminate_session(mut session: RunningSession) {
     session.stop_requested.store(true, Ordering::SeqCst);
+    reject_pending_requests(
+        &session.pending_requests,
+        "PHPactor language server request was stopped.",
+    );
     let _ = session.killer.terminate();
 
     if let Some(reader) = session.reader.take() {
         let _ = reader.join();
     }
+}
+
+fn remove_pending_request(pending_requests: &PendingRequests, id: u64) {
+    let Ok(mut pending) = pending_requests.lock() else {
+        return;
+    };
+
+    pending.remove(&id);
+}
+
+fn reject_pending_requests(pending_requests: &PendingRequests, message: &str) {
+    let Ok(mut pending) = pending_requests.lock() else {
+        return;
+    };
+
+    for sender in pending.drain().map(|(_, sender)| sender) {
+        let _ = sender.send(Err(message.to_string()));
+    }
+}
+
+fn route_pending_response(pending_requests: &PendingRequests, value: &Value) -> bool {
+    let Some(id) = value.get("id").and_then(Value::as_u64) else {
+        return false;
+    };
+    let Ok(mut pending) = pending_requests.lock() else {
+        return true;
+    };
+    let Some(sender) = pending.remove(&id) else {
+        return false;
+    };
+
+    let _ = sender.send(parse_response_result(value));
+    true
+}
+
+fn parse_response_result(value: &Value) -> PendingRequestResult {
+    if let Some(result) = value.get("result") {
+        return Ok(result.clone());
+    }
+
+    if let Some(message) = value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+    {
+        return Err(message.to_string());
+    }
+
+    Err("Language server returned a malformed response.".to_string())
 }
 
 fn is_active_status(status: &LanguageServerRuntimeStatus) -> bool {
@@ -553,6 +694,7 @@ fn spawn_reader(
     stdout: Box<dyn Read + Send>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
     diagnostics_sink: Arc<dyn DiagnosticsSink>,
+    pending_requests: PendingRequests,
     status_sink: Arc<dyn StatusSink>,
     stop_requested: Arc<AtomicBool>,
     handshake_tx: mpsc::Sender<HandshakeOutcome>,
@@ -571,6 +713,10 @@ fn spawn_reader(
                     };
 
                     if handshake_done {
+                        if route_pending_response(&pending_requests, &value) {
+                            continue;
+                        }
+
                         if let Some(event) = parse_publish_diagnostics(&value, session_id) {
                             diagnostics_sink.emit_diagnostics(event);
                         }
@@ -615,6 +761,10 @@ fn spawn_reader(
                         return;
                     }
 
+                    reject_pending_requests(
+                        &pending_requests,
+                        "PHPactor language server exited unexpectedly.",
+                    );
                     publish_crash(
                         &status,
                         status_sink.as_ref(),
@@ -673,7 +823,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Arc, Mutex};
-    use std::time::{Duration, SystemTime};
+    use std::time::{Duration, Instant, SystemTime};
 
     #[test]
     fn successful_handshake_reports_running_and_sends_initialized() {
@@ -913,6 +1063,116 @@ mod tests {
         assert_eq!(event.session_id, 1);
         assert_eq!(event.uri, "file:///tmp/User.php");
         assert_eq!(event.diagnostics[0].message, "Possible issue");
+    }
+
+    #[test]
+    fn request_response_is_correlated_after_handshake() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+
+        let request_supervisor = Arc::clone(&supervisor);
+        let request = std::thread::spawn(move || {
+            request_supervisor
+                .send_request_with_timeout(
+                    "textDocument/hover",
+                    json!({
+                        "textDocument": { "uri": "file:///tmp/User.php" },
+                        "position": { "line": 1, "character": 2 },
+                    }),
+                    Duration::from_secs(2),
+                )
+                .expect("send request")
+                .expect("request result")
+        });
+        let request_id = wait_for_captured_request_id(&capture, "textDocument/hover");
+
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "contents": "Hover text",
+                },
+            }),
+        );
+
+        let result = request.join().expect("request thread");
+        assert_eq!(result["contents"], "Hover text");
+        assert_eq!(supervisor.pending_request_count(), 0);
+    }
+
+    #[test]
+    fn request_timeout_removes_pending_waiter() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+
+        let error = supervisor
+            .send_request_with_timeout("textDocument/hover", json!({}), Duration::from_millis(10))
+            .expect_err("request should time out");
+
+        assert!(error.contains("timed out"));
+        assert_eq!(supervisor.pending_request_count(), 0);
+    }
+
+    #[test]
+    fn stop_rejects_pending_request() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+
+        let request_supervisor = Arc::clone(&supervisor);
+        let request = std::thread::spawn(move || {
+            request_supervisor.send_request_with_timeout(
+                "textDocument/definition",
+                json!({}),
+                Duration::from_secs(2),
+            )
+        });
+        wait_for_captured_request_id(&capture, "textDocument/definition");
+
+        supervisor.stop();
+
+        let error = request
+            .join()
+            .expect("request thread")
+            .expect_err("request should be rejected");
+        assert!(error.contains("stopped"));
     }
 
     #[test]
@@ -1194,6 +1454,46 @@ mod tests {
                 return;
             }
         }
+    }
+
+    fn wait_for_captured_request_id(capture: &Arc<Mutex<Vec<u8>>>, method: &str) -> u64 {
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        loop {
+            for value in captured_messages(capture) {
+                if value["method"] == method {
+                    return value["id"].as_u64().expect("request id");
+                }
+            }
+
+            if Instant::now() >= deadline {
+                panic!("expected captured request {method}");
+            }
+
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn captured_messages(capture: &Arc<Mutex<Vec<u8>>>) -> Vec<Value> {
+        let buffer = capture.lock().expect("capture lock").clone();
+        let mut reader = std::io::Cursor::new(buffer);
+        let mut messages = Vec::new();
+
+        while let Ok(Some(bytes)) = read_message(&mut reader) {
+            if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                messages.push(value);
+            }
+        }
+
+        messages
+    }
+
+    fn write_held_message(held: &Arc<Mutex<Option<PipeWriter>>>, value: Value) {
+        let mut held = held.lock().expect("held writer lock");
+        let writer = held.as_mut().expect("held writer");
+        writer
+            .write_all(&framed(value))
+            .expect("write held message");
     }
 
     fn starting_status() -> LanguageServerRuntimeStatus {

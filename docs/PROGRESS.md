@@ -47,17 +47,18 @@ Completed:
 - Added LSP text document sync foundation for PHP `didOpen`, debounced full-text `didChange`, `didSave`, and `didClose` notifications.
 - Added LSP diagnostics bridge from `textDocument/publishDiagnostics` into the Problems panel with per-document replacement.
 - Added PHPactor capability registry from initialize results for hover, completion, and definition support.
+- Added LSP request-response core with hover, completion, and definition Tauri command adapters.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 29 frontend tests
+- `npm test`: passing, 35 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 45 Rust tests
+- `cargo test`: passing, 52 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after capability registry fixes.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after feature request core.
 
 Known issues:
 
@@ -66,7 +67,7 @@ Known issues:
 
 Next implementation slice:
 
-1. Add PHPactor hover/completion routing.
-2. Add PHPactor go-to-definition routing.
+1. Register PHPactor hover/completion providers in Monaco.
+2. Add app-native PHPactor go-to-definition routing.
 3. Add persisted settings beyond recent workspace.
 4. Add navigation stack.

@@ -1,6 +1,7 @@
 mod lsp;
 mod lsp_diagnostics;
 mod lsp_document;
+mod lsp_features;
 mod lsp_session;
 mod lsp_transport;
 mod project;
@@ -17,6 +18,11 @@ use lsp::{
 use lsp_document::{
     LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
     TextDocumentSyncNotificationFactory,
+};
+use lsp_features::{
+    parse_completion_result, parse_definition_result, parse_hover_result,
+    LanguageServerCompletionList, LanguageServerHover, LanguageServerLocation,
+    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory, TextDocumentPosition,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink, LanguageServerRuntimeStatus,
@@ -267,6 +273,51 @@ fn text_document_did_close(
 }
 
 #[tauri::command]
+fn text_document_hover(
+    position: TextDocumentPosition,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<Option<LanguageServerHover>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.hover(&position);
+    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_hover_result(&result)
+}
+
+#[tauri::command]
+fn text_document_completion(
+    position: TextDocumentPosition,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<LanguageServerCompletionList, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.completion(&position);
+    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+        return Ok(LanguageServerCompletionList {
+            is_incomplete: false,
+            items: Vec::new(),
+        });
+    };
+
+    parse_completion_result(&result)
+}
+
+#[tauri::command]
+fn text_document_definition(
+    position: TextDocumentPosition,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.definition(&position);
+    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;
     repository
@@ -306,10 +357,13 @@ pub fn run() {
             set_workspace_trust,
             start_php_language_server,
             stop_php_language_server,
+            text_document_completion,
+            text_document_definition,
             text_document_did_change,
             text_document_did_close,
             text_document_did_open,
             text_document_did_save,
+            text_document_hover,
             write_text_file
         ])
         .run(tauri::generate_context!())
