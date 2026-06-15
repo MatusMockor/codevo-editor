@@ -44,6 +44,7 @@ import {
   type UnsubscribeFn,
 } from "../domain/languageServerRuntime";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
+import { defaultWorkspaceSettings, type SettingsGateway } from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
   detectLanguage,
@@ -65,8 +66,6 @@ import {
   type WorkspaceFileGateway,
 } from "../domain/workspace";
 
-const RECENT_WORKSPACE_KEY = "editor.recentWorkspace";
-
 export interface WorkbenchWorkspaceGateways {
   detection: WorkspaceDetectionGateway;
   fileSearch: FileSearchGateway;
@@ -84,6 +83,7 @@ export function useWorkbenchController(
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
   languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway,
   languageServerFeaturesGateway: LanguageServerFeaturesGateway,
+  settingsGateway: SettingsGateway,
   prompter: WorkbenchPrompter,
 ) {
   const {
@@ -522,18 +522,41 @@ export function useWorkbenchController(
   const openWorkspacePath = useCallback(
     async (path: string) => {
       await stopLanguageServerRuntime();
+      let workspaceSettings = defaultWorkspaceSettings();
+
+      try {
+        workspaceSettings = await settingsGateway.loadWorkspaceSettings(path);
+      } catch (error) {
+        reportError("Settings", error);
+      }
+
       setWorkspaceRoot(path);
       setEntriesByDirectory({});
       setExpandedDirectories(new Set([path]));
       setDocuments({});
       setOpenPaths([]);
       setActivePath(null);
-      setIntelligenceMode("basic");
+      setIntelligenceMode(workspaceSettings.intelligenceMode);
       setWorkspaceDescriptor(null);
       setPhpTools(null);
       setWorkspaceTrust(null);
       setLanguageServerPlan(null);
-      localStorage.setItem(RECENT_WORKSPACE_KEY, path);
+
+      try {
+        await settingsGateway.saveAppSettings({ recentWorkspacePath: path });
+      } catch (error) {
+        reportError("Settings", error);
+      }
+
+      try {
+        const smartMode = await smartModeGateway.setMode(
+          workspaceSettings.intelligenceMode,
+        );
+        setIntelligenceMode(smartMode.mode);
+      } catch (error) {
+        reportError("Smart Mode", error);
+      }
+
       await loadDirectory(path);
 
       try {
@@ -559,6 +582,8 @@ export function useWorkbenchController(
       phpToolGateway,
       refreshLanguageServerPlan,
       reportError,
+      settingsGateway,
+      smartModeGateway,
       stopLanguageServerRuntime,
       workspaceDetection,
       workspaceTrustGateway,
@@ -967,10 +992,19 @@ export function useWorkbenchController(
       const state = await smartModeGateway.setMode(nextMode);
       setIntelligenceMode(state.mode);
       setMessage(state.message);
+      await settingsGateway.saveWorkspaceSettings(workspaceRoot, {
+        intelligenceMode: state.mode,
+      });
     } catch (error) {
       reportError("Smart Mode", error);
     }
-  }, [intelligenceMode, reportError, smartModeGateway, workspaceRoot]);
+  }, [
+    intelligenceMode,
+    reportError,
+    settingsGateway,
+    smartModeGateway,
+    workspaceRoot,
+  ]);
 
   const toggleWorkspaceTrust = useCallback(async () => {
     if (!workspaceRoot) {
@@ -1260,15 +1294,32 @@ export function useWorkbenchController(
       return;
     }
 
-    const recentWorkspace = localStorage.getItem(RECENT_WORKSPACE_KEY);
-
-    if (!recentWorkspace) {
-      return;
-    }
-
     hasRestoredRef.current = true;
-    void openWorkspacePath(recentWorkspace);
-  }, [openWorkspacePath]);
+    let active = true;
+
+    settingsGateway
+      .loadAppSettings()
+      .then((settings) => {
+        if (!active) {
+          return;
+        }
+
+        if (!settings.recentWorkspacePath) {
+          return;
+        }
+
+        if (!active) {
+          return;
+        }
+
+        void openWorkspacePath(settings.recentWorkspacePath);
+      })
+      .catch((error) => reportError("Settings", error));
+
+    return () => {
+      active = false;
+    };
+  }, [openWorkspacePath, reportError, settingsGateway]);
 
   useEffect(() => {
     if (!quickOpenOpen || !workspaceRoot) {

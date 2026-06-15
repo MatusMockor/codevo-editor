@@ -45,7 +45,7 @@ Scale:
 | P1-06 | Dirty tracking and save | L | Done | Dirty state shows and saves through host command. |
 | P1-07 | File operations | L | Done | Create file/folder, rename active file, delete active file. |
 | P1-08 | Recent workspace restore | M | Done | Last workspace restores from local storage. |
-| P1-09 | Settings persistence | M | Pending | App/workspace settings abstraction exists. |
+| P1-09 | Settings persistence | M | Done | App/workspace settings abstraction persists recent workspace and per-workspace Smart mode. |
 
 ## Phase 2: Navigation And Search
 

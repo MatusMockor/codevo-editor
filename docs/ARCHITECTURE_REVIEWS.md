@@ -676,6 +676,39 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: Settings Persistence
+
+Scope reviewed:
+
+- `SettingsGateway` app/workspace settings port
+- `BrowserSettingsGateway` localStorage adapter
+- recent workspace restore through settings abstraction
+- per-workspace Smart mode persistence
+- settings normalization and adapter tests
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Settings normalization lives in the domain; storage IO lives in the browser adapter; workbench orchestration only loads/saves through the port.
+- Open/Closed: acceptable. A future Tauri-backed or synced settings store can replace `BrowserSettingsGateway` without changing the controller.
+- Liskov Substitution: acceptable. `SettingsGateway` implementations can return the same app/workspace settings contracts.
+- Interface Segregation: acceptable. Settings persistence is separate from workspace file, trust, smart-mode, and language-server gateways.
+- Dependency Inversion: improved. `useWorkbenchController` no longer calls `localStorage` directly.
+
+### Pattern Review
+
+- Adapter pattern: `BrowserSettingsGateway` adapts localStorage to the settings port.
+- Repository pattern: settings are read/written by key with domain normalization at the boundary.
+- Guard pattern: invalid or missing persisted JSON falls back to defaults.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:
