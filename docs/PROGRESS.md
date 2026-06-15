@@ -33,6 +33,8 @@ Completed:
 - Added path helper and dirty-state unit tests.
 - Added backend file search command and Quick Open UI command.
 - Added backend-visible Smart mode state service and Tauri smart mode gateway.
+- Added PHP/Composer workspace detection from `composer.json`.
+- Added Problems panel and workbench notice model for future diagnostics/status events.
 
 Current verification:
 
@@ -40,7 +42,7 @@ Current verification:
 - `npm test`: passing, 7 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 7 Rust tests
+- `cargo test`: passing, 9 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, and command palette
 - `coderabbit review --agent --base main`: completed for this diff; valid findings addressed. Extra final sanity attempt hit free CLI rate limit.
@@ -53,7 +55,7 @@ Known issues:
 Next implementation slice:
 
 1. Add persisted settings beyond recent workspace.
-2. Add a real Problems/Status event surface for future LSP/index messages.
-3. Start PHP workspace detection.
-4. Add ripgrep-backed text search.
-5. Prototype PHPactor provider detection.
+2. Add ripgrep-backed text search.
+3. Prototype PHPactor provider detection.
+4. Add workspace trust state.
+5. Start LSP transport prototype.

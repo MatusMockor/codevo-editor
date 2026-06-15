@@ -1,6 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
+import {
+  createWorkbenchNotice,
+  type WorkbenchNotice,
+} from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { SmartModeGateway } from "../domain/intelligence";
 import {
@@ -13,6 +17,7 @@ import {
   type FileEntry,
   type FileSearchResult,
   type IntelligenceMode,
+  type WorkspaceDescriptor,
   type WorkspaceGateway,
 } from "../domain/workspace";
 
@@ -24,6 +29,8 @@ export function useWorkbenchController(
   prompter: WorkbenchPrompter,
 ) {
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+  const [workspaceDescriptor, setWorkspaceDescriptor] =
+    useState<WorkspaceDescriptor | null>(null);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -46,6 +53,7 @@ export function useWorkbenchController(
     [],
   );
   const [message, setMessage] = useState<string | null>(null);
+  const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
   const [intelligenceMode, setIntelligenceMode] =
     useState<IntelligenceMode>("basic");
   const hasRestoredRef = useRef(false);
@@ -55,6 +63,15 @@ export function useWorkbenchController(
     .map((path) => documents[path])
     .filter((document): document is EditorDocument => Boolean(document));
   const dirtyCount = openDocuments.filter(isDirty).length;
+
+  const reportError = useCallback((source: string, error: unknown) => {
+    const nextMessage = String(error);
+    setMessage(nextMessage);
+    setNotices((current) => [
+      createWorkbenchNotice("error", source, nextMessage),
+      ...current,
+    ]);
+  }, []);
 
   const loadDirectory = useCallback(
     async (path: string) => {
@@ -68,7 +85,7 @@ export function useWorkbenchController(
         }));
         setMessage(null);
       } catch (error) {
-        setMessage(String(error));
+        reportError("Workspace", error);
       } finally {
         setLoadingDirectories((current) => {
           const next = new Set(current);
@@ -89,10 +106,18 @@ export function useWorkbenchController(
       setOpenPaths([]);
       setActivePath(null);
       setIntelligenceMode("basic");
+      setWorkspaceDescriptor(null);
       localStorage.setItem(RECENT_WORKSPACE_KEY, path);
       await loadDirectory(path);
+
+      try {
+        const descriptor = await workspaceGateway.detectWorkspace(path);
+        setWorkspaceDescriptor(descriptor);
+      } catch (error) {
+        reportError("Workspace Detection", error);
+      }
     },
-    [loadDirectory],
+    [loadDirectory, workspaceGateway],
   );
 
   const openWorkspace = useCallback(async () => {
@@ -171,7 +196,7 @@ export function useWorkbenchController(
         setActivePath(entry.path);
         setMessage(null);
       } catch (error) {
-        setMessage(String(error));
+        reportError("Open File", error);
       }
     },
     [documents, workspaceGateway],
@@ -196,7 +221,7 @@ export function useWorkbenchController(
       }));
       setMessage(`Saved ${activeDocument.name}`);
     } catch (error) {
-      setMessage(String(error));
+      reportError("Save File", error);
     }
   }, [activeDocument, workspaceGateway]);
 
@@ -264,7 +289,7 @@ export function useWorkbenchController(
       await refreshDirectory(parentPath);
       await openFile({ kind: "file", name: getFileName(path), path });
     } catch (error) {
-      setMessage(String(error));
+      reportError("Create File", error);
     }
   }, [openFile, prompter, refreshDirectory, workspaceGateway, workspaceRoot]);
 
@@ -296,7 +321,7 @@ export function useWorkbenchController(
       await refreshDirectory(parentPath);
       setMessage(`Created ${path}`);
     } catch (error) {
-      setMessage(String(error));
+      reportError("Create Folder", error);
     }
   }, [prompter, refreshDirectory, workspaceGateway, workspaceRoot]);
 
@@ -336,7 +361,7 @@ export function useWorkbenchController(
       await refreshDirectory(parentPath);
       setMessage(`Renamed ${activeDocument.name}`);
     } catch (error) {
-      setMessage(String(error));
+      reportError("Rename File", error);
     }
   }, [activeDocument, prompter, refreshDirectory, workspaceGateway]);
 
@@ -357,7 +382,7 @@ export function useWorkbenchController(
       await refreshDirectory(parentPath);
       setMessage(`Deleted ${activeDocument.name}`);
     } catch (error) {
-      setMessage(String(error));
+      reportError("Delete File", error);
     }
   }, [
     activeDocument,
@@ -379,7 +404,7 @@ export function useWorkbenchController(
       setIntelligenceMode(state.mode);
       setMessage(state.message);
     } catch (error) {
-      setMessage(String(error));
+      reportError("Smart Mode", error);
     }
   }, [intelligenceMode, smartModeGateway, workspaceRoot]);
 
@@ -569,7 +594,7 @@ export function useWorkbenchController(
           }
 
           setQuickOpenResults([]);
-          setMessage(String(error));
+          reportError("Quick Open", error);
         })
         .finally(() => {
           if (!active) {
@@ -606,7 +631,9 @@ export function useWorkbenchController(
     quickOpenOpen,
     quickOpenQuery,
     quickOpenResults,
-    reportCommandError: (error: unknown) => setMessage(String(error)),
+    clearNotices: () => setNotices([]),
+    notices,
+    reportCommandError: (error: unknown) => reportError("Command", error),
     saveActiveDocument,
     setActivePath,
     setPaletteOpen,
@@ -616,6 +643,7 @@ export function useWorkbenchController(
     toggleSmartMode,
     updateActiveDocument,
     openSearchResult,
+    workspaceDescriptor,
     workspaceRoot,
   };
 }

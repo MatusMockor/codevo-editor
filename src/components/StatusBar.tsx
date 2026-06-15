@@ -2,6 +2,7 @@ import type { IntelligenceMode } from "../domain/workspace";
 
 interface StatusBarProps {
   workspaceRoot: string | null;
+  workspaceLabel: string | null;
   activeLanguage: string | null;
   intelligenceMode: IntelligenceMode;
   dirtyCount: number;
@@ -10,6 +11,7 @@ interface StatusBarProps {
 
 export function StatusBar({
   workspaceRoot,
+  workspaceLabel,
   activeLanguage,
   intelligenceMode,
   dirtyCount,
@@ -18,6 +20,7 @@ export function StatusBar({
   return (
     <footer className="status-bar">
       <span>{workspaceRoot || "No workspace"}</span>
+      {workspaceLabel ? <span>{workspaceLabel}</span> : null}
       <span>{formatMode(intelligenceMode)}</span>
       {activeLanguage ? <span>{activeLanguage}</span> : null}
       {dirtyCount > 0 ? <span>{dirtyCount} unsaved</span> : null}

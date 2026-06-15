@@ -5,6 +5,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileTree } from "./components/FileTree";
+import { ProblemsPanel } from "./components/ProblemsPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
 import { isDirty } from "./domain/workspace";
@@ -31,6 +32,15 @@ function App() {
     () => workbench.activeDocument?.language ?? null,
     [workbench.activeDocument],
   );
+  const workspaceLabel = useMemo(() => {
+    const php = workbench.workspaceDescriptor?.php;
+
+    if (!php) {
+      return null;
+    }
+
+    return php.packageName || "PHP Composer";
+  }, [workbench.workspaceDescriptor]);
 
   return (
     <main className="app-shell">
@@ -96,6 +106,10 @@ function App() {
           activeDocument={workbench.activeDocument}
           onChange={workbench.updateActiveDocument}
         />
+        <ProblemsPanel
+          notices={workbench.notices}
+          onClear={workbench.clearNotices}
+        />
       </section>
 
       <StatusBar
@@ -104,6 +118,7 @@ function App() {
         intelligenceMode={workbench.intelligenceMode}
         message={workbench.message}
         workspaceRoot={workbench.workspaceRoot}
+        workspaceLabel={workspaceLabel}
       />
 
       <CommandPalette

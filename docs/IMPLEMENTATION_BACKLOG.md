@@ -56,7 +56,7 @@ Scale:
 | P2-03 | File quick-open | L | Done | User can search files by path and open results. |
 | P2-04 | Text search | L | Pending | Search respects ignores and streams results. |
 | P2-05 | Navigation stack | M | Pending | Back/forward works across files/positions. |
-| P2-06 | Status service | S | Partial | Basic status bar exists; registry/event model pending. |
+| P2-06 | Status service | S | Partial | Status bar and Problems notice surface exist; backend event stream pending. |
 
 ## Phase 3: Smart Mode Foundation
 
@@ -73,6 +73,7 @@ Scale:
 | ID | Task | Size | Status | Acceptance |
 | --- | --- | --- | --- | --- |
 | P4-01 | LSP transport prototype | XL | Pending | App can initialize local language server. |
+| P4-00 | PHP workspace detection | M | Done | Composer package and PSR-4 roots are detected as data. |
 | P4-02 | PHPactor provider | L | Pending | PHPactor starts for trusted PHP workspace. |
 | P4-03 | Document sync | L | Pending | Open/change/save/close notifications work. |
 | P4-04 | Diagnostics display | L | Pending | Diagnostics appear in editor/problems panel. |

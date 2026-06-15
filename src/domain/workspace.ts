@@ -12,6 +12,23 @@ export interface FileSearchResult {
   relativePath: string;
 }
 
+export interface WorkspaceDescriptor {
+  rootPath: string;
+  php: PhpProjectDescriptor | null;
+}
+
+export interface PhpProjectDescriptor {
+  hasComposer: boolean;
+  packageName: string | null;
+  psr4Roots: Psr4Root[];
+}
+
+export interface Psr4Root {
+  namespace: string;
+  paths: string[];
+  dev: boolean;
+}
+
 export interface EditorDocument {
   path: string;
   name: string;
@@ -26,6 +43,7 @@ export interface WorkspaceGateway {
   createDirectory(path: string): Promise<void>;
   createTextFile(path: string): Promise<void>;
   deletePath(path: string): Promise<void>;
+  detectWorkspace(path: string): Promise<WorkspaceDescriptor>;
   readDirectory(path: string): Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
   renamePath(from: string, to: string): Promise<void>;

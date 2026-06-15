@@ -141,6 +141,70 @@ Scope reviewed:
 - `npm run build`
 - `cargo test`
 - `npm run tauri build -- --debug --bundles app`
+
+## 2026-06-15: PHP Workspace Detection
+
+Scope reviewed:
+
+- Rust `ComposerWorkspaceDetector`
+- Tauri `detect_workspace` command
+- Frontend workspace descriptor types
+- Status bar PHP/Composer label
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Composer detection is isolated in `project.rs` and only parses project metadata as data.
+- Open/Closed: acceptable. Additional detectors can be added behind the `WorkspaceDetector` trait.
+- Liskov Substitution: acceptable. Alternative detector implementations can return the same `WorkspaceDescriptor`.
+- Interface Segregation: acceptable. Detection is exposed as one focused gateway method.
+- Dependency Inversion: acceptable. UI consumes a descriptor through `WorkspaceGateway`, not direct filesystem parsing.
+
+### Pattern Review
+
+- Repository/Detector boundary: `WorkspaceDetector` fits as a focused project metadata detector.
+- Adapter pattern: Tauri command adapts Rust detector output to frontend types.
+- Strategy pattern: not fully needed yet, but the trait leaves room for multiple detectors later.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke confirmed empty workspace state still renders.
+
+## 2026-06-15: Problems Notice Surface
+
+Scope reviewed:
+
+- `WorkbenchNotice` model
+- Problems panel UI
+- Workbench error reporting into notices
+- Browser layout smoke for panel/status/editor relationship
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Notice creation is separate from rendering; Problems panel only displays notices and clears them.
+- Open/Closed: acceptable. Future LSP diagnostics and index health events can append notices without changing panel rendering.
+- Liskov Substitution: not heavily exercised yet; future event sources should emit the same notice shape.
+- Interface Segregation: acceptable. Problems panel receives only notices and clear callback.
+- Dependency Inversion: acceptable. Error-producing flows report through controller helpers rather than importing UI components.
+
+### Pattern Review
+
+- Observer/event pattern: introduced only as a local notice surface; backend event streaming remains deferred.
+- Adapter pattern: not needed in this slice.
+- Command pattern: unchanged.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke confirmed panel geometry and empty state.
 - Browser smoke confirmed command registration and disabled state without workspace.
 
 ### Known Follow-ups

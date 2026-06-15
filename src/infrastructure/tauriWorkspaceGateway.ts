@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   FileEntry,
   FileSearchResult,
+  WorkspaceDescriptor,
   WorkspaceGateway,
 } from "../domain/workspace";
 
@@ -16,6 +17,10 @@ export class TauriWorkspaceGateway implements WorkspaceGateway {
 
   deletePath(path: string): Promise<void> {
     return invoke<void>("delete_path", { path });
+  }
+
+  detectWorkspace(path: string): Promise<WorkspaceDescriptor> {
+    return invoke<WorkspaceDescriptor>("detect_workspace", { path });
   }
 
   readDirectory(path: string): Promise<FileEntry[]> {

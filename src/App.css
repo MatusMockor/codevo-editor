@@ -197,6 +197,95 @@ button {
   min-height: 0;
 }
 
+.problems-panel {
+  display: grid;
+  min-height: 132px;
+  max-height: 132px;
+  grid-template-rows: 32px minmax(0, 1fr);
+  border-top: 1px solid #272d35;
+  background: #171b21;
+}
+
+.problems-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #272d35;
+  color: #d8dee9;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+  text-transform: uppercase;
+}
+
+.problems-header button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8f9aaa;
+  cursor: pointer;
+}
+
+.problems-header button:hover {
+  background: #252b33;
+  color: #f3f6f8;
+}
+
+.problems-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 8px;
+}
+
+.problems-list p {
+  margin: 18px 0 0;
+  color: #8f9aaa;
+  text-align: center;
+}
+
+.problem-row {
+  display: grid;
+  min-height: 34px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  color: #c8d0db;
+  padding: 4px 6px;
+}
+
+.problem-row.error {
+  color: #f2a6a6;
+}
+
+.problem-row.warning {
+  color: #e6c27a;
+}
+
+.problem-row.info {
+  color: #9ed0c5;
+}
+
+.problem-row span {
+  display: grid;
+  min-width: 0;
+}
+
+.problem-row strong,
+.problem-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.problem-row strong {
+  color: #d8dee9;
+}
+
 .editor-tabs {
   display: flex;
   min-height: 38px;

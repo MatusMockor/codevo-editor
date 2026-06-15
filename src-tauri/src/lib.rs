@@ -1,6 +1,8 @@
+mod project;
 mod smart_mode;
 mod workspace;
 
+use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -30,6 +32,14 @@ fn delete_path(path: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;
     repository
         .delete_path(&PathBuf::from(path))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn detect_workspace(path: String) -> Result<WorkspaceDescriptor, String> {
+    let detector = ComposerWorkspaceDetector;
+    detector
+        .detect(&PathBuf::from(path))
         .map_err(|error| error.to_string())
 }
 
@@ -104,6 +114,7 @@ pub fn run() {
             create_directory,
             create_text_file,
             delete_path,
+            detect_workspace,
             get_smart_mode_state,
             read_directory,
             read_text_file,
