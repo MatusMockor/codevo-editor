@@ -643,6 +643,39 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: LSP Go To Definition
+
+Scope reviewed:
+
+- command-palette and F12 `editor.goToDefinition` command
+- capability-gated definition feature requests
+- LSP file URI and position mapping helpers
+- cross-file target opening through existing workspace file gateway
+- editor reveal target lifecycle in `EditorSurface`
+
+### SOLID Review
+
+- Single Responsibility: acceptable. The controller coordinates the workflow; domain helpers map URI/position values; `EditorSurface` only tracks cursor position and reveals requested targets.
+- Open/Closed: acceptable. Future navigation stack support can wrap the same command without changing LSP request parsing or Monaco hover/completion providers.
+- Liskov Substitution: acceptable. Definition requests use `LanguageServerFeaturesGateway`, so tests or alternate providers can replace Tauri IPC.
+- Interface Segregation: maintained. Go-to-definition consumes the feature gateway and does not expand document sync or runtime lifecycle contracts.
+- Dependency Inversion: maintained. The command depends on domain abstractions and existing file gateway methods, not direct Tauri calls.
+
+### Pattern Review
+
+- Command pattern: `editor.goToDefinition` is registered through the existing command registry and F12 keyboard path.
+- Adapter pattern: LSP URI/position values are adapted to workspace paths and editor positions at the domain boundary.
+- Reveal-target state pattern: controller stores a short-lived target and `EditorSurface` consumes/disposes it after positioning the editor.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

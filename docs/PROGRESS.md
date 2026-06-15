@@ -49,17 +49,18 @@ Completed:
 - Added PHPactor capability registry from initialize results for hover, completion, and definition support.
 - Added LSP request-response core with hover, completion, and definition Tauri command adapters.
 - Registered PHPactor-backed Monaco hover and completion providers gated by runtime capabilities.
+- Added app-native PHPactor go-to-definition command that opens target files and reveals target positions.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 39 frontend tests
+- `npm test`: passing, 42 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
 - `cargo test`: passing, 52 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after Monaco hover/completion routing.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after go-to-definition routing.
 
 Known issues:
 
@@ -68,6 +69,5 @@ Known issues:
 
 Next implementation slice:
 
-1. Add app-native PHPactor go-to-definition routing.
-2. Add persisted settings beyond recent workspace.
-3. Add navigation stack.
+1. Add persisted settings beyond recent workspace.
+2. Add navigation stack.

@@ -7,6 +7,11 @@ export interface EditorPosition {
   column: number;
 }
 
+export interface EditorRevealTarget {
+  path: string;
+  position: EditorPosition;
+}
+
 export interface LanguageServerTextDocumentPosition {
   path: string;
   line: number;
@@ -72,6 +77,29 @@ export function toLanguageServerTextDocumentPosition(
     line: Math.max(0, position.lineNumber - 1),
     path,
   };
+}
+
+export function toEditorPosition(
+  position: LanguageServerPosition,
+): EditorPosition {
+  return {
+    column: position.character + 1,
+    lineNumber: position.line + 1,
+  };
+}
+
+export function pathFromLanguageServerUri(uri: string): string | null {
+  try {
+    const parsed = new URL(uri);
+
+    if (parsed.protocol !== "file:") {
+      return null;
+    }
+
+    return decodeURIComponent(parsed.pathname);
+  } catch {
+    return null;
+  }
 }
 
 export function emptyLanguageServerCompletionList(): LanguageServerCompletionList {

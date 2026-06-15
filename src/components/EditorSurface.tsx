@@ -2,7 +2,11 @@ import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { useEffect, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
-import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
+import type {
+  EditorPosition,
+  EditorRevealTarget,
+  LanguageServerFeaturesGateway,
+} from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
@@ -10,22 +14,30 @@ import { getTabId, getTabPanelId } from "./tabIds";
 
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  editorRevealTarget: EditorRevealTarget | null;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
+  onCursorPositionChange(position: EditorPosition): void;
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
+  onRevealTargetHandled(): void;
 }
 
 export function EditorSurface({
   activeDocument,
+  editorRevealTarget,
   flushPendingLanguageServerDocument,
   languageServerFeaturesGateway,
   languageServerRuntimeStatus,
+  onCursorPositionChange,
   onChange,
   onLanguageServerError,
+  onRevealTargetHandled,
 }: EditorSurfaceProps) {
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
+  const [editorApi, setEditorApi] =
+    useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const activeDocumentRef = useRef(activeDocument);
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
@@ -64,8 +76,63 @@ export function EditorSurface({
   }, [languageServerFeaturesGateway, monacoApi]);
 
   const handleMount: OnMount = (_editor, monaco) => {
+    setEditorApi(_editor);
     setMonacoApi(monaco);
   };
+
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    const disposable = editorApi.onDidChangeCursorPosition((event) => {
+      onCursorPositionChange(event.position);
+    });
+    const position = editorApi.getPosition();
+
+    if (position) {
+      onCursorPositionChange(position);
+    }
+
+    return () => disposable.dispose();
+  }, [editorApi, onCursorPositionChange]);
+
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    const position = editorApi.getPosition();
+
+    if (!position) {
+      return;
+    }
+
+    onCursorPositionChange(position);
+  }, [activeDocument, editorApi, onCursorPositionChange]);
+
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    if (!activeDocument) {
+      return;
+    }
+
+    if (!editorRevealTarget) {
+      return;
+    }
+
+    if (editorRevealTarget.path !== activeDocument.path) {
+      return;
+    }
+
+    editorApi.setPosition(editorRevealTarget.position);
+    editorApi.revealPositionInCenter(editorRevealTarget.position);
+    editorApi.focus();
+    onRevealTargetHandled();
+  }, [activeDocument, editorApi, editorRevealTarget, onRevealTargetHandled]);
 
   if (!activeDocument) {
     return (

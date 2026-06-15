@@ -54,6 +54,7 @@ function App() {
     languageServerRuntimeGateway,
     languageServerDocumentSyncGateway,
     languageServerDiagnosticsGateway,
+    languageServerFeaturesGateway,
     workbenchPrompter,
   );
   const activeDocumentDirty = Boolean(
@@ -179,13 +180,16 @@ function App() {
         />
         <EditorSurface
           activeDocument={workbench.activeDocument}
+          editorRevealTarget={workbench.editorRevealTarget}
           flushPendingLanguageServerDocument={
             workbench.flushPendingLanguageServerDocument
           }
           languageServerFeaturesGateway={languageServerFeaturesGateway}
           languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+          onCursorPositionChange={workbench.updateActiveEditorPosition}
           onChange={workbench.updateActiveDocument}
           onLanguageServerError={workbench.reportLanguageServerError}
+          onRevealTargetHandled={workbench.clearEditorRevealTarget}
         />
         <ProblemsPanel
           notices={workbench.notices}

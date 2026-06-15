@@ -28,6 +28,15 @@ import type {
   LanguageServerPlan,
 } from "../domain/languageServer";
 import {
+  canUseLanguageServerFeature,
+  pathFromLanguageServerUri,
+  toEditorPosition,
+  toLanguageServerTextDocumentPosition,
+  type EditorPosition,
+  type EditorRevealTarget,
+  type LanguageServerFeaturesGateway,
+} from "../domain/languageServerFeatures";
+import {
   isLanguageServerActive,
   languageServerCrashMessage,
   type LanguageServerRuntimeGateway,
@@ -74,6 +83,7 @@ export function useWorkbenchController(
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
   languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway,
+  languageServerFeaturesGateway: LanguageServerFeaturesGateway,
   prompter: WorkbenchPrompter,
 ) {
   const {
@@ -94,6 +104,8 @@ export function useWorkbenchController(
   const [languageServerSetupOpen, setLanguageServerSetupOpen] = useState(false);
   const [languageServerRuntimeStatus, setLanguageServerRuntimeStatus] =
     useState<LanguageServerRuntimeStatus | null>(null);
+  const [editorRevealTarget, setEditorRevealTarget] =
+    useState<EditorRevealTarget | null>(null);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, FileEntry[]>
   >({});
@@ -136,6 +148,7 @@ export function useWorkbenchController(
   >({});
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const activeEditorPositionRef = useRef<EditorPosition | null>(null);
 
   const activeDocument = activePath ? documents[activePath] || null : null;
   const openDocuments = openPaths
@@ -760,6 +773,89 @@ export function useWorkbenchController(
     [openFile],
   );
 
+  const updateActiveEditorPosition = useCallback((position: EditorPosition) => {
+    activeEditorPositionRef.current = position;
+  }, []);
+
+  const goToDefinition = useCallback(async () => {
+    if (!activeDocument) {
+      return;
+    }
+
+    if (!isLanguageServerDocument(activeDocument)) {
+      return;
+    }
+
+    if (languageServerRuntimeStatus?.kind !== "running") {
+      return;
+    }
+
+    if (
+      !canUseLanguageServerFeature(
+        languageServerRuntimeStatus.capabilities,
+        "definition",
+      )
+    ) {
+      return;
+    }
+
+    const editorPosition = activeEditorPositionRef.current;
+
+    if (!editorPosition) {
+      return;
+    }
+
+    try {
+      await flushPendingDocumentChange(activeDocument.path);
+      const locations = await languageServerFeaturesGateway.definition(
+        toLanguageServerTextDocumentPosition(activeDocument.path, editorPosition),
+      );
+      const [target] = locations;
+
+      if (!target) {
+        return;
+      }
+
+      const targetPath = pathFromLanguageServerUri(target.uri);
+
+      if (!targetPath) {
+        setMessage("Could not open definition target.");
+        return;
+      }
+
+      if (documents[targetPath]) {
+        setActivePath(targetPath);
+      }
+
+      if (!documents[targetPath]) {
+        await openFile({
+          kind: "file",
+          name: getFileName(targetPath),
+          path: targetPath,
+        });
+      }
+
+      const targetPosition = toEditorPosition(target.range.start);
+      setEditorRevealTarget({
+        path: targetPath,
+        position: targetPosition,
+      });
+      setMessage(
+        `Opened definition ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
+      );
+    } catch (error) {
+      reportLanguageServerError(error);
+    }
+  }, [
+    activeDocument,
+    documents,
+    flushPendingDocumentChange,
+    languageServerFeaturesGateway,
+    languageServerRuntimeStatus,
+    openFile,
+    reportLanguageServerError,
+  ]);
+
   const createDirectory = useCallback(async () => {
     if (!workspaceRoot) {
       return;
@@ -1025,6 +1121,21 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.goToDefinition",
+      title: "Go to Definition",
+      category: "Editor",
+      shortcut: "F12",
+      isEnabled: () =>
+        Boolean(activeDocument) &&
+        languageServerRuntimeStatus?.kind === "running" &&
+        canUseLanguageServerFeature(
+          languageServerRuntimeStatus.capabilities,
+          "definition",
+        ),
+      run: goToDefinition,
+    });
+
+    registry.register({
       id: "commands.show",
       title: "Show Commands",
       category: "Workbench",
@@ -1072,6 +1183,7 @@ export function useWorkbenchController(
     createDirectory,
     createFile,
     deleteActiveDocument,
+    goToDefinition,
     openWorkspace,
     refreshWorkspace,
     renameActiveDocument,
@@ -1093,6 +1205,12 @@ export function useWorkbenchController(
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "F12") {
+        event.preventDefault();
+        void goToDefinition();
+        return;
+      }
+
       const primaryModifier = event.metaKey || event.ctrlKey;
 
       if (!primaryModifier) {
@@ -1135,7 +1253,7 @@ export function useWorkbenchController(
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [openWorkspace, saveActiveDocument, workspaceRoot]);
+  }, [goToDefinition, openWorkspace, saveActiveDocument, workspaceRoot]);
 
   useEffect(() => {
     if (hasRestoredRef.current) {
@@ -1383,6 +1501,8 @@ export function useWorkbenchController(
     entriesByDirectory,
     expandedDirectories,
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
+    clearEditorRevealTarget: () => setEditorRevealTarget(null),
+    editorRevealTarget,
     intelligenceMode,
     loadingDirectories,
     languageServerPlan,
@@ -1419,6 +1539,7 @@ export function useWorkbenchController(
     toggleDirectory,
     toggleSmartMode,
     updateActiveDocument,
+    updateActiveEditorPosition,
     openSearchResult,
     openTextSearchResult,
     workspaceDescriptor,
