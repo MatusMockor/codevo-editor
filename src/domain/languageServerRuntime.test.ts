@@ -42,6 +42,10 @@ describe("isLanguageServerActive", () => {
 function status(
   kind: Exclude<LanguageServerRuntimeStatus["kind"], "crashed">,
 ): LanguageServerRuntimeStatus {
+  if (kind === "starting" || kind === "running") {
+    return { kind, sessionId: 1 };
+  }
+
   return { kind };
 }
 

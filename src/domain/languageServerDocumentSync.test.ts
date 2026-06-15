@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createLanguageServerTextDocument,
+  fileUriFromPath,
   isLanguageServerDocument,
 } from "./languageServerDocumentSync";
 import type { EditorDocument } from "./workspace";
@@ -20,6 +21,17 @@ describe("createLanguageServerTextDocument", () => {
       text: "<?php echo 1;",
       version: 4,
     });
+  });
+});
+
+describe("fileUriFromPath", () => {
+  it("encodes local paths as file uris", () => {
+    expect(fileUriFromPath("/project/src/User Name.php")).toBe(
+      "file:///project/src/User%20Name.php",
+    );
+    expect(fileUriFromPath("C:\\project\\src\\User.php")).toBe(
+      "file:///C:/project/src/User.php",
+    );
   });
 });
 

@@ -503,6 +503,40 @@ Scope reviewed:
 - `npm test`
 - `cargo test`
 - `coderabbit review --agent --fast --base main`
+- `coderabbit review --agent --fast --base main`
+
+## 2026-06-15: LSP Diagnostics Bridge
+
+Scope reviewed:
+
+- `lsp_diagnostics` parser for `textDocument/publishDiagnostics`
+- `EventSink` diagnostics emission through Tauri events
+- frontend diagnostics gateway
+- Problems panel notice grouping and per-document replacement
+- session/version filtering for delayed diagnostics
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Diagnostic parsing, event transport, frontend subscription, and Problems rendering remain separate.
+- Open/Closed: acceptable. Additional LSP server notifications can add parser modules and gateway ports without changing document sync or runtime lifecycle.
+- Liskov Substitution: acceptable. Diagnostics gateway is a narrow subscription port and can be replaced in tests or non-Tauri hosts.
+- Interface Segregation: maintained. Runtime status, document sync, and diagnostics are separate ports.
+- Dependency Inversion: maintained. Workbench depends on diagnostics abstractions, while Tauri event names stay in infrastructure.
+
+### Pattern Review
+
+- Adapter pattern: Tauri diagnostics gateway adapts event subscription to a frontend port.
+- Observer pattern: backend reader publishes diagnostics through `DiagnosticsSink`; frontend reacts by replacing grouped Problems entries.
+- Event publisher split: status and diagnostics use separate sink traits behind the process reader.
+- Parser/factory boundary: backend diagnostic parser converts raw JSON-RPC values into typed diagnostic events before emission.
+- Stale-event guard: frontend applies diagnostics only for the current running session and ignores older versioned diagnostics.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `coderabbit review --agent --fast --base main`
 
 ## 2026-06-15: Smart Mode State Service
 

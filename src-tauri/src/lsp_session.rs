@@ -1,10 +1,11 @@
 use crate::lsp::{JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
+use crate::lsp_diagnostics::{parse_publish_diagnostics, LanguageServerDiagnosticEvent};
 use crate::lsp_transport::{read_message, write_message};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::io::{self, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -12,18 +13,23 @@ use std::time::Duration;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const STATUS_EVENT: &str = "language-server://status";
+const DIAGNOSTICS_EVENT: &str = "language-server://diagnostics";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LanguageServerRuntimeStatus {
-    Starting,
-    Running,
+    Starting { session_id: u64 },
+    Running { session_id: u64 },
     Stopped,
     Crashed { message: String },
 }
 
-pub trait EventSink: Send + Sync {
+pub trait StatusSink: Send + Sync {
     fn emit_status(&self, status: LanguageServerRuntimeStatus);
+}
+
+pub trait DiagnosticsSink: Send + Sync {
+    fn emit_diagnostics(&self, event: LanguageServerDiagnosticEvent);
 }
 
 pub struct AppHandleEventSink {
@@ -36,11 +42,19 @@ impl AppHandleEventSink {
     }
 }
 
-impl EventSink for AppHandleEventSink {
+impl StatusSink for AppHandleEventSink {
     fn emit_status(&self, status: LanguageServerRuntimeStatus) {
         use tauri::Emitter;
 
         let _ = self.app.emit(STATUS_EVENT, status);
+    }
+}
+
+impl DiagnosticsSink for AppHandleEventSink {
+    fn emit_diagnostics(&self, event: LanguageServerDiagnosticEvent) {
+        use tauri::Emitter;
+
+        let _ = self.app.emit(DIAGNOSTICS_EVENT, event);
     }
 }
 
@@ -120,11 +134,12 @@ struct RunningSession {
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Box<dyn ProcessKiller>,
     reader: Option<JoinHandle<()>>,
-    sink: Arc<dyn EventSink>,
+    status_sink: Arc<dyn StatusSink>,
     stop_requested: Arc<AtomicBool>,
 }
 
 pub struct LanguageServerSupervisor {
+    next_session_id: AtomicU64,
     session: Mutex<Option<RunningSession>>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
 }
@@ -132,6 +147,7 @@ pub struct LanguageServerSupervisor {
 impl LanguageServerSupervisor {
     pub fn new() -> Self {
         Self {
+            next_session_id: AtomicU64::new(1),
             session: Mutex::new(None),
             status: Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped)),
         }
@@ -149,16 +165,18 @@ impl LanguageServerSupervisor {
         command: &LanguageServerCommand,
         initialize_request: &JsonRpcRequest,
         spawner: &dyn ServerProcessSpawner,
-        sink: Arc<dyn EventSink>,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
+        let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         self.terminate_stale_session();
-        self.begin_start(sink.as_ref())?;
+        self.begin_start(status_sink.as_ref(), session_id)?;
 
         let spawned = match spawner.spawn(command) {
             Ok(spawned) => spawned,
             Err(error) => {
                 let message = format!("Failed to start PHPactor: {error}");
-                publish_crash(&self.status, sink.as_ref(), &message);
+                publish_crash(&self.status, status_sink.as_ref(), &message);
                 return Err(message);
             }
         };
@@ -169,7 +187,7 @@ impl LanguageServerSupervisor {
             stdin: Arc::clone(&stdin),
             killer: spawned.killer,
             reader: None,
-            sink: Arc::clone(&sink),
+            status_sink: Arc::clone(&status_sink),
             stop_requested: Arc::clone(&stop_requested),
         });
 
@@ -186,7 +204,7 @@ impl LanguageServerSupervisor {
             Err(error) => {
                 let message = format!("Failed to serialize initialize request: {error}");
                 self.terminate_matching_session(&stop_requested);
-                publish_crash(&self.status, sink.as_ref(), &message);
+                publish_crash(&self.status, status_sink.as_ref(), &message);
                 return Err(message);
             }
         };
@@ -194,7 +212,7 @@ impl LanguageServerSupervisor {
         if let Err(error) = write_with_session_stdin(&stdin, &init_bytes) {
             let message = format!("Failed to send initialize: {error}");
             self.terminate_matching_session(&stop_requested);
-            publish_crash(&self.status, sink.as_ref(), &message);
+            publish_crash(&self.status, status_sink.as_ref(), &message);
             return Err(message);
         }
 
@@ -202,10 +220,12 @@ impl LanguageServerSupervisor {
         let mut reader = Some(spawn_reader(
             spawned.stdout,
             Arc::clone(&self.status),
-            Arc::clone(&sink),
+            diagnostics_sink,
+            Arc::clone(&status_sink),
             Arc::clone(&stop_requested),
             handshake_tx,
             initialize_request.id,
+            session_id,
         ));
 
         if !self.attach_reader(&stop_requested, &mut reader)? {
@@ -225,11 +245,11 @@ impl LanguageServerSupervisor {
                 if let Err(message) = send_initialized(&stdin) {
                     stop_requested.store(true, Ordering::SeqCst);
                     self.terminate_matching_session(&stop_requested);
-                    publish_crash(&self.status, sink.as_ref(), &message);
+                    publish_crash(&self.status, status_sink.as_ref(), &message);
                     return Err(message);
                 }
 
-                self.publish_running_if_starting(sink.as_ref(), &stop_requested)
+                self.publish_running_if_starting(status_sink.as_ref(), &stop_requested, session_id)
             }
             Ok(HandshakeOutcome::Failed(message)) => {
                 let was_stopped = stop_requested.load(Ordering::SeqCst);
@@ -238,7 +258,7 @@ impl LanguageServerSupervisor {
                     return Ok(LanguageServerRuntimeStatus::Stopped);
                 }
 
-                publish_crash(&self.status, sink.as_ref(), &message);
+                publish_crash(&self.status, status_sink.as_ref(), &message);
                 Err(message)
             }
             Ok(HandshakeOutcome::Disconnected) => {
@@ -249,7 +269,7 @@ impl LanguageServerSupervisor {
                 }
 
                 let message = "PHPactor exited during the handshake.".to_string();
-                publish_crash(&self.status, sink.as_ref(), &message);
+                publish_crash(&self.status, status_sink.as_ref(), &message);
                 Err(message)
             }
             Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => {
@@ -260,7 +280,7 @@ impl LanguageServerSupervisor {
                 }
 
                 let message = "PHPactor did not respond to initialize in time.".to_string();
-                publish_crash(&self.status, sink.as_ref(), &message);
+                publish_crash(&self.status, status_sink.as_ref(), &message);
                 Err(message)
             }
         }
@@ -272,19 +292,19 @@ impl LanguageServerSupervisor {
             return LanguageServerRuntimeStatus::Stopped;
         };
 
-        let sink = Arc::clone(&session.sink);
+        let status_sink = Arc::clone(&session.status_sink);
         terminate_session(session);
 
         publish(
             &self.status,
-            sink.as_ref(),
+            status_sink.as_ref(),
             LanguageServerRuntimeStatus::Stopped,
         );
         LanguageServerRuntimeStatus::Stopped
     }
 
     pub fn send_notification(&self, notification: &JsonRpcNotification) -> Result<(), String> {
-        if self.status() != LanguageServerRuntimeStatus::Running {
+        if !matches!(self.status(), LanguageServerRuntimeStatus::Running { .. }) {
             return Ok(());
         }
 
@@ -298,22 +318,22 @@ impl LanguageServerSupervisor {
             .map_err(|error| format!("Failed to send LSP notification: {error}"))
     }
 
-    fn begin_start(&self, sink: &dyn EventSink) -> Result<(), String> {
+    fn begin_start(&self, sink: &dyn StatusSink, session_id: u64) -> Result<(), String> {
         let mut status = self.status.lock().map_err(|error| error.to_string())?;
 
         if is_active_status(&status) {
             return Err("Language server already running.".to_string());
         }
 
-        *status = LanguageServerRuntimeStatus::Starting;
-        sink.emit_status(LanguageServerRuntimeStatus::Starting);
+        *status = LanguageServerRuntimeStatus::Starting { session_id };
+        sink.emit_status(LanguageServerRuntimeStatus::Starting { session_id });
         Ok(())
     }
 
     fn install_session(&self, session: &mut Option<RunningSession>) -> Result<bool, String> {
         let mut current = self.session.lock().map_err(|error| error.to_string())?;
 
-        if self.status() != LanguageServerRuntimeStatus::Starting {
+        if !matches!(self.status(), LanguageServerRuntimeStatus::Starting { .. }) {
             return Ok(false);
         }
 
@@ -345,8 +365,9 @@ impl LanguageServerSupervisor {
 
     fn publish_running_if_starting(
         &self,
-        sink: &dyn EventSink,
+        sink: &dyn StatusSink,
         stop_requested: &Arc<AtomicBool>,
+        session_id: u64,
     ) -> Result<LanguageServerRuntimeStatus, String> {
         let mut status = self.status.lock().map_err(|error| error.to_string())?;
 
@@ -360,13 +381,13 @@ impl LanguageServerSupervisor {
             return Err(message.clone());
         }
 
-        if *status != LanguageServerRuntimeStatus::Starting {
+        if *status != (LanguageServerRuntimeStatus::Starting { session_id }) {
             return Ok(status.clone());
         }
 
-        *status = LanguageServerRuntimeStatus::Running;
-        sink.emit_status(LanguageServerRuntimeStatus::Running);
-        Ok(LanguageServerRuntimeStatus::Running)
+        *status = LanguageServerRuntimeStatus::Running { session_id };
+        sink.emit_status(LanguageServerRuntimeStatus::Running { session_id });
+        Ok(LanguageServerRuntimeStatus::Running { session_id })
     }
 
     fn terminate_stale_session(&self) {
@@ -463,13 +484,13 @@ fn terminate_session(mut session: RunningSession) {
 fn is_active_status(status: &LanguageServerRuntimeStatus) -> bool {
     matches!(
         status,
-        LanguageServerRuntimeStatus::Starting | LanguageServerRuntimeStatus::Running
+        LanguageServerRuntimeStatus::Starting { .. } | LanguageServerRuntimeStatus::Running { .. }
     )
 }
 
 fn publish_crash(
     status: &Arc<Mutex<LanguageServerRuntimeStatus>>,
-    sink: &dyn EventSink,
+    sink: &dyn StatusSink,
     message: &str,
 ) {
     publish(
@@ -483,7 +504,7 @@ fn publish_crash(
 
 fn publish(
     status: &Arc<Mutex<LanguageServerRuntimeStatus>>,
-    sink: &dyn EventSink,
+    sink: &dyn StatusSink,
     next: LanguageServerRuntimeStatus,
 ) {
     set_status(status, next.clone());
@@ -499,10 +520,12 @@ fn set_status(status: &Arc<Mutex<LanguageServerRuntimeStatus>>, next: LanguageSe
 fn spawn_reader(
     stdout: Box<dyn Read + Send>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
-    sink: Arc<dyn EventSink>,
+    diagnostics_sink: Arc<dyn DiagnosticsSink>,
+    status_sink: Arc<dyn StatusSink>,
     stop_requested: Arc<AtomicBool>,
     handshake_tx: mpsc::Sender<HandshakeOutcome>,
     init_id: u64,
+    session_id: u64,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -511,13 +534,17 @@ fn spawn_reader(
         loop {
             match read_message(&mut reader) {
                 Ok(Some(bytes)) => {
-                    if handshake_done {
-                        continue;
-                    }
-
                     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
                         continue;
                     };
+
+                    if handshake_done {
+                        if let Some(event) = parse_publish_diagnostics(&value, session_id) {
+                            diagnostics_sink.emit_diagnostics(event);
+                        }
+
+                        continue;
+                    }
 
                     if value.get("id") != Some(&json!(init_id)) {
                         continue;
@@ -550,7 +577,7 @@ fn spawn_reader(
 
                     publish_crash(
                         &status,
-                        sink.as_ref(),
+                        status_sink.as_ref(),
                         "PHPactor language server exited unexpectedly.",
                     );
                     return;
@@ -563,10 +590,11 @@ fn spawn_reader(
 #[cfg(test)]
 mod tests {
     use super::{
-        EventSink, LanguageServerRuntimeStatus, LanguageServerSupervisor, ProcessKiller,
-        ServerProcessSpawner, SpawnedServer,
+        DiagnosticsSink, LanguageServerRuntimeStatus, LanguageServerSupervisor, ProcessKiller,
+        ServerProcessSpawner, SpawnedServer, StatusSink,
     };
     use crate::lsp::{JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
+    use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
     use crate::lsp_transport::{read_message, write_message};
     use serde_json::{json, Value};
     use std::io::{self, PipeWriter, Write};
@@ -583,12 +611,18 @@ mod tests {
         let supervisor = LanguageServerSupervisor::new();
 
         let status = supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect("start");
 
-        assert_eq!(status, LanguageServerRuntimeStatus::Running);
-        wait_for(&rx, &LanguageServerRuntimeStatus::Starting);
-        wait_for(&rx, &LanguageServerRuntimeStatus::Running);
+        assert_eq!(status, running_status());
+        wait_for(&rx, &starting_status());
+        wait_for(&rx, &running_status());
 
         let written = capture.lock().expect("capture lock").clone();
         let mut reader = std::io::Cursor::new(written);
@@ -609,7 +643,13 @@ mod tests {
         let supervisor = LanguageServerSupervisor::new();
 
         supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect("start");
         supervisor
             .send_notification(&JsonRpcNotification {
@@ -643,6 +683,57 @@ mod tests {
     }
 
     #[test]
+    fn publish_diagnostics_messages_emit_diagnostic_events() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, status_rx, diagnostics_sink, diagnostics_rx) = ChannelSink::with_diagnostics();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                diagnostics_sink,
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        let mut held = held.lock().expect("held writer lock");
+        let writer = held.as_mut().expect("held writer");
+        writer
+            .write_all(&framed(json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/publishDiagnostics",
+                "params": {
+                    "uri": "file:///tmp/User.php",
+                    "diagnostics": [
+                        {
+                            "range": {
+                                "start": { "line": 1, "character": 2 },
+                                "end": { "line": 1, "character": 3 }
+                            },
+                            "severity": 2,
+                            "source": "phpactor",
+                            "message": "Possible issue"
+                        }
+                    ]
+                }
+            })))
+            .expect("write diagnostics");
+        drop(held);
+
+        let event = diagnostics_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("diagnostic event");
+
+        assert_eq!(event.session_id, 1);
+        assert_eq!(event.uri, "file:///tmp/User.php");
+        assert_eq!(event.diagnostics[0].message, "Possible issue");
+    }
+
+    #[test]
     fn rejects_start_when_already_running() {
         let spawner = FakeSpawner::new(ready_script(), true);
         let (sink, _rx) = ChannelSink::new();
@@ -653,12 +744,19 @@ mod tests {
                 &command(),
                 &initialize_request(),
                 &spawner,
-                Arc::clone(&sink) as Arc<dyn EventSink>,
+                Arc::clone(&sink) as Arc<dyn StatusSink>,
+                noop_diagnostics_sink(),
             )
             .expect("first start");
 
         let error = supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect_err("second start should fail");
 
         assert!(error.contains("already running"));
@@ -671,7 +769,13 @@ mod tests {
         let supervisor = LanguageServerSupervisor::new();
 
         let error = supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect_err("start should fail");
 
         assert!(error.contains("handshake"));
@@ -689,9 +793,15 @@ mod tests {
         let supervisor = LanguageServerSupervisor::new();
 
         supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect("start");
-        wait_for(&rx, &LanguageServerRuntimeStatus::Running);
+        wait_for(&rx, &running_status());
 
         *held.lock().expect("held writer lock") = None;
 
@@ -710,9 +820,15 @@ mod tests {
         let supervisor = LanguageServerSupervisor::new();
 
         supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect("start");
-        wait_for(&rx, &LanguageServerRuntimeStatus::Running);
+        wait_for(&rx, &running_status());
 
         let status = supervisor.stop();
 
@@ -736,7 +852,13 @@ mod tests {
         let supervisor = LanguageServerSupervisor::new();
 
         supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect("start");
 
         assert_eq!(dropped.load(Ordering::SeqCst), 0);
@@ -762,11 +884,12 @@ mod tests {
                     &initialize_request(),
                     start_spawner.as_ref(),
                     start_sink,
+                    noop_diagnostics_sink(),
                 )
                 .expect("start should stop cleanly")
         });
 
-        wait_for(&rx, &LanguageServerRuntimeStatus::Starting);
+        wait_for(&rx, &starting_status());
 
         assert_eq!(supervisor.stop(), LanguageServerRuntimeStatus::Stopped);
         assert_eq!(
@@ -783,7 +906,13 @@ mod tests {
         let supervisor = LanguageServerSupervisor::new();
 
         let error = supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect_err("spawn should fail");
 
         assert!(error.contains("Failed to start PHPactor"));
@@ -801,7 +930,13 @@ mod tests {
         let supervisor = LanguageServerSupervisor::new();
 
         let error = supervisor
-            .start(&command(), &initialize_request(), &spawner, sink)
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
             .expect_err("initialized write should fail");
 
         assert!(error.contains("initialized"));
@@ -855,6 +990,18 @@ mod tests {
                 return;
             }
         }
+    }
+
+    fn starting_status() -> LanguageServerRuntimeStatus {
+        LanguageServerRuntimeStatus::Starting { session_id: 1 }
+    }
+
+    fn running_status() -> LanguageServerRuntimeStatus {
+        LanguageServerRuntimeStatus::Running { session_id: 1 }
+    }
+
+    fn noop_diagnostics_sink() -> Arc<dyn DiagnosticsSink> {
+        Arc::new(NoopDiagnosticsSink)
     }
 
     #[derive(Clone)]
@@ -997,11 +1144,55 @@ mod tests {
             let (tx, rx) = mpsc::channel();
             (Arc::new(Self { tx: Mutex::new(tx) }), rx)
         }
+
+        fn with_diagnostics() -> (
+            Arc<Self>,
+            Receiver<LanguageServerRuntimeStatus>,
+            Arc<dyn DiagnosticsSink>,
+            Receiver<LanguageServerDiagnosticEvent>,
+        ) {
+            let (tx, rx) = mpsc::channel();
+            let (diagnostics_sink, diagnostics_rx) = ChannelDiagnosticsSink::new();
+            (
+                Arc::new(Self { tx: Mutex::new(tx) }),
+                rx,
+                diagnostics_sink,
+                diagnostics_rx,
+            )
+        }
     }
 
-    impl EventSink for ChannelSink {
+    impl StatusSink for ChannelSink {
         fn emit_status(&self, status: LanguageServerRuntimeStatus) {
             let _ = self.tx.lock().expect("sink lock").send(status);
+        }
+    }
+
+    struct ChannelDiagnosticsSink {
+        tx: Mutex<Sender<LanguageServerDiagnosticEvent>>,
+    }
+
+    impl ChannelDiagnosticsSink {
+        fn new() -> (
+            Arc<dyn DiagnosticsSink>,
+            Receiver<LanguageServerDiagnosticEvent>,
+        ) {
+            let (tx, rx) = mpsc::channel();
+            (Arc::new(Self { tx: Mutex::new(tx) }), rx)
+        }
+    }
+
+    impl DiagnosticsSink for ChannelDiagnosticsSink {
+        fn emit_diagnostics(&self, event: LanguageServerDiagnosticEvent) {
+            let _ = self.tx.lock().expect("diagnostics sink lock").send(event);
+        }
+    }
+
+    struct NoopDiagnosticsSink;
+
+    impl DiagnosticsSink for NoopDiagnosticsSink {
+        fn emit_diagnostics(&self, _event: LanguageServerDiagnosticEvent) {
+            // no-op for status-only tests
         }
     }
 

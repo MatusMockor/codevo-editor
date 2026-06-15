@@ -3,12 +3,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import {
   createWorkbenchNotice,
+  replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { SmartModeGateway } from "../domain/intelligence";
 import {
+  languageServerDiagnosticNoticeGroup,
+  languageServerDiagnosticNoticeMessage,
+  languageServerDiagnosticNoticeSeverity,
+  shouldApplyLanguageServerDiagnostics,
+  type LanguageServerDiagnosticEvent,
+  type LanguageServerDiagnosticsGateway,
+} from "../domain/languageServerDiagnostics";
+import {
   createLanguageServerTextDocument,
+  fileUriFromPath,
   isLanguageServerDocument,
   type LanguageServerDocumentSyncGateway,
   type LanguageServerTextDocument,
@@ -63,6 +73,7 @@ export function useWorkbenchController(
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
+  languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway,
   prompter: WorkbenchPrompter,
 ) {
   const {
@@ -117,6 +128,7 @@ export function useWorkbenchController(
   const hasRestoredRef = useRef(false);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const documentVersionsRef = useRef<Record<string, number>>({});
+  const documentVersionsByUriRef = useRef<Record<string, number>>({});
   const syncedDocumentPathsRef = useRef<Set<string>>(new Set());
   const syncedDocumentContentRef = useRef<Record<string, string>>({});
   const pendingDocumentChangesRef = useRef<
@@ -155,6 +167,54 @@ export function useWorkbenchController(
     ]);
   }, []);
 
+  const clearLanguageServerDiagnostics = useCallback(() => {
+    setNotices((current) =>
+      current.filter(
+        (notice) => !notice.groupKey?.startsWith("language-server-diagnostics:"),
+      ),
+    );
+  }, []);
+
+  const applyLanguageServerDiagnostics = useCallback(
+    (event: LanguageServerDiagnosticEvent) => {
+      const currentSessionId =
+        languageServerRuntimeStatus?.kind === "running"
+          ? languageServerRuntimeStatus.sessionId
+          : null;
+
+      if (event.sessionId !== currentSessionId) {
+        return;
+      }
+
+      const currentVersion = documentVersionsByUriRef.current[event.uri];
+
+      if (
+        !shouldApplyLanguageServerDiagnostics(
+          event,
+          currentSessionId,
+          currentVersion,
+        )
+      ) {
+        return;
+      }
+
+      const groupKey = languageServerDiagnosticNoticeGroup(event.uri);
+      const diagnosticNotices = event.diagnostics.map((diagnostic) =>
+        createWorkbenchNotice(
+          languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+          diagnostic.source || "Language Server",
+          languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
+          groupKey,
+        ),
+      );
+
+      setNotices((current) =>
+        replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+      );
+    },
+    [languageServerRuntimeStatus],
+  );
+
   const refreshLanguageServerPlan = useCallback(
     async (rootPath: string) => {
       try {
@@ -175,6 +235,10 @@ export function useWorkbenchController(
       setLanguageServerRuntimeStatus(status);
       const crash = languageServerCrashMessage(status);
 
+      if (status.kind !== "running") {
+        clearLanguageServerDiagnostics();
+      }
+
       if (!crash) {
         lastLanguageServerCrashRef.current = null;
         return;
@@ -182,12 +246,13 @@ export function useWorkbenchController(
 
       reportLanguageServerError(crash);
     },
-    [reportLanguageServerError],
+    [clearLanguageServerDiagnostics, reportLanguageServerError],
   );
 
   const nextDocumentVersion = useCallback((path: string): number => {
     const next = (documentVersionsRef.current[path] || 0) + 1;
     documentVersionsRef.current[path] = next;
+    documentVersionsByUriRef.current[fileUriFromPath(path)] = next;
     return next;
   }, []);
 
@@ -228,6 +293,7 @@ export function useWorkbenchController(
     syncedDocumentContentRef.current = {};
     pendingDocumentChangesRef.current = {};
     documentVersionsRef.current = {};
+    documentVersionsByUriRef.current = {};
     documentSyncQueuesRef.current = {};
   }, [clearDocumentChangeTimer]);
 
@@ -236,6 +302,7 @@ export function useWorkbenchController(
       const status = await languageServerRuntimeGateway.stop();
       setLanguageServerRuntimeStatus(status);
       lastLanguageServerCrashRef.current = null;
+      clearLanguageServerDiagnostics();
       resetLanguageServerDocuments();
       return status;
     } catch (error) {
@@ -243,6 +310,7 @@ export function useWorkbenchController(
       return null;
     }
   }, [
+    clearLanguageServerDiagnostics,
     languageServerRuntimeGateway,
     reportLanguageServerError,
     resetLanguageServerDocuments,
@@ -396,6 +464,7 @@ export function useWorkbenchController(
       delete syncedDocumentContentRef.current[document.path];
       delete pendingDocumentChangesRef.current[document.path];
       delete documentVersionsRef.current[document.path];
+      delete documentVersionsByUriRef.current[fileUriFromPath(document.path)];
 
       try {
         await enqueueDocumentSync(document.path, () =>
@@ -1219,6 +1288,38 @@ export function useWorkbenchController(
     languageServerRuntimeGateway,
     reportLanguageServerError,
     reportError,
+  ]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: UnsubscribeFn | null = null;
+
+    languageServerDiagnosticsGateway
+      .subscribeDiagnostics((event) => {
+        if (!active) {
+          return;
+        }
+
+        applyLanguageServerDiagnostics(event);
+      })
+      .then((dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+
+        unsubscribe = dispose;
+      })
+      .catch((error) => reportLanguageServerError(error));
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [
+    applyLanguageServerDiagnostics,
+    languageServerDiagnosticsGateway,
+    reportLanguageServerError,
   ]);
 
   useEffect(() => {

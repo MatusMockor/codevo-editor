@@ -29,3 +29,33 @@ export function createLanguageServerTextDocument(
     version,
   };
 }
+
+export function fileUriFromPath(path: string): string {
+  const normalized = path.split("\\").join("/");
+  const encoded = encodeUriPath(normalized);
+
+  if (encoded.startsWith("/")) {
+    return `file://${encoded}`;
+  }
+
+  return `file:///${encoded}`;
+}
+
+function encodeUriPath(path: string): string {
+  let encoded = "";
+
+  for (const character of path) {
+    if (isUriPathCharacter(character)) {
+      encoded += character;
+      continue;
+    }
+
+    encoded += encodeURIComponent(character);
+  }
+
+  return encoded;
+}
+
+function isUriPathCharacter(character: string): boolean {
+  return /^[A-Za-z0-9/:._~!$&'()*+,;=-]$/.test(character);
+}

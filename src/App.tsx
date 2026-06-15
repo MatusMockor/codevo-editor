@@ -13,6 +13,7 @@ import { TextSearch } from "./components/TextSearch";
 import { languageServerStatusLabel } from "./domain/languageServerRuntime";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
+import { TauriLanguageServerDiagnosticsGateway } from "./infrastructure/tauriLanguageServerDiagnosticsGateway";
 import { TauriLanguageServerDocumentSyncGateway } from "./infrastructure/tauriLanguageServerDocumentSyncGateway";
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
 import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
@@ -35,6 +36,8 @@ const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
 const languageServerDocumentSyncGateway =
   new TauriLanguageServerDocumentSyncGateway();
+const languageServerDiagnosticsGateway =
+  new TauriLanguageServerDiagnosticsGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
@@ -45,6 +48,7 @@ function App() {
     languageServerGateway,
     languageServerRuntimeGateway,
     languageServerDocumentSyncGateway,
+    languageServerDiagnosticsGateway,
     workbenchPrompter,
   );
   const activeDocumentDirty = Boolean(

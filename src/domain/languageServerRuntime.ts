@@ -1,6 +1,6 @@
 export type LanguageServerRuntimeStatus =
-  | { kind: "starting" }
-  | { kind: "running" }
+  | { kind: "starting"; sessionId: number }
+  | { kind: "running"; sessionId: number }
   | { kind: "stopped" }
   | { kind: "crashed"; message: string };
 

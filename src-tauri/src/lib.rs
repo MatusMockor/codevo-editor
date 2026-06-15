@@ -1,4 +1,5 @@
 mod lsp;
+mod lsp_diagnostics;
 mod lsp_document;
 mod lsp_session;
 mod lsp_transport;
@@ -18,8 +19,8 @@ use lsp_document::{
     TextDocumentSyncNotificationFactory,
 };
 use lsp_session::{
-    AppHandleEventSink, ChildServerProcessSpawner, EventSink, LanguageServerRuntimeStatus,
-    LanguageServerSupervisor,
+    AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink, LanguageServerRuntimeStatus,
+    LanguageServerSupervisor, StatusSink,
 };
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
@@ -209,13 +210,16 @@ fn start_php_language_server(
     let initialize_request: JsonRpcRequest = plan
         .initialize_request
         .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
-    let sink: Arc<dyn EventSink> = Arc::new(AppHandleEventSink::new(app));
+    let event_sink = Arc::new(AppHandleEventSink::new(app));
+    let status_sink: Arc<dyn StatusSink> = event_sink.clone();
+    let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink;
 
     supervisor.start(
         &command,
         &initialize_request,
         &ChildServerProcessSpawner,
-        sink,
+        status_sink,
+        diagnostics_sink,
     )
 }
 
