@@ -471,6 +471,39 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke passed for shell and runtime event subscription wiring.
 
+## 2026-06-15: LSP Document Sync
+
+Scope reviewed:
+
+- `lsp_document` text-document notification factory
+- `LanguageServerSupervisor::send_notification`
+- Tauri text-document sync commands
+- frontend `LanguageServerDocumentSyncGateway`
+- PHP-only open replay, debounced full-text changes, save, close, and runtime cleanup
+
+### SOLID Review
+
+- Single Responsibility: acceptable. JSON-RPC document payload construction is isolated from process supervision and frontend orchestration.
+- Open/Closed: acceptable for this foundation. Additional sync strategies or language providers can add factories/adapters later; capability-driven partial-sync/save-text negotiation is intentionally deferred to the provider capability registry slice.
+- Liskov Substitution: acceptable. The frontend document-sync gateway is a narrow port and can be replaced by an in-memory or non-Tauri implementation.
+- Interface Segregation: improved. Runtime lifecycle and document sync are separate frontend ports.
+- Dependency Inversion: maintained. Workbench orchestration depends on document-sync abstractions, while Tauri command names stay in infrastructure.
+
+### Pattern Review
+
+- Factory pattern: `LspTextDocumentSyncNotificationFactory` creates protocol payloads.
+- Adapter pattern: Tauri document-sync gateway adapts IPC commands to a focused frontend port.
+- Observer-style state reaction: React effects replay open documents on `Running` and clear sync state on stop/crash.
+- Debounce pattern: full-text `didChange` notifications are delayed briefly to avoid sending one message per keystroke.
+- Queue pattern: sync operations are serialized per document so `didSave` and `didClose` cannot overtake a pending `didChange`.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `coderabbit review --agent --fast --base main`
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

@@ -1,4 +1,4 @@
-use crate::lsp::{JsonRpcRequest, LanguageServerCommand};
+use crate::lsp::{JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
 use crate::lsp_transport::{read_message, write_message};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -117,7 +117,7 @@ enum HandshakeOutcome {
 }
 
 struct RunningSession {
-    _stdin: Arc<Mutex<Box<dyn Write + Send>>>,
+    stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Box<dyn ProcessKiller>,
     reader: Option<JoinHandle<()>>,
     sink: Arc<dyn EventSink>,
@@ -166,7 +166,7 @@ impl LanguageServerSupervisor {
         let stdin = Arc::new(Mutex::new(spawned.stdin));
         let stop_requested = Arc::new(AtomicBool::new(false));
         let mut session = Some(RunningSession {
-            _stdin: Arc::clone(&stdin),
+            stdin: Arc::clone(&stdin),
             killer: spawned.killer,
             reader: None,
             sink: Arc::clone(&sink),
@@ -283,6 +283,21 @@ impl LanguageServerSupervisor {
         LanguageServerRuntimeStatus::Stopped
     }
 
+    pub fn send_notification(&self, notification: &JsonRpcNotification) -> Result<(), String> {
+        if self.status() != LanguageServerRuntimeStatus::Running {
+            return Ok(());
+        }
+
+        let Some(stdin) = self.session_stdin() else {
+            return Ok(());
+        };
+        let bytes = serde_json::to_vec(notification)
+            .map_err(|error| format!("Failed to serialize LSP notification: {error}"))?;
+
+        write_with_session_stdin(&stdin, &bytes)
+            .map_err(|error| format!("Failed to send LSP notification: {error}"))
+    }
+
     fn begin_start(&self, sink: &dyn EventSink) -> Result<(), String> {
         let mut status = self.status.lock().map_err(|error| error.to_string())?;
 
@@ -389,6 +404,14 @@ impl LanguageServerSupervisor {
 
     fn take_session(&self) -> Option<RunningSession> {
         self.session.lock().ok()?.take()
+    }
+
+    fn session_stdin(&self) -> Option<Arc<Mutex<Box<dyn Write + Send>>>> {
+        self.session
+            .lock()
+            .ok()?
+            .as_ref()
+            .map(|session| Arc::clone(&session.stdin))
     }
 }
 
@@ -543,7 +566,7 @@ mod tests {
         EventSink, LanguageServerRuntimeStatus, LanguageServerSupervisor, ProcessKiller,
         ServerProcessSpawner, SpawnedServer,
     };
-    use crate::lsp::{JsonRpcRequest, LanguageServerCommand};
+    use crate::lsp::{JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_transport::{read_message, write_message};
     use serde_json::{json, Value};
     use std::io::{self, PipeWriter, Write};
@@ -576,6 +599,47 @@ mod tests {
 
         assert_eq!(initialize["method"], "initialize");
         assert_eq!(initialized["method"], "initialized");
+    }
+
+    #[test]
+    fn sends_notification_after_successful_handshake() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start(&command(), &initialize_request(), &spawner, sink)
+            .expect("start");
+        supervisor
+            .send_notification(&JsonRpcNotification {
+                jsonrpc: "2.0".to_string(),
+                method: "textDocument/didSave".to_string(),
+                params: json!({ "textDocument": { "uri": "file:///tmp/User.php" } }),
+            })
+            .expect("send notification");
+
+        let written = capture.lock().expect("capture lock").clone();
+        let mut reader = std::io::Cursor::new(written);
+        read_message(&mut reader).unwrap().unwrap();
+        read_message(&mut reader).unwrap().unwrap();
+        let notification: Value =
+            serde_json::from_slice(&read_message(&mut reader).unwrap().unwrap()).unwrap();
+
+        assert_eq!(notification["method"], "textDocument/didSave");
+    }
+
+    #[test]
+    fn notification_is_noop_when_server_is_stopped() {
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .send_notification(&JsonRpcNotification {
+                jsonrpc: "2.0".to_string(),
+                method: "textDocument/didSave".to_string(),
+                params: json!({}),
+            })
+            .expect("stopped notification should be ignored");
     }
 
     #[test]

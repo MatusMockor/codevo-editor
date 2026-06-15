@@ -45,6 +45,14 @@ pub struct JsonRpcRequest {
     pub params: Value,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JsonRpcNotification {
+    pub jsonrpc: String,
+    pub method: String,
+    pub params: Value,
+}
+
 pub trait LanguageServerPlanner {
     fn plan(
         &self,
@@ -168,7 +176,7 @@ fn unavailable_plan(message: &str) -> LanguageServerPlan {
     }
 }
 
-fn file_uri(root: &Path) -> String {
+pub fn file_uri(root: &Path) -> String {
     let path = root
         .canonicalize()
         .unwrap_or_else(|_| root.to_path_buf())

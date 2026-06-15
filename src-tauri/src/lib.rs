@@ -1,4 +1,5 @@
 mod lsp;
+mod lsp_document;
 mod lsp_session;
 mod lsp_transport;
 mod project;
@@ -11,6 +12,10 @@ mod workspace;
 use lsp::{
     JsonRpcRequest, LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus,
     LanguageServerPlanner, PhpactorLanguageServerPlanner,
+};
+use lsp_document::{
+    LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
+    TextDocumentSyncNotificationFactory,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, EventSink, LanguageServerRuntimeStatus,
@@ -222,6 +227,42 @@ fn stop_php_language_server(
 }
 
 #[tauri::command]
+fn text_document_did_open(
+    document: TextDocumentContent,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentSyncNotificationFactory;
+    supervisor.send_notification(&factory.did_open(&document))
+}
+
+#[tauri::command]
+fn text_document_did_change(
+    document: TextDocumentContent,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentSyncNotificationFactory;
+    supervisor.send_notification(&factory.did_change(&document))
+}
+
+#[tauri::command]
+fn text_document_did_save(
+    document: TextDocumentContent,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentSyncNotificationFactory;
+    supervisor.send_notification(&factory.did_save(&document))
+}
+
+#[tauri::command]
+fn text_document_did_close(
+    document: TextDocumentPath,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentSyncNotificationFactory;
+    supervisor.send_notification(&factory.did_close(&document))
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;
     repository
@@ -261,6 +302,10 @@ pub fn run() {
             set_workspace_trust,
             start_php_language_server,
             stop_php_language_server,
+            text_document_did_change,
+            text_document_did_close,
+            text_document_did_open,
+            text_document_did_save,
             write_text_file
         ])
         .run(tauri::generate_context!())

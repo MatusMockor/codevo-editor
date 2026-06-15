@@ -76,8 +76,8 @@ Scale:
 | P4-00 | PHP workspace detection | M | Done | Composer package and PSR-4 roots are detected as data. |
 | P4-01A | PHP tool detection | M | Done | PHPactor/Intelephense are detected from workspace vendor bin and PATH. |
 | P4-01B | PHPactor setup guidance | S | Done | Non-ready PHPactor plans can show setup commands from the command palette. |
-| P4-02 | PHPactor provider | L | Partial | PHPactor starts for trusted PHP workspaces when installed; provider features pending document sync/capabilities. |
-| P4-03 | Document sync | L | Pending | Open/change/save/close notifications work. |
+| P4-02 | PHPactor provider | L | Partial | PHPactor starts for trusted PHP workspaces when installed; provider features pending diagnostics/capabilities. |
+| P4-03 | Document sync | L | Done | Open/change/save/close notifications work. |
 | P4-04 | Diagnostics display | L | Pending | Diagnostics appear in editor/problems panel. |
 | P4-05 | Hover/completion | L | Pending | Monaco requests route through LSP. |
 | P4-06 | Go to definition | M | Pending | Definition opens target location. |

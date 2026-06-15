@@ -13,6 +13,7 @@ import { TextSearch } from "./components/TextSearch";
 import { languageServerStatusLabel } from "./domain/languageServerRuntime";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
+import { TauriLanguageServerDocumentSyncGateway } from "./infrastructure/tauriLanguageServerDocumentSyncGateway";
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
 import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
@@ -32,6 +33,8 @@ const smartModeGateway = new TauriSmartModeGateway();
 const workspaceTrustGateway = new TauriWorkspaceTrustGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
+const languageServerDocumentSyncGateway =
+  new TauriLanguageServerDocumentSyncGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
@@ -41,6 +44,7 @@ function App() {
     workspaceTrustGateway,
     languageServerGateway,
     languageServerRuntimeGateway,
+    languageServerDocumentSyncGateway,
     workbenchPrompter,
   );
   const activeDocumentDirty = Boolean(

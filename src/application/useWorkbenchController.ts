@@ -7,6 +7,12 @@ import {
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { SmartModeGateway } from "../domain/intelligence";
+import {
+  createLanguageServerTextDocument,
+  isLanguageServerDocument,
+  type LanguageServerDocumentSyncGateway,
+  type LanguageServerTextDocument,
+} from "../domain/languageServerDocumentSync";
 import type {
   LanguageServerGateway,
   LanguageServerPlan,
@@ -56,6 +62,7 @@ export function useWorkbenchController(
   workspaceTrustGateway: WorkspaceTrustGateway,
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
+  languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
   prompter: WorkbenchPrompter,
 ) {
   const {
@@ -109,6 +116,14 @@ export function useWorkbenchController(
     useState<IntelligenceMode>("basic");
   const hasRestoredRef = useRef(false);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
+  const documentVersionsRef = useRef<Record<string, number>>({});
+  const syncedDocumentPathsRef = useRef<Set<string>>(new Set());
+  const syncedDocumentContentRef = useRef<Record<string, string>>({});
+  const pendingDocumentChangesRef = useRef<
+    Record<string, LanguageServerTextDocument>
+  >({});
+  const documentChangeTimersRef = useRef<Record<string, number>>({});
+  const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
 
   const activeDocument = activePath ? documents[activePath] || null : null;
   const openDocuments = openPaths
@@ -170,17 +185,233 @@ export function useWorkbenchController(
     [reportLanguageServerError],
   );
 
+  const nextDocumentVersion = useCallback((path: string): number => {
+    const next = (documentVersionsRef.current[path] || 0) + 1;
+    documentVersionsRef.current[path] = next;
+    return next;
+  }, []);
+
+  const clearDocumentChangeTimer = useCallback((path: string) => {
+    const timer = documentChangeTimersRef.current[path];
+
+    if (!timer) {
+      return;
+    }
+
+    window.clearTimeout(timer);
+    delete documentChangeTimersRef.current[path];
+  }, []);
+
+  const enqueueDocumentSync = useCallback(
+    (path: string, operation: () => Promise<void>) => {
+      const previous = documentSyncQueuesRef.current[path] || Promise.resolve();
+      const next = previous.then(operation, operation);
+      const queued = next.catch(() => undefined);
+      documentSyncQueuesRef.current[path] = queued;
+
+      queued.finally(() => {
+        if (documentSyncQueuesRef.current[path] !== queued) {
+          return;
+        }
+
+        delete documentSyncQueuesRef.current[path];
+      });
+
+      return next;
+    },
+    [],
+  );
+
+  const resetLanguageServerDocuments = useCallback(() => {
+    Object.keys(documentChangeTimersRef.current).forEach(clearDocumentChangeTimer);
+    syncedDocumentPathsRef.current.clear();
+    syncedDocumentContentRef.current = {};
+    pendingDocumentChangesRef.current = {};
+    documentVersionsRef.current = {};
+    documentSyncQueuesRef.current = {};
+  }, [clearDocumentChangeTimer]);
+
   const stopLanguageServerRuntime = useCallback(async () => {
     try {
       const status = await languageServerRuntimeGateway.stop();
       setLanguageServerRuntimeStatus(status);
       lastLanguageServerCrashRef.current = null;
+      resetLanguageServerDocuments();
       return status;
     } catch (error) {
       reportLanguageServerError(error);
       return null;
     }
-  }, [languageServerRuntimeGateway, reportLanguageServerError]);
+  }, [
+    languageServerRuntimeGateway,
+    reportLanguageServerError,
+    resetLanguageServerDocuments,
+  ]);
+
+  const syncOpenDocument = useCallback(
+    async (document: EditorDocument) => {
+      if (languageServerRuntimeStatus?.kind !== "running") {
+        return;
+      }
+
+      if (!isLanguageServerDocument(document)) {
+        return;
+      }
+
+      if (syncedDocumentPathsRef.current.has(document.path)) {
+        return;
+      }
+
+      const version = nextDocumentVersion(document.path);
+      const syncedDocument = createLanguageServerTextDocument(document, version);
+      syncedDocumentPathsRef.current.add(document.path);
+      syncedDocumentContentRef.current[document.path] = document.content;
+
+      try {
+        await enqueueDocumentSync(document.path, () =>
+          languageServerDocumentSyncGateway.didOpen(syncedDocument),
+        );
+      } catch (error) {
+        syncedDocumentPathsRef.current.delete(document.path);
+        delete syncedDocumentContentRef.current[document.path];
+        reportLanguageServerError(error);
+      }
+    },
+    [
+      enqueueDocumentSync,
+      languageServerDocumentSyncGateway,
+      languageServerRuntimeStatus,
+      nextDocumentVersion,
+      reportLanguageServerError,
+    ],
+  );
+
+  const scheduleDocumentChange = useCallback(
+    (document: EditorDocument) => {
+      if (languageServerRuntimeStatus?.kind !== "running") {
+        return;
+      }
+
+      if (!syncedDocumentPathsRef.current.has(document.path)) {
+        return;
+      }
+
+      if (syncedDocumentContentRef.current[document.path] === document.content) {
+        return;
+      }
+
+      clearDocumentChangeTimer(document.path);
+      syncedDocumentContentRef.current[document.path] = document.content;
+
+      const version = nextDocumentVersion(document.path);
+      const syncedDocument = createLanguageServerTextDocument(document, version);
+      pendingDocumentChangesRef.current[document.path] = syncedDocument;
+      documentChangeTimersRef.current[document.path] = window.setTimeout(() => {
+        const pendingDocument = pendingDocumentChangesRef.current[document.path];
+        delete documentChangeTimersRef.current[document.path];
+        delete pendingDocumentChangesRef.current[document.path];
+
+        if (!pendingDocument) {
+          return;
+        }
+
+        void enqueueDocumentSync(document.path, () =>
+          languageServerDocumentSyncGateway.didChange(pendingDocument),
+        )
+          .catch(reportLanguageServerError);
+      }, 150);
+    },
+    [
+      clearDocumentChangeTimer,
+      enqueueDocumentSync,
+      languageServerDocumentSyncGateway,
+      languageServerRuntimeStatus,
+      nextDocumentVersion,
+      reportLanguageServerError,
+    ],
+  );
+
+  const flushPendingDocumentChange = useCallback(
+    async (path: string) => {
+      const pendingDocument = pendingDocumentChangesRef.current[path];
+
+      if (!pendingDocument) {
+        return;
+      }
+
+      clearDocumentChangeTimer(path);
+      delete pendingDocumentChangesRef.current[path];
+
+      await enqueueDocumentSync(path, () =>
+        languageServerDocumentSyncGateway.didChange(pendingDocument),
+      );
+    },
+    [
+      clearDocumentChangeTimer,
+      enqueueDocumentSync,
+      languageServerDocumentSyncGateway,
+    ],
+  );
+
+  const syncSavedDocument = useCallback(
+    async (document: EditorDocument) => {
+      if (!syncedDocumentPathsRef.current.has(document.path)) {
+        return;
+      }
+
+      if (!isLanguageServerDocument(document)) {
+        return;
+      }
+
+      try {
+        await flushPendingDocumentChange(document.path);
+        await enqueueDocumentSync(document.path, () =>
+          languageServerDocumentSyncGateway.didSave(
+            createLanguageServerTextDocument(
+              document,
+              documentVersionsRef.current[document.path] || 0,
+            ),
+          ),
+        );
+      } catch (error) {
+        reportLanguageServerError(error);
+      }
+    },
+    [
+      enqueueDocumentSync,
+      flushPendingDocumentChange,
+      languageServerDocumentSyncGateway,
+      reportLanguageServerError,
+    ],
+  );
+
+  const syncClosedDocument = useCallback(
+    async (document: EditorDocument) => {
+      if (!syncedDocumentPathsRef.current.has(document.path)) {
+        return;
+      }
+
+      clearDocumentChangeTimer(document.path);
+      syncedDocumentPathsRef.current.delete(document.path);
+      delete syncedDocumentContentRef.current[document.path];
+      delete pendingDocumentChangesRef.current[document.path];
+      delete documentVersionsRef.current[document.path];
+
+      try {
+        await enqueueDocumentSync(document.path, () =>
+          languageServerDocumentSyncGateway.didClose(document.path),
+        );
+      } catch (error) {
+        reportLanguageServerError(error);
+      }
+    },
+    [
+      clearDocumentChangeTimer,
+      enqueueDocumentSync,
+      languageServerDocumentSyncGateway,
+      reportLanguageServerError,
+    ],
+  );
 
   const loadDirectory = useCallback(
     async (path: string) => {
@@ -351,11 +582,12 @@ export function useWorkbenchController(
           savedContent: activeDocument.content,
         },
       }));
+      await syncSavedDocument(activeDocument);
       setMessage(`Saved ${activeDocument.name}`);
     } catch (error) {
       reportError("Save File", error);
     }
-  }, [activeDocument, reportError, workspaceFiles]);
+  }, [activeDocument, reportError, syncSavedDocument, workspaceFiles]);
 
   const closeDocument = useCallback(
     (path: string) => {
@@ -363,6 +595,10 @@ export function useWorkbenchController(
 
       if (document && isDirty(document) && !prompter.confirm("Discard changes?")) {
         return;
+      }
+
+      if (document) {
+        void syncClosedDocument(document);
       }
 
       setDocuments((current) => {
@@ -381,7 +617,7 @@ export function useWorkbenchController(
         return next;
       });
     },
-    [activePath, documents, prompter],
+    [activePath, documents, prompter, syncClosedDocument],
   );
 
   const updateActiveDocument = useCallback(
@@ -495,6 +731,7 @@ export function useWorkbenchController(
 
     try {
       await workspaceFiles.renamePath(activeDocument.path, nextPath);
+      await syncClosedDocument(activeDocument);
       const renamedDocument = {
         ...activeDocument,
         language: detectLanguage(nextPath),
@@ -517,7 +754,14 @@ export function useWorkbenchController(
     } catch (error) {
       reportError("Rename File", error);
     }
-  }, [activeDocument, prompter, refreshDirectory, reportError, workspaceFiles]);
+  }, [
+    activeDocument,
+    prompter,
+    refreshDirectory,
+    reportError,
+    syncClosedDocument,
+    workspaceFiles,
+  ]);
 
   const deleteActiveDocument = useCallback(async () => {
     if (!activeDocument) {
@@ -976,6 +1220,57 @@ export function useWorkbenchController(
     reportLanguageServerError,
     reportError,
   ]);
+
+  useEffect(() => {
+    if (languageServerRuntimeStatus?.kind !== "running") {
+      resetLanguageServerDocuments();
+      return;
+    }
+
+    openPaths.forEach((path) => {
+      const document = documents[path];
+
+      if (!document) {
+        return;
+      }
+
+      void syncOpenDocument(document);
+    });
+  }, [
+    documents,
+    languageServerRuntimeStatus,
+    openPaths,
+    resetLanguageServerDocuments,
+    syncOpenDocument,
+  ]);
+
+  useEffect(() => {
+    if (languageServerRuntimeStatus?.kind !== "running") {
+      return;
+    }
+
+    openPaths.forEach((path) => {
+      const document = documents[path];
+
+      if (!document) {
+        return;
+      }
+
+      scheduleDocumentChange(document);
+    });
+  }, [
+    documents,
+    languageServerRuntimeStatus,
+    openPaths,
+    scheduleDocumentChange,
+  ]);
+
+  useEffect(
+    () => () => {
+      resetLanguageServerDocuments();
+    },
+    [resetLanguageServerDocuments],
+  );
 
   return {
     activeDocument,
