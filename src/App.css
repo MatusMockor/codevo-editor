@@ -301,7 +301,8 @@ button {
   z-index: 10;
 }
 
-.command-palette {
+.command-palette,
+.quick-open {
   width: min(640px, calc(100vw - 36px));
   max-height: min(520px, calc(100vh - 80px));
   overflow: hidden;
@@ -374,6 +375,54 @@ button {
 
 .palette-command small {
   color: #8f9aaa;
+}
+
+.quick-open-results {
+  max-height: 470px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.quick-open-result {
+  display: grid;
+  width: 100%;
+  min-height: 52px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #d8dee9;
+  cursor: pointer;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.quick-open-result:hover,
+.quick-open-result.active {
+  background: #26313b;
+}
+
+.quick-open-result span {
+  display: grid;
+  min-width: 0;
+}
+
+.quick-open-result strong,
+.quick-open-result small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-open-result small,
+.quick-open-state {
+  color: #8f9aaa;
+}
+
+.quick-open-state {
+  padding: 14px 12px;
 }
 
 kbd {

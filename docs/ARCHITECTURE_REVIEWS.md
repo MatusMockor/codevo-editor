@@ -108,3 +108,86 @@ Skipped findings:
 - `cargo test`
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test after refactor and accessibility fixes
+
+## 2026-06-15: Quick Open Slice
+
+Scope reviewed:
+
+- Rust recursive file search
+- Tauri `search_files` command
+- Frontend `WorkspaceGateway.searchFiles`
+- Quick Open modal
+- Cmd+P command registration
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Search traversal lives in the Rust repository; Quick Open only renders/search-selects; controller coordinates state.
+- Open/Closed: acceptable. Quick Open was added as a command and modal without changing command palette behavior.
+- Liskov Substitution: acceptable. Search is part of `WorkspaceGateway`, so a future indexed search provider can replace the Tauri implementation behind the same contract.
+- Interface Segregation: acceptable for now, though `WorkspaceGateway` should be split if it grows beyond workspace file operations.
+- Dependency Inversion: acceptable. UI consumes `searchFiles` through the gateway abstraction, not raw Tauri IPC.
+
+### Pattern Review
+
+- Command pattern: `file.quickOpen` fits the existing command registry.
+- Adapter pattern: `TauriWorkspaceGateway` adapts Tauri IPC to the frontend contract.
+- Repository pattern: Rust search reuses the local workspace repository boundary.
+- Pipeline pattern: intentionally not introduced; full search/index pipelines belong to later phases.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke confirmed command registration and disabled state without workspace.
+
+### Known Follow-ups
+
+- Browser cannot execute the full Tauri quick-open filesystem flow.
+- Search is recursive host scanning with default ignores. Replace or augment with indexed/ripgrep-backed search in later phases.
+- CodeRabbit review for this slice was delayed by free CLI rate limit and must run before committing this slice.
+
+## 2026-06-15: Smart Mode State Service
+
+Scope reviewed:
+
+- Rust `SmartModeService`
+- Tauri `get_smart_mode_state` and `set_smart_mode` commands
+- Frontend `SmartModeGateway`
+- Workbench smart-mode toggle routed through backend state
+
+### SOLID Review
+
+- Single Responsibility: acceptable. `SmartModeService` owns smart mode state only; it does not start LSP/indexer services yet.
+- Open/Closed: acceptable. Future `LightSmart` and `FullSmart` side effects can attach behind the service boundary without changing UI controls.
+- Liskov Substitution: acceptable. `SmartModeGateway` can be replaced by test or future remote implementations.
+- Interface Segregation: acceptable. Smart mode is separate from workspace file operations.
+- Dependency Inversion: improved. Workbench depends on `SmartModeGateway`, not direct Tauri IPC.
+
+### Pattern Review
+
+- State machine: minimal version introduced for Basic, Light Smart, and Full Smart.
+- Adapter pattern: `TauriSmartModeGateway` adapts IPC to the frontend contract.
+- Observer pattern: deferred until background service events exist.
+- Strategy pattern: deferred until PHP provider selection exists.
+
+### CodeRabbit Review
+
+Valid findings addressed:
+
+- Added workspace guard for Cmd+P.
+- Added `aria-label` to Quick Open input.
+
+Additional final sanity review attempt:
+
+- A later CodeRabbit run hit the free CLI rate limit. The last completed review findings were addressed before commit.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`

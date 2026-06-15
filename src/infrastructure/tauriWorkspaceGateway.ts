@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { FileEntry, WorkspaceGateway } from "../domain/workspace";
+import type {
+  FileEntry,
+  FileSearchResult,
+  WorkspaceGateway,
+} from "../domain/workspace";
 
 export class TauriWorkspaceGateway implements WorkspaceGateway {
   createDirectory(path: string): Promise<void> {
@@ -24,6 +28,14 @@ export class TauriWorkspaceGateway implements WorkspaceGateway {
 
   renamePath(from: string, to: string): Promise<void> {
     return invoke<void>("rename_path", { from, to });
+  }
+
+  searchFiles(
+    root: string,
+    query: string,
+    limit: number,
+  ): Promise<FileSearchResult[]> {
+    return invoke<FileSearchResult[]>("search_files", { root, query, limit });
   }
 
   writeTextFile(path: string, content: string): Promise<void> {

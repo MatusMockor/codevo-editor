@@ -5,17 +5,24 @@ import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileTree } from "./components/FileTree";
+import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
+import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import "./App.css";
 
 const workspaceGateway = new TauriWorkspaceGateway();
+const smartModeGateway = new TauriSmartModeGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
-  const workbench = useWorkbenchController(workspaceGateway, workbenchPrompter);
+  const workbench = useWorkbenchController(
+    workspaceGateway,
+    smartModeGateway,
+    workbenchPrompter,
+  );
   const activeDocumentDirty = Boolean(
     workbench.activeDocument && isDirty(workbench.activeDocument),
   );
@@ -105,6 +112,16 @@ function App() {
         isOpen={workbench.paletteOpen}
         onCommandError={workbench.reportCommandError}
         onClose={() => workbench.setPaletteOpen(false)}
+      />
+
+      <QuickOpen
+        isLoading={workbench.quickOpenLoading}
+        isOpen={workbench.quickOpenOpen}
+        onChangeQuery={workbench.setQuickOpenQuery}
+        onClose={() => workbench.setQuickOpenOpen(false)}
+        onOpen={workbench.openSearchResult}
+        query={workbench.quickOpenQuery}
+        results={workbench.quickOpenResults}
       />
     </main>
   );

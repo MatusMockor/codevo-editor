@@ -2,6 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type { SmartModeGateway } from "../domain/intelligence";
 import {
   detectLanguage,
   getFileName,
@@ -10,6 +11,7 @@ import {
   joinWorkspacePath,
   type EditorDocument,
   type FileEntry,
+  type FileSearchResult,
   type IntelligenceMode,
   type WorkspaceGateway,
 } from "../domain/workspace";
@@ -18,6 +20,7 @@ const RECENT_WORKSPACE_KEY = "editor.recentWorkspace";
 
 export function useWorkbenchController(
   workspaceGateway: WorkspaceGateway,
+  smartModeGateway: SmartModeGateway,
   prompter: WorkbenchPrompter,
 ) {
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
@@ -36,6 +39,12 @@ export function useWorkbenchController(
   const [openPaths, setOpenPaths] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [quickOpenOpen, setQuickOpenOpen] = useState(false);
+  const [quickOpenQuery, setQuickOpenQuery] = useState("");
+  const [quickOpenLoading, setQuickOpenLoading] = useState(false);
+  const [quickOpenResults, setQuickOpenResults] = useState<FileSearchResult[]>(
+    [],
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [intelligenceMode, setIntelligenceMode] =
     useState<IntelligenceMode>("basic");
@@ -259,6 +268,14 @@ export function useWorkbenchController(
     }
   }, [openFile, prompter, refreshDirectory, workspaceGateway, workspaceRoot]);
 
+  const openSearchResult = useCallback(
+    async (result: FileSearchResult) => {
+      await openFile({ kind: "file", name: result.name, path: result.path });
+      setQuickOpenOpen(false);
+    },
+    [openFile],
+  );
+
   const createDirectory = useCallback(async () => {
     if (!workspaceRoot) {
       return;
@@ -350,17 +367,21 @@ export function useWorkbenchController(
     workspaceGateway,
   ]);
 
-  const toggleSmartMode = useCallback(() => {
-    setIntelligenceMode((current) => {
-      if (current === "basic") {
-        setMessage("Light Smart mode scaffolded; LSP integration comes next.");
-        return "lightSmart";
-      }
+  const toggleSmartMode = useCallback(async () => {
+    if (!workspaceRoot) {
+      return;
+    }
 
-      setMessage("Back to Basic mode.");
-      return "basic";
-    });
-  }, []);
+    const nextMode = intelligenceMode === "basic" ? "lightSmart" : "basic";
+
+    try {
+      const state = await smartModeGateway.setMode(nextMode);
+      setIntelligenceMode(state.mode);
+      setMessage(state.message);
+    } catch (error) {
+      setMessage(String(error));
+    }
+  }, [intelligenceMode, smartModeGateway, workspaceRoot]);
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -388,6 +409,15 @@ export function useWorkbenchController(
       category: "File",
       isEnabled: (context) => context.hasWorkspace,
       run: createFile,
+    });
+
+    registry.register({
+      id: "file.quickOpen",
+      title: "Quick Open File",
+      category: "File",
+      shortcut: "Cmd+P",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => setQuickOpenOpen(true),
     });
 
     registry.register({
@@ -482,12 +512,20 @@ export function useWorkbenchController(
       if (event.key.toLowerCase() === "o") {
         event.preventDefault();
         void openWorkspace();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        if (workspaceRoot) {
+          setQuickOpenOpen(true);
+        }
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [openWorkspace, saveActiveDocument]);
+  }, [openWorkspace, saveActiveDocument, workspaceRoot]);
 
   useEffect(() => {
     if (hasRestoredRef.current) {
@@ -503,6 +541,50 @@ export function useWorkbenchController(
     hasRestoredRef.current = true;
     void openWorkspacePath(recentWorkspace);
   }, [openWorkspacePath]);
+
+  useEffect(() => {
+    if (!quickOpenOpen || !workspaceRoot) {
+      setQuickOpenResults([]);
+      setQuickOpenLoading(false);
+      return;
+    }
+
+    let active = true;
+    setQuickOpenLoading(true);
+
+    const timeout = window.setTimeout(() => {
+      workspaceGateway
+        .searchFiles(workspaceRoot, quickOpenQuery, 80)
+        .then((results) => {
+          if (!active) {
+            return;
+          }
+
+          setQuickOpenResults(results);
+          setMessage(null);
+        })
+        .catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setQuickOpenResults([]);
+          setMessage(String(error));
+        })
+        .finally(() => {
+          if (!active) {
+            return;
+          }
+
+          setQuickOpenLoading(false);
+        });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [quickOpenOpen, quickOpenQuery, workspaceGateway, workspaceRoot]);
 
   return {
     activeDocument,
@@ -520,13 +602,20 @@ export function useWorkbenchController(
     openFile,
     openWorkspace,
     paletteOpen,
+    quickOpenLoading,
+    quickOpenOpen,
+    quickOpenQuery,
+    quickOpenResults,
     reportCommandError: (error: unknown) => setMessage(String(error)),
     saveActiveDocument,
     setActivePath,
     setPaletteOpen,
+    setQuickOpenOpen,
+    setQuickOpenQuery,
     toggleDirectory,
     toggleSmartMode,
     updateActiveDocument,
+    openSearchResult,
     workspaceRoot,
   };
 }

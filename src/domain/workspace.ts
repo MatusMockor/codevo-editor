@@ -6,6 +6,12 @@ export interface FileEntry {
   kind: FileEntryKind;
 }
 
+export interface FileSearchResult {
+  name: string;
+  path: string;
+  relativePath: string;
+}
+
 export interface EditorDocument {
   path: string;
   name: string;
@@ -23,6 +29,7 @@ export interface WorkspaceGateway {
   readDirectory(path: string): Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
   renamePath(from: string, to: string): Promise<void>;
+  searchFiles(root: string, query: string, limit: number): Promise<FileSearchResult[]>;
   writeTextFile(path: string, content: string): Promise<void>;
 }
 

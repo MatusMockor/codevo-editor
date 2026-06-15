@@ -20,6 +20,14 @@ pub enum FileEntryKind {
     File,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSearchResult {
+    pub name: String,
+    pub path: String,
+    pub relative_path: String,
+}
+
 pub trait WorkspaceFileRepository {
     fn create_directory(&self, path: &Path) -> io::Result<()>;
     fn create_text_file(&self, path: &Path) -> io::Result<()>;
@@ -27,6 +35,12 @@ pub trait WorkspaceFileRepository {
     fn read_directory(&self, path: &Path) -> io::Result<Vec<FileEntry>>;
     fn read_text_file(&self, path: &Path) -> io::Result<String>;
     fn rename_path(&self, from: &Path, to: &Path) -> io::Result<()>;
+    fn search_files(
+        &self,
+        root: &Path,
+        query: &str,
+        limit: usize,
+    ) -> io::Result<Vec<FileSearchResult>>;
     fn write_text_file(&self, path: &Path, content: &str) -> io::Result<()>;
 }
 
@@ -152,6 +166,35 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
         fs::rename(from, to)
     }
 
+    fn search_files(
+        &self,
+        root: &Path,
+        query: &str,
+        limit: usize,
+    ) -> io::Result<Vec<FileSearchResult>> {
+        if !root.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Root path is not a directory",
+            ));
+        }
+
+        let normalized_query = query.trim().to_lowercase();
+        let capped_limit = limit.clamp(1, 500);
+        let scan_limit = capped_limit.saturating_mul(10).min(5_000);
+        let mut results = Vec::new();
+
+        collect_file_results(root, root, &normalized_query, scan_limit, &mut results)?;
+        results.sort_by(|left, right| {
+            score_result(&left.relative_path, &normalized_query)
+                .cmp(&score_result(&right.relative_path, &normalized_query))
+                .then_with(|| left.relative_path.cmp(&right.relative_path))
+        });
+        results.truncate(capped_limit);
+
+        Ok(results)
+    }
+
     fn write_text_file(&self, path: &Path, content: &str) -> io::Result<()> {
         if path.is_dir() {
             return Err(io::Error::new(
@@ -184,6 +227,85 @@ fn should_hide_entry(name: &str) -> bool {
             | ".cache"
             | "coverage"
     )
+}
+
+fn collect_file_results(
+    root: &Path,
+    current: &Path,
+    query: &str,
+    limit: usize,
+    results: &mut Vec<FileSearchResult>,
+) -> io::Result<()> {
+    if results.len() >= limit {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(current)? {
+        if results.len() >= limit {
+            return Ok(());
+        }
+
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy().to_string();
+
+        if should_hide_entry(&name) {
+            continue;
+        }
+
+        let file_type = entry.file_type()?;
+
+        if file_type.is_symlink() {
+            continue;
+        }
+
+        let path = entry.path();
+
+        if file_type.is_dir() {
+            collect_file_results(root, &path, query, limit, results)?;
+            continue;
+        }
+
+        if !file_type.is_file() {
+            continue;
+        }
+
+        let relative_path = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if !query.is_empty() && !relative_path.to_lowercase().contains(query) {
+            continue;
+        }
+
+        results.push(FileSearchResult {
+            name,
+            path: path.to_string_lossy().to_string(),
+            relative_path,
+        });
+    }
+
+    Ok(())
+}
+
+fn score_result(relative_path: &str, query: &str) -> usize {
+    if query.is_empty() {
+        return relative_path.matches('/').count();
+    }
+
+    let lower_path = relative_path.to_lowercase();
+
+    if lower_path == query {
+        return 0;
+    }
+
+    if lower_path.ends_with(query) {
+        return 1;
+    }
+
+    lower_path.find(query).unwrap_or(usize::MAX - 1) + 2
 }
 
 #[cfg(test)]
@@ -267,6 +389,25 @@ mod tests {
             .delete_path(&root.join("src"))
             .expect("delete directory tree");
         assert!(!directory_path.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn search_files_filters_by_relative_path_and_skips_hidden_roots() {
+        let root = create_temp_dir("workspace-search");
+        fs::create_dir_all(root.join("src").join("Domain")).expect("create src");
+        fs::create_dir_all(root.join("node_modules")).expect("create node_modules");
+        fs::write(root.join("src").join("Domain").join("User.php"), "<?php").expect("write php");
+        fs::write(root.join("node_modules").join("User.php"), "<?php").expect("write hidden php");
+        fs::write(root.join("README.md"), "hello").expect("write readme");
+
+        let repository = LocalWorkspaceFileRepository;
+        let results = repository
+            .search_files(&root, "user", 20)
+            .expect("search files");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].relative_path, "src/Domain/User.php");
         fs::remove_dir_all(root).expect("cleanup");
     }
 

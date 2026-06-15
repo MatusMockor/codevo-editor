@@ -31,6 +31,8 @@ Completed:
 - Added CodeRabbit review loop and fixed valid findings.
 - Added accessibility improvements for command palette, file tree, and tabs.
 - Added path helper and dirty-state unit tests.
+- Added backend file search command and Quick Open UI command.
+- Added backend-visible Smart mode state service and Tauri smart mode gateway.
 
 Current verification:
 
@@ -38,10 +40,10 @@ Current verification:
 - `npm test`: passing, 7 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 4 Rust tests
+- `cargo test`: passing, 7 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, and command palette
-- `coderabbit review --agent --base main`: completed; valid findings addressed
+- `coderabbit review --agent --base main`: completed for this diff; valid findings addressed. Extra final sanity attempt hit free CLI rate limit.
 
 Known issues:
 
@@ -50,8 +52,8 @@ Known issues:
 
 Next implementation slice:
 
-1. Add file quick-open and improved search foundation.
-2. Add persisted settings beyond recent workspace.
-3. Start Smart mode state machine as a backend-visible service, still without LSP/index side effects.
-4. Add a real Problems/Status event surface for future LSP/index messages.
-5. Start PHP workspace detection.
+1. Add persisted settings beyond recent workspace.
+2. Add a real Problems/Status event surface for future LSP/index messages.
+3. Start PHP workspace detection.
+4. Add ripgrep-backed text search.
+5. Prototype PHPactor provider detection.

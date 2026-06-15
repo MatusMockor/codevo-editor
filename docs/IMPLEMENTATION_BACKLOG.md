@@ -53,7 +53,7 @@ Scale:
 | --- | --- | --- | --- | --- |
 | P2-01 | Command registry | M | Done | Commands have id/title/category/enabled state. |
 | P2-02 | Command palette | M | Done | Commands can be searched/executed. |
-| P2-03 | File quick-open | L | Pending | User can fuzzy-open files by path. |
+| P2-03 | File quick-open | L | Done | User can search files by path and open results. |
 | P2-04 | Text search | L | Pending | Search respects ignores and streams results. |
 | P2-05 | Navigation stack | M | Pending | Back/forward works across files/positions. |
 | P2-06 | Status service | S | Partial | Basic status bar exists; registry/event model pending. |
@@ -62,7 +62,7 @@ Scale:
 
 | ID | Task | Size | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| P3-01 | Smart mode state machine | M | Partial | UI state exists; backend service lifecycle pending. |
+| P3-01 | Smart mode state machine | M | Partial | Backend-visible state service exists; real service lifecycle pending. |
 | P3-02 | Workspace trust model | M | Pending | Untrusted workspaces cannot execute project code. |
 | P3-03 | Service supervisor | L | Pending | Services start/stop/restart and report health. |
 | P3-04 | Background event bus | M | Pending | UI receives service status/log events. |
