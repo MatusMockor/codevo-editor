@@ -295,6 +295,7 @@ function createControllerDependencies({
       })),
       definition: vi.fn(async () => []),
       hover: vi.fn(async () => null),
+      implementation: vi.fn(async () => []),
     },
     languageServerGateway: {
       planPhpLanguageServer: vi.fn(async () => ({

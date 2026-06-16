@@ -7,6 +7,7 @@ import type {
   EditorRevealTarget,
   LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
+import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
@@ -16,6 +17,7 @@ interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
   editorRevealTarget: EditorRevealTarget | null;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
+  languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   monacoTheme: "vs" | "vs-dark";
@@ -29,6 +31,7 @@ export function EditorSurface({
   activeDocument,
   editorRevealTarget,
   flushPendingLanguageServerDocument,
+  languageServerDiagnosticsByPath,
   languageServerFeaturesGateway,
   languageServerRuntimeStatus,
   monacoTheme,
@@ -136,6 +139,24 @@ export function EditorSurface({
     onRevealTargetHandled();
   }, [activeDocument, editorApi, editorRevealTarget, onRevealTargetHandled]);
 
+  useEffect(() => {
+    if (!monacoApi) {
+      return;
+    }
+
+    monacoApi.editor.getModels().forEach((model) => {
+      const path = modelPath(model);
+      const diagnostics = path ? languageServerDiagnosticsByPath[path] ?? [] : [];
+      monacoApi.editor.setModelMarkers(
+        model,
+        "php-language-server",
+        diagnostics.map((diagnostic) =>
+          toMonacoDiagnosticMarker(monacoApi, diagnostic),
+        ),
+      );
+    });
+  }, [activeDocument, languageServerDiagnosticsByPath, monacoApi]);
+
   if (!activeDocument) {
     return (
       <div className="empty-editor">
@@ -174,4 +195,50 @@ export function EditorSurface({
       />
     </div>
   );
+}
+
+function toMonacoDiagnosticMarker(
+  monaco: typeof Monaco,
+  diagnostic: LanguageServerDiagnostic,
+): Monaco.editor.IMarkerData {
+  return {
+    endColumn: diagnostic.character + 2,
+    endLineNumber: diagnostic.line + 1,
+    message: diagnostic.message,
+    severity: diagnosticSeverity(monaco, diagnostic),
+    source: diagnostic.source || "Language Server",
+    startColumn: diagnostic.character + 1,
+    startLineNumber: diagnostic.line + 1,
+  };
+}
+
+function diagnosticSeverity(
+  monaco: typeof Monaco,
+  diagnostic: LanguageServerDiagnostic,
+): Monaco.MarkerSeverity {
+  if (diagnostic.severity === "error") {
+    return monaco.MarkerSeverity.Error;
+  }
+
+  if (diagnostic.severity === "warning") {
+    return monaco.MarkerSeverity.Warning;
+  }
+
+  if (diagnostic.severity === "hint") {
+    return monaco.MarkerSeverity.Hint;
+  }
+
+  return monaco.MarkerSeverity.Info;
+}
+
+function modelPath(model: Monaco.editor.ITextModel): string | null {
+  if (model.uri.fsPath) {
+    return model.uri.fsPath;
+  }
+
+  if (model.uri.path) {
+    return decodeURIComponent(model.uri.path);
+  }
+
+  return null;
 }

@@ -2,6 +2,7 @@ export interface LanguageServerCapabilities {
   hover: boolean;
   completion: boolean;
   definition: boolean;
+  implementation: boolean;
 }
 
 export type LanguageServerRuntimeStatus =
@@ -95,6 +96,10 @@ export function languageServerCapabilityLabels(
     labels.push("definition");
   }
 
+  if (capabilities.implementation) {
+    labels.push("implementation");
+  }
+
   return labels;
 }
 
@@ -103,5 +108,6 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     completion: false,
     definition: false,
     hover: false,
+    implementation: false,
   };
 }

@@ -44,6 +44,7 @@ pub struct LanguageServerCapabilities {
     pub hover: bool,
     pub completion: bool,
     pub definition: bool,
+    pub implementation: bool,
 }
 
 pub trait StatusSink: Send + Sync {
@@ -793,6 +794,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         hover: is_capability_enabled(capabilities.get("hoverProvider")),
         completion: is_capability_enabled(capabilities.get("completionProvider")),
         definition: is_capability_enabled(capabilities.get("definitionProvider")),
+        implementation: is_capability_enabled(capabilities.get("implementationProvider")),
     })
 }
 
@@ -915,6 +917,7 @@ mod tests {
                     hover: true,
                     completion: true,
                     definition: true,
+                    implementation: true,
                 },
             }
         );
@@ -930,6 +933,7 @@ mod tests {
                 hover: true,
                 completion: false,
                 definition: true,
+                implementation: false,
             },
         };
 
@@ -942,6 +946,7 @@ mod tests {
                     "hover": true,
                     "completion": false,
                     "definition": true,
+                    "implementation": false,
                 },
             })
         );
@@ -963,6 +968,7 @@ mod tests {
                     "hoverProvider": false,
                     "completionProvider": null,
                     "definitionProvider": {},
+                    "implementationProvider": true,
                 }
             }
         }))
@@ -974,6 +980,7 @@ mod tests {
                 hover: false,
                 completion: false,
                 definition: true,
+                implementation: true,
             }
         );
     }
@@ -1423,6 +1430,7 @@ mod tests {
                     "hoverProvider": true,
                     "completionProvider": { "triggerCharacters": [">"] },
                     "definitionProvider": true,
+                    "implementationProvider": true,
                 }
             },
         }))

@@ -39,7 +39,7 @@ export function PhpTreePanel({
   if (tree.nodes.length === 0) {
     return (
       <div className="empty-tree">
-        <p>No PHP symbols indexed</p>
+        <p>No indexed PHP symbols. Use Cmd+R for current file structure.</p>
       </div>
     );
   }

@@ -48,6 +48,7 @@ describe("languageServerCapabilities", () => {
       completion: true,
       definition: true,
       hover: true,
+      implementation: true,
     });
     expect(languageServerCapabilities(status("starting"))).toEqual(
       emptyLanguageServerCapabilities(),
@@ -62,6 +63,7 @@ describe("languageServerCapabilities", () => {
       "hover",
       "completion",
       "definition",
+      "implementation",
     ]);
     expect(languageServerCapabilityLabels(status("starting"))).toEqual([]);
   });
@@ -79,6 +81,7 @@ function status(
           completion: true,
           definition: true,
           hover: true,
+          implementation: true,
         },
       };
     }

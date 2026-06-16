@@ -637,6 +637,21 @@ fn text_document_definition(
 }
 
 #[tauri::command]
+fn text_document_implementation(
+    position: TextDocumentPosition,
+    supervisor: State<'_, LanguageServerSupervisor>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.implementation(&position);
+    let result = match supervisor.send_request(&request.method, request.params)? {
+        Some(result) => result,
+        None => return Ok(Vec::new()),
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;
     repository
@@ -799,6 +814,7 @@ pub fn run() {
             text_document_did_open,
             text_document_did_save,
             text_document_hover,
+            text_document_implementation,
             upsert_workspace_index_file,
             write_terminal_input,
             write_text_file

@@ -46,6 +46,12 @@ export class TauriLanguageServerFeaturesGateway
     return this.invokeWhenAvailable("text_document_definition", { position }, []);
   }
 
+  implementation(
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLocation[]> {
+    return this.invokeWhenAvailable("text_document_implementation", { position }, []);
+  }
+
   private async invokeWhenAvailable<T>(
     command: string,
     args: Record<string, unknown>,

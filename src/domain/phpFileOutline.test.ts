@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { canExpandPhpFileEntry, emptyPhpFileOutline } from "./phpFileOutline";
+import {
+  canExpandPhpFileEntry,
+  emptyPhpFileOutline,
+  flattenPhpFileOutlineNodes,
+  isNavigablePhpFileOutlineNode,
+  type PhpFileOutlineNode,
+} from "./phpFileOutline";
 import type { FileEntry } from "./workspace";
 
 describe("phpFileOutline", () => {
@@ -19,6 +25,20 @@ describe("phpFileOutline", () => {
       }),
     ).toBe(false);
   });
+
+  it("flattens nested outline nodes with depth", () => {
+    const root = outlineNode("class:user", "User", "class", [
+      outlineNode("method:save", "save", "method", []),
+    ]);
+    const rows = flattenPhpFileOutlineNodes([root]);
+
+    expect(rows.map((row) => [row.depth, row.node.label])).toEqual([
+      [0, "User"],
+      [1, "save"],
+    ]);
+    expect(isNavigablePhpFileOutlineNode(root)).toBe(true);
+    expect(isNavigablePhpFileOutlineNode({ ...root, path: null })).toBe(false);
+  });
 });
 
 function file(name: string): FileEntry {
@@ -26,5 +46,24 @@ function file(name: string): FileEntry {
     kind: "file",
     name,
     path: `/workspace/${name}`,
+  };
+}
+
+function outlineNode(
+  id: string,
+  label: string,
+  kind: PhpFileOutlineNode["kind"],
+  children: PhpFileOutlineNode[],
+): PhpFileOutlineNode {
+  return {
+    children,
+    column: 1,
+    fullyQualifiedName: label,
+    id,
+    kind,
+    label,
+    lineNumber: 1,
+    path: "/workspace/User.php",
+    relativePath: "User.php",
   };
 }

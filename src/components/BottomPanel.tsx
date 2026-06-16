@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { ShieldCheck, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { PointerEvent } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
@@ -26,8 +26,10 @@ interface BottomPanelProps {
   onResizeStart(event: PointerEvent<HTMLDivElement>): void;
   onSelectView(view: BottomPanelView): void;
   onSoftReindex(): void;
+  onTrustWorkspace(): void;
   terminalGateway: TerminalGateway;
   terminalTheme: TerminalTheme;
+  workspaceTrusted: boolean;
   workspaceRoot: string | null;
 }
 
@@ -49,8 +51,10 @@ export function BottomPanel({
   onResizeStart,
   onSelectView,
   onSoftReindex,
+  onTrustWorkspace,
   terminalGateway,
   terminalTheme,
+  workspaceTrusted,
   workspaceRoot,
 }: BottomPanelProps) {
   const [terminalMounted, setTerminalMounted] = useState(
@@ -159,6 +163,17 @@ export function BottomPanel({
             type="button"
           >
             <X aria-hidden="true" size={14} />
+          </button>
+        ) : null}
+        {activeView === "terminal" && workspaceRoot && !workspaceTrusted ? (
+          <button
+            className="bottom-panel-text-action"
+            onClick={onTrustWorkspace}
+            title="Trust workspace"
+            type="button"
+          >
+            <ShieldCheck aria-hidden="true" size={14} />
+            Trust
           </button>
         ) : null}
         {activeView === "terminal" && terminalProfiles.length > 0 ? (

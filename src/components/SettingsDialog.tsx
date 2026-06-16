@@ -162,6 +162,12 @@ export function SettingsDialog({
                       intelligenceMode,
                     }))
                   }
+                  onChangeAutoSave={(autoSave) =>
+                    setDraftWorkspaceSettings((current) => ({
+                      ...current,
+                      autoSave,
+                    }))
+                  }
                   onChangeTrusted={setDraftTrusted}
                   saving={saving}
                   workspaceRoot={workspaceRoot}
@@ -235,6 +241,7 @@ interface GeneralSettingsProps {
   saving: boolean;
   workspaceRoot: string | null;
   workspaceSettings: WorkspaceSettings;
+  onChangeAutoSave(autoSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeTrusted(trusted: boolean): void;
 }
@@ -242,6 +249,7 @@ interface GeneralSettingsProps {
 function GeneralSettings({
   draftTrusted,
   hasWorkspace,
+  onChangeAutoSave,
   onChangeIntelligenceMode,
   onChangeTrusted,
   saving,
@@ -270,6 +278,16 @@ function GeneralSettings({
           <option value="lightSmart">Light Smart</option>
           <option value="fullSmart">Full Smart</option>
         </select>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.autoSave}
+          disabled={!hasWorkspace || saving}
+          onChange={(event) => onChangeAutoSave(event.currentTarget.checked)}
+          type="checkbox"
+        />
+        <span>Auto Save</span>
       </label>
 
       <label className="settings-toggle">

@@ -352,6 +352,88 @@ button {
   background: var(--color-app);
 }
 
+.workbench-toolbar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-tabs);
+  padding: 4px 10px;
+}
+
+.mode-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-control);
+}
+
+.mode-switch button {
+  min-width: 58px;
+  height: 24px;
+  border: 0;
+  border-right: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.mode-switch button:last-child {
+  border-right: 0;
+}
+
+.mode-switch button.active {
+  background: var(--color-active-muted);
+  color: var(--color-text-strong);
+}
+
+.mode-switch button:hover:not(:disabled) {
+  color: var(--color-text-strong);
+}
+
+.mode-switch button:disabled {
+  color: var(--color-disabled);
+  cursor: not-allowed;
+}
+
+.toolbar-status {
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-action,
+.bottom-panel-text-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 24px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 9px;
+}
+
+.toolbar-action:hover,
+.bottom-panel-text-action:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
 .editor-panel {
   flex: 1 1 auto;
   min-height: 0;
@@ -699,6 +781,22 @@ button {
 
 .problem-row strong {
   color: var(--color-text);
+}
+
+.file-structure {
+  display: grid;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(620px, calc(100vh - 64px));
+  grid-template-rows: 44px minmax(0, 1fr);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-modal);
+  box-shadow: 0 20px 70px rgb(0 0 0 / 42%);
+  overflow: hidden;
+}
+
+.file-structure .quick-open-result span {
+  padding-left: var(--structure-indent, 0);
 }
 
 .editor-tabs {

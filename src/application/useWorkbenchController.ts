@@ -30,6 +30,7 @@ import {
   languageServerDiagnosticNoticeMessage,
   languageServerDiagnosticNoticeSeverity,
   shouldApplyLanguageServerDiagnostics,
+  type LanguageServerDiagnostic,
   type LanguageServerDiagnosticEvent,
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
@@ -51,6 +52,7 @@ import {
   toLanguageServerTextDocumentPosition,
   type EditorPosition,
   type EditorRevealTarget,
+  type LanguageServerFeature,
   type LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
 import {
@@ -160,6 +162,8 @@ export function useWorkbenchController(
   const [languageServerSetupOpen, setLanguageServerSetupOpen] = useState(false);
   const [languageServerRuntimeStatus, setLanguageServerRuntimeStatus] =
     useState<LanguageServerRuntimeStatus | null>(null);
+  const [languageServerDiagnosticsByPath, setLanguageServerDiagnosticsByPath] =
+    useState<Record<string, LanguageServerDiagnostic[]>>({});
   const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
     initialIndexProgress,
   );
@@ -224,6 +228,7 @@ export function useWorkbenchController(
   const [workspaceSettings, setWorkspaceSettings] =
     useState<WorkspaceSettings>(defaultWorkspaceSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [fileStructureOpen, setFileStructureOpen] = useState(false);
   const [intelligenceMode, setIntelligenceMode] =
     useState<IntelligenceMode>("basic");
   const hasRestoredRef = useRef(false);
@@ -346,6 +351,7 @@ export function useWorkbenchController(
   }, [currentNavigationLocation]);
 
   const clearLanguageServerDiagnostics = useCallback(() => {
+    setLanguageServerDiagnosticsByPath({});
     setNotices((current) =>
       current.filter(
         (notice) => !notice.groupKey?.startsWith("language-server-diagnostics:"),
@@ -377,6 +383,7 @@ export function useWorkbenchController(
       }
 
       const groupKey = languageServerDiagnosticNoticeGroup(event.uri);
+      const diagnosticPath = pathFromLanguageServerUri(event.uri);
       const diagnosticNotices = event.diagnostics.map((diagnostic) =>
         createWorkbenchNotice(
           languageServerDiagnosticNoticeSeverity(diagnostic.severity),
@@ -389,6 +396,13 @@ export function useWorkbenchController(
       setNotices((current) =>
         replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
       );
+
+      if (diagnosticPath) {
+        setLanguageServerDiagnosticsByPath((current) => ({
+          ...current,
+          [diagnosticPath]: event.diagnostics,
+        }));
+      }
     },
     [languageServerRuntimeStatus],
   );
@@ -1227,6 +1241,38 @@ export function useWorkbenchController(
     });
   }, []);
 
+  const openFileStructure = useCallback(() => {
+    if (!activeDocument) {
+      setMessage("Open a PHP file to show file structure.");
+      return;
+    }
+
+    if (!isLanguageServerDocument(activeDocument)) {
+      setMessage("File structure is available for PHP files.");
+      return;
+    }
+
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setTextSearchOpen(false);
+    setSettingsOpen(false);
+    setFileStructureOpen(true);
+
+    if (
+      phpFileOutlinesByPath[activeDocument.path] ||
+      loadingPhpFileOutlinePaths.has(activeDocument.path)
+    ) {
+      return;
+    }
+
+    void loadPhpFileOutline(activeDocument.path);
+  }, [
+    activeDocument,
+    loadPhpFileOutline,
+    loadingPhpFileOutlinePaths,
+    phpFileOutlinesByPath,
+  ]);
+
   const openPhpFileOutlineNode = useCallback(
     async (node: PhpFileOutlineNode) => {
       if (!node.path) {
@@ -1277,6 +1323,53 @@ export function useWorkbenchController(
       reportError("Save File", error);
     }
   }, [activeDocument, reportError, syncSavedDocument, workspaceFiles]);
+
+  useEffect(() => {
+    if (!workspaceSettings.autoSave) {
+      return;
+    }
+
+    if (!activeDocument || !isDirty(activeDocument)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void saveActiveDocument();
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [activeDocument, saveActiveDocument, workspaceSettings.autoSave]);
+
+  const setSmartMode = useCallback(
+    async (mode: IntelligenceMode) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      if (mode === intelligenceMode) {
+        return;
+      }
+
+      try {
+        const state = await smartModeGateway.setMode(mode);
+        setIntelligenceMode(state.mode);
+        setMessage(state.message);
+        await persistWorkspaceSettings(workspaceRoot, {
+          ...workspaceSettingsRef.current,
+          intelligenceMode: state.mode,
+        });
+      } catch (error) {
+        reportError("Smart Mode", error);
+      }
+    },
+    [
+      intelligenceMode,
+      persistWorkspaceSettings,
+      reportError,
+      smartModeGateway,
+      workspaceRoot,
+    ],
+  );
 
   const closeDocument = useCallback(
     (path: string) => {
@@ -1396,7 +1489,10 @@ export function useWorkbenchController(
     activeEditorPositionRef.current = position;
   }, []);
 
-  const goToDefinition = useCallback(async () => {
+  const goToLanguageServerLocation = useCallback(async (
+    feature: Extract<LanguageServerFeature, "definition" | "implementation">,
+    label: string,
+  ) => {
     if (!activeDocument) {
       return;
     }
@@ -1412,7 +1508,7 @@ export function useWorkbenchController(
     if (
       !canUseLanguageServerFeature(
         languageServerRuntimeStatus.capabilities,
-        "definition",
+        feature,
       )
     ) {
       return;
@@ -1426,7 +1522,7 @@ export function useWorkbenchController(
 
     try {
       await flushPendingDocumentChange(activeDocument.path);
-      const locations = await languageServerFeaturesGateway.definition(
+      const locations = await languageServerFeaturesGateway[feature](
         toLanguageServerTextDocumentPosition(activeDocument.path, editorPosition),
       );
       const [target] = locations;
@@ -1438,7 +1534,7 @@ export function useWorkbenchController(
       const targetPath = pathFromLanguageServerUri(target.uri);
 
       if (!targetPath) {
-        setMessage("Could not open definition target.");
+        setMessage(`Could not open ${label} target.`);
         return;
       }
 
@@ -1465,7 +1561,7 @@ export function useWorkbenchController(
         position: targetPosition,
       });
       setMessage(
-        `Opened definition ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
+        `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
       );
     } catch (error) {
       reportLanguageServerError(error);
@@ -1480,6 +1576,14 @@ export function useWorkbenchController(
     recordCurrentNavigationLocation,
     reportLanguageServerError,
   ]);
+
+  const goToDefinition = useCallback(async () => {
+    await goToLanguageServerLocation("definition", "definition");
+  }, [goToLanguageServerLocation]);
+
+  const goToImplementation = useCallback(async () => {
+    await goToLanguageServerLocation("implementation", "implementation");
+  }, [goToLanguageServerLocation]);
 
   const applyNavigationLocation = useCallback(
     async (location: NavigationLocation) => {
@@ -1627,30 +1731,9 @@ export function useWorkbenchController(
   ]);
 
   const toggleSmartMode = useCallback(async () => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    const nextMode = intelligenceMode === "basic" ? "lightSmart" : "basic";
-
-    try {
-      const state = await smartModeGateway.setMode(nextMode);
-      setIntelligenceMode(state.mode);
-      setMessage(state.message);
-      await persistWorkspaceSettings(workspaceRoot, {
-        ...workspaceSettingsRef.current,
-        intelligenceMode: state.mode,
-      });
-    } catch (error) {
-      reportError("Smart Mode", error);
-    }
-  }, [
-    intelligenceMode,
-    persistWorkspaceSettings,
-    reportError,
-    smartModeGateway,
-    workspaceRoot,
-  ]);
+    const nextMode = intelligenceMode === "basic" ? "fullSmart" : "basic";
+    await setSmartMode(nextMode);
+  }, [intelligenceMode, setSmartMode]);
 
   const toggleWorkspaceTrust = useCallback(async () => {
     if (!workspaceRoot) {
@@ -1826,6 +1909,7 @@ export function useWorkbenchController(
     setQuickOpenOpen(false);
     setTextSearchOpen(false);
     setLanguageServerSetupOpen(false);
+    setFileStructureOpen(false);
     setSettingsOpen(true);
   }, []);
 
@@ -1953,6 +2037,32 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.goToImplementation",
+      title: "Go to Implementation",
+      category: "Editor",
+      shortcut: "Cmd+Alt+B",
+      isEnabled: () =>
+        Boolean(activeDocument) &&
+        languageServerRuntimeStatus?.kind === "running" &&
+        canUseLanguageServerFeature(
+          languageServerRuntimeStatus.capabilities,
+          "implementation",
+        ),
+      run: goToImplementation,
+    });
+
+    registry.register({
+      id: "editor.fileStructure",
+      title: "File Structure",
+      category: "Editor",
+      shortcut: "Cmd+R",
+      isEnabled: () =>
+        Boolean(activeDocument) &&
+        Boolean(activeDocument && isLanguageServerDocument(activeDocument)),
+      run: openFileStructure,
+    });
+
+    registry.register({
       id: "commands.show",
       title: "Show Commands",
       category: "Workbench",
@@ -2074,12 +2184,15 @@ export function useWorkbenchController(
 
     return registry;
   }, [
+    activeDocument,
     createDirectory,
     createFile,
     deleteActiveDocument,
     goToDefinition,
+    goToImplementation,
     navigateBackward,
     navigateForwardInHistory,
+    openFileStructure,
     openSettingsPanel,
     navigationHistory,
     openWorkspace,
@@ -2187,6 +2300,18 @@ export function useWorkbenchController(
         return;
       }
 
+      if (event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        openFileStructure();
+        return;
+      }
+
+      if (event.altKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        void goToImplementation();
+        return;
+      }
+
       if (event.altKey && event.key === "ArrowLeft") {
         event.preventDefault();
         void navigateBackward();
@@ -2231,8 +2356,10 @@ export function useWorkbenchController(
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     goToDefinition,
+    goToImplementation,
     navigateBackward,
     navigateForwardInHistory,
+    openFileStructure,
     openSettingsPanel,
     openWorkspace,
     saveActiveDocument,
@@ -2568,6 +2695,7 @@ export function useWorkbenchController(
     entriesByDirectory,
     expandedDirectories,
     expandedPhpFilePaths,
+    fileStructureOpen,
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
     bottomPanelView,
@@ -2575,6 +2703,7 @@ export function useWorkbenchController(
     indexHealthLogs,
     indexProgress,
     intelligenceMode,
+    languageServerDiagnosticsByPath,
     loadingDirectories,
     loadingPhpFileOutlinePaths,
     languageServerPlan,
@@ -2583,6 +2712,7 @@ export function useWorkbenchController(
     message,
     openDocuments,
     openFile,
+    openFileStructure,
     openPhpFileOutlineNode,
     previewFile,
     previewPath,
@@ -2616,6 +2746,8 @@ export function useWorkbenchController(
     setTextSearchOpen,
     setTextSearchQuery,
     setLanguageServerSetupOpen,
+    setFileStructureOpen,
+    setSmartMode,
     pinDocument,
     startIndexScan,
     startHardReindex,
@@ -2632,6 +2764,7 @@ export function useWorkbenchController(
     togglePhpFileOutlineNode,
     togglePhpTreeNode,
     toggleSmartMode,
+    toggleWorkspaceTrust,
     updateActiveDocument,
     updateActiveEditorPosition,
     openPhpTreeNode,

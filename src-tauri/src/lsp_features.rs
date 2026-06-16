@@ -64,6 +64,7 @@ pub trait TextDocumentFeatureRequestFactory {
     fn hover(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn completion(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
 }
 
 pub struct LspTextDocumentFeatureRequestFactory;
@@ -79,6 +80,10 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
 
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
         request("textDocument/definition", position)
+    }
+
+    fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
+        request("textDocument/implementation", position)
     }
 }
 
@@ -241,6 +246,20 @@ mod tests {
         let request = factory.hover(&position());
 
         assert_eq!(request.method, "textDocument/hover");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn implementation_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.implementation(&position());
+
+        assert_eq!(request.method, "textDocument/implementation");
         assert!(request.params["textDocument"]["uri"]
             .as_str()
             .expect("uri")

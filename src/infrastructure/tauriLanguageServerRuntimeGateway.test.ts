@@ -40,6 +40,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         completion: true,
         definition: true,
         hover: true,
+        implementation: true,
       },
     };
     const invokeCommand = vi.fn<InvokeCommand>(async () => running);

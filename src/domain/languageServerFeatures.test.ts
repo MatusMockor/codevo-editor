@@ -14,10 +14,12 @@ describe("canUseLanguageServerFeature", () => {
       completion: false,
       definition: true,
       hover: true,
+      implementation: false,
     };
 
     expect(canUseLanguageServerFeature(capabilities, "hover")).toBe(true);
     expect(canUseLanguageServerFeature(capabilities, "completion")).toBe(false);
+    expect(canUseLanguageServerFeature(capabilities, "definition")).toBe(true);
   });
 });
 

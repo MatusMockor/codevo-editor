@@ -193,6 +193,7 @@ function featuresGateway(
     ),
     definition: vi.fn(async () => responses.definition ?? []),
     hover: vi.fn(async () => responses.hover ?? null),
+    implementation: vi.fn(async () => []),
   };
 }
 
@@ -204,6 +205,7 @@ function runningStatus(
       completion: true,
       definition: true,
       hover: true,
+      implementation: true,
       ...capabilities,
     },
     kind: "running",

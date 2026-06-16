@@ -17,6 +17,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileTree } from "./components/FileTree";
+import { FileStructure } from "./components/FileStructure";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { PhpTreePanel } from "./components/PhpTreePanel";
 import { QuickOpen } from "./components/QuickOpen";
@@ -26,13 +27,15 @@ import { TextSearch } from "./components/TextSearch";
 import {
   languageServerCapabilityLabels,
   languageServerStatusLabel,
+  type LanguageServerRuntimeStatus,
 } from "./domain/languageServerRuntime";
+import type { LanguageServerPlan } from "./domain/languageServer";
 import { indexProgressLabel } from "./domain/indexProgress";
 import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
 } from "./domain/settings";
-import { isDirty } from "./domain/workspace";
+import { isDirty, type IntelligenceMode } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import { TauriLanguageServerDiagnosticsGateway } from "./infrastructure/tauriLanguageServerDiagnosticsGateway";
@@ -155,6 +158,13 @@ function App() {
   const indexLabel = useMemo(
     () => indexProgressLabel(workbench.indexProgress),
     [workbench.indexProgress],
+  );
+  const activeOutline = workbench.activeDocument
+    ? workbench.phpFileOutlinesByPath[workbench.activeDocument.path] ?? null
+    : null;
+  const activeOutlineLoading = Boolean(
+    workbench.activeDocument &&
+      workbench.loadingPhpFileOutlinePaths.has(workbench.activeDocument.path),
   );
   const monacoTheme = useMemo(
     () =>
@@ -364,6 +374,53 @@ function App() {
       </section>
 
       <section className="editor-workbench">
+        <header className="workbench-toolbar">
+          <div aria-label="Editor intelligence mode" className="mode-switch">
+            <button
+              aria-pressed={workbench.intelligenceMode === "basic"}
+              className={
+                workbench.intelligenceMode === "basic" ? "active" : ""
+              }
+              disabled={!workbench.workspaceRoot}
+              onClick={() => workbench.setSmartMode("basic")}
+              type="button"
+            >
+              Light
+            </button>
+            <button
+              aria-pressed={workbench.intelligenceMode !== "basic"}
+              className={
+                workbench.intelligenceMode !== "basic" ? "active" : ""
+              }
+              disabled={!workbench.workspaceRoot}
+              onClick={() => workbench.setSmartMode("fullSmart")}
+              type="button"
+            >
+              Smart
+            </button>
+          </div>
+          <span className="toolbar-status">
+            {smartModeSummary(
+              Boolean(workbench.workspaceRoot),
+              workbench.intelligenceMode,
+              workbench.languageServerRuntimeStatus,
+              workbench.languageServerPlan,
+              workbench.workspaceTrust?.trusted ?? false,
+            )}
+          </span>
+          {workbench.workspaceRoot && !workbench.workspaceTrust?.trusted ? (
+            <button
+              className="toolbar-action"
+              onClick={workbench.toggleWorkspaceTrust}
+              type="button"
+            >
+              Trust
+            </button>
+          ) : null}
+          {workbench.workspaceSettings.autoSave ? (
+            <span className="toolbar-status">Auto Save</span>
+          ) : null}
+        </header>
         <EditorTabs
           activePath={workbench.activePath}
           documents={workbench.openDocuments}
@@ -379,6 +436,9 @@ function App() {
             workbench.flushPendingLanguageServerDocument
           }
           languageServerFeaturesGateway={languageServerFeaturesGateway}
+          languageServerDiagnosticsByPath={
+            workbench.languageServerDiagnosticsByPath
+          }
           languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
           monacoTheme={monacoTheme}
           onCursorPositionChange={workbench.updateActiveEditorPosition}
@@ -397,8 +457,10 @@ function App() {
           onResizeStart={startBottomPanelResize}
           onSelectView={workbench.setBottomPanelView}
           onSoftReindex={workbench.startIndexScan}
+          onTrustWorkspace={workbench.toggleWorkspaceTrust}
           terminalGateway={terminalGateway}
           terminalTheme={terminalTheme}
+          workspaceTrusted={workbench.workspaceTrust?.trusted ?? false}
           workspaceRoot={workbench.workspaceRoot}
         />
       </section>
@@ -449,6 +511,15 @@ function App() {
         results={workbench.textSearchResults}
       />
 
+      <FileStructure
+        fileName={workbench.activeDocument?.name ?? null}
+        isLoading={activeOutlineLoading}
+        isOpen={workbench.fileStructureOpen}
+        onClose={() => workbench.setFileStructureOpen(false)}
+        onOpenNode={workbench.openPhpFileOutlineNode}
+        outline={activeOutline}
+      />
+
       <LanguageServerSetup
         isOpen={workbench.languageServerSetupOpen}
         onClose={() => workbench.setLanguageServerSetupOpen(false)}
@@ -481,6 +552,38 @@ function clamp(value: number, min: number, max: number): number {
 
 function maxBottomPanelHeight(viewportHeight: number): number {
   return Math.max(96, Math.min(viewportHeight * 0.7, 520));
+}
+
+function smartModeSummary(
+  hasWorkspace: boolean,
+  mode: IntelligenceMode,
+  runtimeStatus: LanguageServerRuntimeStatus | null,
+  plan: LanguageServerPlan | null,
+  trusted: boolean,
+): string {
+  if (!hasWorkspace) {
+    return "No workspace";
+  }
+
+  if (!trusted) {
+    return "Untrusted";
+  }
+
+  const runtimeLabel = languageServerStatusLabel(runtimeStatus);
+
+  if (runtimeLabel) {
+    return runtimeLabel;
+  }
+
+  if (mode !== "basic" && plan?.status === "ready") {
+    return "Smart ready";
+  }
+
+  if (mode !== "basic") {
+    return "Smart setup needed";
+  }
+
+  return "Lightweight";
 }
 
 function usePrefersLightTheme(): boolean {

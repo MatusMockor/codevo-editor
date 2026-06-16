@@ -59,6 +59,9 @@ export interface LanguageServerFeaturesGateway {
   definition(
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
+  implementation(
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLocation[]>;
 }
 
 export function canUseLanguageServerFeature(

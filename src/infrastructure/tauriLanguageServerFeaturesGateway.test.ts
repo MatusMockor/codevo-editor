@@ -21,6 +21,7 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       items: [],
     });
     await expect(gateway.definition(position())).resolves.toEqual([]);
+    await expect(gateway.implementation(position())).resolves.toEqual([]);
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
@@ -59,6 +60,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(gateway.hover(requestPosition)).resolves.toEqual(hover);
     await expect(gateway.completion(requestPosition)).resolves.toEqual(completion);
     await expect(gateway.definition(requestPosition)).resolves.toEqual(definition);
+    await expect(gateway.implementation(requestPosition)).resolves.toEqual(
+      definition,
+    );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_hover", {
       position: requestPosition,
     });
@@ -66,6 +70,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       position: requestPosition,
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_definition", {
+      position: requestPosition,
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_implementation", {
       position: requestPosition,
     });
   });
