@@ -17,7 +17,8 @@ This document records what the packaged desktop app can rely on today, what it d
 | SQLite index | Ready for desktop debug bundles | Database lives under Tauri `app_config_dir` per workspace hash. |
 | Text search | Works when host `rg` is discoverable | Do not claim bundled ripgrep. |
 | Trust/settings data | Ready for desktop debug bundles | Trust file and index DB are app-config scoped; settings are browser localStorage. |
-| DMG/signing/notarization | Not ready | Covered by P8-02B and P8-02C. |
+| DMG packaging | Ready for debug desktop bundles | Default debug build produces `.app` and `.dmg`. |
+| Signing/notarization | Not ready | Covered by P8-02C. |
 
 ## Product And Bundle
 
@@ -25,6 +26,7 @@ This document records what the packaged desktop app can rely on today, what it d
 - Version: `0.1.0`
 - Identifier: `dev.mockor.editor`
 - Debug macOS app bundle: `src-tauri/target/debug/bundle/macos/Mockor Editor.app`
+- Debug macOS DMG bundle: `src-tauri/target/debug/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg`
 - Executable: `Contents/MacOS/mockor-editor`
 - Icon resource: `Contents/Resources/icon.icns`
 - Bundle category: `DeveloperTool`
@@ -45,6 +47,12 @@ Release metadata still missing:
 - signing identity
 - notarization profile
 - update channel
+
+Verified DMG image info:
+
+- Format: `UDZO`
+- Format description: `UDIF read-only compressed (zlib)`
+- Partition scheme: `GUID`
 
 ## External Tool Discovery
 
@@ -271,23 +279,24 @@ Release follow-up:
 
 ## Required Packaged Smoke Before Release
 
-1. Launch `Mockor Editor.app` from Finder and verify title, icon, and executable.
-2. Open an untrusted PHP Composer fixture.
-3. Verify PHPactor is blocked until trust is granted.
-4. Trust the workspace and start PHPactor when PHPactor is available.
-5. Repeat with missing PHPactor or missing PHP and confirm setup/crash messaging.
-6. Open Terminal in the trusted workspace, run `echo`, and resize the panel.
-7. Verify untrusted workspaces block Terminal launch.
-8. Run soft, PHP, and hard reindex from the Index panel.
-9. Verify text search with and without `rg` visible to the GUI app process.
-10. Verify packaged behavior without Watchman installed.
-11. Verify app restart preserves trust, session, and index state.
-12. Verify deleting the workspace index DB allows recovery through hard reindex.
-13. Confirm release notes list no bundled PHP, PHPactor, Intelephense, Watchman, ripgrep, or shell.
+1. Build `npm run tauri build -- --debug` and verify both `.app` and `.dmg` outputs.
+2. Inspect the DMG with `hdiutil imageinfo`.
+3. Launch `Mockor Editor.app` from Finder and verify title, icon, and executable.
+4. Open an untrusted PHP Composer fixture.
+5. Verify PHPactor is blocked until trust is granted.
+6. Trust the workspace and start PHPactor when PHPactor is available.
+7. Repeat with missing PHPactor or missing PHP and confirm setup/crash messaging.
+8. Open Terminal in the trusted workspace, run `echo`, and resize the panel.
+9. Verify untrusted workspaces block Terminal launch.
+10. Run soft, PHP, and hard reindex from the Index panel.
+11. Verify text search with and without `rg` visible to the GUI app process.
+12. Verify packaged behavior without Watchman installed.
+13. Verify app restart preserves trust, session, and index state.
+14. Verify deleting the workspace index DB allows recovery through hard reindex.
+15. Confirm release notes list no bundled PHP, PHPactor, Intelephense, Watchman, ripgrep, or shell.
 
 ## Phase 8 Follow-Ups
 
-- P8-02B: reproduce/fix/document DMG packaging.
 - P8-02C: signing and notarization plan.
 - P8-03: decide bundled vs user-installed PHP/PHPactor/Intelephense/Watchman policy.
 - P8-04: update channel research.

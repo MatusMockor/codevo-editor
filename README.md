@@ -37,13 +37,13 @@ npm run build
 cd src-tauri && cargo test
 ```
 
-Build a debug macOS app bundle:
+Build debug macOS app and DMG bundles:
 
 ```sh
-npm run tauri build -- --debug --bundles app
+npm run tauri build -- --debug
 ```
 
-Full DMG bundling is deferred to the packaging phase.
+Use `npm run tauri build -- --debug --bundles app` for a faster app-only bundle.
 
 ## Planning Docs
 

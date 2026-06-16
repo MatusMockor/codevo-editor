@@ -77,6 +77,7 @@ Completed:
 - Added theme polish with semantic active-state foregrounds, accessible terminal palettes, first-render system preference handling, and xterm theme updates without restarting the terminal session.
 - Added Mockor Editor product identity with app/window/web title metadata, bundle publisher/category/descriptions, custom desktop icon set, and web favicon.
 - Added packaged runtime readiness audit for LSP, terminal, watcher, index, trust/settings, security permissions, and release smoke expectations.
+- Verified default debug macOS DMG packaging for `Mockor Editor_0.1.0_aarch64.dmg`.
 
 Current verification:
 
@@ -86,15 +87,16 @@ Current verification:
 - `npm audit --json`: zero vulnerabilities
 - `cargo test`: passing, 144 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
+- `npm run tauri build -- --debug`: passing, producing `.app` and `.dmg` bundles
 - Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Index/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, Index health responsive behavior, timestamped session-load smoke, light/dark/system theme switching, terminal lazy-load rendering after theme changes, product title/favicon metadata, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Service runtime readiness audit slice.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the macOS DMG packaging slice.
 
 Known issues:
 
-- `npm run tauri build -- --debug` with all default bundles fails during DMG packaging. The `.app` bundle succeeds. DMG packaging is deferred to Phase 8.
+- Debug DMG packaging is unsigned and not notarized. Release signing/notarization is deferred to P8-02C.
 - Native file dialog cannot be fully tested in the regular browser smoke test.
 
 Next implementation slice:
 
-1. Fix or document macOS DMG packaging.
-2. Draft signing and notarization plan.
+1. Draft signing and notarization plan.
+2. Research update channel.

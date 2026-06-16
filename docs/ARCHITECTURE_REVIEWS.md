@@ -1645,7 +1645,7 @@ Scope reviewed:
 
 ### Residual Risk
 
-- DMG packaging remains in P8-02B.
+- Release signing and notarization remain in P8-02C.
 - Mobile Android/iOS icon readiness remains out of scope for this desktop packaging slice.
 - License and homepage bundle fields remain unset until the project has explicit values.
 
@@ -1692,4 +1692,38 @@ Scope reviewed:
 ### Verification
 
 - Documentation review against current runtime code paths
+- `coderabbit review --agent --fast --base main`: passing with 0 findings
+
+## 2026-06-16: macOS DMG Packaging
+
+Scope reviewed:
+
+- default debug Tauri build with all configured bundle targets
+- generated `Mockor Editor.app` and `Mockor Editor_0.1.0_aarch64.dmg`
+- packaged app `Info.plist` identity after product metadata changes
+- DMG image metadata through `hdiutil imageinfo`
+
+### SOLID Review
+
+- Single Responsibility: acceptable. This slice verifies packaging output and updates documentation only.
+- Open/Closed: acceptable. Signing, notarization, and release distribution can extend packaging without changing runtime services.
+- Liskov Substitution: not materially affected. No runtime service implementations changed.
+- Interface Segregation: not materially affected. No app contracts changed.
+- Dependency Inversion: not materially affected. Build tooling consumes existing config and generated assets.
+
+### Pattern Review
+
+- Configuration-as-policy: bundle targets, product metadata, and icons remain driven by Tauri config.
+- Verification gate: DMG readiness is recorded as a packaging gate distinct from signing and notarization.
+
+### Residual Risk
+
+- The verified DMG is a debug, unsigned, non-notarized artifact.
+- Release signing, notarization, and update distribution remain separate Phase 8 tasks.
+
+### Verification
+
+- `npm run tauri build -- --debug`
+- `hdiutil imageinfo src-tauri/target/debug/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg`
+- `Info.plist` check for `CFBundleName`, `CFBundleExecutable`, `CFBundleIdentifier`, and `CFBundleShortVersionString`
 - `coderabbit review --agent --fast --base main`: passing with 0 findings
