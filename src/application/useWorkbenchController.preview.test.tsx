@@ -29,7 +29,11 @@ import {
   type SettingsGateway,
 } from "../domain/settings";
 import type { WorkspaceTrustGateway } from "../domain/trust";
-import type { FileEntry } from "../domain/workspace";
+import type {
+  FileEntry,
+  PhpProjectDescriptor,
+  WorkspaceDescriptor,
+} from "../domain/workspace";
 
 type WorkbenchController = ReturnType<typeof useWorkbenchController>;
 
@@ -226,16 +230,171 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("resolves Laravel request input through typed parameters instead of a random input method", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const postRequestPath =
+      "/workspace/app/Kontentino/src/Http/Requests/POSTRequest.php";
+    const inputTraitPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Http/Concerns/InteractsWithInput.php";
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 5,
+        containerName: "Kontentino\\Http\\Requests\\POSTRequest",
+        fullyQualifiedName: "Kontentino\\Http\\Requests\\POSTRequest::input",
+        kind: "method",
+        lineNumber: 16,
+        name: "input",
+        path: postRequestPath,
+        relativePath: "app/Kontentino/src/Http/Requests/POSTRequest.php",
+      },
+    ];
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return `<?php
+namespace App\\Http\\Controllers\\publicapi\\AiHub;
+
+use App\\Http\\Request\\AiHub\\StoreCommentRequest;
+
+class CommentController
+{
+    public function store(StoreCommentRequest $request): void
+    {
+        $request->input('originalComment', '');
+    }
+}
+`;
+        }
+
+        if (path === inputTraitPath) {
+          return "<?php\ntrait InteractsWithInput\n{\n    public function input($key = null, $default = null) {}\n}\n";
+        }
+
+        return "<?php\nclass POSTRequest { public function input() {} }\n";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 21,
+        lineNumber: 10,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(inputTraitPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: inputTraitPath,
+      position: {
+        column: 21,
+        lineNumber: 4,
+      },
+    });
+  });
+
+  it("resolves imported FormRequest to vendor instead of a local substring class", async () => {
+    const requestPath = "/workspace/app/Http/Request/AiHub/StoreCommentRequest.php";
+    const baseRequestPath = "/workspace/app/Http/Request/BaseFormRequest.php";
+    const formRequestPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Foundation/Http/FormRequest.php";
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Http\\Request\\BaseFormRequest",
+        kind: "class",
+        lineNumber: 14,
+        name: "BaseFormRequest",
+        path: baseRequestPath,
+        relativePath: "app/Http/Request/BaseFormRequest.php",
+      },
+    ];
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === requestPath) {
+          return `<?php
+namespace App\\Http\\Request\\AiHub;
+
+use Illuminate\\Foundation\\Http\\FormRequest;
+
+class StoreCommentRequest extends FormRequest
+{
+}
+`;
+        }
+
+        if (path === formRequestPath) {
+          return "<?php\nnamespace Illuminate\\Foundation\\Http;\nclass FormRequest extends Request {}\n";
+        }
+
+        return "<?php\nclass BaseFormRequest {}\n";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(requestPath, "StoreCommentRequest.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 37,
+        lineNumber: 6,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(formRequestPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: formRequestPath,
+      position: {
+        column: 7,
+        lineNumber: 3,
+      },
+    });
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     projectSymbols = [],
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
+    workspaceDescriptor,
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     projectSymbols?: ProjectSymbolSearchResult[];
     readTextFile?: (path: string) => Promise<string>;
     runtimeStatus?: LanguageServerRuntimeStatus;
+    workspaceDescriptor?: WorkspaceDescriptor;
   } = {}) {
     let workbench: WorkbenchController | null = null;
     const dependencies = createControllerDependencies({
@@ -243,6 +402,7 @@ describe("useWorkbenchController preview tabs", () => {
       projectSymbols,
       readTextFile,
       runtimeStatus,
+      workspaceDescriptor,
     });
     const getWorkbench = () => {
       if (!workbench) {
@@ -302,11 +462,13 @@ function createControllerDependencies({
   projectSymbols,
   readTextFile,
   runtimeStatus,
+  workspaceDescriptor,
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   projectSymbols: ProjectSymbolSearchResult[];
   readTextFile(path: string): Promise<string>;
   runtimeStatus: LanguageServerRuntimeStatus;
+  workspaceDescriptor?: WorkspaceDescriptor;
 }): ControllerDependencies {
   const documentSyncGateway: LanguageServerDocumentSyncGateway = {
     didChange: vi.fn(async () => undefined),
@@ -317,7 +479,7 @@ function createControllerDependencies({
   const workspaceGateways: WorkbenchWorkspaceGateways = {
     detection: {
       detectWorkspace: vi.fn(async (path) => ({
-        php: null,
+        php: workspaceDescriptor?.php ?? null,
         rootPath: path,
       })),
     },
@@ -457,6 +619,45 @@ async function flushAsyncTurns(count = 12): Promise<void> {
       await Promise.resolve();
     }
   });
+}
+
+function phpWorkspaceDescriptor(): WorkspaceDescriptor {
+  return {
+    php: phpProjectDescriptor(),
+    rootPath: "/workspace",
+  };
+}
+
+function phpProjectDescriptor(): PhpProjectDescriptor {
+  return {
+    classmapRoots: [],
+    hasComposer: true,
+    packageName: "laravel/laravel",
+    packages: [
+      {
+        classmapRoots: [],
+        dev: false,
+        installPath: "../laravel/framework",
+        name: "laravel/framework",
+        packageType: "library",
+        psr4Roots: [
+          {
+            dev: false,
+            namespace: "Illuminate\\",
+            paths: ["src/Illuminate/"],
+          },
+        ],
+        version: "13.0.0",
+      },
+    ],
+    psr4Roots: [
+      {
+        dev: false,
+        namespace: "App\\",
+        paths: ["app/"],
+      },
+    ],
+  };
 }
 
 function fileEntry(path: string, name: string): FileEntry {

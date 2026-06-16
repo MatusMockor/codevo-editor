@@ -83,6 +83,17 @@ import {
   type PhpTreeGateway,
   type PhpTreeNode,
 } from "../domain/phpTree";
+import {
+  phpClassPathCandidates,
+  phpIdentifierContextAt,
+  phpLaravelRequestMethodDefinition,
+  phpMethodPosition,
+  phpNamedTypePosition,
+  phpParameterTypeForVariable,
+  resolvePhpClassName,
+  type PhpIdentifierContext,
+  type PhpMethodDefinitionHint,
+} from "../domain/phpNavigation";
 import type {
   ProjectSymbolSearchGateway,
   ProjectSymbolSearchResult,
@@ -1567,6 +1578,244 @@ export function useWorkbenchController(
     setBottomPanelVisible((visible) => !visible);
   }, []);
 
+  const openNavigationTarget = useCallback(
+    async (
+      path: string,
+      position: EditorPosition,
+      label: string,
+    ): Promise<boolean> => {
+      recordCurrentNavigationLocation();
+
+      if (documents[path]) {
+        setActivePath(path);
+      }
+
+      if (!documents[path]) {
+        const opened = await openFile(
+          {
+            kind: "file",
+            name: getFileName(path),
+            path,
+          },
+          { recordNavigation: false },
+        );
+
+        if (!opened) {
+          return false;
+        }
+      }
+
+      setEditorRevealTarget({
+        path,
+        position,
+      });
+      setMessage(
+        `Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`,
+      );
+      return true;
+    },
+    [documents, openFile, recordCurrentNavigationLocation],
+  );
+
+  const readNavigationFileContent = useCallback(
+    async (path: string): Promise<string> => {
+      const openDocument = documents[path];
+
+      if (openDocument) {
+        return openDocument.content;
+      }
+
+      return workspaceFiles.readTextFile(path);
+    },
+    [documents, workspaceFiles],
+  );
+
+  const openPhpClassTarget = useCallback(
+    async (className: string, label: string): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
+        workspaceRoot,
+        className,
+        25,
+      );
+      const indexedTarget = bestIndexedSymbolMatch(
+        indexedSymbols,
+        className,
+        activeDocument?.path ?? "",
+      );
+
+      if (indexedTarget) {
+        return openNavigationTarget(
+          indexedTarget.path,
+          editorPositionFromProjectSymbol(indexedTarget),
+          label,
+        );
+      }
+
+      for (const path of phpClassPathCandidates(
+        workspaceRoot,
+        workspaceDescriptor.php,
+        className,
+      )) {
+        try {
+          const content = await readNavigationFileContent(path);
+          return openNavigationTarget(
+            path,
+            phpNamedTypePosition(content, shortPhpName(className)),
+            label,
+          );
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      activeDocument,
+      openNavigationTarget,
+      projectSymbolSearch,
+      readNavigationFileContent,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  const openPhpMethodHintTarget = useCallback(
+    async (hint: PhpMethodDefinitionHint): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      for (const path of phpClassPathCandidates(
+        workspaceRoot,
+        workspaceDescriptor.php,
+        hint.className,
+      )) {
+        try {
+          const content = await readNavigationFileContent(path);
+          return openNavigationTarget(
+            path,
+            phpMethodPosition(content, hint.methodName),
+            `${hint.methodName}()`,
+          );
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      openNavigationTarget,
+      readNavigationFileContent,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  const openDirectPhpMethodTarget = useCallback(
+    async (className: string, methodName: string): Promise<boolean> => {
+      if (!workspaceRoot) {
+        return false;
+      }
+
+      const symbols = await projectSymbolSearch.searchProjectSymbols(
+        workspaceRoot,
+        methodName,
+        50,
+      );
+      const normalizedClassName = className.toLowerCase();
+      const normalizedMethodName = methodName.toLowerCase();
+      const target = symbols.find(
+        (symbol) =>
+          symbol.kind === "method" &&
+          symbol.name.toLowerCase() === normalizedMethodName &&
+          symbol.containerName?.toLowerCase() === normalizedClassName,
+      );
+
+      if (!target) {
+        return false;
+      }
+
+      return openNavigationTarget(
+        target.path,
+        editorPositionFromProjectSymbol(target),
+        `${methodName}()`,
+      );
+    },
+    [openNavigationTarget, projectSymbolSearch, workspaceRoot],
+  );
+
+  const goToPhpMethodCallDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "methodCall" }>,
+    ): Promise<boolean> => {
+      if (!activeDocument) {
+        return false;
+      }
+
+      const variableType = phpParameterTypeForVariable(
+        activeDocument.content,
+        activeEditorPositionRef.current ?? { column: 1, lineNumber: 1 },
+        context.variableName,
+      );
+      const resolvedVariableType = variableType
+        ? resolvePhpClassName(activeDocument.content, variableType)
+        : null;
+
+      if (resolvedVariableType) {
+        const directTargetOpened = await openDirectPhpMethodTarget(
+          resolvedVariableType,
+          context.methodName,
+        );
+
+        if (directTargetOpened) {
+          return true;
+        }
+      }
+
+      const frameworkHint = phpLaravelRequestMethodDefinition(
+        resolvedVariableType,
+        context.methodName,
+      );
+
+      if (frameworkHint) {
+        return openPhpMethodHintTarget(frameworkHint);
+      }
+
+      setMessage(
+        `No typed target found for $${context.variableName}->${context.methodName}().`,
+      );
+      return false;
+    },
+    [
+      activeDocument,
+      openDirectPhpMethodTarget,
+      openPhpMethodHintTarget,
+    ],
+  );
+
+  const goToPhpClassIdentifierDefinition = useCallback(
+    async (name: string): Promise<boolean> => {
+      if (!activeDocument) {
+        return false;
+      }
+
+      const className = resolvePhpClassName(activeDocument.content, name);
+
+      if (!className) {
+        return false;
+      }
+
+      return openPhpClassTarget(className, name);
+    },
+    [activeDocument, openPhpClassTarget],
+  );
+
   const goToLanguageServerLocation = useCallback(async (
     feature: Extract<LanguageServerFeature, "definition" | "implementation">,
     label: string,
@@ -1682,6 +1931,51 @@ export function useWorkbenchController(
     }
 
     try {
+      if (activeDocument.language === "php") {
+        const context = phpIdentifierContextAt(
+          activeDocument.content,
+          editorPosition,
+        );
+
+        if (!context) {
+          return false;
+        }
+
+        if (context.kind === "methodCall") {
+          return goToPhpMethodCallDefinition(context);
+        }
+
+        const openedClassTarget = await goToPhpClassIdentifierDefinition(
+          context.name,
+        );
+
+        if (openedClassTarget) {
+          return true;
+        }
+
+        const symbols = await projectSymbolSearch.searchProjectSymbols(
+          workspaceRoot,
+          context.name,
+          25,
+        );
+        const target = bestIndexedSymbolMatch(
+          symbols,
+          context.name,
+          activeDocument.path,
+        );
+
+        if (!target) {
+          setMessage(`No indexed symbol found for ${context.name}.`);
+          return false;
+        }
+
+        return openNavigationTarget(
+          target.path,
+          editorPositionFromProjectSymbol(target),
+          target.name,
+        );
+      }
+
       const symbols = await projectSymbolSearch.searchProjectSymbols(
         workspaceRoot,
         symbolName,
@@ -1698,46 +1992,21 @@ export function useWorkbenchController(
         return false;
       }
 
-      recordCurrentNavigationLocation();
-
-      if (documents[target.path]) {
-        setActivePath(target.path);
-      }
-
-      if (!documents[target.path]) {
-        const opened = await openFile(
-          {
-            kind: "file",
-            name: getFileName(target.path),
-            path: target.path,
-          },
-          { recordNavigation: false },
-        );
-
-        if (!opened) {
-          return false;
-        }
-      }
-
-      const targetPosition = editorPositionFromProjectSymbol(target);
-      setEditorRevealTarget({
-        path: target.path,
-        position: targetPosition,
-      });
-      setMessage(
-        `Opened indexed symbol ${target.name} ${target.relativePath}:${targetPosition.lineNumber}:${targetPosition.column}`,
+      return openNavigationTarget(
+        target.path,
+        editorPositionFromProjectSymbol(target),
+        target.name,
       );
-      return true;
     } catch (error) {
       reportError("Go to Definition", error);
       return false;
     }
   }, [
     activeDocument,
-    documents,
-    openFile,
+    goToPhpClassIdentifierDefinition,
+    goToPhpMethodCallDefinition,
+    openNavigationTarget,
     projectSymbolSearch,
-    recordCurrentNavigationLocation,
     reportError,
     workspaceRoot,
   ]);
@@ -3047,22 +3316,32 @@ function bestIndexedSymbolMatch(
   const exactMatchOutsideActiveFile = symbols.find(
     (symbol) =>
       symbol.path !== activePath &&
-      symbol.name.toLowerCase() === normalizedQuery,
+      isExactProjectSymbolMatch(symbol, normalizedQuery),
   );
 
   if (exactMatchOutsideActiveFile) {
     return exactMatchOutsideActiveFile;
   }
 
-  const exactMatch = symbols.find(
-    (symbol) => symbol.name.toLowerCase() === normalizedQuery,
+  const exactMatch = symbols.find((symbol) =>
+    isExactProjectSymbolMatch(symbol, normalizedQuery),
   );
 
   if (exactMatch) {
     return exactMatch;
   }
 
-  return symbols[0] ?? null;
+  return null;
+}
+
+function isExactProjectSymbolMatch(
+  symbol: ProjectSymbolSearchResult,
+  normalizedQuery: string,
+): boolean {
+  return (
+    symbol.name.toLowerCase() === normalizedQuery ||
+    symbol.fullyQualifiedName.toLowerCase() === normalizedQuery
+  );
 }
 
 function editorPositionFromProjectSymbol(
@@ -3072,6 +3351,11 @@ function editorPositionFromProjectSymbol(
     column: Math.max(1, Number(symbol.column)),
     lineNumber: Math.max(1, Number(symbol.lineNumber)),
   };
+}
+
+function shortPhpName(className: string): string {
+  const parts = className.split("\\");
+  return parts[parts.length - 1] || className;
 }
 
 function indexProgressNoticeGroup(rootPath: string): string {
