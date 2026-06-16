@@ -76,6 +76,7 @@ Completed:
 - Added per-workspace session restore for open tabs, active tab, sidebar view, and bottom-panel view.
 - Added theme polish with semantic active-state foregrounds, accessible terminal palettes, first-render system preference handling, and xterm theme updates without restarting the terminal session.
 - Added Mockor Editor product identity with app/window/web title metadata, bundle publisher/category/descriptions, custom desktop icon set, and web favicon.
+- Added packaged runtime readiness audit for LSP, terminal, watcher, index, trust/settings, security permissions, and release smoke expectations.
 
 Current verification:
 
@@ -86,7 +87,7 @@ Current verification:
 - `cargo test`: passing, 144 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Index/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, Index health responsive behavior, timestamped session-load smoke, light/dark/system theme switching, terminal lazy-load rendering after theme changes, product title/favicon metadata, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Product icon/metadata slice.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Service runtime readiness audit slice.
 
 Known issues:
 
@@ -95,5 +96,5 @@ Known issues:
 
 Next implementation slice:
 
-1. Audit packaged service runtime readiness before deeper packaging work.
-2. Fix or document macOS DMG packaging.
+1. Fix or document macOS DMG packaging.
+2. Draft signing and notarization plan.

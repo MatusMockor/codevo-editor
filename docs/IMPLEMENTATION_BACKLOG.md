@@ -126,7 +126,7 @@ Scale:
 
 | ID | Task | Size | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| P8-00 | Service runtime readiness audit | M | Pending | LSP, terminal, watcher, and index crash/health semantics are documented for packaged builds. |
+| P8-00 | Service runtime readiness audit | M | Done | LSP, terminal, watcher, and index crash/health semantics are documented for packaged builds. |
 | P8-01 | Product icon/metadata | S | Done | Product-specific icon/name/version. |
 | P8-02A | macOS `.app` debug bundle | S | Done | `.app` debug bundle passes. |
 | P8-02B | macOS DMG packaging | M | Pending | Default DMG build is reproduced, fixed, or documented with a release workaround. |

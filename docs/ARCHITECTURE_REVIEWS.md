@@ -1661,3 +1661,35 @@ Scope reviewed:
 - `Info.plist` check for `CFBundleName`, `CFBundleDisplayName`, `CFBundleExecutable`, `CFBundleIdentifier`, `CFBundleShortVersionString`, and `CFBundleIconFile`
 - Browser smoke test for `Mockor Editor` document title, `/app-icon.svg` favicon, shell render, and console errors
 - `coderabbit review --agent --fast --base main`: passing with 0 findings
+
+## 2026-06-16: Service Runtime Readiness Audit
+
+Scope reviewed:
+
+- packaged runtime assumptions for PHPactor, Intelephense, Watchman, terminal shells, SQLite index DB, trust, and settings
+- LSP, terminal, watcher, and index status/crash semantics
+- Tauri capabilities and CSP boundaries relevant to packaged services
+- release smoke checklist and Phase 8 follow-ups
+
+### SOLID Review
+
+- Single Responsibility: acceptable. The audit is documentation-only and records runtime responsibilities without changing service code.
+- Open/Closed: acceptable. Follow-up packaging decisions can extend the readiness document and backlog without changing existing runtime abstractions.
+- Liskov Substitution: not materially affected. Runtime ports and adapters remain unchanged.
+- Interface Segregation: not materially affected. No service interfaces were widened.
+- Dependency Inversion: documented. External tools remain behind detection, planner, spawner, watcher, and gateway boundaries.
+
+### Pattern Review
+
+- Adapter pattern: documented where external PHPactor, terminal PTY, native watcher, and Tauri event sinks enter the app.
+- Observer pattern: documented runtime event channels for LSP, terminal, and index health.
+- Repository pattern: documented SQLite index DB and backend trust persistence boundaries.
+
+### Residual Risk
+
+- This slice documents readiness; it does not implement missing sidecar bundling, Watchman subscriptions, settings-file migration, DMG packaging, signing, notarization, or update channels.
+
+### Verification
+
+- Documentation review against current runtime code paths
+- `coderabbit review --agent --fast --base main`: passing with 0 findings
