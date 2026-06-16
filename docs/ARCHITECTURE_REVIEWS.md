@@ -742,6 +742,38 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: Shared Ignore Matcher
+
+Scope reviewed:
+
+- `GitignoreWorkspaceIgnoreMatcher` scoped `.gitignore` loading
+- default heavy-folder ignore policy
+- workspace file-search integration
+- tests for root `.gitignore`, nested `.gitignore`, negation, outside-root paths, and default excludes
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Ignore decisions are isolated in `ignore_matcher.rs`; workspace search consumes the matcher without owning ignore parsing.
+- Open/Closed: acceptable. Future watcher/index scans can depend on `WorkspaceIgnoreMatcher` and add settings-driven options without rewriting search traversal.
+- Liskov Substitution: acceptable. The trait only exposes `is_ignored`, so alternate matchers can be substituted for tests or future workspace policies.
+- Interface Segregation: acceptable. Ignore matching is separate from SQLite storage, workspace mutation, text search, and LSP services.
+- Dependency Inversion: acceptable. Recursive workspace file search depends on the matcher abstraction instead of hard-coded `.gitignore` parsing.
+
+### Pattern Review
+
+- Strategy pattern: `WorkspaceIgnoreMatcher` gives scans and future watchers a swappable ignore policy.
+- Adapter pattern: `GitignoreWorkspaceIgnoreMatcher` adapts the Rust `ignore` crate to the editor's workspace boundary.
+- Policy object: `WorkspaceIgnoreOptions` carries editor-level default excludes without scattering lists across modules.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: SQLite Index Database Foundation
 
 Scope reviewed:

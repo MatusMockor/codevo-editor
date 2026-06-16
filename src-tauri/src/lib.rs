@@ -1,3 +1,4 @@
+mod ignore_matcher;
 mod index;
 mod lsp;
 mod lsp_diagnostics;

@@ -1,3 +1,6 @@
+use crate::ignore_matcher::{
+    is_default_ignored_name, GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher,
+};
 use serde::Serialize;
 use std::{
     fs,
@@ -97,7 +100,7 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy().to_string();
 
-            if should_hide_entry(&name) {
+            if is_default_ignored_name(&name) {
                 continue;
             }
 
@@ -177,7 +180,15 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
         let scan_limit = capped_limit.saturating_mul(10).min(5_000);
         let mut results = Vec::new();
 
-        collect_file_results(root, root, &normalized_query, scan_limit, &mut results)?;
+        let matcher = GitignoreWorkspaceIgnoreMatcher::load(root)?;
+        collect_file_results(
+            root,
+            root,
+            &normalized_query,
+            scan_limit,
+            &matcher,
+            &mut results,
+        )?;
         results.sort_by(|left, right| {
             score_result(&left.relative_path, &normalized_query)
                 .cmp(&score_result(&right.relative_path, &normalized_query))
@@ -206,22 +217,6 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
     }
 }
 
-fn should_hide_entry(name: &str) -> bool {
-    matches!(
-        name,
-        ".git"
-            | "node_modules"
-            | "vendor"
-            | "target"
-            | "dist"
-            | "build"
-            | ".next"
-            | ".turbo"
-            | ".cache"
-            | "coverage"
-    )
-}
-
 fn file_entry_kind(metadata: &fs::Metadata) -> FileEntryKind {
     if metadata.is_dir() {
         return FileEntryKind::Directory;
@@ -235,6 +230,7 @@ fn collect_file_results(
     current: &Path,
     query: &str,
     limit: usize,
+    matcher: &dyn WorkspaceIgnoreMatcher,
     results: &mut Vec<FileSearchResult>,
 ) -> io::Result<()> {
     if results.len() >= limit {
@@ -250,20 +246,19 @@ fn collect_file_results(
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy().to_string();
 
-        if should_hide_entry(&name) {
-            continue;
-        }
-
+        let path = entry.path();
         let file_type = entry.file_type()?;
 
         if file_type.is_symlink() {
             continue;
         }
 
-        let path = entry.path();
+        if matcher.is_ignored(&path, file_type.is_dir()) {
+            continue;
+        }
 
         if file_type.is_dir() {
-            collect_file_results(root, &path, query, limit, results)?;
+            collect_file_results(root, &path, query, limit, matcher, results)?;
             continue;
         }
 
@@ -409,6 +404,26 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].relative_path, "src/Domain/User.php");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn search_files_respects_gitignore_patterns() {
+        let root = create_temp_dir("workspace-search-gitignore");
+        fs::write(root.join(".gitignore"), "generated/\n*.cache\n").expect("write gitignore");
+        fs::create_dir_all(root.join("src")).expect("create src");
+        fs::create_dir_all(root.join("generated")).expect("create generated");
+        fs::write(root.join("src").join("User.php"), "<?php").expect("write php");
+        fs::write(root.join("generated").join("User.php"), "<?php").expect("write generated php");
+        fs::write(root.join("User.cache"), "cache").expect("write cache");
+
+        let repository = LocalWorkspaceFileRepository;
+        let results = repository
+            .search_files(&root, "user", 20)
+            .expect("search files");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].relative_path, "src/User.php");
         fs::remove_dir_all(root).expect("cleanup");
     }
 
