@@ -742,6 +742,44 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: Index Job Scheduler Foundation
+
+Scope reviewed:
+
+- in-memory scheduler with `watch-events`, `metadata-scan`, `parse`, `db-write`, and `maintenance` queues
+- queue policy for deterministic cross-queue dequeue order
+- FIFO ordering within each queue
+- watcher batch routing into metadata scan and DB-write follow-up jobs
+- tests for queue placement, ordering, policy override, delete/rename/rescan routing, and watch batch payloads
+
+### SOLID Review
+
+- Single Responsibility: acceptable. The scheduler owns queueing and routing intent only; it does not read files, parse PHP, or write SQLite rows.
+- Open/Closed: acceptable. New job payloads and queue policies can be added without changing watcher or index storage adapters.
+- Liskov Substitution: acceptable. `IndexJobScheduler` and `IndexWatchEventRouter` expose small contracts that can be replaced by a threaded or persistent scheduler later.
+- Interface Segregation: acceptable. Scheduling, watcher event routing, and SQLite persistence stay separate.
+- Dependency Inversion: acceptable. Future index services can depend on scheduler traits instead of concrete queue storage.
+
+### Pattern Review
+
+- Producer/Consumer queue: typed jobs are enqueued and dequeued by queue policy.
+- Strategy pattern: `IndexJobQueuePolicy` controls cross-queue priority without hard-wiring consumer order.
+- Command-like payloads: `IndexJobPayload` carries explicit job intent without introducing a broad command hierarchy.
+
+### Deferred
+
+- Generation and stale-job commit guards remain in P5-05.
+- Worker thread lifecycle and cancellation remain deferred until handlers and real index side effects exist.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: Watcher Abstraction
 
 Scope reviewed:

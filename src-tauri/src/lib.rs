@@ -1,6 +1,7 @@
 pub mod file_watcher;
 pub mod ignore_matcher;
 mod index;
+pub mod job_scheduler;
 mod lsp;
 mod lsp_diagnostics;
 mod lsp_document;
