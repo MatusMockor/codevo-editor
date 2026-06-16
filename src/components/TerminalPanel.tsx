@@ -10,12 +10,14 @@ import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPanelProps {
   isActive: boolean;
+  profileId: string | null;
   rootPath: string | null;
   terminalGateway: TerminalGateway;
 }
 
 export function TerminalPanel({
   isActive,
+  profileId,
   rootPath,
   terminalGateway,
 }: TerminalPanelProps) {
@@ -66,6 +68,7 @@ export function TerminalPanel({
       fitAddon,
       gateway: terminalGateway,
       host,
+      profileId,
       rootPath,
       scheduleFrame: (callback) => requestAnimationFrame(callback),
       terminal: {
@@ -89,7 +92,7 @@ export function TerminalPanel({
       sessionRef.current = null;
       session.dispose();
     };
-  }, [rootPath, terminalGateway]);
+  }, [profileId, rootPath, terminalGateway]);
 
   useEffect(() => {
     if (!isActive) {

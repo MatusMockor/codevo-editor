@@ -1433,3 +1433,34 @@ Scope reviewed:
 - `npm run check`
 - `npm test -- terminalSession tauriTerminalGateway`
 - Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings
+
+## 2026-06-16: Terminal Profiles
+
+Scope reviewed:
+
+- backend terminal profile DTO and local profile provider
+- `list_terminal_profiles` command
+- profile-aware `start_terminal_session`
+- frontend terminal profile gateway contract and bottom-panel selector
+- xterm session restart when profile selection changes
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Profile discovery is separate from PTY session lifecycle, and profile selection UI is contained in the bottom panel.
+- Open/Closed: acceptable. More profile sources can extend `TerminalProfileProvider` without changing `TerminalSupervisor` behavior.
+- Liskov Substitution: acceptable. Profile provider resolution is trait-based and testable.
+- Interface Segregation: acceptable. `TerminalGateway` exposes profile listing separately from start/input/resize/stop.
+- Dependency Inversion: acceptable. UI consumes `TerminalGateway` and backend start command resolves a profile before calling the PTY adapter.
+
+### Pattern Review
+
+- Strategy pattern: `TerminalProfile` selects the shell command strategy for PTY launch.
+- Adapter pattern: `LocalTerminalProfileProvider` adapts platform/environment shell data to the app profile contract.
+- Command pattern: Tauri profile list and profile-aware start commands expose the backend feature.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml terminal_session`
+- `npm run check`
+- `npm test -- terminalSession tauriTerminalGateway`
+- Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings after trimming `SHELL` profile values

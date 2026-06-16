@@ -57,6 +57,14 @@ pub struct TerminalOutputEvent {
     pub session_id: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalProfile {
+    pub command: Option<String>,
+    pub id: String,
+    pub label: String,
+}
+
 pub trait TerminalEventSink: Send + Sync {
     fn emit_output(&self, event: TerminalOutputEvent);
     fn emit_status(&self, status: TerminalRuntimeStatus);

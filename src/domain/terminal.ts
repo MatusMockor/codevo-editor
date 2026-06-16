@@ -21,11 +21,22 @@ export interface TerminalOutputEvent {
   sessionId: number;
 }
 
+export interface TerminalProfile {
+  command: string | null;
+  id: string;
+  label: string;
+}
+
 export type TerminalUnsubscribeFn = () => void;
 
 export interface TerminalGateway {
+  listProfiles(): Promise<TerminalProfile[]>;
   resize(sessionId: number, size: TerminalSize): Promise<void>;
-  start(rootPath: string, size: TerminalSize): Promise<TerminalRuntimeStatus>;
+  start(
+    rootPath: string,
+    size: TerminalSize,
+    profileId?: string,
+  ): Promise<TerminalRuntimeStatus>;
   stop(sessionId: number): Promise<TerminalRuntimeStatus>;
   subscribeOutput(
     listener: (event: TerminalOutputEvent) => void,

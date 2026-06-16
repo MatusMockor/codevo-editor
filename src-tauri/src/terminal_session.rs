@@ -1,5 +1,5 @@
 use crate::terminal::{
-    TerminalEventSink, TerminalOutputEvent, TerminalRuntimeStatus, TerminalSize,
+    TerminalEventSink, TerminalOutputEvent, TerminalProfile, TerminalRuntimeStatus, TerminalSize,
 };
 use portable_pty::{
     native_pty_system, Child as PtyChild, ChildKiller as PtyChildKiller, CommandBuilder, MasterPty,
@@ -7,6 +7,7 @@ use portable_pty::{
 };
 use std::{
     collections::HashMap,
+    env,
     io::{self, Read, Write},
     path::PathBuf,
     sync::{
@@ -19,6 +20,7 @@ use std::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TerminalLaunchRequest {
     pub cwd: PathBuf,
+    pub profile: TerminalProfile,
     pub size: TerminalSize,
 }
 
@@ -53,6 +55,34 @@ pub struct TerminalExitStatus {
 
 pub struct PortablePtySpawner;
 
+pub trait TerminalProfileProvider {
+    fn profiles(&self) -> Vec<TerminalProfile>;
+
+    fn resolve_profile(&self, profile_id: Option<&str>) -> Result<TerminalProfile, String> {
+        let target_id = profile_id.unwrap_or(DEFAULT_TERMINAL_PROFILE_ID);
+
+        for profile in self.profiles() {
+            if profile.id == target_id {
+                return Ok(profile);
+            }
+        }
+
+        Err(format!("Unknown terminal profile: {target_id}"))
+    }
+}
+
+pub struct LocalTerminalProfileProvider;
+
+impl TerminalProfileProvider for LocalTerminalProfileProvider {
+    fn profiles(&self) -> Vec<TerminalProfile> {
+        let mut profiles = vec![default_profile()];
+        profiles.extend(platform_profiles());
+        profiles
+    }
+}
+
+const DEFAULT_TERMINAL_PROFILE_ID: &str = "default";
+
 impl TerminalPtySpawner for PortablePtySpawner {
     fn spawn(&self, request: &TerminalLaunchRequest) -> Result<SpawnedTerminal, String> {
         let size = request.size.normalized();
@@ -60,7 +90,7 @@ impl TerminalPtySpawner for PortablePtySpawner {
         let pair = pty_system
             .openpty(pty_size(size))
             .map_err(|error| format!("Failed to open terminal PTY: {error}"))?;
-        let mut command = CommandBuilder::new_default_prog();
+        let mut command = command_builder(&request.profile);
         command.cwd(request.cwd.as_os_str());
         command.env("TERM", "xterm-256color");
 
@@ -155,12 +185,14 @@ impl TerminalSupervisor {
         &self,
         cwd: PathBuf,
         size: TerminalSize,
+        profile: TerminalProfile,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         let request = TerminalLaunchRequest {
             cwd: cwd.clone(),
+            profile,
             size: size.normalized(),
         };
         sink.emit_status(TerminalRuntimeStatus::Starting { session_id });
@@ -388,14 +420,71 @@ fn pty_size(size: TerminalSize) -> PtySize {
     }
 }
 
+fn command_builder(profile: &TerminalProfile) -> CommandBuilder {
+    match profile.command.as_deref() {
+        Some(command) => CommandBuilder::new(command),
+        None => CommandBuilder::new_default_prog(),
+    }
+}
+
+fn default_profile() -> TerminalProfile {
+    TerminalProfile {
+        command: None,
+        id: DEFAULT_TERMINAL_PROFILE_ID.to_string(),
+        label: "Default Shell".to_string(),
+    }
+}
+
+#[cfg(not(windows))]
+fn platform_profiles() -> Vec<TerminalProfile> {
+    match env::var("SHELL") {
+        Ok(shell) if !shell.trim().is_empty() => {
+            let shell = shell.trim().to_string();
+
+            vec![TerminalProfile {
+                command: Some(shell.clone()),
+                id: format!("shell:{shell}"),
+                label: shell_label(&shell),
+            }]
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(windows)]
+fn platform_profiles() -> Vec<TerminalProfile> {
+    vec![
+        TerminalProfile {
+            command: Some("powershell.exe".to_string()),
+            id: "powershell".to_string(),
+            label: "PowerShell".to_string(),
+        },
+        TerminalProfile {
+            command: Some("cmd.exe".to_string()),
+            id: "cmd".to_string(),
+            label: "Command Prompt".to_string(),
+        },
+    ]
+}
+
+fn shell_label(shell: &str) -> String {
+    PathBuf::from(shell)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| shell.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        SpawnedTerminal, TerminalChild, TerminalExitStatus, TerminalKiller, TerminalLaunchRequest,
-        TerminalPtySpawner, TerminalResizer, TerminalSupervisor,
+        LocalTerminalProfileProvider, SpawnedTerminal, TerminalChild, TerminalExitStatus,
+        TerminalKiller, TerminalLaunchRequest, TerminalProfileProvider, TerminalPtySpawner,
+        TerminalResizer, TerminalSupervisor,
     };
     use crate::terminal::{
-        TerminalEventSink, TerminalOutputEvent, TerminalRuntimeStatus, TerminalSize,
+        TerminalEventSink, TerminalOutputEvent, TerminalProfile, TerminalRuntimeStatus,
+        TerminalSize,
     };
     use std::{
         io::{self, Cursor, Read, Write},
@@ -418,6 +507,7 @@ mod tests {
                     cols: 100,
                     rows: 30,
                 },
+                default_test_profile(),
                 &spawner,
                 sink.clone(),
             )
@@ -453,6 +543,7 @@ mod tests {
             .start(
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
+                default_test_profile(),
                 &spawner,
                 sink,
             )
@@ -480,6 +571,7 @@ mod tests {
             .start(
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
+                default_test_profile(),
                 &spawner,
                 sink,
             )
@@ -519,6 +611,7 @@ mod tests {
             .start(
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
+                default_test_profile(),
                 &spawner,
                 sink.clone(),
             )
@@ -549,6 +642,7 @@ mod tests {
             .start(
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
+                default_test_profile(),
                 &spawner,
                 sink.clone(),
             )
@@ -559,6 +653,18 @@ mod tests {
                 session_id: 1,
             })
         });
+    }
+
+    #[test]
+    fn local_profiles_include_default_and_resolve_it() {
+        let provider = LocalTerminalProfileProvider;
+        let profile = provider.resolve_profile(None).expect("default profile");
+
+        assert_eq!(profile.id, "default");
+        assert!(provider
+            .profiles()
+            .iter()
+            .any(|profile| profile.id == "default"));
     }
 
     #[derive(Default)]
@@ -808,5 +914,13 @@ mod tests {
         }
 
         panic!("condition was not met");
+    }
+
+    fn default_test_profile() -> TerminalProfile {
+        TerminalProfile {
+            command: None,
+            id: "default".to_string(),
+            label: "Default Shell".to_string(),
+        }
     }
 }

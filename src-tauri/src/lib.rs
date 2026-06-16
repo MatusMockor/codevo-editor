@@ -65,8 +65,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
-use terminal::{AppHandleTerminalEventSink, TerminalRuntimeStatus, TerminalSize};
-use terminal_session::{PortablePtySpawner, TerminalSupervisor};
+use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize};
+use terminal_session::{
+    LocalTerminalProfileProvider, PortablePtySpawner, TerminalProfileProvider, TerminalSupervisor,
+};
 use tools::{LocalPhpToolDetector, PhpToolAvailability, PhpToolDetector};
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
@@ -497,6 +499,7 @@ fn stop_php_language_server(
 #[tauri::command]
 fn start_terminal_session(
     root_path: String,
+    profile_id: Option<String>,
     size: TerminalSize,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
@@ -515,7 +518,15 @@ fn start_terminal_session(
     }
 
     let sink = Arc::new(AppHandleTerminalEventSink::new(app));
-    supervisor.start(root, size, &PortablePtySpawner, sink)
+    let profile_provider = LocalTerminalProfileProvider;
+    let profile = profile_provider.resolve_profile(profile_id.as_deref())?;
+    supervisor.start(root, size, profile, &PortablePtySpawner, sink)
+}
+
+#[tauri::command]
+fn list_terminal_profiles() -> Result<Vec<TerminalProfile>, String> {
+    let profile_provider = LocalTerminalProfileProvider;
+    Ok(profile_provider.profiles())
 }
 
 #[tauri::command]
@@ -763,6 +774,7 @@ pub fn run() {
             get_smart_mode_state,
             get_workspace_trust,
             initialize_workspace_index,
+            list_terminal_profiles,
             plan_php_language_server,
             read_directory,
             read_text_file,

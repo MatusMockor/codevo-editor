@@ -41,6 +41,7 @@ interface TerminalSessionOptions {
   fitAddon: TerminalFitAddon;
   gateway: TerminalGateway;
   host: HTMLElement;
+  profileId: string | null;
   rootPath: string | null;
   scheduleFrame(callback: FrameRequestCallback): number;
   terminal: XtermTerminal;
@@ -52,6 +53,7 @@ export function createTerminalSession({
   fitAddon,
   gateway,
   host,
+  profileId,
   rootPath,
   scheduleFrame,
   terminal,
@@ -162,7 +164,7 @@ export function createTerminalSession({
 
         scheduleFit(() => {
           void gateway
-            .start(rootPath, currentSize())
+            .start(rootPath, currentSize(), profileId || undefined)
             .then((status) => {
               const startedSessionId = terminalSessionId(status);
 

@@ -5,7 +5,7 @@ import {
   bottomPanelLabel,
   type BottomPanelView,
 } from "../domain/bottomPanel";
-import type { TerminalGateway } from "../domain/terminal";
+import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
 import { ProblemsPanel } from "./ProblemsPanel";
 
 interface BottomPanelProps {
@@ -35,6 +35,12 @@ export function BottomPanel({
   const [terminalMounted, setTerminalMounted] = useState(
     activeView === "terminal",
   );
+  const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>(
+    [],
+  );
+  const [selectedTerminalProfileId, setSelectedTerminalProfileId] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if (activeView !== "terminal") {
@@ -43,6 +49,43 @@ export function BottomPanel({
 
     setTerminalMounted(true);
   }, [activeView]);
+
+  useEffect(() => {
+    if (!terminalMounted) {
+      return;
+    }
+
+    let cancelled = false;
+
+    terminalGateway
+      .listProfiles()
+      .then((profiles) => {
+        if (cancelled) {
+          return;
+        }
+
+        setTerminalProfiles(profiles);
+        setSelectedTerminalProfileId((current) => {
+          if (profiles.some((profile) => profile.id === current)) {
+            return current;
+          }
+
+          return profiles[0]?.id ?? null;
+        });
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setTerminalProfiles([]);
+        setSelectedTerminalProfileId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [terminalGateway, terminalMounted]);
 
   return (
     <section aria-label="Panel" className="bottom-panel">
@@ -79,6 +122,20 @@ export function BottomPanel({
             <X aria-hidden="true" size={14} />
           </button>
         ) : null}
+        {activeView === "terminal" && terminalProfiles.length > 0 ? (
+          <select
+            aria-label="Terminal profile"
+            className="terminal-profile-select"
+            onChange={(event) => setSelectedTerminalProfileId(event.target.value)}
+            value={selectedTerminalProfileId ?? ""}
+          >
+            {terminalProfiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.label}
+              </option>
+            ))}
+          </select>
+        ) : null}
       </header>
       <div className="bottom-panel-body">
         <ProblemsPanel isActive={activeView === "problems"} notices={notices} />
@@ -95,6 +152,7 @@ export function BottomPanel({
           >
             <LazyTerminalPanel
               isActive={activeView === "terminal"}
+              profileId={selectedTerminalProfileId}
               rootPath={terminalRootPath}
               terminalGateway={terminalGateway}
             />

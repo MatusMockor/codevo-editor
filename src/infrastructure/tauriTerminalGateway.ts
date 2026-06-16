@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   TerminalGateway,
   TerminalOutputEvent,
+  TerminalProfile,
   TerminalRuntimeStatus,
   TerminalSize,
   TerminalUnsubscribeFn,
@@ -34,12 +35,27 @@ export class TauriTerminalGateway implements TerminalGateway {
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
   ) {}
 
-  start(rootPath: string, size: TerminalSize): Promise<TerminalRuntimeStatus> {
+  listProfiles(): Promise<TerminalProfile[]> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve([]);
+    }
+
+    return this.invokeCommand("list_terminal_profiles") as Promise<
+      TerminalProfile[]
+    >;
+  }
+
+  start(
+    rootPath: string,
+    size: TerminalSize,
+    profileId?: string,
+  ): Promise<TerminalRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
       return Promise.reject(new Error(DESKTOP_RUNTIME_REQUIRED));
     }
 
     return this.invokeCommand("start_terminal_session", {
+      profileId,
       rootPath,
       size,
     }) as Promise<TerminalRuntimeStatus>;

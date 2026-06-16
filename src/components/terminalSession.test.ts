@@ -17,7 +17,7 @@ describe("createTerminalSession", () => {
     expect(harness.gateway.start).toHaveBeenCalledWith("/workspace", {
       cols: 80,
       rows: 24,
-    });
+    }, "default");
     expect(harness.terminal.write).toHaveBeenCalledWith("ready\r\n");
   });
 
@@ -107,6 +107,7 @@ function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
     write: vi.fn(),
   };
   const gateway: TerminalGateway = {
+    listProfiles: vi.fn(async () => []),
     resize: vi.fn(async () => undefined),
     start: vi.fn(async () => ({
       cols: 80,
@@ -154,6 +155,7 @@ function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
       fitAddon,
       gateway,
       host,
+      profileId: "default",
       rootPath: "rootPath" in overrides
         ? overrides.rootPath ?? null
         : "/workspace",

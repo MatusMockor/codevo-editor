@@ -288,6 +288,22 @@ button {
   color: #f3f6f8;
 }
 
+.terminal-profile-select {
+  max-width: 180px;
+  height: 24px;
+  border: 1px solid #384150;
+  border-radius: 5px;
+  background: #20262e;
+  color: #d8dee9;
+  font-size: 12px;
+  outline: 0;
+  padding: 0 8px;
+}
+
+.terminal-profile-select:focus {
+  border-color: #4e9f8f;
+}
+
 .bottom-panel-body {
   min-height: 0;
   overflow: hidden;
