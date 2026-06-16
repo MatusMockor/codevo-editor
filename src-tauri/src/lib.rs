@@ -11,6 +11,7 @@ mod lsp_features;
 mod lsp_session;
 mod lsp_transport;
 pub mod php_parser;
+pub mod php_symbols;
 mod project;
 mod search;
 mod smart_mode;

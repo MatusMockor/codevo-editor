@@ -102,7 +102,7 @@ Scale:
 | ID | Task | Size | Status | Acceptance |
 | --- | --- | --- | --- | --- |
 | P6-01 | tree-sitter PHP parser | L | Done | Handles valid and incomplete fixtures. |
-| P6-02 | Symbol extraction | XL | Pending | Classes, interfaces, traits, enums, methods, functions, constants. |
+| P6-02 | Symbol extraction | XL | Done | Classes, interfaces, traits, enums, methods, functions, constants. |
 | P6-03 | Composer detector | L | Pending | PSR-4 roots/classmaps/packages parsed as data. |
 | P6-04 | Symbol DB writes | M | Pending | Per-file symbols replace transactionally. |
 | P6-05 | Project symbol search | M | Pending | Search classes/functions/methods from SQLite. |

@@ -1057,6 +1057,43 @@ Scope reviewed:
 - Browser smoke test
 - `coderabbit review --agent --fast --base main` passed with 0 findings
 
+## 2026-06-15: PHP Symbol Extraction
+
+Scope reviewed:
+
+- `PhpSymbolExtractor` abstraction
+- tree-sitter-backed symbol traversal
+- namespace context handling
+- class/interface/trait/enum declarations
+- methods, functions, and constants with fully qualified names
+- symbol source ranges and container names
+- valid and incomplete PHP fixture coverage
+
+### SOLID Review
+
+- Single Responsibility: acceptable. `php_symbols.rs` extracts structural symbols only; parsing, SQLite writes, scheduler jobs, and UI rendering stay in separate modules.
+- Open/Closed: acceptable. New symbol kinds or richer metadata can extend `PhpSymbolKind`/`PhpSymbol` without changing parser setup or index storage contracts.
+- Liskov Substitution: acceptable. `PhpSymbolExtractor` can be replaced by a query-based extractor or test extractor while preserving the output contract.
+- Interface Segregation: acceptable. Symbol extraction consumes `PhpSyntaxTree` and source text only, not workspace, Composer, or database services.
+- Dependency Inversion: acceptable. Future parse jobs can depend on `PhpSymbolExtractor` rather than concrete tree-sitter traversal.
+
+### Pattern Review
+
+- Visitor pattern: recursive traversal visits syntax nodes and emits symbols according to node kind.
+- Strategy pattern: `PhpSymbolExtractor` provides a swappable extraction boundary.
+- Value object pattern: `PhpSymbol`, `PhpSymbolKind`, and `PhpSymbolRange` carry extracted data without persistence concerns.
+- Tolerant extraction: incomplete files can still produce available class/method symbols while parser error health remains separate.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+- `coderabbit review --agent --fast --base main` passed with 0 findings
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:
