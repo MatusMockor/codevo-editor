@@ -1,6 +1,7 @@
 pub mod file_watcher;
 pub mod ignore_matcher;
 pub mod index;
+pub mod index_scan;
 pub mod job_scheduler;
 mod lsp;
 mod lsp_diagnostics;
@@ -18,6 +19,11 @@ mod workspace;
 use index::{
     workspace_index_path, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore,
     WorkspaceIndexSummary,
+};
+use index_scan::{
+    InitialMetadataScanStart, LocalWorkspaceMetadataScanStarter, MetadataScanCompletionEvent,
+    MetadataScanEventSink, WorkspaceMetadataScanRequest, WorkspaceMetadataScanStarter,
+    METADATA_SCAN_COMPLETED_EVENT,
 };
 use lsp::{
     JsonRpcRequest, LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus,
@@ -44,7 +50,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tools::{LocalPhpToolDetector, PhpToolAvailability, PhpToolDetector};
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
@@ -147,6 +153,47 @@ fn remove_workspace_index_file(
         .remove_file(&path)
         .map_err(|error| error.to_string())?;
     index.summary().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn start_initial_metadata_scan(
+    root_path: String,
+    app: AppHandle,
+) -> Result<InitialMetadataScanStart, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+    let database_path = workspace_index_path(&config_dir, &root);
+    let starter = LocalWorkspaceMetadataScanStarter;
+    let event_sink = Arc::new(AppHandleMetadataScanEventSink::new(app));
+
+    starter
+        .start(
+            WorkspaceMetadataScanRequest {
+                database_path,
+                root_path: root,
+            },
+            event_sink,
+        )
+        .map_err(|error| error.to_string())
+}
+
+struct AppHandleMetadataScanEventSink {
+    app: AppHandle,
+}
+
+impl AppHandleMetadataScanEventSink {
+    fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl MetadataScanEventSink for AppHandleMetadataScanEventSink {
+    fn emit_completion(&self, event: MetadataScanCompletionEvent) {
+        let _ = self.app.emit(METADATA_SCAN_COMPLETED_EVENT, event);
+    }
 }
 
 fn open_workspace_index(app: &AppHandle, root_path: &Path) -> Result<SqliteWorkspaceIndex, String> {
@@ -601,6 +648,7 @@ pub fn run() {
             search_text,
             set_smart_mode,
             set_workspace_trust,
+            start_initial_metadata_scan,
             start_php_language_server,
             stop_php_language_server,
             text_document_completion,

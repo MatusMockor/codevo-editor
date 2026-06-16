@@ -912,6 +912,45 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: Initial Metadata Scan
+
+Scope reviewed:
+
+- `LocalWorkspaceMetadataScanner` recursive metadata traversal
+- extension-based metadata language detection
+- `.gitignore` and default heavy-folder filtering through the shared ignore matcher
+- symlink and outside-root safety behavior
+- SQLite file-record writes through `WorkspaceIndexStore`
+- non-blocking Tauri `start_initial_metadata_scan` command
+- completion/failure notifications through `MetadataScanEventSink`
+- integration-style Rust tests using temp workspaces and real SQLite databases
+
+### SOLID Review
+
+- Single Responsibility: acceptable. `index_scan.rs` owns metadata traversal and scan start orchestration only; SQLite schema stays in `index.rs`, ignore parsing stays in `ignore_matcher.rs`, and Tauri remains a thin adapter.
+- Open/Closed: acceptable. New language metadata strategies can replace `MetadataLanguageDetector`; future progress or cancellation details can extend the event sink/start boundary without changing the scanner's persistence contract.
+- Liskov Substitution: acceptable. `WorkspaceMetadataScanner`, `MetadataLanguageDetector`, `WorkspaceMetadataScanStarter`, and `WorkspaceIndexStore` are narrow enough for alternate implementations to substitute in future tests or services.
+- Interface Segregation: acceptable. The scanner depends on focused ignore, language, and store contracts instead of a broad index service.
+- Dependency Inversion: acceptable. Scan behavior writes through `WorkspaceIndexStore`; UI-facing code depends on `WorkspaceMetadataScanStarter` rather than concrete thread/process details.
+
+### Pattern Review
+
+- Repository pattern: metadata rows are persisted through `WorkspaceIndexStore` and `SqliteWorkspaceIndex`.
+- Strategy pattern: `MetadataLanguageDetector` isolates extension-to-language decisions from traversal.
+- Adapter pattern: `start_initial_metadata_scan` adapts Tauri paths/app config into a scan request; `LocalWorkspaceMetadataScanStarter` adapts scan work to a detached background thread.
+- Observer pattern: `MetadataScanEventSink` reports completed and failed background scans without coupling traversal to Tauri.
+- Pipeline direction: traversal already separates ignore filtering, metadata extraction, and store writes, leaving room for parser and symbol stages in Phase 6.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+- `coderabbit review --agent --fast --base main` passed with 0 findings after addressing one valid fire-and-forget scan finding
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

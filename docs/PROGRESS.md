@@ -57,6 +57,7 @@ Completed:
 - Added workspace watcher abstraction with normalized native/Watchman event shape and Watchman-to-native fallback strategy.
 - Added in-memory index job scheduler foundation with watch, metadata, parse, DB-write, and maintenance queues.
 - Added index generation guards and guarded SQLite DB-write commits so stale jobs cannot mutate the index.
+- Added initial metadata scan service with `.gitignore` filtering, symlink skipping, SQLite file-record writes, completion/failure events, and a non-blocking Tauri start command.
 
 Current verification:
 
@@ -64,10 +65,10 @@ Current verification:
 - `npm test`: passing, 53 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 94 Rust tests
+- `cargo test`: passing, 100 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after index generation and commit guards.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after addressing one valid fire-and-forget scan finding.
 
 Known issues:
 
@@ -76,4 +77,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add initial metadata scan that records eligible files without blocking UI.
+1. Add incremental index updates for modify/delete/rename events.
