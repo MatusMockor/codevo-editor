@@ -1,5 +1,12 @@
-import { FolderOpen, RefreshCw, Save, Search, Zap } from "lucide-react";
-import { useMemo } from "react";
+import {
+  FolderOpen,
+  RefreshCw,
+  Save,
+  Search,
+  Settings as SettingsIcon,
+  Zap,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import { BottomPanel } from "./components/BottomPanel";
 import { CommandPalette } from "./components/CommandPalette";
@@ -9,6 +16,7 @@ import { FileTree } from "./components/FileTree";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { PhpTreePanel } from "./components/PhpTreePanel";
 import { QuickOpen } from "./components/QuickOpen";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
 import {
@@ -16,6 +24,7 @@ import {
   languageServerStatusLabel,
 } from "./domain/languageServerRuntime";
 import { indexProgressLabel } from "./domain/indexProgress";
+import { monacoThemeForAppTheme } from "./domain/settings";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
@@ -58,6 +67,7 @@ const settingsGateway = new BrowserSettingsGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
+  const prefersLightTheme = usePrefersLightTheme();
   const workbench = useWorkbenchController(
     workspaceGateways,
     smartModeGateway,
@@ -137,9 +147,17 @@ function App() {
     () => indexProgressLabel(workbench.indexProgress),
     [workbench.indexProgress],
   );
+  const monacoTheme = useMemo(
+    () =>
+      monacoThemeForAppTheme(
+        workbench.appSettings.theme,
+        prefersLightTheme,
+      ),
+    [prefersLightTheme, workbench.appSettings.theme],
+  );
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-theme={workbench.appSettings.theme}>
       <aside className="activity-bar" aria-label="Primary navigation">
         <button
           onClick={workbench.openWorkspace}
@@ -170,6 +188,14 @@ function App() {
           type="button"
         >
           <Zap aria-hidden="true" size={20} />
+        </button>
+        <button
+          className="activity-bar-secondary"
+          onClick={workbench.openSettingsPanel}
+          title="Settings"
+          type="button"
+        >
+          <SettingsIcon aria-hidden="true" size={20} />
         </button>
       </aside>
 
@@ -266,6 +292,7 @@ function App() {
           }
           languageServerFeaturesGateway={languageServerFeaturesGateway}
           languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+          monacoTheme={monacoTheme}
           onCursorPositionChange={workbench.updateActiveEditorPosition}
           onChange={workbench.updateActiveDocument}
           onLanguageServerError={workbench.reportLanguageServerError}
@@ -332,8 +359,45 @@ function App() {
         onClose={() => workbench.setLanguageServerSetupOpen(false)}
         plan={workbench.languageServerPlan}
       />
+
+      <SettingsDialog
+        appSettings={workbench.appSettings}
+        isOpen={workbench.settingsOpen}
+        onClose={() => workbench.setSettingsOpen(false)}
+        onSave={({ appSettings, trusted, workspaceSettings }) =>
+          workbench.saveWorkbenchSettings(
+            appSettings,
+            workspaceSettings,
+            trusted,
+          )
+        }
+        phpTools={workbench.phpTools}
+        workspaceRoot={workbench.workspaceRoot}
+        workspaceSettings={workbench.workspaceSettings}
+        workspaceTrust={workbench.workspaceTrust}
+      />
     </main>
   );
+}
+
+function usePrefersLightTheme(): boolean {
+  const [prefersLight, setPrefersLight] = useState(false);
+
+  useEffect(() => {
+    if (!window.matchMedia) {
+      return;
+    }
+
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const updatePreference = () => setPrefersLight(media.matches);
+
+    updatePreference();
+    media.addEventListener("change", updatePreference);
+
+    return () => media.removeEventListener("change", updatePreference);
+  }, []);
+
+  return prefersLight;
 }
 
 export default App;

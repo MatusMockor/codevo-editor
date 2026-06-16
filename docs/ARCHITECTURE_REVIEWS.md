@@ -1464,3 +1464,40 @@ Scope reviewed:
 - `npm run check`
 - `npm test -- terminalSession tauriTerminalGateway`
 - Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings after trimming `SHELL` profile values
+
+## 2026-06-16: Settings UI
+
+Scope reviewed:
+
+- expanded app/workspace settings contracts and browser storage normalization
+- Settings dialog for mode, trust, PHP backend preference, tool paths, extra ignores, and appearance
+- workbench settings open/save orchestration and command-palette/shortcut entry points
+- theme tokenization for the app shell plus Monaco theme selection
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Settings normalization stays in the domain, storage remains in `BrowserSettingsGateway`, `SettingsDialog` owns draft form presentation, and `useWorkbenchController` owns the save use-case.
+- Open/Closed: acceptable. New persisted settings extend `AppSettings`/`WorkspaceSettings` without changing the storage adapter API or unrelated workbench commands.
+- Liskov Substitution: acceptable. `SettingsGateway` implementations can load and save the broader settings contracts with the same methods.
+- Interface Segregation: acceptable. Settings persistence remains separate from trust, smart mode, PHP tool detection, terminal, and index gateways.
+- Dependency Inversion: acceptable. UI components depend on settings values and callbacks, while the controller depends on gateway abstractions.
+
+### Pattern Review
+
+- Adapter pattern: `BrowserSettingsGateway` adapts localStorage to the settings port.
+- Repository pattern: app/workspace settings are loaded and saved as normalized records behind key-based storage.
+- Command pattern: Settings can be opened through the activity bar, command palette, and keyboard shortcut.
+- Strategy-ready preference model: PHP backend, theme, and ignore settings are modeled as swappable preferences for later backend/runtime integration.
+
+### Residual Risk
+
+- PHP backend preference, custom tool paths, and extra ignore patterns are persisted and surfaced in UI, but deeper backend consumers still need follow-up integration where runtime behavior depends on them.
+
+### Verification
+
+- `npm run check`
+- `npm test -- settings browserSettingsGateway`
+- `npm test`: 78 frontend tests
+- `npm run build`
+- Browser smoke test for Settings gear, command-palette entry, `Cmd+,`, theme save, responsive layout, and console errors
+- Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings

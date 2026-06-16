@@ -7,9 +7,14 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       recentWorkspacePath: null,
+      theme: "dark",
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
+      extraIgnorePatterns: [],
       intelligenceMode: "basic",
+      intelephensePath: null,
+      phpBackend: "auto",
+      phpactorPath: null,
     });
   });
 
@@ -17,16 +22,28 @@ describe("BrowserSettingsGateway", () => {
     const storage = memoryStorage();
     const gateway = new BrowserSettingsGateway(storage);
 
-    await gateway.saveAppSettings({ recentWorkspacePath: "/project" });
+    await gateway.saveAppSettings({
+      recentWorkspacePath: "/project",
+      theme: "light",
+    });
     await gateway.saveWorkspaceSettings("/project", {
+      extraIgnorePatterns: ["var/cache"],
       intelligenceMode: "lightSmart",
+      intelephensePath: "/tools/intelephense",
+      phpBackend: "phpactor",
+      phpactorPath: "/tools/phpactor",
     });
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       recentWorkspacePath: "/project",
+      theme: "light",
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
+      extraIgnorePatterns: ["var/cache"],
       intelligenceMode: "lightSmart",
+      intelephensePath: "/tools/intelephense",
+      phpBackend: "phpactor",
+      phpactorPath: "/tools/phpactor",
     });
   });
 
@@ -38,9 +55,14 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       recentWorkspacePath: null,
+      theme: "dark",
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
+      extraIgnorePatterns: [],
       intelligenceMode: "basic",
+      intelephensePath: null,
+      phpBackend: "auto",
+      phpactorPath: null,
     });
   });
 });

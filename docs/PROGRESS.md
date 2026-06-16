@@ -71,17 +71,18 @@ Completed:
 - Added a lazy-loaded xterm.js terminal view in the bottom panel with Problems/Terminal switching.
 - Added a trusted-workspace Rust PTY service with terminal session start/input/resize/stop commands and output events.
 - Added terminal profile listing and selection for default/platform shells.
+- Added Settings UI with persisted mode, trust, PHP backend preference, tool paths, extra ignore patterns, and theme selection.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 74 frontend tests
+- `npm test`: passing, 78 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
 - `cargo test`: passing, 143 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
-- Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after the terminal profiles slice.
+- Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, and non-Tauri development fallback
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Settings UI slice.
 
 Known issues:
 
@@ -90,4 +91,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add settings UI.
+1. Add index health panel.

@@ -18,6 +18,7 @@ interface EditorSurfaceProps {
   flushPendingLanguageServerDocument(path: string): Promise<void>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
+  monacoTheme: "vs" | "vs-dark";
   onCursorPositionChange(position: EditorPosition): void;
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
@@ -30,6 +31,7 @@ export function EditorSurface({
   flushPendingLanguageServerDocument,
   languageServerFeaturesGateway,
   languageServerRuntimeStatus,
+  monacoTheme,
   onCursorPositionChange,
   onChange,
   onLanguageServerError,
@@ -167,7 +169,7 @@ export function EditorSurface({
           tabSize: 2,
         }}
         path={activeDocument.path}
-        theme="vs-dark"
+        theme={monacoTheme}
         value={activeDocument.content}
       />
     </div>

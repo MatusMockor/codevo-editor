@@ -77,7 +77,13 @@ import {
   type PhpTreeGateway,
   type PhpTreeNode,
 } from "../domain/phpTree";
-import { defaultWorkspaceSettings, type SettingsGateway } from "../domain/settings";
+import {
+  defaultAppSettings,
+  defaultWorkspaceSettings,
+  type AppSettings,
+  type SettingsGateway,
+  type WorkspaceSettings,
+} from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
   detectLanguage,
@@ -197,9 +203,18 @@ export function useWorkbenchController(
   );
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
+  const [appSettings, setAppSettings] =
+    useState<AppSettings>(defaultAppSettings);
+  const [workspaceSettings, setWorkspaceSettings] =
+    useState<WorkspaceSettings>(defaultWorkspaceSettings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [intelligenceMode, setIntelligenceMode] =
     useState<IntelligenceMode>("basic");
   const hasRestoredRef = useRef(false);
+  const appSettingsRef = useRef<AppSettings>(defaultAppSettings());
+  const workspaceSettingsRef = useRef<WorkspaceSettings>(
+    defaultWorkspaceSettings(),
+  );
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
@@ -245,6 +260,46 @@ export function useWorkbenchController(
       ...current,
     ]);
   }, []);
+
+  const applyAppSettings = useCallback((settings: AppSettings) => {
+    appSettingsRef.current = settings;
+    setAppSettings(settings);
+  }, []);
+
+  const applyWorkspaceSettings = useCallback((settings: WorkspaceSettings) => {
+    workspaceSettingsRef.current = settings;
+    setWorkspaceSettings(settings);
+  }, []);
+
+  const persistAppSettings = useCallback(
+    async (nextSettings: AppSettings) => {
+      const previousSettings = appSettingsRef.current;
+      applyAppSettings(nextSettings);
+
+      try {
+        await settingsGateway.saveAppSettings(nextSettings);
+      } catch (error) {
+        applyAppSettings(previousSettings);
+        throw error;
+      }
+    },
+    [applyAppSettings, settingsGateway],
+  );
+
+  const persistWorkspaceSettings = useCallback(
+    async (rootPath: string, nextSettings: WorkspaceSettings) => {
+      const previousSettings = workspaceSettingsRef.current;
+      applyWorkspaceSettings(nextSettings);
+
+      try {
+        await settingsGateway.saveWorkspaceSettings(rootPath, nextSettings);
+      } catch (error) {
+        applyWorkspaceSettings(previousSettings);
+        throw error;
+      }
+    },
+    [applyWorkspaceSettings, settingsGateway],
+  );
 
   const currentNavigationLocation =
     useCallback((): NavigationLocation | null => {
@@ -655,6 +710,7 @@ export function useWorkbenchController(
       setOpenPaths([]);
       setActivePath(null);
       setNavigationHistory(createNavigationHistory());
+      applyWorkspaceSettings(workspaceSettings);
       setIntelligenceMode(workspaceSettings.intelligenceMode);
       setWorkspaceDescriptor(null);
       setPhpTools(null);
@@ -673,7 +729,10 @@ export function useWorkbenchController(
       pendingIndexScanRef.current = false;
 
       try {
-        await settingsGateway.saveAppSettings({ recentWorkspacePath: path });
+        await persistAppSettings({
+          ...appSettingsRef.current,
+          recentWorkspacePath: path,
+        });
       } catch (error) {
         reportError("Settings", error);
       }
@@ -708,7 +767,9 @@ export function useWorkbenchController(
       }
     },
     [
+      applyWorkspaceSettings,
       loadDirectory,
+      persistAppSettings,
       phpToolGateway,
       refreshLanguageServerPlan,
       reportError,
@@ -1398,7 +1459,8 @@ export function useWorkbenchController(
       const state = await smartModeGateway.setMode(nextMode);
       setIntelligenceMode(state.mode);
       setMessage(state.message);
-      await settingsGateway.saveWorkspaceSettings(workspaceRoot, {
+      await persistWorkspaceSettings(workspaceRoot, {
+        ...workspaceSettingsRef.current,
         intelligenceMode: state.mode,
       });
     } catch (error) {
@@ -1406,8 +1468,8 @@ export function useWorkbenchController(
     }
   }, [
     intelligenceMode,
+    persistWorkspaceSettings,
     reportError,
-    settingsGateway,
     smartModeGateway,
     workspaceRoot,
   ]);
@@ -1447,6 +1509,68 @@ export function useWorkbenchController(
     workspaceTrust,
     workspaceTrustGateway,
   ]);
+
+  const saveWorkbenchSettings = useCallback(
+    async (
+      nextAppSettings: AppSettings,
+      nextWorkspaceSettings: WorkspaceSettings,
+      nextTrusted: boolean | null,
+    ) => {
+      try {
+        await persistAppSettings(nextAppSettings);
+
+        if (!workspaceRoot) {
+          setSettingsOpen(false);
+          setMessage("Settings saved.");
+          return;
+        }
+
+        const smartMode = await smartModeGateway.setMode(
+          nextWorkspaceSettings.intelligenceMode,
+        );
+        const resolvedWorkspaceSettings = {
+          ...nextWorkspaceSettings,
+          intelligenceMode: smartMode.mode,
+        };
+
+        await persistWorkspaceSettings(workspaceRoot, resolvedWorkspaceSettings);
+        setIntelligenceMode(smartMode.mode);
+
+        if (nextTrusted !== null && nextTrusted !== workspaceTrust?.trusted) {
+          const trust = await workspaceTrustGateway.setTrust(
+            workspaceRoot,
+            nextTrusted,
+          );
+          setWorkspaceTrust(trust);
+
+          if (!trust.trusted) {
+            await stopLanguageServerRuntime();
+          }
+
+          if (workspaceDescriptor?.php) {
+            await refreshLanguageServerPlan(workspaceRoot);
+          }
+        }
+
+        setSettingsOpen(false);
+        setMessage("Settings saved.");
+      } catch (error) {
+        reportError("Settings", error);
+      }
+    },
+    [
+      persistAppSettings,
+      persistWorkspaceSettings,
+      refreshLanguageServerPlan,
+      reportError,
+      smartModeGateway,
+      stopLanguageServerRuntime,
+      workspaceDescriptor,
+      workspaceRoot,
+      workspaceTrust,
+      workspaceTrustGateway,
+    ],
+  );
 
   const startLanguageServer = useCallback(async () => {
     if (!workspaceRoot) {
@@ -1503,6 +1627,14 @@ export function useWorkbenchController(
   const startIndexScan = useCallback(async () => {
     await startReindex("soft");
   }, [startReindex]);
+
+  const openSettingsPanel = useCallback(() => {
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setTextSearchOpen(false);
+    setLanguageServerSetupOpen(false);
+    setSettingsOpen(true);
+  }, []);
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -1637,6 +1769,15 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "workbench.openSettings",
+      title: "Open Settings",
+      category: "Workbench",
+      shortcut: "Cmd+,",
+      isEnabled: () => true,
+      run: openSettingsPanel,
+    });
+
+    registry.register({
       id: "panel.showProblems",
       title: "Show Problems",
       category: "Workbench",
@@ -1738,6 +1879,7 @@ export function useWorkbenchController(
     goToDefinition,
     navigateBackward,
     navigateForwardInHistory,
+    openSettingsPanel,
     navigationHistory,
     openWorkspace,
     refreshWorkspace,
@@ -1831,6 +1973,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (event.key === ",") {
+        event.preventDefault();
+        openSettingsPanel();
+        return;
+      }
+
       if (event.key.toLowerCase() === "s") {
         event.preventDefault();
         void saveActiveDocument();
@@ -1883,6 +2031,7 @@ export function useWorkbenchController(
     goToDefinition,
     navigateBackward,
     navigateForwardInHistory,
+    openSettingsPanel,
     openWorkspace,
     saveActiveDocument,
     workspaceRoot,
@@ -1903,6 +2052,8 @@ export function useWorkbenchController(
           return;
         }
 
+        applyAppSettings(settings);
+
         if (!settings.recentWorkspacePath) {
           return;
         }
@@ -1918,7 +2069,7 @@ export function useWorkbenchController(
     return () => {
       active = false;
     };
-  }, [openWorkspacePath, reportError, settingsGateway]);
+  }, [applyAppSettings, openWorkspacePath, reportError, settingsGateway]);
 
   useEffect(() => {
     if (!quickOpenOpen || !workspaceRoot) {
@@ -2172,6 +2323,7 @@ export function useWorkbenchController(
   return {
     activeDocument,
     activePath,
+    appSettings,
     closeDocument,
     commandContext,
     commands: commandRegistry.list(),
@@ -2194,6 +2346,7 @@ export function useWorkbenchController(
     openDocuments,
     openFile,
     openPhpFileOutlineNode,
+    openSettingsPanel,
     openWorkspace,
     paletteOpen,
     phpFileOutlineExpandedNodeIds,
@@ -2212,18 +2365,21 @@ export function useWorkbenchController(
     reportLanguageServerError,
     refreshPhpTree,
     saveActiveDocument,
+    saveWorkbenchSettings,
     setActivePath: activateDocument,
     setBottomPanelView,
     setPaletteOpen,
     setQuickOpenOpen,
     setSidebarView,
     setQuickOpenQuery,
+    setSettingsOpen,
     setTextSearchOpen,
     setTextSearchQuery,
     setLanguageServerSetupOpen,
     startIndexScan,
     startLanguageServer,
     stopLanguageServer,
+    settingsOpen,
     textSearchLoading,
     textSearchOpen,
     textSearchQuery,
@@ -2241,6 +2397,7 @@ export function useWorkbenchController(
     sidebarView,
     workspaceDescriptor,
     workspaceRoot,
+    workspaceSettings,
     workspaceTrust,
   };
 }
