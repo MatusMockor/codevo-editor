@@ -742,6 +742,39 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: Index Generation And Commit Guards
+
+Scope reviewed:
+
+- generation captured on scheduled jobs
+- workspace cancellation advancing generation and removing pending workspace jobs
+- scheduler-backed current/stale checks
+- guarded DB-write commit helper in SQLite index layer
+- tests proving stale upsert/remove operations cannot mutate SQLite rows
+
+### SOLID Review
+
+- Single Responsibility: acceptable. The scheduler owns in-memory generation state; the index store owns persistence; the commit helper owns final side-effect gating.
+- Open/Closed: acceptable. Future scan, parse, write, and publish stages can reuse `IndexCommitScope` and scheduler generation checks without changing job payload routing.
+- Liskov Substitution: acceptable. `IndexCommitGate` allows tests and future index services to provide alternate generation decisions.
+- Interface Segregation: acceptable. DB commit gating is separate from queueing, watcher normalization, parsing, and SQLite SQL methods.
+- Dependency Inversion: acceptable. SQLite guarded writes depend on the commit gate abstraction rather than concrete scheduler internals.
+
+### Pattern Review
+
+- Commit gate / Unit-of-Work guard: DB writes perform a final generation check before mutation.
+- Strategy pattern: `IndexCommitGate` can be swapped for fake, scheduler-backed, or future persistent generation registries.
+- Pipeline guard: generation checks are ready to be reused before future read, parse, commit, and publish stages.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: Index Job Scheduler Foundation
 
 Scope reviewed:

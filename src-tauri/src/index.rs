@@ -1,3 +1,7 @@
+use crate::job_scheduler::{
+    IndexCommitGate, IndexCommitPermission, IndexCommitScope, IndexDbWriteOperation,
+    IndexFileMetadata,
+};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,7 +22,7 @@ pub struct WorkspaceIndexSummary {
     pub schema_version: i64,
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceFileRecord {
     pub path: String,
@@ -32,6 +36,29 @@ pub trait WorkspaceIndexStore {
     fn remove_file(&self, path: &str) -> rusqlite::Result<()>;
     fn summary(&self) -> rusqlite::Result<WorkspaceIndexSummary>;
     fn upsert_file(&self, record: &WorkspaceFileRecord) -> rusqlite::Result<()>;
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum IndexCommitOutcome {
+    Committed,
+    SkippedCancelled,
+    SkippedStale,
+}
+
+pub fn commit_index_db_write(
+    store: &dyn WorkspaceIndexStore,
+    gate: &dyn IndexCommitGate,
+    scope: &IndexCommitScope,
+    operation: &IndexDbWriteOperation,
+) -> rusqlite::Result<IndexCommitOutcome> {
+    match gate.check(scope) {
+        IndexCommitPermission::Cancelled => Ok(IndexCommitOutcome::SkippedCancelled),
+        IndexCommitPermission::Stale => Ok(IndexCommitOutcome::SkippedStale),
+        IndexCommitPermission::Current => {
+            apply_index_db_write(store, operation)?;
+            Ok(IndexCommitOutcome::Committed)
+        }
+    }
 }
 
 pub struct SqliteWorkspaceIndex {
@@ -164,6 +191,28 @@ fn to_sqlite_error(error: std::io::Error) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
 }
 
+fn apply_index_db_write(
+    store: &dyn WorkspaceIndexStore,
+    operation: &IndexDbWriteOperation,
+) -> rusqlite::Result<()> {
+    match operation {
+        IndexDbWriteOperation::RemoveFile { path } => store.remove_file(path),
+        IndexDbWriteOperation::UpsertFileMetadata { metadata } => {
+            store.upsert_file(&workspace_file_record(metadata))
+        }
+    }
+}
+
+fn workspace_file_record(metadata: &IndexFileMetadata) -> WorkspaceFileRecord {
+    WorkspaceFileRecord {
+        language: metadata.language.clone(),
+        modified_at_unix: metadata.modified_at_unix,
+        path: metadata.path.clone(),
+        relative_path: metadata.relative_path.clone(),
+        size_bytes: metadata.size_bytes,
+    }
+}
+
 fn stable_workspace_hash(value: &str) -> u64 {
     let mut hash = FNV_OFFSET_BASIS;
 
@@ -178,7 +227,13 @@ fn stable_workspace_hash(value: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        workspace_index_path, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore,
+        commit_index_db_write, workspace_index_path, IndexCommitOutcome, SqliteWorkspaceIndex,
+        WorkspaceFileRecord, WorkspaceIndexStore,
+    };
+    use crate::job_scheduler::{
+        InMemoryIndexJobScheduler, IndexCommitGate, IndexCommitPermission, IndexCommitScope,
+        IndexDbWriteOperation, IndexFileMetadata, IndexGenerationGuard, IndexJobPayload,
+        IndexJobScheduler, ScheduleIndexJobRequest,
     };
     use std::{
         fs,
@@ -242,6 +297,106 @@ mod tests {
     }
 
     #[test]
+    fn guarded_db_write_commits_current_generation() {
+        let database_path = temp_database_path("guard-current");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        let gate = StaticCommitGate(IndexCommitPermission::Current);
+        let operation = IndexDbWriteOperation::UpsertFileMetadata {
+            metadata: file_metadata("/project/src/User.php", 128),
+        };
+
+        let outcome = commit_index_db_write(&index, &gate, &commit_scope(1), &operation)
+            .expect("commit write");
+
+        assert_eq!(outcome, IndexCommitOutcome::Committed);
+        assert_eq!(index.summary().expect("summary").file_count, 1);
+    }
+
+    #[test]
+    fn guarded_upsert_does_not_replace_newer_record_when_stale() {
+        let database_path = temp_database_path("guard-stale-upsert");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        let current = file_record("/project/src/User.php", 256);
+        index.upsert_file(&current).expect("seed current file");
+        let gate = StaticCommitGate(IndexCommitPermission::Stale);
+        let stale_operation = IndexDbWriteOperation::UpsertFileMetadata {
+            metadata: file_metadata("/project/src/User.php", 128),
+        };
+
+        let outcome = commit_index_db_write(&index, &gate, &commit_scope(1), &stale_operation)
+            .expect("skip stale write");
+        let size_bytes: i64 = index
+            .connection()
+            .query_row(
+                "SELECT size_bytes FROM workspace_files WHERE path = ?1",
+                ["/project/src/User.php"],
+                |row| row.get(0),
+            )
+            .expect("file size");
+
+        assert_eq!(outcome, IndexCommitOutcome::SkippedStale);
+        assert_eq!(size_bytes, 256);
+    }
+
+    #[test]
+    fn guarded_remove_does_not_delete_when_stale() {
+        let database_path = temp_database_path("guard-stale-remove");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed file");
+        let gate = StaticCommitGate(IndexCommitPermission::Stale);
+        let operation = IndexDbWriteOperation::RemoveFile {
+            path: "/project/src/User.php".to_string(),
+        };
+
+        let outcome = commit_index_db_write(&index, &gate, &commit_scope(1), &operation)
+            .expect("skip stale remove");
+
+        assert_eq!(outcome, IndexCommitOutcome::SkippedStale);
+        assert_eq!(index.summary().expect("summary").file_count, 1);
+    }
+
+    #[test]
+    fn guarded_db_write_skips_cancelled_generation() {
+        let database_path = temp_database_path("guard-cancelled");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        let gate = StaticCommitGate(IndexCommitPermission::Cancelled);
+        let operation = IndexDbWriteOperation::UpsertFileMetadata {
+            metadata: file_metadata("/project/src/User.php", 128),
+        };
+
+        let outcome = commit_index_db_write(&index, &gate, &commit_scope(1), &operation)
+            .expect("skip cancelled write");
+
+        assert_eq!(outcome, IndexCommitOutcome::SkippedCancelled);
+        assert_eq!(index.summary().expect("summary").file_count, 0);
+    }
+
+    #[test]
+    fn scheduler_generation_gate_skips_stale_sqlite_write() {
+        let database_path = temp_database_path("scheduler-gate");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        let mut scheduler = InMemoryIndexJobScheduler::default();
+        let operation = IndexDbWriteOperation::UpsertFileMetadata {
+            metadata: file_metadata("/project/src/User.php", 128),
+        };
+        let job = scheduler.enqueue(ScheduleIndexJobRequest {
+            payload: IndexJobPayload::DbWrite {
+                operation: operation.clone(),
+            },
+            workspace_root: "/project".to_string(),
+        });
+
+        scheduler.cancel_workspace("/project");
+        let outcome = commit_index_db_write(&index, &scheduler, &job.commit_scope(), &operation)
+            .expect("guarded write");
+
+        assert_eq!(outcome, IndexCommitOutcome::SkippedStale);
+        assert_eq!(index.summary().expect("summary").file_count, 0);
+    }
+
+    #[test]
     fn workspace_index_paths_are_stable_per_root() {
         let config_dir = Path::new("/tmp/editor-config");
 
@@ -273,5 +428,40 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("editor-index-{label}-{nanos}"));
         fs::create_dir_all(&directory).expect("temp dir");
         directory.join("workspace.sqlite3")
+    }
+
+    fn file_record(path: &str, size_bytes: i64) -> WorkspaceFileRecord {
+        WorkspaceFileRecord {
+            language: "php".to_string(),
+            modified_at_unix: 10,
+            path: path.to_string(),
+            relative_path: path.strip_prefix("/project/").unwrap_or(path).to_string(),
+            size_bytes,
+        }
+    }
+
+    fn file_metadata(path: &str, size_bytes: i64) -> IndexFileMetadata {
+        IndexFileMetadata {
+            language: "php".to_string(),
+            modified_at_unix: 10,
+            path: path.to_string(),
+            relative_path: path.strip_prefix("/project/").unwrap_or(path).to_string(),
+            size_bytes,
+        }
+    }
+
+    fn commit_scope(generation: u64) -> IndexCommitScope {
+        IndexCommitScope {
+            generation,
+            workspace_root: "/project".to_string(),
+        }
+    }
+
+    struct StaticCommitGate(IndexCommitPermission);
+
+    impl IndexCommitGate for StaticCommitGate {
+        fn check(&self, _scope: &IndexCommitScope) -> IndexCommitPermission {
+            self.0
+        }
     }
 }

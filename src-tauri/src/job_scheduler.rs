@@ -1,5 +1,5 @@
 use crate::file_watcher::{WorkspaceWatchEvent, WorkspaceWatchEventBatch, WorkspaceWatchEventKind};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexJobQueue {
@@ -10,10 +10,19 @@ pub enum IndexJobQueue {
     Maintenance,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IndexFileMetadata {
+    pub language: String,
+    pub modified_at_unix: i64,
+    pub path: String,
+    pub relative_path: String,
+    pub size_bytes: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexDbWriteOperation {
     RemoveFile { path: String },
-    UpsertFileMetadata { path: String },
+    UpsertFileMetadata { metadata: IndexFileMetadata },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +40,29 @@ pub enum IndexJobPayload {
     Maintenance { task: IndexMaintenanceTask },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexCommitDecision {
+    Committed,
+    SkippedStale,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IndexCommitScope {
+    pub generation: u64,
+    pub workspace_root: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum IndexCommitPermission {
+    Cancelled,
+    Current,
+    Stale,
+}
+
+pub trait IndexCommitGate {
+    fn check(&self, scope: &IndexCommitScope) -> IndexCommitPermission;
+}
+
 impl IndexJobPayload {
     pub fn queue(&self) -> IndexJobQueue {
         match self {
@@ -45,10 +77,20 @@ impl IndexJobPayload {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledIndexJob {
+    pub generation: u64,
     pub id: u64,
     pub payload: IndexJobPayload,
     pub queue: IndexJobQueue,
     pub workspace_root: String,
+}
+
+impl ScheduledIndexJob {
+    pub fn commit_scope(&self) -> IndexCommitScope {
+        IndexCommitScope {
+            generation: self.generation,
+            workspace_root: self.workspace_root.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,9 +138,25 @@ pub trait IndexWatchEventRouter {
     fn route_watch_events(&mut self, batch: WorkspaceWatchEventBatch) -> Vec<ScheduledIndexJob>;
 }
 
+pub trait IndexDbWriteExecutor {
+    fn execute(&mut self, operation: &IndexDbWriteOperation) -> Result<(), String>;
+}
+
+pub trait IndexGenerationGuard {
+    fn cancel_workspace(&mut self, workspace_root: &str) -> u64;
+    fn commit_db_write(
+        &self,
+        job: &ScheduledIndexJob,
+        executor: &mut dyn IndexDbWriteExecutor,
+    ) -> Result<IndexCommitDecision, String>;
+    fn current_generation(&self, workspace_root: &str) -> u64;
+    fn is_current(&self, job: &ScheduledIndexJob) -> bool;
+}
+
 #[derive(Debug)]
 pub struct InMemoryIndexJobScheduler {
     db_write: VecDeque<ScheduledIndexJob>,
+    generations: HashMap<String, u64>,
     maintenance: VecDeque<ScheduledIndexJob>,
     metadata_scan: VecDeque<ScheduledIndexJob>,
     next_id: u64,
@@ -117,6 +175,7 @@ impl InMemoryIndexJobScheduler {
     pub fn new(policy: IndexJobQueuePolicy) -> Self {
         Self {
             db_write: VecDeque::new(),
+            generations: HashMap::new(),
             maintenance: VecDeque::new(),
             metadata_scan: VecDeque::new(),
             next_id: 1,
@@ -153,6 +212,19 @@ impl InMemoryIndexJobScheduler {
             IndexJobQueue::Maintenance => &self.maintenance,
         }
     }
+
+    fn remove_workspace_jobs(&mut self, workspace_root: &str) {
+        self.watch_events
+            .retain(|job| job.workspace_root != workspace_root);
+        self.metadata_scan
+            .retain(|job| job.workspace_root != workspace_root);
+        self.parse
+            .retain(|job| job.workspace_root != workspace_root);
+        self.db_write
+            .retain(|job| job.workspace_root != workspace_root);
+        self.maintenance
+            .retain(|job| job.workspace_root != workspace_root);
+    }
 }
 
 impl IndexJobScheduler for InMemoryIndexJobScheduler {
@@ -170,7 +242,9 @@ impl IndexJobScheduler for InMemoryIndexJobScheduler {
 
     fn enqueue(&mut self, request: ScheduleIndexJobRequest) -> ScheduledIndexJob {
         let queue = request.payload.queue();
+        let generation = self.current_generation(&request.workspace_root);
         let job = ScheduledIndexJob {
+            generation,
             id: self.next_id,
             payload: request.payload,
             queue,
@@ -183,6 +257,52 @@ impl IndexJobScheduler for InMemoryIndexJobScheduler {
 
     fn pending_count(&self, queue: IndexJobQueue) -> usize {
         self.queue(queue).len()
+    }
+}
+
+impl IndexGenerationGuard for InMemoryIndexJobScheduler {
+    fn cancel_workspace(&mut self, workspace_root: &str) -> u64 {
+        let generation = self.current_generation(workspace_root) + 1;
+        self.generations
+            .insert(workspace_root.to_string(), generation);
+        self.remove_workspace_jobs(workspace_root);
+        generation
+    }
+
+    fn commit_db_write(
+        &self,
+        job: &ScheduledIndexJob,
+        executor: &mut dyn IndexDbWriteExecutor,
+    ) -> Result<IndexCommitDecision, String> {
+        if !self.is_current(job) {
+            return Ok(IndexCommitDecision::SkippedStale);
+        }
+
+        match &job.payload {
+            IndexJobPayload::DbWrite { operation } => {
+                executor.execute(operation)?;
+                Ok(IndexCommitDecision::Committed)
+            }
+            _ => Err("Only DB-write jobs can be committed.".to_string()),
+        }
+    }
+
+    fn current_generation(&self, workspace_root: &str) -> u64 {
+        self.generations.get(workspace_root).copied().unwrap_or(1)
+    }
+
+    fn is_current(&self, job: &ScheduledIndexJob) -> bool {
+        job.generation == self.current_generation(&job.workspace_root)
+    }
+}
+
+impl IndexCommitGate for InMemoryIndexJobScheduler {
+    fn check(&self, scope: &IndexCommitScope) -> IndexCommitPermission {
+        if scope.generation == self.current_generation(&scope.workspace_root) {
+            return IndexCommitPermission::Current;
+        }
+
+        IndexCommitPermission::Stale
     }
 }
 
@@ -262,7 +382,8 @@ fn enqueue_metadata_scan(
 #[cfg(test)]
 mod tests {
     use super::{
-        InMemoryIndexJobScheduler, IndexDbWriteOperation, IndexJobPayload, IndexJobQueue,
+        InMemoryIndexJobScheduler, IndexCommitDecision, IndexDbWriteExecutor,
+        IndexDbWriteOperation, IndexGenerationGuard, IndexJobPayload, IndexJobQueue,
         IndexJobQueuePolicy, IndexJobScheduler, IndexMaintenanceTask, IndexWatchEventRouter,
         ScheduleIndexJobRequest,
     };
@@ -284,13 +405,97 @@ mod tests {
         }));
         scheduler.enqueue(request(IndexJobPayload::DbWrite {
             operation: IndexDbWriteOperation::UpsertFileMetadata {
-                path: "/workspace/src/User.php".to_string(),
+                metadata: file_metadata("/workspace/src/User.php", 128),
             },
         }));
 
         assert_eq!(scheduler.pending_count(IndexJobQueue::MetadataScan), 1);
         assert_eq!(scheduler.pending_count(IndexJobQueue::Parse), 1);
         assert_eq!(scheduler.pending_count(IndexJobQueue::DbWrite), 1);
+    }
+
+    #[test]
+    fn jobs_capture_current_workspace_generation_when_enqueued() {
+        let mut scheduler = InMemoryIndexJobScheduler::default();
+
+        let first = scheduler.enqueue(request(IndexJobPayload::ParseFile {
+            path: "/workspace/src/A.php".to_string(),
+            relative_path: "src/A.php".to_string(),
+        }));
+        scheduler.cancel_workspace("/workspace");
+        let second = scheduler.enqueue(request(IndexJobPayload::ParseFile {
+            path: "/workspace/src/B.php".to_string(),
+            relative_path: "src/B.php".to_string(),
+        }));
+
+        assert_eq!(first.generation, 1);
+        assert_eq!(second.generation, 2);
+    }
+
+    #[test]
+    fn cancelling_workspace_removes_pending_jobs_for_that_workspace() {
+        let mut scheduler = InMemoryIndexJobScheduler::default();
+
+        scheduler.enqueue(request(IndexJobPayload::ParseFile {
+            path: "/workspace/src/A.php".to_string(),
+            relative_path: "src/A.php".to_string(),
+        }));
+        scheduler.enqueue(ScheduleIndexJobRequest {
+            payload: IndexJobPayload::ParseFile {
+                path: "/other/src/B.php".to_string(),
+                relative_path: "src/B.php".to_string(),
+            },
+            workspace_root: "/other".to_string(),
+        });
+
+        let generation = scheduler.cancel_workspace("/workspace");
+
+        assert_eq!(generation, 2);
+        assert_eq!(scheduler.pending_count(IndexJobQueue::Parse), 1);
+        assert_eq!(
+            scheduler
+                .dequeue_next()
+                .expect("remaining job")
+                .workspace_root,
+            "/other"
+        );
+    }
+
+    #[test]
+    fn stale_db_write_jobs_do_not_commit() {
+        let mut scheduler = InMemoryIndexJobScheduler::default();
+        let job = scheduler.enqueue(request(IndexJobPayload::DbWrite {
+            operation: IndexDbWriteOperation::RemoveFile {
+                path: "/workspace/src/User.php".to_string(),
+            },
+        }));
+        let mut executor = RecordingDbWriteExecutor::default();
+
+        scheduler.cancel_workspace("/workspace");
+        let decision = scheduler
+            .commit_db_write(&job, &mut executor)
+            .expect("commit decision");
+
+        assert_eq!(decision, IndexCommitDecision::SkippedStale);
+        assert!(executor.operations.is_empty());
+    }
+
+    #[test]
+    fn current_db_write_jobs_commit() {
+        let mut scheduler = InMemoryIndexJobScheduler::default();
+        let job = scheduler.enqueue(request(IndexJobPayload::DbWrite {
+            operation: IndexDbWriteOperation::RemoveFile {
+                path: "/workspace/src/User.php".to_string(),
+            },
+        }));
+        let mut executor = RecordingDbWriteExecutor::default();
+
+        let decision = scheduler
+            .commit_db_write(&job, &mut executor)
+            .expect("commit decision");
+
+        assert_eq!(decision, IndexCommitDecision::Committed);
+        assert_eq!(executor.operations.len(), 1);
     }
 
     #[test]
@@ -500,6 +705,28 @@ mod tests {
             previous_relative_path: Some(previous_relative_path.to_string()),
             relative_path: relative_path.to_string(),
             root_path: "/workspace".to_string(),
+        }
+    }
+
+    fn file_metadata(path: &str, size_bytes: i64) -> super::IndexFileMetadata {
+        super::IndexFileMetadata {
+            language: "php".to_string(),
+            modified_at_unix: 10,
+            path: path.to_string(),
+            relative_path: path.strip_prefix("/workspace/").unwrap_or(path).to_string(),
+            size_bytes,
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDbWriteExecutor {
+        operations: Vec<IndexDbWriteOperation>,
+    }
+
+    impl IndexDbWriteExecutor for RecordingDbWriteExecutor {
+        fn execute(&mut self, operation: &IndexDbWriteOperation) -> Result<(), String> {
+            self.operations.push(operation.clone());
+            Ok(())
         }
     }
 }
