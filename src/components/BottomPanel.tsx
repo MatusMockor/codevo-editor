@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
+import type { PointerEvent } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import {
   bottomPanelLabel,
@@ -22,6 +23,7 @@ interface BottomPanelProps {
   onClearProblems(): void;
   onHardReindex(): void;
   onPhpReindex(): void;
+  onResizeStart(event: PointerEvent<HTMLDivElement>): void;
   onSelectView(view: BottomPanelView): void;
   onSoftReindex(): void;
   terminalGateway: TerminalGateway;
@@ -44,6 +46,7 @@ export function BottomPanel({
   onClearProblems,
   onHardReindex,
   onPhpReindex,
+  onResizeStart,
   onSelectView,
   onSoftReindex,
   terminalGateway,
@@ -105,8 +108,26 @@ export function BottomPanel({
     };
   }, [terminalGateway, terminalMounted]);
 
+  const activePanel = renderActivePanel({
+    activeView,
+    indexHealthLogs,
+    indexProgress,
+    notices,
+    onHardReindex,
+    onPhpReindex,
+    onSoftReindex,
+    workspaceRoot,
+  });
+
   return (
     <section aria-label="Panel" className="bottom-panel">
+      <div
+        aria-label="Resize panel"
+        aria-orientation="horizontal"
+        className="bottom-panel-resize-handle"
+        onPointerDown={onResizeStart}
+        role="separator"
+      />
       <header className="bottom-panel-header">
         <div
           aria-label="Panel views"
@@ -156,16 +177,7 @@ export function BottomPanel({
         ) : null}
       </header>
       <div className="bottom-panel-body">
-        <ProblemsPanel isActive={activeView === "problems"} notices={notices} />
-        <IndexHealthPanel
-          isActive={activeView === "index"}
-          logs={indexHealthLogs}
-          onHardReindex={onHardReindex}
-          onPhpReindex={onPhpReindex}
-          onSoftReindex={onSoftReindex}
-          progress={indexProgress}
-          rootPath={workspaceRoot}
-        />
+        {activePanel}
         {terminalMounted ? (
           <Suspense
             fallback={
@@ -189,4 +201,46 @@ export function BottomPanel({
       </div>
     </section>
   );
+}
+
+interface RenderActivePanelOptions {
+  activeView: BottomPanelView;
+  indexHealthLogs: IndexHealthLogEntry[];
+  indexProgress: IndexProgressState;
+  notices: WorkbenchNotice[];
+  onHardReindex(): void;
+  onPhpReindex(): void;
+  onSoftReindex(): void;
+  workspaceRoot: string | null;
+}
+
+function renderActivePanel({
+  activeView,
+  indexHealthLogs,
+  indexProgress,
+  notices,
+  onHardReindex,
+  onPhpReindex,
+  onSoftReindex,
+  workspaceRoot,
+}: RenderActivePanelOptions) {
+  if (activeView === "problems") {
+    return <ProblemsPanel isActive notices={notices} />;
+  }
+
+  if (activeView === "index") {
+    return (
+      <IndexHealthPanel
+        isActive
+        logs={indexHealthLogs}
+        onHardReindex={onHardReindex}
+        onPhpReindex={onPhpReindex}
+        onSoftReindex={onSoftReindex}
+        progress={indexProgress}
+        rootPath={workspaceRoot}
+      />
+    );
+  }
+
+  return null;
 }

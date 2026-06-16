@@ -146,6 +146,33 @@ export function isDirty(document: EditorDocument): boolean {
   return document.content !== document.savedContent;
 }
 
+export function visibleEditorPaths(
+  openPaths: string[],
+  previewPath: string | null,
+): string[] {
+  if (!previewPath) {
+    return openPaths;
+  }
+
+  if (openPaths.includes(previewPath)) {
+    return openPaths;
+  }
+
+  return [...openPaths, previewPath];
+}
+
+export function nextActiveEditorPathAfterClose(
+  closedPath: string,
+  openPaths: string[],
+  previewPath: string | null,
+): string | null {
+  const remainingPaths = visibleEditorPaths(openPaths, previewPath).filter(
+    (path) => path !== closedPath,
+  );
+
+  return remainingPaths[remainingPaths.length - 1] || null;
+}
+
 export function getParentPath(path: string): string {
   const normalized = path.split("\\").join("/");
   const index = normalized.lastIndexOf("/");

@@ -130,12 +130,17 @@ button {
   color: inherit;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .app-shell {
   color-scheme: dark;
   display: grid;
   width: 100%;
   height: 100%;
-  grid-template-columns: 46px minmax(220px, 300px) minmax(0, 1fr);
+  grid-template-columns:
+    46px minmax(180px, var(--sidebar-width, 300px)) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) 25px;
   background: var(--color-app);
 }
@@ -143,6 +148,10 @@ button {
 @media (max-width: 520px) {
   .app-shell {
     grid-template-columns: 42px minmax(138px, 38vw) minmax(0, 1fr);
+  }
+
+  .sidebar-resize-handle {
+    display: none;
   }
 }
 
@@ -183,12 +192,28 @@ button {
 }
 
 .sidebar {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--color-border);
   background: var(--color-sidebar);
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resize-handle:hover {
+  background: var(--color-accent);
 }
 
 .sidebar-header {
@@ -333,12 +358,30 @@ button {
 }
 
 .bottom-panel {
+  position: relative;
   display: grid;
-  min-height: 152px;
-  max-height: 152px;
+  flex: 0 0 var(--bottom-panel-height, 152px);
+  height: var(--bottom-panel-height, 152px);
+  min-height: 96px;
+  max-height: min(70vh, 520px);
   grid-template-rows: 32px minmax(0, 1fr);
   border-top: 1px solid var(--color-border);
   background: var(--color-panel);
+}
+
+.bottom-panel-resize-handle {
+  position: absolute;
+  z-index: 5;
+  top: -3px;
+  right: 0;
+  left: 0;
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.bottom-panel-resize-handle:hover {
+  background: var(--color-accent);
 }
 
 .bottom-panel-header {
@@ -424,6 +467,10 @@ button {
 .bottom-panel-body {
   min-height: 0;
   overflow: hidden;
+}
+
+.bottom-panel-body > [role="tabpanel"] {
+  height: 100%;
 }
 
 .problems-list {
@@ -682,6 +729,10 @@ button {
 .editor-tab.active {
   background: var(--color-tab-active);
   color: var(--color-text-strong);
+}
+
+.editor-tab.preview .tab-main span {
+  font-style: italic;
 }
 
 .tab-main,

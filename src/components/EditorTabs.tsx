@@ -7,15 +7,19 @@ import { getTabId, getTabPanelId } from "./tabIds";
 interface EditorTabsProps {
   documents: EditorDocument[];
   activePath: string | null;
+  previewPath: string | null;
   onActivate(path: string): void;
   onClose(path: string): void;
+  onPin(path: string): void;
 }
 
 export function EditorTabs({
   documents,
   activePath,
+  previewPath,
   onActivate,
   onClose,
+  onPin,
 }: EditorTabsProps) {
   if (documents.length === 0) {
     return <div className="editor-tabs empty" />;
@@ -41,14 +45,19 @@ export function EditorTabs({
       {documents.map((document, index) => {
         const dirty = isDirty(document);
         const active = document.path === activePath;
+        const preview = document.path === previewPath && !dirty;
 
         return (
-          <div className={active ? "editor-tab active" : "editor-tab"} key={document.path}>
+          <div
+            className={getEditorTabClassName(active, preview)}
+            key={document.path}
+          >
             <button
               aria-controls={getTabPanelId(document.path)}
               aria-selected={active}
               className="tab-main"
               id={getTabId(document.path)}
+              onDoubleClick={() => onPin(document.path)}
               onKeyDown={(event) => handleKeyDown(index, event)}
               onClick={() => onActivate(document.path)}
               role="tab"
@@ -99,4 +108,18 @@ function getNextTabIndex(
   }
 
   return null;
+}
+
+function getEditorTabClassName(active: boolean, preview: boolean): string {
+  const classNames = ["editor-tab"];
+
+  if (active) {
+    classNames.push("active");
+  }
+
+  if (preview) {
+    classNames.push("preview");
+  }
+
+  return classNames.join(" ");
 }

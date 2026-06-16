@@ -5,6 +5,8 @@ import {
   getParentPath,
   isDirty,
   joinWorkspacePath,
+  nextActiveEditorPathAfterClose,
+  visibleEditorPaths,
   type EditorDocument,
 } from "./workspace";
 
@@ -38,5 +40,38 @@ describe("workspace path helpers", () => {
 
     expect(isDirty(document)).toBe(true);
     expect(isDirty({ ...document, savedContent: "changed" })).toBe(false);
+  });
+
+  it("adds one preview tab after pinned editor tabs", () => {
+    expect(visibleEditorPaths(["/project/A.php"], null)).toEqual([
+      "/project/A.php",
+    ]);
+    expect(visibleEditorPaths(["/project/A.php"], "/project/B.php")).toEqual([
+      "/project/A.php",
+      "/project/B.php",
+    ]);
+    expect(visibleEditorPaths(["/project/A.php"], "/project/A.php")).toEqual([
+      "/project/A.php",
+    ]);
+  });
+
+  it("selects the next visible editor path after closing a tab", () => {
+    expect(
+      nextActiveEditorPathAfterClose(
+        "/project/A.php",
+        ["/project/A.php"],
+        "/project/C.php",
+      ),
+    ).toBe("/project/C.php");
+    expect(
+      nextActiveEditorPathAfterClose(
+        "/project/C.php",
+        ["/project/A.php", "/project/B.php"],
+        "/project/C.php",
+      ),
+    ).toBe("/project/B.php");
+    expect(nextActiveEditorPathAfterClose("/project/A.php", [], null)).toBe(
+      null,
+    );
   });
 });

@@ -1,5 +1,6 @@
 import { ChevronRight, FileCode2, Folder, FolderOpen } from "lucide-react";
 import type { CSSProperties } from "react";
+import type { MouseEvent } from "react";
 import {
   canExpandPhpFileEntry,
   type PhpFileOutline,
@@ -19,6 +20,7 @@ interface FileTreeProps {
   phpFileOutlinesByPath: Record<string, PhpFileOutline>;
   activePath: string | null;
   onOpenFile(entry: FileEntry): void;
+  onPreviewFile(entry: FileEntry): void;
   onOpenPhpFileOutlineNode(node: PhpFileOutlineNode): void;
   onToggleDirectory(path: string): void;
   onTogglePhpFileOutline(path: string): void;
@@ -36,6 +38,7 @@ export function FileTree({
   phpFileOutlinesByPath,
   activePath,
   onOpenFile,
+  onPreviewFile,
   onOpenPhpFileOutlineNode,
   onToggleDirectory,
   onTogglePhpFileOutline,
@@ -65,6 +68,7 @@ export function FileTree({
           loadingDirectories={loadingDirectories}
           loadingPhpFileOutlinePaths={loadingPhpFileOutlinePaths}
           onOpenFile={onOpenFile}
+          onPreviewFile={onPreviewFile}
           onOpenPhpFileOutlineNode={onOpenPhpFileOutlineNode}
           onToggleDirectory={onToggleDirectory}
           onTogglePhpFileOutline={onTogglePhpFileOutline}
@@ -89,6 +93,7 @@ interface TreeEntryProps {
   phpFileOutlinesByPath: Record<string, PhpFileOutline>;
   activePath: string | null;
   onOpenFile(entry: FileEntry): void;
+  onPreviewFile(entry: FileEntry): void;
   onOpenPhpFileOutlineNode(node: PhpFileOutlineNode): void;
   onToggleDirectory(path: string): void;
   onTogglePhpFileOutline(path: string): void;
@@ -107,6 +112,7 @@ function TreeEntry({
   phpFileOutlinesByPath,
   activePath,
   onOpenFile,
+  onPreviewFile,
   onOpenPhpFileOutlineNode,
   onToggleDirectory,
   onTogglePhpFileOutline,
@@ -136,7 +142,11 @@ function TreeEntry({
       <button
         aria-expanded={isExpandable ? isExpanded : undefined}
         className={entry.path === activePath ? "tree-row active" : "tree-row"}
-        onClick={() => {
+        onClick={(event) => {
+          if (event.detail > 1) {
+            return;
+          }
+
           if (isDirectory) {
             onToggleDirectory(entry.path);
             return;
@@ -146,8 +156,9 @@ function TreeEntry({
             onTogglePhpFileOutline(entry.path);
           }
 
-          onOpenFile(entry);
+          onPreviewFile(entry);
         }}
+        onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
         style={{ "--tree-level": level } as CSSProperties}
         title={entry.path}
         type="button"
@@ -184,6 +195,7 @@ function TreeEntry({
               loadingDirectories={loadingDirectories}
               loadingPhpFileOutlinePaths={loadingPhpFileOutlinePaths}
               onOpenFile={onOpenFile}
+              onPreviewFile={onPreviewFile}
               onOpenPhpFileOutlineNode={onOpenPhpFileOutlineNode}
               onToggleDirectory={onToggleDirectory}
               onTogglePhpFileOutline={onTogglePhpFileOutline}
@@ -217,4 +229,17 @@ function getChevronClassName(isExpandable: boolean, isExpanded: boolean): string
   }
 
   return "tree-chevron";
+}
+
+function handleDoubleClick(
+  event: MouseEvent<HTMLButtonElement>,
+  entry: FileEntry,
+  onOpenFile: (entry: FileEntry) => void,
+): void {
+  if (entry.kind === "directory") {
+    return;
+  }
+
+  event.preventDefault();
+  onOpenFile(entry);
 }

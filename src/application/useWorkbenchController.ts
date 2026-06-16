@@ -96,6 +96,8 @@ import {
   getParentPath,
   isDirty,
   joinWorkspacePath,
+  nextActiveEditorPathAfterClose,
+  visibleEditorPaths,
   type EditorDocument,
   type FileEntry,
   type FileSearchResult,
@@ -116,6 +118,11 @@ export interface WorkbenchWorkspaceGateways {
   files: WorkspaceFileGateway;
   phpTools: PhpToolGateway;
   textSearch: TextSearchGateway;
+}
+
+interface OpenFileOptions {
+  preview?: boolean;
+  recordNavigation?: boolean;
 }
 
 export type SidebarView = "files" | "php";
@@ -196,6 +203,7 @@ export function useWorkbenchController(
   );
   const [openPaths, setOpenPaths] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
@@ -225,6 +233,7 @@ export function useWorkbenchController(
   );
   const workspaceSessionRestoredRef = useRef(false);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
+  const openFileRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
   const documentVersionsRef = useRef<Record<string, number>>({});
@@ -241,7 +250,11 @@ export function useWorkbenchController(
   const lastPhpFileOutlineRefreshKeyRef = useRef<string | null>(null);
 
   const activeDocument = activePath ? documents[activePath] || null : null;
-  const openDocuments = openPaths
+  const openDocumentPaths = useMemo(
+    () => visibleEditorPaths(openPaths, previewPath),
+    [openPaths, previewPath],
+  );
+  const openDocuments = openDocumentPaths
     .map((path) => documents[path])
     .filter((document): document is EditorDocument => Boolean(document));
   const dirtyCount = openDocuments.filter(isDirty).length;
@@ -780,6 +793,7 @@ export function useWorkbenchController(
       setDocuments({});
       setOpenPaths([]);
       setActivePath(null);
+      setPreviewPath(null);
       setNavigationHistory(createNavigationHistory());
       setSidebarView("files");
       setBottomPanelView("problems");
@@ -899,6 +913,17 @@ export function useWorkbenchController(
     [activePath, recordCurrentNavigationLocation],
   );
 
+  const pinDocument = useCallback((path: string) => {
+    setOpenPaths((current) => {
+      if (current.includes(path)) {
+        return current;
+      }
+
+      return [...current, path];
+    });
+    setPreviewPath((current) => (current === path ? null : current));
+  }, []);
+
   const toggleDirectory = useCallback(
     async (path: string) => {
       const isExpanded = expandedDirectories.has(path);
@@ -925,15 +950,23 @@ export function useWorkbenchController(
   );
 
   const openFile = useCallback(
-    async (
-      entry: FileEntry,
-      options: { recordNavigation?: boolean } = {},
-    ) => {
+    async (entry: FileEntry, options: OpenFileOptions = {}) => {
+      const requestToken = openFileRequestTokenRef.current + 1;
+      openFileRequestTokenRef.current = requestToken;
       const shouldRecordNavigation = options.recordNavigation !== false;
+      const shouldPreview = options.preview === true;
 
       if (documents[entry.path]) {
         if (shouldRecordNavigation && activePath !== entry.path) {
           recordCurrentNavigationLocation();
+        }
+
+        if (shouldPreview && !openPaths.includes(entry.path)) {
+          setPreviewPath(entry.path);
+        }
+
+        if (!shouldPreview) {
+          pinDocument(entry.path);
         }
 
         setActivePath(entry.path);
@@ -941,7 +974,22 @@ export function useWorkbenchController(
       }
 
       try {
+        const previousPreviewPath = previewPath;
+        const shouldReplacePreview = Boolean(
+          shouldPreview &&
+            previousPreviewPath &&
+            previousPreviewPath !== entry.path &&
+            !openPaths.includes(previousPreviewPath),
+        );
+        const previousPreviewDocument = previousPreviewPath
+          ? documents[previousPreviewPath]
+          : null;
         const content = await workspaceFiles.readTextFile(entry.path);
+
+        if (openFileRequestTokenRef.current !== requestToken) {
+          return false;
+        }
+
         const document: EditorDocument = {
           path: entry.path,
           name: entry.name,
@@ -954,17 +1002,58 @@ export function useWorkbenchController(
           recordCurrentNavigationLocation();
         }
 
-        setDocuments((current) => ({ ...current, [entry.path]: document }));
-        setOpenPaths((current) => [...current, entry.path]);
+        if (shouldReplacePreview && previousPreviewDocument) {
+          void syncClosedDocument(previousPreviewDocument);
+        }
+
+        setDocuments((current) => {
+          const next = { ...current, [entry.path]: document };
+
+          if (shouldReplacePreview && previousPreviewPath) {
+            delete next[previousPreviewPath];
+          }
+
+          return next;
+        });
+
+        if (shouldPreview) {
+          setPreviewPath(entry.path);
+        }
+
+        if (!shouldPreview) {
+          pinDocument(entry.path);
+        }
+
         setActivePath(entry.path);
         setMessage(null);
         return true;
       } catch (error) {
+        if (openFileRequestTokenRef.current !== requestToken) {
+          return false;
+        }
+
         reportError("Open File", error);
         return false;
       }
     },
-    [activePath, documents, recordCurrentNavigationLocation, reportError, workspaceFiles],
+    [
+      activePath,
+      documents,
+      openPaths,
+      pinDocument,
+      previewPath,
+      recordCurrentNavigationLocation,
+      reportError,
+      syncClosedDocument,
+      workspaceFiles,
+    ],
+  );
+
+  const previewFile = useCallback(
+    async (entry: FileEntry) => {
+      await openFile(entry, { preview: true });
+    },
+    [openFile],
   );
 
   const refreshPhpTree = useCallback(async () => {
@@ -1193,7 +1282,11 @@ export function useWorkbenchController(
     (path: string) => {
       const document = documents[path];
 
-      if (document && isDirty(document) && !prompter.confirm("Discard changes?")) {
+      if (
+        document &&
+        isDirty(document) &&
+        !prompter.confirm("Discard changes?")
+      ) {
         return;
       }
 
@@ -1206,18 +1299,21 @@ export function useWorkbenchController(
         delete next[path];
         return next;
       });
+      setPreviewPath((current) => (current === path ? null : current));
 
       setOpenPaths((current) => {
         const next = current.filter((item) => item !== path);
 
         if (activePath === path) {
-          setActivePath(next[next.length - 1] || null);
+          setActivePath(
+            nextActiveEditorPathAfterClose(path, current, previewPath),
+          );
         }
 
         return next;
       });
     },
-    [activePath, documents, prompter, syncClosedDocument],
+    [activePath, documents, previewPath, prompter, syncClosedDocument],
   );
 
   const updateActiveDocument = useCallback(
@@ -1226,6 +1322,11 @@ export function useWorkbenchController(
         return;
       }
 
+      if (content === activeDocument.content) {
+        return;
+      }
+
+      pinDocument(activeDocument.path);
       setDocuments((current) => ({
         ...current,
         [activeDocument.path]: {
@@ -1234,7 +1335,7 @@ export function useWorkbenchController(
         },
       }));
     },
-    [activeDocument],
+    [activeDocument, pinDocument],
   );
 
   const createFile = useCallback(async () => {
@@ -2411,7 +2512,7 @@ export function useWorkbenchController(
       return;
     }
 
-    openPaths.forEach((path) => {
+    openDocumentPaths.forEach((path) => {
       const document = documents[path];
 
       if (!document) {
@@ -2423,7 +2524,7 @@ export function useWorkbenchController(
   }, [
     documents,
     languageServerRuntimeStatus,
-    openPaths,
+    openDocumentPaths,
     resetLanguageServerDocuments,
     syncOpenDocument,
   ]);
@@ -2433,7 +2534,7 @@ export function useWorkbenchController(
       return;
     }
 
-    openPaths.forEach((path) => {
+    openDocumentPaths.forEach((path) => {
       const document = documents[path];
 
       if (!document) {
@@ -2445,7 +2546,7 @@ export function useWorkbenchController(
   }, [
     documents,
     languageServerRuntimeStatus,
-    openPaths,
+    openDocumentPaths,
     scheduleDocumentChange,
   ]);
 
@@ -2483,6 +2584,8 @@ export function useWorkbenchController(
     openDocuments,
     openFile,
     openPhpFileOutlineNode,
+    previewFile,
+    previewPath,
     openSettingsPanel,
     openWorkspace,
     paletteOpen,
@@ -2513,6 +2616,7 @@ export function useWorkbenchController(
     setTextSearchOpen,
     setTextSearchQuery,
     setLanguageServerSetupOpen,
+    pinDocument,
     startIndexScan,
     startHardReindex,
     startLanguageServer,

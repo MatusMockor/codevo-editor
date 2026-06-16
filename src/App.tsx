@@ -6,7 +6,11 @@ import {
   Settings as SettingsIcon,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type {
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import { BottomPanel } from "./components/BottomPanel";
 import { CommandPalette } from "./components/CommandPalette";
@@ -71,6 +75,8 @@ const workbenchPrompter = new BrowserWorkbenchPrompter();
 
 function App() {
   const prefersLightTheme = usePrefersLightTheme();
+  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(152);
   const workbench = useWorkbenchController(
     workspaceGateways,
     smartModeGateway,
@@ -166,9 +172,70 @@ function App() {
       ),
     [prefersLightTheme, workbench.appSettings.theme],
   );
+  const shellStyle = useMemo(
+    () =>
+      ({
+        "--bottom-panel-height": `${bottomPanelHeight}px`,
+        "--sidebar-width": `${sidebarWidth}px`,
+      }) as CSSProperties,
+    [bottomPanelHeight, sidebarWidth],
+  );
+  const startSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = sidebarWidth;
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        setSidebarWidth(
+          clamp(startWidth + moveEvent.clientX - startX, 180, 520),
+        );
+      };
+      const stopResize = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", stopResize);
+        window.removeEventListener("pointercancel", stopResize);
+        window.removeEventListener("blur", stopResize);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", stopResize);
+      window.addEventListener("pointercancel", stopResize);
+      window.addEventListener("blur", stopResize);
+    },
+    [sidebarWidth],
+  );
+  const startBottomPanelResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = bottomPanelHeight;
+      const maxHeight = maxBottomPanelHeight(window.innerHeight);
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        setBottomPanelHeight(
+          clamp(startHeight + startY - moveEvent.clientY, 96, maxHeight),
+        );
+      };
+      const stopResize = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", stopResize);
+        window.removeEventListener("pointercancel", stopResize);
+        window.removeEventListener("blur", stopResize);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", stopResize);
+      window.addEventListener("pointercancel", stopResize);
+      window.addEventListener("blur", stopResize);
+    },
+    [bottomPanelHeight],
+  );
 
   return (
-    <main className="app-shell" data-theme={workbench.appSettings.theme}>
+    <main
+      className="app-shell"
+      data-theme={workbench.appSettings.theme}
+      style={shellStyle}
+    >
       <aside className="activity-bar" aria-label="Primary navigation">
         <button
           onClick={workbench.openWorkspace}
@@ -275,6 +342,7 @@ function App() {
             loadingPhpFileOutlinePaths={workbench.loadingPhpFileOutlinePaths}
             loadingDirectories={workbench.loadingDirectories}
             onOpenFile={workbench.openFile}
+            onPreviewFile={workbench.previewFile}
             onOpenPhpFileOutlineNode={workbench.openPhpFileOutlineNode}
             onToggleDirectory={workbench.toggleDirectory}
             onTogglePhpFileOutline={workbench.togglePhpFileOutline}
@@ -286,6 +354,13 @@ function App() {
             rootPath={workbench.workspaceRoot}
           />
         )}
+        <div
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          className="sidebar-resize-handle"
+          onPointerDown={startSidebarResize}
+          role="separator"
+        />
       </section>
 
       <section className="editor-workbench">
@@ -294,6 +369,8 @@ function App() {
           documents={workbench.openDocuments}
           onActivate={workbench.setActivePath}
           onClose={workbench.closeDocument}
+          onPin={workbench.pinDocument}
+          previewPath={workbench.previewPath}
         />
         <EditorSurface
           activeDocument={workbench.activeDocument}
@@ -317,6 +394,7 @@ function App() {
           onClearProblems={workbench.clearNotices}
           onHardReindex={workbench.startHardReindex}
           onPhpReindex={workbench.startPhpReindex}
+          onResizeStart={startBottomPanelResize}
           onSelectView={workbench.setBottomPanelView}
           onSoftReindex={workbench.startIndexScan}
           terminalGateway={terminalGateway}
@@ -395,6 +473,14 @@ function App() {
       />
     </main>
   );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function maxBottomPanelHeight(viewportHeight: number): number {
+  return Math.max(96, Math.min(viewportHeight * 0.7, 520));
 }
 
 function usePrefersLightTheme(): boolean {
