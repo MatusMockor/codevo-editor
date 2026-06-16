@@ -742,6 +742,40 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: SQLite Index Database Foundation
+
+Scope reviewed:
+
+- `SqliteWorkspaceIndex` connection setup
+- schema migrations table and initial `workspace_files` table
+- WAL journal mode and 5s busy timeout
+- stable per-workspace index database path
+- Tauri commands for initialize/upsert/remove file records
+- canonical workspace path guard for index file commands, including symlink escape protection
+
+### SOLID Review
+
+- Single Responsibility: acceptable. SQLite connection setup, migrations, and file-record persistence are isolated in `index.rs`.
+- Open/Closed: acceptable. Later metadata, symbol, and job tables can be added as migrations without changing existing file-record commands.
+- Liskov Substitution: acceptable. `WorkspaceIndexStore` defines a small persistence contract for future in-memory or alternate stores in tests/services.
+- Interface Segregation: acceptable. Index persistence is separate from workspace filesystem, search, LSP, and settings gateways.
+- Dependency Inversion: acceptable. Tauri commands depend on the store trait methods rather than embedding SQL in command handlers.
+
+### Pattern Review
+
+- Repository pattern: `SqliteWorkspaceIndex` owns persistence for indexed workspace file records.
+- Migration pattern: schema changes are tracked in `schema_migrations` and `PRAGMA user_version`.
+- Adapter pattern: Tauri commands adapt root paths and payloads to the index store.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

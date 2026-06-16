@@ -1,3 +1,4 @@
+mod index;
 mod lsp;
 mod lsp_diagnostics;
 mod lsp_document;
@@ -11,6 +12,10 @@ mod tools;
 mod trust;
 mod workspace;
 
+use index::{
+    workspace_index_path, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore,
+    WorkspaceIndexSummary,
+};
 use lsp::{
     JsonRpcRequest, LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus,
     LanguageServerPlanner, PhpactorLanguageServerPlanner,
@@ -31,8 +36,11 @@ use lsp_session::{
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::{
+    ffi::OsString,
+    path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 use tauri::{AppHandle, Manager, State};
 use tools::{LocalPhpToolDetector, PhpToolAvailability, PhpToolDetector};
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
@@ -96,6 +104,135 @@ fn get_workspace_trust(
 ) -> Result<WorkspaceTrustState, String> {
     let service = service.lock().map_err(|error| error.to_string())?;
     Ok(service.get(&root_path))
+}
+
+#[tauri::command]
+fn initialize_workspace_index(
+    root_path: String,
+    app: AppHandle,
+) -> Result<WorkspaceIndexSummary, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    let index = open_workspace_index(&app, &root)?;
+    index.summary().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn upsert_workspace_index_file(
+    root_path: String,
+    record: WorkspaceFileRecord,
+    app: AppHandle,
+) -> Result<WorkspaceIndexSummary, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    ensure_path_in_workspace(&root, &record.path)?;
+    let index = open_workspace_index(&app, &root)?;
+    index
+        .upsert_file(&record)
+        .map_err(|error| error.to_string())?;
+    index.summary().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn remove_workspace_index_file(
+    root_path: String,
+    path: String,
+    app: AppHandle,
+) -> Result<WorkspaceIndexSummary, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    ensure_path_in_workspace(&root, &path)?;
+    let index = open_workspace_index(&app, &root)?;
+    index
+        .remove_file(&path)
+        .map_err(|error| error.to_string())?;
+    index.summary().map_err(|error| error.to_string())
+}
+
+fn open_workspace_index(app: &AppHandle, root_path: &Path) -> Result<SqliteWorkspaceIndex, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| error.to_string())?;
+    let database_path = workspace_index_path(&config_dir, root_path);
+    SqliteWorkspaceIndex::open(&database_path).map_err(|error| error.to_string())
+}
+
+fn canonicalize_workspace_root(root_path: &str) -> Result<PathBuf, String> {
+    PathBuf::from(root_path)
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve workspace root: {error}"))
+}
+
+fn ensure_path_in_workspace(root_path: &Path, path: &str) -> Result<(), String> {
+    let canonical_root = root_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve workspace root: {error}"))?;
+    let absolute = absolute_workspace_candidate(root_path, path);
+    let resolved_path = resolve_existing_or_parent_path(&absolute)?;
+
+    if resolved_path.starts_with(&canonical_root) {
+        return Ok(());
+    }
+
+    Err("Index path is outside the workspace root.".to_string())
+}
+
+fn absolute_workspace_candidate(root_path: &Path, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+
+    if candidate.is_absolute() {
+        return candidate;
+    }
+
+    root_path.join(candidate)
+}
+
+fn resolve_existing_or_parent_path(path: &Path) -> Result<PathBuf, String> {
+    if let Ok(canonical) = path.canonicalize() {
+        return Ok(canonical);
+    }
+
+    let mut cursor = path.to_path_buf();
+    let mut missing_components: Vec<OsString> = Vec::new();
+
+    while !cursor.exists() {
+        match cursor.file_name() {
+            Some(component) => missing_components.push(component.to_os_string()),
+            None => return Err("Failed to resolve index path.".to_string()),
+        }
+
+        if cursor.pop() {
+            continue;
+        }
+
+        return Err("Failed to resolve index path.".to_string());
+    }
+
+    let mut resolved = cursor
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve index path: {error}"))?;
+
+    while let Some(component) = missing_components.pop() {
+        resolved.push(component);
+    }
+
+    Ok(normalize_path(&resolved))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+        }
+    }
+
+    normalized
 }
 
 fn build_php_language_server_plan(
@@ -325,6 +462,110 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{ensure_path_in_workspace, normalize_path};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn index_path_guard_accepts_workspace_paths() {
+        let root = temp_workspace("accepts");
+        let source_directory = root.join("src");
+        fs::create_dir_all(&source_directory).expect("source directory");
+        fs::write(source_directory.join("User.php"), "<?php").expect("source file");
+
+        assert!(ensure_path_in_workspace(&root, &path_string(&root.join("src/User.php"))).is_ok());
+        assert!(ensure_path_in_workspace(&root, "src/Missing.php").is_ok());
+        assert!(ensure_path_in_workspace(
+            &root,
+            &path_string(&root.join(".").join("src/User.php"))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn index_path_guard_rejects_paths_outside_workspace() {
+        let root = temp_workspace("rejects-root");
+        let sibling = root
+            .parent()
+            .expect("workspace parent")
+            .join(format!("{}-sibling", unique_suffix()));
+        fs::create_dir_all(&sibling).expect("sibling directory");
+        fs::write(sibling.join("User.php"), "<?php").expect("sibling file");
+
+        assert!(ensure_path_in_workspace(&root, &path_string(&sibling.join("User.php"))).is_err());
+        assert!(ensure_path_in_workspace(&root, "../outside/User.php").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn index_path_guard_accepts_paths_through_symlinked_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_workspace("symlink-root");
+        let source_directory = root.join("src");
+        let linked_root = root
+            .parent()
+            .expect("workspace parent")
+            .join(format!("{}-link", unique_suffix()));
+        fs::create_dir_all(&source_directory).expect("source directory");
+        fs::write(source_directory.join("User.php"), "<?php").expect("source file");
+        symlink(&root, &linked_root).expect("workspace symlink");
+
+        assert!(
+            ensure_path_in_workspace(&root, &path_string(&linked_root.join("src/User.php")))
+                .is_ok()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn index_path_guard_rejects_symlink_escape_paths() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_workspace("symlink-escape-root");
+        let outside = temp_workspace("symlink-escape-outside");
+        let linked_outside = root.join("linked-outside");
+        fs::write(outside.join("Secret.php"), "<?php").expect("outside file");
+        symlink(&outside, &linked_outside).expect("outside symlink");
+
+        assert!(
+            ensure_path_in_workspace(&root, &path_string(&linked_outside.join("Secret.php")))
+                .is_err()
+        );
+        assert!(ensure_path_in_workspace(&root, "linked-outside/Missing.php").is_err());
+    }
+
+    #[test]
+    fn normalize_path_removes_parent_and_current_components() {
+        assert_eq!(
+            normalize_path(Path::new("/workspace/project/../project/./src")),
+            Path::new("/workspace/project/src")
+        );
+    }
+
+    fn temp_workspace(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("editor-lib-{label}-{}", unique_suffix()));
+        fs::create_dir_all(&root).expect("temp workspace");
+        root.canonicalize().expect("canonical workspace")
+    }
+
+    fn unique_suffix() -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
+    }
+
+    fn path_string(path: &Path) -> String {
+        path.to_string_lossy().to_string()
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -347,9 +588,11 @@ pub fn run() {
             get_php_language_server_status,
             get_smart_mode_state,
             get_workspace_trust,
+            initialize_workspace_index,
             plan_php_language_server,
             read_directory,
             read_text_file,
+            remove_workspace_index_file,
             rename_path,
             search_files,
             search_text,
@@ -364,6 +607,7 @@ pub fn run() {
             text_document_did_open,
             text_document_did_save,
             text_document_hover,
+            upsert_workspace_index_file,
             write_text_file
         ])
         .run(tauri::generate_context!())
