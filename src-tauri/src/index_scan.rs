@@ -42,6 +42,12 @@ impl MetadataLanguageDetector for ExtensionMetadataLanguageDetector {
 }
 
 pub trait WorkspaceMetadataScanner {
+    fn collect_path(
+        &self,
+        root_path: &Path,
+        scan_path: &Path,
+    ) -> Result<MetadataScanCollection, MetadataScanError>;
+
     fn scan(
         &self,
         root_path: &Path,
@@ -69,13 +75,12 @@ impl LocalWorkspaceMetadataScanner {
         root_path: &Path,
         directory: &Path,
         matcher: &dyn WorkspaceIgnoreMatcher,
-        store: &dyn WorkspaceIndexStore,
-        report: &mut MetadataScanReport,
+        collection: &mut MetadataScanCollection,
     ) -> Result<(), MetadataScanError> {
         let entries = match fs::read_dir(directory) {
             Ok(entries) => entries,
             Err(_) => {
-                report.errored_entries += 1;
+                collection.report.errored_entries += 1;
                 return Ok(());
             }
         };
@@ -84,11 +89,11 @@ impl LocalWorkspaceMetadataScanner {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(_) => {
-                    report.errored_entries += 1;
+                    collection.report.errored_entries += 1;
                     continue;
                 }
             };
-            self.scan_entry(root_path, &entry, matcher, store, report)?;
+            self.scan_entry(root_path, &entry.path(), matcher, collection)?;
         }
 
         Ok(())
@@ -97,97 +102,115 @@ impl LocalWorkspaceMetadataScanner {
     fn scan_entry(
         &self,
         root_path: &Path,
-        entry: &fs::DirEntry,
+        path: &Path,
         matcher: &dyn WorkspaceIgnoreMatcher,
-        store: &dyn WorkspaceIndexStore,
-        report: &mut MetadataScanReport,
+        collection: &mut MetadataScanCollection,
     ) -> Result<(), MetadataScanError> {
-        let file_type = match entry.file_type() {
+        let file_type = match fs::symlink_metadata(path) {
             Ok(file_type) => file_type,
             Err(_) => {
-                report.errored_entries += 1;
+                collection.report.errored_entries += 1;
                 return Ok(());
             }
         };
-        let path = entry.path();
+        let file_type = file_type.file_type();
 
         if file_type.is_symlink() {
-            report.skipped_entries += 1;
+            collection.report.skipped_entries += 1;
             return Ok(());
         }
 
         if matcher.is_ignored(&path, file_type.is_dir()) {
-            report.skipped_entries += 1;
+            collection.report.skipped_entries += 1;
             return Ok(());
         }
 
         if file_type.is_dir() {
-            self.scan_directory(root_path, &path, matcher, store, report)?;
+            self.scan_directory(root_path, path, matcher, collection)?;
             return Ok(());
         }
 
         if !file_type.is_file() {
-            report.skipped_entries += 1;
+            collection.report.skipped_entries += 1;
             return Ok(());
         }
 
-        self.scan_file(root_path, &path, store, report)
+        self.scan_file(root_path, path, collection)
     }
 
     fn scan_file(
         &self,
         root_path: &Path,
         path: &Path,
-        store: &dyn WorkspaceIndexStore,
-        report: &mut MetadataScanReport,
+        collection: &mut MetadataScanCollection,
     ) -> Result<(), MetadataScanError> {
         let metadata = match fs::metadata(path) {
             Ok(metadata) => metadata,
             Err(_) => {
-                report.errored_entries += 1;
+                collection.report.errored_entries += 1;
                 return Ok(());
             }
         };
         let canonical_path = match path.canonicalize() {
             Ok(path) => path,
             Err(_) => {
-                report.errored_entries += 1;
+                collection.report.errored_entries += 1;
                 return Ok(());
             }
         };
         let relative_path = match relative_path(root_path, &canonical_path) {
             Some(path) => path,
             None => {
-                report.skipped_entries += 1;
+                collection.report.skipped_entries += 1;
                 return Ok(());
             }
         };
 
-        store.upsert_file(&WorkspaceFileRecord {
+        collection.records.push(WorkspaceFileRecord {
             language: self.language_detector.language_for_path(&canonical_path),
             modified_at_unix: modified_at_unix(&metadata),
             path: canonical_path.to_string_lossy().to_string(),
             relative_path,
             size_bytes: size_bytes(&metadata),
-        })?;
-        report.indexed_files += 1;
+        });
+        collection.report.indexed_files += 1;
 
         Ok(())
     }
 }
 
 impl WorkspaceMetadataScanner for LocalWorkspaceMetadataScanner {
+    fn collect_path(
+        &self,
+        root_path: &Path,
+        scan_path: &Path,
+    ) -> Result<MetadataScanCollection, MetadataScanError> {
+        let root_path = root_path.canonicalize()?;
+        let scan_path = absolute_candidate(&root_path, scan_path);
+        let matcher = GitignoreWorkspaceIgnoreMatcher::load(&root_path)?;
+        let mut collection = MetadataScanCollection::default();
+
+        if !scan_path.exists() {
+            return Ok(collection);
+        }
+
+        self.scan_entry(&root_path, &scan_path, &matcher, &mut collection)?;
+
+        Ok(collection)
+    }
+
     fn scan(
         &self,
         root_path: &Path,
         store: &dyn WorkspaceIndexStore,
     ) -> Result<MetadataScanReport, MetadataScanError> {
-        let root_path = root_path.canonicalize()?;
-        let matcher = GitignoreWorkspaceIgnoreMatcher::load(&root_path)?;
-        let mut report = MetadataScanReport::default();
-        self.scan_directory(&root_path, &root_path, &matcher, store, &mut report)?;
+        let collection = self.collect_path(root_path, root_path)?;
 
-        Ok(report)
+        for record in &collection.records {
+            store.upsert_file(record)?;
+        }
+
+        Ok(collection.report)
     }
 }
 
@@ -197,6 +220,12 @@ pub struct MetadataScanReport {
     pub errored_entries: usize,
     pub indexed_files: usize,
     pub skipped_entries: usize,
+}
+
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
+pub struct MetadataScanCollection {
+    pub records: Vec<WorkspaceFileRecord>,
+    pub report: MetadataScanReport,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -367,6 +396,14 @@ fn relative_path(root_path: &Path, path: &Path) -> Option<String> {
     path.strip_prefix(root_path)
         .ok()
         .map(|path| path.to_string_lossy().replace('\\', "/"))
+}
+
+fn absolute_candidate(root_path: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    root_path.join(path)
 }
 
 fn modified_at_unix(metadata: &fs::Metadata) -> i64 {

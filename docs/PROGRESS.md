@@ -58,6 +58,7 @@ Completed:
 - Added in-memory index job scheduler foundation with watch, metadata, parse, DB-write, and maintenance queues.
 - Added index generation guards and guarded SQLite DB-write commits so stale jobs cannot mutate the index.
 - Added initial metadata scan service with `.gitignore` filtering, symlink skipping, SQLite file-record writes, completion/failure events, and a non-blocking Tauri start command.
+- Added incremental index updates that route watch events through the scheduler and apply guarded SQLite upsert/remove writes for modify, delete, rename, and ignored-file cases.
 
 Current verification:
 
@@ -65,10 +66,10 @@ Current verification:
 - `npm test`: passing, 53 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 100 Rust tests
+- `cargo test`: passing, 104 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after addressing one valid fire-and-forget scan finding.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after incremental index updates.
 
 Known issues:
 
@@ -77,4 +78,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add incremental index updates for modify/delete/rename events.
+1. Add index progress UI for file counts, phases, and errors.

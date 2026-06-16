@@ -94,7 +94,7 @@ Scale:
 | P5-04 | Job scheduler | L | Done | Watch, metadata, parse, write, maintenance queues. |
 | P5-05 | Cancellation/generation | M | Done | Stale jobs cannot commit. |
 | P5-06 | Initial metadata scan | L | Done | Eligible files recorded without blocking UI. |
-| P5-07 | Incremental updates | L | Pending | Modify/delete/rename updates DB. |
+| P5-07 | Incremental updates | L | Done | Modify/delete/rename updates DB. |
 | P5-08 | Index progress UI | M | Pending | User sees file counts, phases, errors. |
 
 ## Phase 6: PHP Structural Index

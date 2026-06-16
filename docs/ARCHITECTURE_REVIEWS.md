@@ -951,6 +951,42 @@ Scope reviewed:
 - Browser smoke test
 - `coderabbit review --agent --fast --base main` passed with 0 findings after addressing one valid fire-and-forget scan finding
 
+## 2026-06-15: Incremental Index Updates
+
+Scope reviewed:
+
+- `WorkspaceMetadataScanner::collect_path` for targeted metadata extraction
+- `LocalWorkspaceIndexIncrementalUpdater` watch-event application
+- scheduler-routed metadata and DB-write jobs
+- guarded SQLite commits through `commit_index_db_write`
+- modify, delete, rename, and ignored-file integration tests using temp workspaces and real SQLite databases
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Metadata collection remains in `index_scan.rs`; incremental orchestration lives in `index_update.rs`; SQLite mutation remains owned by `index.rs`; watch normalization remains owned by `file_watcher.rs`.
+- Open/Closed: acceptable. New event sources can feed `WorkspaceWatchEventBatch`, and future parse/symbol stages can extend job handling without replacing the scheduler or store contracts.
+- Liskov Substitution: acceptable. The updater depends on `WorkspaceMetadataScanner` and `WorkspaceIndexStore`, so alternate scanners/stores can be substituted for future services or tests.
+- Interface Segregation: acceptable. Incremental update behavior consumes narrow scheduler, scanner, and store contracts instead of a broad workspace service.
+- Dependency Inversion: acceptable. The updater coordinates abstractions and guarded operations; concrete SQLite and local metadata scanning are default adapters.
+
+### Pattern Review
+
+- Pipeline pattern: watch events flow through routing, metadata collection, guarded DB write operations, and later parse stages.
+- Repository pattern: all persisted file metadata changes still go through `WorkspaceIndexStore`.
+- Strategy pattern: metadata language detection remains replaceable behind the scanner.
+- Command pattern: `IndexDbWriteOperation` models removals and upserts as explicit write commands.
+- Guard pattern: `IndexCommitGate` prevents stale scheduled jobs from mutating SQLite.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+- `coderabbit review --agent --fast --base main` passed with 0 findings
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:
