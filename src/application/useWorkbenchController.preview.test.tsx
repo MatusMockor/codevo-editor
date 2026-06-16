@@ -91,7 +91,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     act(() => {
       previewPromise = getWorkbench().previewFile(file);
-      pinPromise = getWorkbench().openFile(file);
+      pinPromise = getWorkbench().openPinnedFile(file);
     });
 
     expect(reads.map((read) => read.path)).toEqual([file.path, file.path]);
@@ -121,7 +121,7 @@ describe("useWorkbenchController preview tabs", () => {
     const previewFile = fileEntry("/workspace/src/Preview.php", "Preview.php");
 
     await act(async () => {
-      await getWorkbench().openFile(pinnedFile);
+      await getWorkbench().openPinnedFile(pinnedFile);
     });
     await act(async () => {
       await getWorkbench().previewFile(previewFile);
@@ -136,6 +136,79 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(getWorkbench().activePath).toBe(previewFile.path);
     expect(getWorkbench().activeDocument?.path).toBe(previewFile.path);
+  });
+
+  it("reuses a clean preview tab for search result opens", async () => {
+    const { getWorkbench } = renderController();
+    const firstFile = fileEntry("/workspace/src/First.php", "First.php");
+    const secondFile = fileEntry("/workspace/src/Second.php", "Second.php");
+
+    await act(async () => {
+      await getWorkbench().previewFile(firstFile);
+    });
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: secondFile.name,
+        path: secondFile.path,
+        relativePath: "src/Second.php",
+      });
+    });
+
+    expect(getWorkbench().activePath).toBe(secondFile.path);
+    expect(getWorkbench().previewPath).toBe(secondFile.path);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      secondFile.path,
+    ]);
+  });
+
+  it("keeps a dirty editor tab when opening another file", async () => {
+    const { getWorkbench } = renderController();
+    const dirtyFile = fileEntry("/workspace/src/Dirty.php", "Dirty.php");
+    const nextFile = fileEntry("/workspace/src/Next.php", "Next.php");
+
+    await act(async () => {
+      await getWorkbench().previewFile(dirtyFile);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nfinal class DirtyChanged {}\n");
+    });
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: nextFile.name,
+        path: nextFile.path,
+        relativePath: "src/Next.php",
+      });
+    });
+
+    expect(getWorkbench().activePath).toBe(nextFile.path);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      dirtyFile.path,
+      nextFile.path,
+    ]);
+    expect(getWorkbench().dirtyCount).toBe(1);
+  });
+
+  it("keeps a double-click pinned tab when another file opens", async () => {
+    const { getWorkbench } = renderController();
+    const pinnedFile = fileEntry("/workspace/src/Pinned.php", "Pinned.php");
+    const nextFile = fileEntry("/workspace/src/Next.php", "Next.php");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(pinnedFile);
+    });
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: nextFile.name,
+        path: nextFile.path,
+        relativePath: "src/Next.php",
+      });
+    });
+
+    expect(getWorkbench().activePath).toBe(nextFile.path);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      pinnedFile.path,
+      nextFile.path,
+    ]);
   });
 
   it("syncs preview documents with the language server", async () => {
@@ -180,6 +253,28 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.indexProgressGateway.startInitialMetadataScan,
     ).not.toHaveBeenCalled();
     expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
+  it("does not restore the terminal bottom panel on startup", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        session: {
+          activePath: null,
+          bottomPanelView: "terminal",
+          openPaths: [],
+          sidebarView: "files",
+        },
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().bottomPanelVisible).toBe(false);
+    expect(getWorkbench().bottomPanelView).toBe("problems");
   });
 
   it("starts indexing when a restored workspace is already in IDE mode", async () => {

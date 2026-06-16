@@ -147,7 +147,7 @@ export interface WorkbenchWorkspaceGateways {
 }
 
 interface OpenFileOptions {
-  preview?: boolean;
+  pin?: boolean;
   recordNavigation?: boolean;
 }
 
@@ -200,7 +200,7 @@ export function useWorkbenchController(
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
   const [bottomPanelView, setBottomPanelView] =
     useState<BottomPanelView>("problems");
-  const [bottomPanelVisible, setBottomPanelVisible] = useState(true);
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState<
@@ -875,7 +875,7 @@ export function useWorkbenchController(
 
       if (paths.length === 0) {
         setSidebarView(session.sidebarView);
-        setBottomPanelView(session.bottomPanelView);
+        setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
         return;
       }
 
@@ -907,7 +907,7 @@ export function useWorkbenchController(
       setOpenPaths(restoredPaths);
       setActivePath(restoredActivePath(session.activePath, restoredPaths));
       setSidebarView(session.sidebarView);
-      setBottomPanelView(session.bottomPanelView);
+      setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
 
       if (failedCount === 0) {
         return;
@@ -1121,18 +1121,18 @@ export function useWorkbenchController(
       const requestToken = openFileRequestTokenRef.current + 1;
       openFileRequestTokenRef.current = requestToken;
       const shouldRecordNavigation = options.recordNavigation !== false;
-      const shouldPreview = options.preview === true;
+      const shouldPin = options.pin === true;
 
       if (documents[entry.path]) {
         if (shouldRecordNavigation && activePath !== entry.path) {
           recordCurrentNavigationLocation();
         }
 
-        if (shouldPreview && !openPaths.includes(entry.path)) {
+        if (!shouldPin && !openPaths.includes(entry.path)) {
           setPreviewPath(entry.path);
         }
 
-        if (!shouldPreview) {
+        if (shouldPin) {
           pinDocument(entry.path);
         }
 
@@ -1141,16 +1141,13 @@ export function useWorkbenchController(
       }
 
       try {
-        const previousPreviewPath = previewPath;
-        const shouldReplacePreview = Boolean(
-          shouldPreview &&
-            previousPreviewPath &&
-            previousPreviewPath !== entry.path &&
-            !openPaths.includes(previousPreviewPath),
+        const replacement = cleanReplacementDocument(
+          activeDocument,
+          documents,
+          openPaths,
+          previewPath,
         );
-        const previousPreviewDocument = previousPreviewPath
-          ? documents[previousPreviewPath]
-          : null;
+        const replacedPath = replacement?.path ?? null;
         const content = await workspaceFiles.readTextFile(entry.path);
 
         if (openFileRequestTokenRef.current !== requestToken) {
@@ -1169,27 +1166,36 @@ export function useWorkbenchController(
           recordCurrentNavigationLocation();
         }
 
-        if (shouldReplacePreview && previousPreviewDocument) {
-          void syncClosedDocument(previousPreviewDocument);
+        if (replacement) {
+          void syncClosedDocument(replacement);
         }
 
         setDocuments((current) => {
           const next = { ...current, [entry.path]: document };
 
-          if (shouldReplacePreview && previousPreviewPath) {
-            delete next[previousPreviewPath];
+          if (replacedPath) {
+            delete next[replacedPath];
           }
 
           return next;
         });
+        setOpenPaths((current) => {
+          if (shouldPin && !replacedPath) {
+            return current.includes(entry.path)
+              ? current
+              : [...current, entry.path];
+          }
 
-        if (shouldPreview) {
-          setPreviewPath(entry.path);
-        }
+          if (shouldPin && replacedPath) {
+            const mapped = current.map((openPath) =>
+              openPath === replacedPath ? entry.path : openPath,
+            );
+            return mapped.includes(entry.path) ? mapped : [...mapped, entry.path];
+          }
 
-        if (!shouldPreview) {
-          pinDocument(entry.path);
-        }
+          return current.filter((openPath) => openPath !== replacedPath);
+        });
+        setPreviewPath(shouldPin ? null : entry.path);
 
         setActivePath(entry.path);
         setMessage(null);
@@ -1205,9 +1211,9 @@ export function useWorkbenchController(
     },
     [
       activePath,
+      activeDocument,
       documents,
       openPaths,
-      pinDocument,
       previewPath,
       recordCurrentNavigationLocation,
       reportError,
@@ -1218,7 +1224,14 @@ export function useWorkbenchController(
 
   const previewFile = useCallback(
     async (entry: FileEntry) => {
-      await openFile(entry, { preview: true });
+      await openFile(entry);
+    },
+    [openFile],
+  );
+
+  const openPinnedFile = useCallback(
+    async (entry: FileEntry) => {
+      return openFile(entry, { pin: true });
     },
     [openFile],
   );
@@ -1910,49 +1923,13 @@ export function useWorkbenchController(
 
   const openPathForNavigation = useCallback(
     async (path: string): Promise<boolean> => {
-      if (documents[path]) {
-        setActivePath(path);
-        return true;
-      }
-
-      if (activeDocument && !isDirty(activeDocument)) {
-        try {
-          const content = await workspaceFiles.readTextFile(path);
-          const document: EditorDocument = {
-            content,
-            language: detectLanguage(path),
-            name: getFileName(path),
-            path,
-            savedContent: content,
-          };
-          const replacedPath = activeDocument.path;
-          void syncClosedDocument(activeDocument);
-
-          setDocuments((current) => {
-            const next = { ...current };
-            delete next[replacedPath];
-            next[path] = document;
-            return next;
-          });
-          setOpenPaths((current) =>
-            current.map((openPath) => (openPath === replacedPath ? path : openPath)),
-          );
-          setPreviewPath((current) => (current === replacedPath ? path : current));
-          setActivePath(path);
-          return true;
-        } catch (error) {
-          reportError("Open Navigation Target", error);
-          return false;
-        }
-      }
-
       const opened = await openFile(
         {
           kind: "file",
           name: getFileName(path),
           path,
         },
-        { preview: true, recordNavigation: false },
+        { recordNavigation: false },
       );
 
       if (!opened) {
@@ -1961,14 +1938,7 @@ export function useWorkbenchController(
 
       return true;
     },
-    [
-      activeDocument,
-      documents,
-      openFile,
-      reportError,
-      syncClosedDocument,
-      workspaceFiles,
-    ],
+    [openFile],
   );
 
   const openNavigationTarget = useCallback(
@@ -3789,6 +3759,7 @@ export function useWorkbenchController(
     openFileStructure,
     openPhpFileOutlineNode,
     openClassSearchResult,
+    openPinnedFile,
     previewFile,
     previewPath,
     openSettingsPanel,
@@ -3978,6 +3949,37 @@ function restoredActivePath(
   return restoredPaths[0] || null;
 }
 
+function cleanReplacementDocument(
+  activeDocument: EditorDocument | null,
+  documents: Record<string, EditorDocument>,
+  openPaths: string[],
+  previewPath: string | null,
+): EditorDocument | null {
+  if (
+    activeDocument &&
+    !isDirty(activeDocument) &&
+    !openPaths.includes(activeDocument.path)
+  ) {
+    return activeDocument;
+  }
+
+  if (!previewPath) {
+    return null;
+  }
+
+  if (openPaths.includes(previewPath)) {
+    return null;
+  }
+
+  const previewDocument = documents[previewPath] ?? null;
+
+  if (!previewDocument || isDirty(previewDocument)) {
+    return null;
+  }
+
+  return previewDocument;
+}
+
 function currentWorkspaceSession(
   rootPath: string,
   openPaths: string[],
@@ -3992,10 +3994,30 @@ function currentWorkspaceSession(
   return {
     activePath:
       activePath && sessionPaths.includes(activePath) ? activePath : null,
-    bottomPanelView,
+    bottomPanelView: persistedBottomPanelView(bottomPanelView),
     openPaths: sessionPaths,
     sidebarView,
   };
+}
+
+function restoredBottomPanelView(
+  view: WorkspaceSessionState["bottomPanelView"],
+): WorkspaceSessionState["bottomPanelView"] {
+  if (view === "terminal") {
+    return "problems";
+  }
+
+  return view;
+}
+
+function persistedBottomPanelView(
+  view: WorkspaceSessionState["bottomPanelView"],
+): WorkspaceSessionState["bottomPanelView"] {
+  if (view === "terminal") {
+    return "problems";
+  }
+
+  return view;
 }
 
 function workspaceSessionsEqual(

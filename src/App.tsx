@@ -148,15 +148,7 @@ function App() {
       return null;
     }
 
-    if (plan.status === "ready") {
-      return "PHPactor LSP ready";
-    }
-
-    if (plan.status === "blocked") {
-      return "LSP blocked";
-    }
-
-    return "LSP unavailable";
+    return languageServerPlanLabel(plan);
   }, [workbench.languageServerPlan, workbench.languageServerRuntimeStatus]);
   const indexLabel = useMemo(
     () => indexProgressLabel(workbench.indexProgress),
@@ -331,7 +323,7 @@ function App() {
             expandedDirectories={workbench.expandedDirectories}
             loadingPhpFileOutlinePaths={workbench.loadingPhpFileOutlinePaths}
             loadingDirectories={workbench.loadingDirectories}
-            onOpenFile={workbench.openFile}
+            onOpenFile={workbench.openPinnedFile}
             onPreviewFile={workbench.previewFile}
             onOpenPhpFileOutlineNode={workbench.openPhpFileOutlineNode}
             onToggleDirectory={workbench.toggleDirectory}
@@ -630,6 +622,34 @@ function indexToolbarLabel(progress: IndexProgressState): string {
   }
 
   return "Index: idle";
+}
+
+function languageServerPlanLabel(plan: LanguageServerPlan): string {
+  if (plan.status === "ready") {
+    return "PHPactor LSP ready";
+  }
+
+  if (plan.status === "blocked") {
+    return `LSP blocked · ${languageServerPlanReason(plan.message)}`;
+  }
+
+  return `LSP unavailable · ${languageServerPlanReason(plan.message)}`;
+}
+
+function languageServerPlanReason(message: string): string {
+  if (message.includes("PHPactor was not found")) {
+    return "PHPactor missing";
+  }
+
+  if (message.includes("not a PHP Composer project")) {
+    return "Not PHP Composer";
+  }
+
+  if (message.includes("Trust this workspace")) {
+    return "Trust required";
+  }
+
+  return message;
 }
 
 function usePrefersLightTheme(): boolean {
