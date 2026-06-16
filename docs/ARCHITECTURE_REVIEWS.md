@@ -1771,3 +1771,47 @@ Scope reviewed:
 - `codesign -dv --verbose=4` on the debug `.app`: ad-hoc signature and `TeamIdentifier=not set`
 - `xcrun stapler validate` on the debug `.dmg`: no stapled ticket
 - `spctl -a -vvv -t open --context context:primary-signature` on the debug `.dmg`: rejected with no usable signature
+
+## 2026-06-16: Sidecar And Runtime Packaging Plan
+
+Scope reviewed:
+
+- Tauri sidecar configuration and target-triple packaging requirements
+- current PHPactor, Intelephense, Watchman, ripgrep, terminal, and index runtime paths
+- first-release host-runtime policy
+- future sidecar signing, permissions, smoke, and diagnostic requirements
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Runtime ownership decisions are documented separately from implementation code.
+- Open/Closed: acceptable. Future sidecars can extend detector and launcher ports without changing frontend command contracts.
+- Liskov Substitution: acceptable. Host-tool and sidecar launchers can satisfy the same process-spawner abstractions when implemented.
+- Interface Segregation: acceptable. PHPactor, Intelephense, Watchman, ripgrep, terminal, and index concerns remain split by runtime boundary.
+- Dependency Inversion: acceptable. The policy keeps app services depending on launcher/detector abstractions rather than a hardcoded bundled-tool layout.
+
+### Pattern Review
+
+- Strategy pattern: host `PATH`, workspace-local tool, explicit settings path, and future sidecar launch are treated as swappable runtime strategies.
+- Adapter pattern: future Tauri sidecar launches should adapt to existing backend process ports.
+- Capability boundary: sidecar permissions must be exact-name and backend-owned, avoiding arbitrary frontend shell execution.
+- Verification gate: packaged smoke distinguishes host-runtime release behavior from future sidecar release behavior.
+
+### Residual Risk
+
+- Settings paths for PHPactor and Intelephense are persisted but not backend-active yet.
+- PHPactor stderr is discarded today, limiting packaged support diagnostics.
+- Watchman remains a tested parser/fallback abstraction rather than a live packaged service.
+- Text search depends on host `rg` visibility from a GUI-launched app.
+- Terminal output subscription is frontend-active, but exit/crash status subscription after startup remains future work.
+
+### Verification
+
+- Official Tauri sidecar docs checked on 2026-06-16.
+- PHPactor, Intelephense, Watchman, and ripgrep distribution docs checked on 2026-06-16.
+- `jq '.bundle.externalBin // null' src-tauri/tauri.conf.json`: `null`
+- `jq '.permissions' src-tauri/capabilities/default.json`: `core:default`, `dialog:default`, `opener:default`
+- `which php phpactor intelephense watchman rg`
+- `php -v`
+- `rg --version`
+- `rustc --print host-tuple`: `aarch64-apple-darwin`
+- `src-tauri/Cargo.toml`: `rusqlite` uses `bundled`

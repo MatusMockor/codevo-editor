@@ -16,6 +16,7 @@ This document records what the packaged desktop app can rely on today, what it d
 | Workspace watcher | Not active as a packaged background service yet | Use explicit scan/reindex flows; Watchman is optional/future. |
 | SQLite index | Ready for desktop debug bundles | Database lives under Tauri `app_config_dir` per workspace hash. |
 | Text search | Works when host `rg` is discoverable | Do not claim bundled ripgrep. |
+| Sidecars | None configured | First release is a host-runtime build; see `docs/SIDECAR_RUNTIME_PACKAGING_PLAN.md`. |
 | Trust/settings data | Ready for desktop debug bundles | Trust file and index DB are app-config scoped; settings are browser localStorage. |
 | DMG packaging | Ready for debug desktop bundles | Default debug build produces `.app` and `.dmg`. |
 | Signing/notarization | Planned, credentials missing | See `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`; no Developer ID identity is installed locally today. |
@@ -47,6 +48,7 @@ Release metadata still missing:
 - configured release signing identity
 - notarization credentials or profile
 - update channel
+- sidecar bundle metadata
 
 Verified DMG image info:
 
@@ -60,6 +62,13 @@ Signing and notarization plan:
 - Current local keychain check reports `0 valid identities found`.
 - `notarytool` and `stapler` are available through `xcrun`.
 - Xcode Command Line Tools are installed; Xcode.app is not installed.
+
+Sidecar/runtime packaging plan:
+
+- `docs/SIDECAR_RUNTIME_PACKAGING_PLAN.md`
+- `bundle.externalBin` is not configured.
+- `tauri-plugin-shell` is not installed.
+- Current release policy keeps PHP, PHPactor, Intelephense, Watchman, ripgrep, and terminal shells as host/runtime dependencies instead of bundled sidecars.
 
 ## External Tool Discovery
 
@@ -87,10 +96,10 @@ Packaged-build behavior:
 - PHP itself is not detected separately; PHPactor/Composer scripts still require PHP to be available to the launched process.
 - PHPactor stderr is discarded today, so spawn and handshake failures can surface as crash or timeout messages without detailed server logs.
 
-Release follow-up:
+Release policy:
 
-- Decide whether PHPactor remains user-installed or becomes a bundled sidecar.
-- Decide whether PHP is bundled, required from `PATH`, or inherited through workspace vendor scripts.
+- Keep PHPactor user-installed for the first release.
+- Keep PHP user-installed for the first release.
 - Wire persisted `phpactorPath` settings into backend detection or remove the field until it is actionable.
 
 ### Intelephense
@@ -103,8 +112,9 @@ Packaged-build behavior:
 - Keep backend preference UI descriptive until provider launch is implemented.
 - Persisted `phpBackend`, `phpactorPath`, and `intelephensePath` settings are not runtime-active in backend planning yet.
 
-Release follow-up:
+Release policy:
 
+- Do not launch or bundle Intelephense in the first release.
 - Decide Node/Intelephense packaging policy before enabling provider selection.
 - Wire persisted `intelephensePath` settings into backend detection when the provider lands.
 
@@ -118,9 +128,9 @@ Packaged-build behavior:
 - Native notify normalization exists, but it is not exposed as a packaged start/stop service.
 - Watchman subscription parsing is tested, but the `WatchmanWorkspaceFileWatcher` adapter still returns unsupported.
 
-Release follow-up:
+Release policy:
 
-- Either implement Watchman subscriptions end to end or document Watchman as unsupported in packaged builds.
+- Treat Watchman as unsupported in packaged builds until subscriptions are implemented end to end.
 - Add service health UI for watcher backend and rescan-required events before claiming Watchman support.
 
 ### Ripgrep
@@ -133,9 +143,9 @@ Packaged-build behavior:
 - Missing `rg` returns a user-facing error that asks the user to install ripgrep.
 - `rg` is not listed in Tauri `externalBin` and is not bundled.
 
-Release follow-up:
+Release policy:
 
-- Decide whether ripgrep remains user-installed or becomes a bundled sidecar.
+- Keep ripgrep user-installed for the first release.
 - Add packaged smoke coverage with and without `rg` visible to the GUI app process.
 
 ## Runtime Status And Crash Semantics
@@ -231,6 +241,7 @@ app_config_dir / workspace-indexes / <workspace-hash>.sqlite3
 Current behavior:
 
 - SQLite opens with migrations, WAL, and busy timeout.
+- `rusqlite` uses bundled SQLite, so no external SQLite sidecar is required.
 - Initial metadata scans emit `index://metadata-scan-completed`.
 - Scan/reindex reports include bounded error and skipped-file details.
 - Reindex paths are guarded to stay inside the workspace root.
@@ -240,6 +251,7 @@ Current behavior:
 Release follow-up:
 
 - Add a packaged smoke test that opens a PHP fixture, runs soft/PHP/hard reindex, and verifies the Index health panel.
+- Verify DB creation under app config, WAL writability, deleted DB recovery, and corrupt DB support flow.
 - Add a maintenance command or support doc for deleting a corrupt workspace index DB.
 
 ### Trust And Settings
@@ -301,10 +313,9 @@ Release follow-up:
 13. Verify app restart preserves trust, session, and index state.
 14. Verify deleting the workspace index DB allows recovery through hard reindex.
 15. For release artifacts, verify code signing, notarization, stapling, and Gatekeeper checks from `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`.
-16. Confirm release notes list no bundled PHP, PHPactor, Intelephense, Watchman, ripgrep, or shell.
+16. Confirm release notes list no bundled PHP, PHPactor, Intelephense, Watchman, ripgrep, or shell, matching `docs/SIDECAR_RUNTIME_PACKAGING_PLAN.md`.
 
 ## Phase 8 Follow-Ups
 
-- P8-03: decide bundled vs user-installed PHP/PHPactor/Intelephense/Watchman policy.
 - P8-04: update channel research.
 - P8-05: Windows/Linux feasibility and runtime smoke.
