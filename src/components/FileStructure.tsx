@@ -16,6 +16,7 @@ interface FileStructureProps {
   isOpen: boolean;
   outline: PhpFileOutline | null;
   scope: PhpFileStructureScope;
+  onChangeScope(scope: PhpFileStructureScope): void;
   onClose(): void;
   onOpenNode(node: PhpFileOutlineNode): void;
 }
@@ -24,6 +25,7 @@ export function FileStructure({
   fileName,
   isLoading,
   isOpen,
+  onChangeScope,
   onClose,
   onOpenNode,
   outline,
@@ -95,6 +97,20 @@ export function FileStructure({
             value={query}
           />
         </div>
+
+        <label className="file-structure-option">
+          <input
+            checked={scope === "inherited"}
+            onChange={(event) => {
+              const nextScope = event.currentTarget.checked
+                ? "inherited"
+                : "current";
+              onChangeScope(nextScope);
+            }}
+            type="checkbox"
+          />
+          <span>Include inherited members</span>
+        </label>
 
         <div className="quick-open-results">
           {isLoading ? <div className="quick-open-state">Loading symbols...</div> : null}

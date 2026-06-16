@@ -1519,6 +1519,27 @@ export function useWorkbenchController(
     });
   }, []);
 
+  const setFileStructureScopeMode = useCallback(
+    (scope: PhpFileStructureScope) => {
+      setFileStructureScope(scope);
+
+      if (
+        scope === "inherited" &&
+        activeDocument &&
+        !phpInheritedFileOutlinesByPath[activeDocument.path] &&
+        !loadingInheritedPhpFileOutlinePaths.has(activeDocument.path)
+      ) {
+        void loadInheritedPhpFileOutline(activeDocument.path);
+      }
+    },
+    [
+      activeDocument,
+      loadInheritedPhpFileOutline,
+      loadingInheritedPhpFileOutlinePaths,
+      phpInheritedFileOutlinesByPath,
+    ],
+  );
+
   const openFileStructure = useCallback(() => {
     if (!activeDocument) {
       setMessage("Open a PHP file to show file structure.");
@@ -1539,7 +1560,7 @@ export function useWorkbenchController(
       fileStructureOpen && fileStructureScope === "current"
         ? "inherited"
         : "current";
-    setFileStructureScope(nextScope);
+    setFileStructureScopeMode(nextScope);
     setFileStructureOpen(true);
 
     if (
@@ -1549,23 +1570,14 @@ export function useWorkbenchController(
       void loadPhpFileOutline(activeDocument.path);
     }
 
-    if (
-      nextScope === "inherited" &&
-      !phpInheritedFileOutlinesByPath[activeDocument.path] &&
-      !loadingInheritedPhpFileOutlinePaths.has(activeDocument.path)
-    ) {
-      void loadInheritedPhpFileOutline(activeDocument.path);
-    }
   }, [
     activeDocument,
     fileStructureOpen,
     fileStructureScope,
-    loadInheritedPhpFileOutline,
     loadPhpFileOutline,
-    loadingInheritedPhpFileOutlinePaths,
     loadingPhpFileOutlinePaths,
-    phpInheritedFileOutlinesByPath,
     phpFileOutlinesByPath,
+    setFileStructureScopeMode,
   ]);
 
   const openPhpFileOutlineNode = useCallback(
@@ -3816,6 +3828,7 @@ export function useWorkbenchController(
     setLanguageServerSetupOpen,
     setAutoSave,
     setFileStructureOpen,
+    setFileStructureScopeMode,
     setSmartMode,
     pinDocument,
     startIndexScan,

@@ -844,7 +844,7 @@ button {
   display: grid;
   width: min(560px, calc(100vw - 32px));
   max-height: min(620px, calc(100vh - 64px));
-  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-rows: 44px 36px minmax(0, 1fr);
   border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   background: var(--color-modal);
@@ -854,6 +854,24 @@ button {
 
 .file-structure .quick-open-result span {
   padding-left: var(--structure-indent, 0);
+}
+
+.file-structure-option {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 12px;
+  padding: 0 14px;
+}
+
+.file-structure-option input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--color-accent);
 }
 
 .editor-tabs {

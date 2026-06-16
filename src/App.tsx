@@ -545,6 +545,7 @@ function App() {
         fileName={workbench.activeDocument?.name ?? null}
         isLoading={workbench.fileStructureLoading}
         isOpen={workbench.fileStructureOpen}
+        onChangeScope={workbench.setFileStructureScopeMode}
         onClose={() => workbench.setFileStructureOpen(false)}
         onOpenNode={workbench.openPhpFileOutlineNode}
         outline={workbench.fileStructureOutline}

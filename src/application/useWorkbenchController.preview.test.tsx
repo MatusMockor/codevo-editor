@@ -227,6 +227,44 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().intelligenceMode).toBe("basic");
   });
 
+  it("toggles file structure to inherited members on the second Cmd+R", async () => {
+    const childPath = "/workspace/app/Child.php";
+    const parentPath = "/workspace/app/ParentClass.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === childPath) {
+          return "<?php\nnamespace App;\nclass Child extends ParentClass {}\n";
+        }
+
+        return "<?php\nnamespace App;\nclass ParentClass { public function inherited() {} }\n";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(childPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().fileStructureOpen).toBe(true);
+    expect(getWorkbench().fileStructureScope).toBe("inherited");
+    expect(
+      dependencies.phpFileOutlineGateway.parsePhpFileOutline,
+    ).toHaveBeenCalledWith(parentPath, expect.stringContaining("inherited"));
+  });
+
   it("uses the project index for go to definition when the language server is unavailable", async () => {
     const controllerPath = "/workspace/src/CommentController.php";
     const agentPath = "/workspace/src/CommentsAgent.php";
