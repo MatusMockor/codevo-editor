@@ -64,6 +64,7 @@ Completed:
 - Added PHP symbol extraction for namespaced classes, interfaces, traits, enums, methods, functions, and constants.
 - Added Composer metadata detection for root PSR-4/classmap roots plus lock/installed package metadata as data.
 - Added SQLite symbol storage with transactional per-file symbol replacement, rollback coverage, and cascade cleanup when files are removed.
+- Added project symbol search over SQLite symbols with ranked class/type/function/method results and a Tauri/TypeScript gateway contract.
 
 Current verification:
 
@@ -71,10 +72,10 @@ Current verification:
 - `npm test`: passing, 59 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 120 Rust tests
+- `cargo test`: passing, 123 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after symbol DB writes.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after project symbol search.
 
 Known issues:
 
@@ -83,4 +84,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add project symbol search for classes, functions, and methods from SQLite.
+1. Add PHP tree panel backed by indexed namespaces/classes/members.

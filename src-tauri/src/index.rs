@@ -48,6 +48,14 @@ pub trait WorkspaceIndexWriteStore: WorkspaceIndexStore + WorkspaceSymbolStore {
 
 impl<T: WorkspaceIndexStore + WorkspaceSymbolStore> WorkspaceIndexWriteStore for T {}
 
+pub trait WorkspaceSymbolSearchStore {
+    fn search_project_symbols(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<ProjectSymbolSearchResult>>;
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceFileSymbols {
     pub file_path: String,
@@ -64,7 +72,8 @@ pub struct WorkspaceSymbolRecord {
     pub range: WorkspaceSymbolRange,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum WorkspaceSymbolKind {
     Class,
     Constant,
@@ -110,6 +119,19 @@ pub struct WorkspaceSymbolRange {
     pub start_byte: i64,
     pub start_column: i64,
     pub start_line: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSymbolSearchResult {
+    pub column: i64,
+    pub container_name: Option<String>,
+    pub fully_qualified_name: String,
+    pub kind: WorkspaceSymbolKind,
+    pub line_number: i64,
+    pub name: String,
+    pub path: String,
+    pub relative_path: String,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -291,6 +313,83 @@ impl WorkspaceSymbolStore for SqliteWorkspaceIndex {
         }
 
         transaction.commit()
+    }
+}
+
+impl WorkspaceSymbolSearchStore for SqliteWorkspaceIndex {
+    fn search_project_symbols(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<ProjectSymbolSearchResult>> {
+        let normalized_query = query.trim().to_lowercase();
+
+        if normalized_query.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let capped_limit = limit.clamp(1, 200);
+        let contains_pattern = format!("%{}%", escape_like_query(&normalized_query));
+        let prefix_pattern = format!("{}%", escape_like_query(&normalized_query));
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                kind,
+                name,
+                fully_qualified_name,
+                container_name,
+                file_path,
+                file_relative_path,
+                start_line,
+                start_column,
+                ordinal
+            FROM workspace_symbols
+            WHERE kind IN ('class', 'interface', 'trait', 'enum', 'function', 'method')
+                AND (
+                    lower(name) LIKE ?1 ESCAPE '\\'
+                    OR lower(fully_qualified_name) LIKE ?1 ESCAPE '\\'
+                )
+            ORDER BY
+                CASE
+                    WHEN lower(name) = ?2 THEN 0
+                    WHEN lower(fully_qualified_name) = ?2 THEN 1
+                    WHEN lower(name) LIKE ?3 ESCAPE '\\' THEN 2
+                    WHEN lower(fully_qualified_name) LIKE ?3 ESCAPE '\\' THEN 3
+                    WHEN lower(name) LIKE ?1 ESCAPE '\\' THEN 4
+                    WHEN lower(fully_qualified_name) LIKE ?1 ESCAPE '\\' THEN 5
+                END,
+                CASE kind
+                    WHEN 'class' THEN 0
+                    WHEN 'interface' THEN 1
+                    WHEN 'trait' THEN 2
+                    WHEN 'enum' THEN 3
+                    WHEN 'function' THEN 4
+                    WHEN 'method' THEN 5
+                END,
+                length(fully_qualified_name),
+                lower(fully_qualified_name),
+                file_relative_path,
+                start_line,
+                ordinal
+            LIMIT ?4
+            ",
+        )?;
+        let rows = statement.query_map(
+            params![
+                contains_pattern,
+                normalized_query,
+                prefix_pattern,
+                capped_limit as i64,
+            ],
+            project_symbol_search_result,
+        )?;
+        let mut results = Vec::new();
+
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
     }
 }
 
@@ -487,6 +586,47 @@ fn workspace_symbol_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<Workspac
     })
 }
 
+fn project_symbol_search_result(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ProjectSymbolSearchResult> {
+    let kind_text: String = row.get(0)?;
+    let kind = match WorkspaceSymbolKind::from_storage_value(&kind_text) {
+        Some(kind) => kind,
+        None => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                0,
+                Type::Text,
+                Box::new(InvalidWorkspaceSymbolKind(kind_text)),
+            ))
+        }
+    };
+
+    Ok(ProjectSymbolSearchResult {
+        column: row.get(7)?,
+        container_name: row.get(3)?,
+        fully_qualified_name: row.get(2)?,
+        kind,
+        line_number: row.get(6)?,
+        name: row.get(1)?,
+        path: row.get(4)?,
+        relative_path: row.get(5)?,
+    })
+}
+
+fn escape_like_query(query: &str) -> String {
+    let mut escaped = String::new();
+
+    for character in query.chars() {
+        if character == '\\' || character == '%' || character == '_' {
+            escaped.push('\\');
+        }
+
+        escaped.push(character);
+    }
+
+    escaped
+}
+
 #[derive(Debug)]
 struct InvalidWorkspaceSymbolKind(String);
 
@@ -503,7 +643,8 @@ mod tests {
     use super::{
         commit_index_db_write, workspace_index_path, IndexCommitOutcome, SqliteWorkspaceIndex,
         WorkspaceFileRecord, WorkspaceFileSymbols, WorkspaceIndexStore, WorkspaceSymbolKind,
-        WorkspaceSymbolRange, WorkspaceSymbolRecord, WorkspaceSymbolStore,
+        WorkspaceSymbolRange, WorkspaceSymbolRecord, WorkspaceSymbolSearchStore,
+        WorkspaceSymbolStore,
     };
     use crate::job_scheduler::{
         InMemoryIndexJobScheduler, IndexCommitGate, IndexCommitPermission, IndexCommitScope,
@@ -824,6 +965,121 @@ mod tests {
         assert_eq!(outcome, IndexCommitOutcome::SkippedStale);
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].fully_qualified_name, "App\\User");
+    }
+
+    #[test]
+    fn searches_project_symbols_from_sqlite() {
+        let database_path = temp_database_path("symbol-search");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed user file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![
+                    symbol("User", "App\\User", WorkspaceSymbolKind::Class, 10),
+                    symbol(
+                        "UserFactory",
+                        "App\\UserFactory",
+                        WorkspaceSymbolKind::Class,
+                        20,
+                    ),
+                    symbol(
+                        "findUser",
+                        "App\\UserRepository::findUser",
+                        WorkspaceSymbolKind::Method,
+                        30,
+                    ),
+                    symbol(
+                        "user_helper",
+                        "App\\user_helper",
+                        WorkspaceSymbolKind::Function,
+                        40,
+                    ),
+                    symbol(
+                        "USER_TYPE",
+                        "App\\User::USER_TYPE",
+                        WorkspaceSymbolKind::Constant,
+                        50,
+                    ),
+                ],
+            ))
+            .expect("seed symbols");
+
+        let results = index
+            .search_project_symbols("user", 10)
+            .expect("symbol search");
+        let names: Vec<String> = results.iter().map(|result| result.name.clone()).collect();
+
+        assert_eq!(
+            names,
+            vec![
+                "User".to_string(),
+                "UserFactory".to_string(),
+                "user_helper".to_string(),
+                "findUser".to_string(),
+            ]
+        );
+        assert_eq!(results[0].kind, WorkspaceSymbolKind::Class);
+        assert_eq!(results[0].relative_path, "src/User.php");
+        assert_eq!(results[0].line_number, 1);
+        assert_eq!(results[0].column, 1);
+
+        let fqn_results = index
+            .search_project_symbols("APP\\USERREPOSITORY::FINDUSER", 10)
+            .expect("fqn symbol search");
+
+        assert_eq!(fqn_results.len(), 1);
+        assert_eq!(fqn_results[0].name, "findUser");
+        assert_eq!(fqn_results[0].path, "/project/src/User.php");
+    }
+
+    #[test]
+    fn project_symbol_search_escapes_like_wildcards() {
+        let database_path = temp_database_path("symbol-search-escape");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/Wildcard.php", 128))
+            .expect("seed file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/Wildcard.php",
+                vec![
+                    symbol(
+                        "User_Match",
+                        "App\\User_Match",
+                        WorkspaceSymbolKind::Class,
+                        10,
+                    ),
+                    symbol(
+                        "UserXMatch",
+                        "App\\UserXMatch",
+                        WorkspaceSymbolKind::Class,
+                        20,
+                    ),
+                ],
+            ))
+            .expect("seed symbols");
+
+        let results = index
+            .search_project_symbols("User_", 10)
+            .expect("symbol search");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "User_Match");
+    }
+
+    #[test]
+    fn project_symbol_search_returns_no_results_for_empty_query() {
+        let database_path = temp_database_path("symbol-search-empty");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        let results = index
+            .search_project_symbols("   ", 10)
+            .expect("symbol search");
+
+        assert!(results.is_empty());
     }
 
     #[test]

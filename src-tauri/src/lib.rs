@@ -21,8 +21,8 @@ mod trust;
 mod workspace;
 
 use index::{
-    workspace_index_path, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore,
-    WorkspaceIndexSummary,
+    workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
+    WorkspaceIndexStore, WorkspaceIndexSummary, WorkspaceSymbolSearchStore,
 };
 use index_scan::{
     InitialMetadataScanStart, LocalWorkspaceMetadataScanStarter, MetadataScanCompletionEvent,
@@ -361,6 +361,20 @@ fn search_text(root: String, query: String, limit: usize) -> Result<Vec<TextSear
 }
 
 #[tauri::command]
+fn search_project_symbols(
+    app: AppHandle,
+    root: String,
+    query: String,
+    limit: usize,
+) -> Result<Vec<ProjectSymbolSearchResult>, String> {
+    let root = canonicalize_workspace_root(&root)?;
+    let index = open_workspace_index(&app, &root)?;
+    index
+        .search_project_symbols(&query, limit)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn set_smart_mode(
     mode: IntelligenceMode,
     service: State<'_, Mutex<SmartModeService>>,
@@ -649,6 +663,7 @@ pub fn run() {
             remove_workspace_index_file,
             rename_path,
             search_files,
+            search_project_symbols,
             search_text,
             set_smart_mode,
             set_workspace_trust,

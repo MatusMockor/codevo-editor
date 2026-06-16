@@ -1167,6 +1167,42 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - `coderabbit review --agent --fast --base main` passed with 0 findings
 
+## 2026-06-15: Project Symbol Search
+
+Scope reviewed:
+
+- `WorkspaceSymbolSearchStore` read-side contract
+- ranked SQLite project symbol query
+- project symbol result DTO serialization
+- Tauri `search_project_symbols` command
+- TypeScript project symbol domain and Tauri gateway adapter
+- real SQLite tests for ranking, wildcard escaping, empty query, and constant exclusion
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Symbol search reads indexed symbol rows only; symbol extraction, index writes, and UI rendering remain separate.
+- Open/Closed: acceptable. Ranking can evolve inside the search store without changing the storage write contract or Tauri command shape.
+- Liskov Substitution: acceptable. Search consumers can depend on `WorkspaceSymbolSearchStore` or `ProjectSymbolSearchGateway` with alternate implementations.
+- Interface Segregation: improved. Project symbol search has a read-side Rust trait and a dedicated TypeScript domain/gateway, separate from workspace file operations.
+- Dependency Inversion: acceptable. Tauri command code depends on the search store abstraction implemented by SQLite.
+
+### Pattern Review
+
+- Repository pattern: `SqliteWorkspaceIndex` serves indexed symbol search results from persisted rows.
+- Query object pattern: the SQL query encapsulates ranking and filtering for project symbols.
+- Adapter pattern: Tauri and TypeScript gateways adapt IPC to the domain-facing contract.
+- Value object pattern: `ProjectSymbolSearchResult` carries search data without UI behavior.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml index::tests::`
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- `coderabbit review --agent --fast --base main` passed with 0 findings
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

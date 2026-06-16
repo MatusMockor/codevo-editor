@@ -105,7 +105,7 @@ Scale:
 | P6-02 | Symbol extraction | XL | Done | Classes, interfaces, traits, enums, methods, functions, constants. |
 | P6-03 | Composer detector | L | Done | PSR-4 roots/classmaps/packages parsed as data. |
 | P6-04 | Symbol DB writes | M | Done | Per-file symbols replace transactionally. |
-| P6-05 | Project symbol search | M | Pending | Search classes/functions/methods from SQLite. |
+| P6-05 | Project symbol search | M | Done | Search classes/functions/methods from SQLite. |
 | P6-06 | PHP tree panel | L | Pending | Namespaces/classes/members render from index. |
 | P6-07 | File tree members mode | L | Pending | PHP files expand into indexed members. |
 | P6-08 | Reindex commands | M | Pending | Soft/language/hard reindex commands. |
