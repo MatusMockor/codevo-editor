@@ -9,6 +9,7 @@ import type {
   IndexHealthLogEntry,
   IndexProgressState,
 } from "../domain/indexProgress";
+import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
 import { IndexHealthPanel } from "./IndexHealthPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
@@ -24,6 +25,7 @@ interface BottomPanelProps {
   onSelectView(view: BottomPanelView): void;
   onSoftReindex(): void;
   terminalGateway: TerminalGateway;
+  terminalTheme: TerminalTheme;
   workspaceRoot: string | null;
 }
 
@@ -45,6 +47,7 @@ export function BottomPanel({
   onSelectView,
   onSoftReindex,
   terminalGateway,
+  terminalTheme,
   workspaceRoot,
 }: BottomPanelProps) {
   const [terminalMounted, setTerminalMounted] = useState(
@@ -179,6 +182,7 @@ export function BottomPanel({
               profileId={selectedTerminalProfileId}
               rootPath={workspaceRoot}
               terminalGateway={terminalGateway}
+              terminalTheme={terminalTheme}
             />
           </Suspense>
         ) : null}

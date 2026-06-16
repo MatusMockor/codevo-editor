@@ -120,15 +120,18 @@ Scale:
 | P7-04 | Settings UI | L | Done | Mode, PHP backend, paths, ignores, theme. |
 | P7-05 | Index health panel | M | Done | Errors/skipped files/logs inspectable. |
 | P7-06 | Session restore | M | Done | Tabs/layout restore after restart. |
-| P7-07 | Theme polish | L | Pending | Light/dark themes and contrast checks. |
+| P7-07 | Theme polish | L | Done | Light/dark themes and contrast checks. |
 
 ## Phase 8: Packaging
 
 | ID | Task | Size | Status | Acceptance |
 | --- | --- | --- | --- | --- |
+| P8-00 | Service runtime readiness audit | M | Pending | LSP, terminal, watcher, and index crash/health semantics are documented for packaged builds. |
 | P8-01 | Product icon/metadata | S | Pending | Product-specific icon/name/version. |
-| P8-02 | macOS app packaging | M | Partial | `.app` debug bundle passes; DMG pending. |
-| P8-03 | Sidecar packaging plan | L | Pending | PHPactor/LSP/index packaging documented. |
+| P8-02A | macOS `.app` debug bundle | S | Done | `.app` debug bundle passes. |
+| P8-02B | macOS DMG packaging | M | Pending | Default DMG build is reproduced, fixed, or documented with a release workaround. |
+| P8-02C | Signing and notarization plan | M | Pending | Certificate, entitlement, signing, and notarization requirements are documented. |
+| P8-03 | Sidecar/runtime packaging plan | L | Pending | PHP, PHPactor, Intelephense, Watchman, and index runtime packaging/discovery/update policy documented. |
 | P8-04 | Update channel research | M | Pending | Signing/update mechanism decided. |
 | P8-05 | Windows/Linux feasibility | L | Pending | Builds attempted and blockers documented. |
 

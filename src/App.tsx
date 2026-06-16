@@ -24,7 +24,10 @@ import {
   languageServerStatusLabel,
 } from "./domain/languageServerRuntime";
 import { indexProgressLabel } from "./domain/indexProgress";
-import { monacoThemeForAppTheme } from "./domain/settings";
+import {
+  monacoThemeForAppTheme,
+  terminalThemeForAppTheme,
+} from "./domain/settings";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
@@ -150,6 +153,14 @@ function App() {
   const monacoTheme = useMemo(
     () =>
       monacoThemeForAppTheme(
+        workbench.appSettings.theme,
+        prefersLightTheme,
+      ),
+    [prefersLightTheme, workbench.appSettings.theme],
+  );
+  const terminalTheme = useMemo(
+    () =>
+      terminalThemeForAppTheme(
         workbench.appSettings.theme,
         prefersLightTheme,
       ),
@@ -309,6 +320,7 @@ function App() {
           onSelectView={workbench.setBottomPanelView}
           onSoftReindex={workbench.startIndexScan}
           terminalGateway={terminalGateway}
+          terminalTheme={terminalTheme}
           workspaceRoot={workbench.workspaceRoot}
         />
       </section>
@@ -386,7 +398,17 @@ function App() {
 }
 
 function usePrefersLightTheme(): boolean {
-  const [prefersLight, setPrefersLight] = useState(false);
+  const [prefersLight, setPrefersLight] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    if (!window.matchMedia) {
+      return false;
+    }
+
+    return window.matchMedia("(prefers-color-scheme: light)").matches;
+  });
 
   useEffect(() => {
     if (!window.matchMedia) {

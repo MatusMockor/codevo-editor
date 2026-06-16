@@ -1,6 +1,7 @@
 :root {
   --color-accent: #4e9f8f;
   --color-active: #26363c;
+  --color-active-text: #ffffff;
   --color-active-muted: #21363a;
   --color-app: #15181d;
   --color-border: #272d35;
@@ -42,6 +43,7 @@
 .app-shell[data-theme="light"] {
   --color-accent: #26776d;
   --color-active: #d5e8e5;
+  --color-active-text: #18212b;
   --color-active-muted: #e1f0ee;
   --color-app: #f4f6f8;
   --color-border: #cad3de;
@@ -67,12 +69,14 @@
   --color-text-subtle: #6d7a8b;
   --color-warning: #9a680d;
   --color-white: #ffffff;
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: light) {
   .app-shell[data-theme="system"] {
     --color-accent: #26776d;
     --color-active: #d5e8e5;
+    --color-active-text: #18212b;
     --color-active-muted: #e1f0ee;
     --color-app: #f4f6f8;
     --color-border: #cad3de;
@@ -98,6 +102,7 @@
     --color-text-subtle: #6d7a8b;
     --color-warning: #9a680d;
     --color-white: #ffffff;
+    color-scheme: light;
   }
 }
 
@@ -126,6 +131,7 @@ button {
 }
 
 .app-shell {
+  color-scheme: dark;
   display: grid;
   width: 100%;
   height: 100%;
@@ -277,7 +283,11 @@ button {
 
 .tree-row.active {
   background: var(--color-active);
-  color: var(--color-white);
+  color: var(--color-active-text);
+}
+
+.tree-row.active small {
+  color: var(--color-active-text);
 }
 
 .tree-row span {

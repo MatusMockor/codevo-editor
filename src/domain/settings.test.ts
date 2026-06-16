@@ -10,6 +10,7 @@ import {
   resolveAppTheme,
   settingsIgnorePatternsFromText,
   settingsIgnorePatternsText,
+  terminalThemeForAppTheme,
 } from "./settings";
 
 describe("settings defaults", () => {
@@ -168,5 +169,14 @@ describe("resolveAppTheme", () => {
     expect(resolveAppTheme("dark", true)).toBe("dark");
     expect(resolveAppTheme("system", true)).toBe("light");
     expect(resolveAppTheme("system", false)).toBe("dark");
+  });
+});
+
+describe("terminalThemeForAppTheme", () => {
+  it("maps app themes to terminal palettes", () => {
+    expect(terminalThemeForAppTheme("dark").background).toBe("#111418");
+    expect(terminalThemeForAppTheme("light").background).toBe("#f4f6f8");
+    expect(terminalThemeForAppTheme("system", true).foreground).toBe("#263240");
+    expect(terminalThemeForAppTheme("system", false).foreground).toBe("#d8dee9");
   });
 });

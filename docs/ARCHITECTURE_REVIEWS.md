@@ -1579,3 +1579,44 @@ Scope reviewed:
 - `npm run build`
 - Browser smoke test for timestamped clean session-load startup
 - Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings
+
+## 2026-06-16: Theme Polish
+
+Scope reviewed:
+
+- semantic active-state foreground token for readable selected rows in dark and light themes
+- first-render system theme preference handling
+- Monaco and xterm theme mapping from app settings
+- xterm theme updates without restarting the terminal session
+- pure contrast coverage for app active states and terminal text palettes
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Theme resolution and terminal palettes live in the settings domain, contrast calculation is a separate pure helper, `App.tsx` composes resolved editor/terminal themes, and `TerminalPanel` only adapts the resolved theme to xterm.
+- Open/Closed: acceptable. Additional app themes or terminal palettes can extend the domain mapping without changing terminal session lifecycle code.
+- Liskov Substitution: acceptable. `TerminalPanel` still depends on the `TerminalGateway` port and accepts a `TerminalTheme` value without coupling to a concrete settings store.
+- Interface Segregation: acceptable. Theme polish did not expand workspace, terminal gateway, index, or language-server contracts.
+- Dependency Inversion: acceptable. UI consumers receive resolved theme data from the composition root, while terminal lifecycle still depends on the existing session adapter boundary.
+
+### Pattern Review
+
+- Strategy pattern: `monacoThemeForAppTheme` and `terminalThemeForAppTheme` choose editor/terminal rendering strategies from the app theme preference and system preference.
+- Adapter pattern: `TerminalPanel` adapts the domain `TerminalTheme` value to xterm options and applies updates to the existing xterm instance.
+- Semantic token pattern: selected tree row foreground uses `--color-active-text` instead of a hard-coded white foreground.
+
+### Residual Risk
+
+- Browser smoke verified system mode on the current host preference. Automated OS preference emulation can be added later if the Browser viewport/runtime grows that capability.
+
+### Verification
+
+- `npm run check`
+- `npm test -- themeContrast settings TerminalPanel`
+- `npm test`: 86 frontend tests
+- `npm run build`
+- `npm audit --json`
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check`
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 144 Rust tests
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test for light/dark/system theme switching, active-state token values, terminal lazy-load rendering, dark reset, and console errors
+- `coderabbit review --agent --fast --base main`: passing with 0 findings

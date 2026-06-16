@@ -1,6 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
+import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import {
   createTerminalSession,
@@ -13,6 +14,7 @@ interface TerminalPanelProps {
   profileId: string | null;
   rootPath: string | null;
   terminalGateway: TerminalGateway;
+  terminalTheme: TerminalTheme;
 }
 
 export function TerminalPanel({
@@ -20,9 +22,11 @@ export function TerminalPanel({
   profileId,
   rootPath,
   terminalGateway,
+  terminalTheme,
 }: TerminalPanelProps) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<TerminalSession | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
 
   useEffect(() => {
     const host = terminalHostRef.current;
@@ -38,29 +42,9 @@ export function TerminalPanel({
       fontSize: 13,
       lineHeight: 1.25,
       scrollback: 2000,
-      theme: {
-        background: "#111418",
-        black: "#15181d",
-        blue: "#7aa2f7",
-        brightBlack: "#58606b",
-        brightBlue: "#9bbcff",
-        brightCyan: "#9ed0c5",
-        brightGreen: "#a7d08c",
-        brightMagenta: "#d6a5dd",
-        brightRed: "#f2a6a6",
-        brightWhite: "#f3f6f8",
-        brightYellow: "#e6c27a",
-        cursor: "#d8dee9",
-        cyan: "#7dc5bc",
-        foreground: "#d8dee9",
-        green: "#8fcb7f",
-        magenta: "#c49ad4",
-        red: "#e58b8b",
-        selectionBackground: "#33414f",
-        white: "#d8dee9",
-        yellow: "#d7b56d",
-      },
+      theme: terminalTheme,
     });
+    terminalRef.current = terminal;
     const fitAddon = new FitAddon();
     const session = createTerminalSession({
       cancelFrame: (frameId) => cancelAnimationFrame(frameId),
@@ -89,10 +73,21 @@ export function TerminalPanel({
     sessionRef.current = session;
 
     return () => {
+      terminalRef.current = null;
       sessionRef.current = null;
       session.dispose();
     };
   }, [profileId, rootPath, terminalGateway]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+
+    if (!terminal) {
+      return;
+    }
+
+    terminal.options.theme = terminalTheme;
+  }, [terminalTheme]);
 
   useEffect(() => {
     if (!isActive) {
