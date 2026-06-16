@@ -1,6 +1,6 @@
 use crate::file_watcher::WorkspaceWatchEventBatch;
 use crate::index::{
-    commit_index_db_write, IndexCommitOutcome, WorkspaceFileRecord, WorkspaceIndexStore,
+    commit_index_db_write, IndexCommitOutcome, WorkspaceFileRecord, WorkspaceIndexWriteStore,
 };
 use crate::index_scan::{
     LocalWorkspaceMetadataScanner, MetadataScanError, WorkspaceMetadataScanner,
@@ -15,7 +15,7 @@ pub trait WorkspaceIndexIncrementalUpdater {
     fn apply_watch_events(
         &mut self,
         batch: WorkspaceWatchEventBatch,
-        store: &dyn WorkspaceIndexStore,
+        store: &dyn WorkspaceIndexWriteStore,
     ) -> Result<IndexIncrementalUpdateReport, IndexIncrementalUpdateError>;
 }
 
@@ -47,7 +47,7 @@ impl LocalWorkspaceIndexIncrementalUpdater {
     fn apply_job(
         &mut self,
         job: &ScheduledIndexJob,
-        store: &dyn WorkspaceIndexStore,
+        store: &dyn WorkspaceIndexWriteStore,
         report: &mut IndexIncrementalUpdateReport,
     ) -> Result<(), IndexIncrementalUpdateError> {
         match &job.payload {
@@ -66,7 +66,7 @@ impl LocalWorkspaceIndexIncrementalUpdater {
     fn apply_metadata_scan(
         &self,
         job: &ScheduledIndexJob,
-        store: &dyn WorkspaceIndexStore,
+        store: &dyn WorkspaceIndexWriteStore,
         path: &str,
         report: &mut IndexIncrementalUpdateReport,
     ) -> Result<(), IndexIncrementalUpdateError> {
@@ -90,7 +90,7 @@ impl LocalWorkspaceIndexIncrementalUpdater {
     fn commit_operation(
         &self,
         job: &ScheduledIndexJob,
-        store: &dyn WorkspaceIndexStore,
+        store: &dyn WorkspaceIndexWriteStore,
         operation: &IndexDbWriteOperation,
         report: &mut IndexIncrementalUpdateReport,
     ) -> Result<(), IndexIncrementalUpdateError> {
@@ -115,7 +115,7 @@ impl WorkspaceIndexIncrementalUpdater for LocalWorkspaceIndexIncrementalUpdater 
     fn apply_watch_events(
         &mut self,
         batch: WorkspaceWatchEventBatch,
-        store: &dyn WorkspaceIndexStore,
+        store: &dyn WorkspaceIndexWriteStore,
     ) -> Result<IndexIncrementalUpdateReport, IndexIncrementalUpdateError> {
         let jobs = self.scheduler.route_watch_events(batch);
         let mut report = IndexIncrementalUpdateReport {
@@ -180,6 +180,7 @@ fn count_committed_operation(
     report: &mut IndexIncrementalUpdateReport,
 ) {
     match operation {
+        IndexDbWriteOperation::ReplaceFileSymbols { .. } => {}
         IndexDbWriteOperation::RemoveFile { .. } => report.removed_files += 1,
         IndexDbWriteOperation::UpsertFileMetadata { .. } => report.upserted_files += 1,
     }

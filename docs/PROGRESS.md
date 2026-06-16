@@ -63,6 +63,7 @@ Completed:
 - Added tree-sitter PHP parser foundation with tolerant valid/incomplete PHP fixture coverage.
 - Added PHP symbol extraction for namespaced classes, interfaces, traits, enums, methods, functions, and constants.
 - Added Composer metadata detection for root PSR-4/classmap roots plus lock/installed package metadata as data.
+- Added SQLite symbol storage with transactional per-file symbol replacement, rollback coverage, and cascade cleanup when files are removed.
 
 Current verification:
 
@@ -70,10 +71,10 @@ Current verification:
 - `npm test`: passing, 59 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 115 Rust tests
+- `cargo test`: passing, 120 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after Composer detector enhancements.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after symbol DB writes.
 
 Known issues:
 
@@ -82,4 +83,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add transactional symbol DB writes for per-file PHP symbols.
+1. Add project symbol search for classes, functions, and methods from SQLite.

@@ -1,16 +1,17 @@
 use crate::job_scheduler::{
     IndexCommitGate, IndexCommitPermission, IndexCommitScope, IndexDbWriteOperation,
-    IndexFileMetadata,
+    IndexFileMetadata, IndexFileSymbols, IndexSymbolKind, IndexSymbolRange, IndexSymbolRecord,
 };
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::Type, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
+    error::Error,
+    fmt, fs,
     path::{Path, PathBuf},
     time::Duration,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+const CURRENT_SCHEMA_VERSION: i64 = 2;
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 
@@ -38,6 +39,79 @@ pub trait WorkspaceIndexStore {
     fn upsert_file(&self, record: &WorkspaceFileRecord) -> rusqlite::Result<()>;
 }
 
+pub trait WorkspaceSymbolStore {
+    fn list_file_symbols(&self, file_path: &str) -> rusqlite::Result<Vec<WorkspaceSymbolRecord>>;
+    fn replace_file_symbols(&self, file_symbols: &WorkspaceFileSymbols) -> rusqlite::Result<()>;
+}
+
+pub trait WorkspaceIndexWriteStore: WorkspaceIndexStore + WorkspaceSymbolStore {}
+
+impl<T: WorkspaceIndexStore + WorkspaceSymbolStore> WorkspaceIndexWriteStore for T {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceFileSymbols {
+    pub file_path: String,
+    pub relative_path: String,
+    pub symbols: Vec<WorkspaceSymbolRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceSymbolRecord {
+    pub container_name: Option<String>,
+    pub fully_qualified_name: String,
+    pub kind: WorkspaceSymbolKind,
+    pub name: String,
+    pub range: WorkspaceSymbolRange,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceSymbolKind {
+    Class,
+    Constant,
+    Enum,
+    Function,
+    Interface,
+    Method,
+    Trait,
+}
+
+impl WorkspaceSymbolKind {
+    fn as_storage_value(self) -> &'static str {
+        match self {
+            Self::Class => "class",
+            Self::Constant => "constant",
+            Self::Enum => "enum",
+            Self::Function => "function",
+            Self::Interface => "interface",
+            Self::Method => "method",
+            Self::Trait => "trait",
+        }
+    }
+
+    fn from_storage_value(value: &str) -> Option<Self> {
+        match value {
+            "class" => Some(Self::Class),
+            "constant" => Some(Self::Constant),
+            "enum" => Some(Self::Enum),
+            "function" => Some(Self::Function),
+            "interface" => Some(Self::Interface),
+            "method" => Some(Self::Method),
+            "trait" => Some(Self::Trait),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceSymbolRange {
+    pub end_byte: i64,
+    pub end_column: i64,
+    pub end_line: i64,
+    pub start_byte: i64,
+    pub start_column: i64,
+    pub start_line: i64,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum IndexCommitOutcome {
     Committed,
@@ -46,7 +120,7 @@ pub enum IndexCommitOutcome {
 }
 
 pub fn commit_index_db_write(
-    store: &dyn WorkspaceIndexStore,
+    store: &dyn WorkspaceIndexWriteStore,
     gate: &dyn IndexCommitGate,
     scope: &IndexCommitScope,
     operation: &IndexDbWriteOperation,
@@ -140,6 +214,86 @@ impl WorkspaceIndexStore for SqliteWorkspaceIndex {
     }
 }
 
+impl WorkspaceSymbolStore for SqliteWorkspaceIndex {
+    fn list_file_symbols(&self, file_path: &str) -> rusqlite::Result<Vec<WorkspaceSymbolRecord>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                kind,
+                name,
+                fully_qualified_name,
+                container_name,
+                start_byte,
+                end_byte,
+                start_line,
+                start_column,
+                end_line,
+                end_column
+            FROM workspace_symbols
+            WHERE file_path = ?1
+            ORDER BY ordinal
+            ",
+        )?;
+        let rows = statement.query_map([file_path], workspace_symbol_record)?;
+        let mut symbols = Vec::new();
+
+        for row in rows {
+            symbols.push(row?);
+        }
+
+        Ok(symbols)
+    }
+
+    fn replace_file_symbols(&self, file_symbols: &WorkspaceFileSymbols) -> rusqlite::Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM workspace_symbols WHERE file_path = ?1",
+            [&file_symbols.file_path],
+        )?;
+
+        for (ordinal, symbol) in file_symbols.symbols.iter().enumerate() {
+            transaction.execute(
+                "
+                INSERT INTO workspace_symbols (
+                    file_path,
+                    file_relative_path,
+                    ordinal,
+                    kind,
+                    name,
+                    fully_qualified_name,
+                    container_name,
+                    start_byte,
+                    end_byte,
+                    start_line,
+                    start_column,
+                    end_line,
+                    end_column,
+                    indexed_at_unix
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, strftime('%s', 'now'))
+                ",
+                params![
+                    file_symbols.file_path,
+                    file_symbols.relative_path,
+                    ordinal as i64,
+                    symbol.kind.as_storage_value(),
+                    symbol.name,
+                    symbol.fully_qualified_name,
+                    symbol.container_name,
+                    symbol.range.start_byte,
+                    symbol.range.end_byte,
+                    symbol.range.start_line,
+                    symbol.range.start_column,
+                    symbol.range.end_line,
+                    symbol.range.end_column,
+                ],
+            )?;
+        }
+
+        transaction.commit()
+    }
+}
+
 pub fn workspace_index_path(config_dir: &Path, root_path: &Path) -> PathBuf {
     let normalized = root_path.to_string_lossy().replace('\\', "/");
     let hash = stable_workspace_hash(&normalized);
@@ -181,7 +335,39 @@ fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> {
         VALUES (1, 'initial_workspace_files', strftime('%s', 'now'))
         ON CONFLICT(version) DO NOTHING;
 
-        PRAGMA user_version = 1;
+        CREATE TABLE IF NOT EXISTS workspace_symbols (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            file_relative_path TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            fully_qualified_name TEXT NOT NULL,
+            container_name TEXT,
+            start_byte INTEGER NOT NULL CHECK(start_byte >= 0),
+            end_byte INTEGER NOT NULL CHECK(end_byte >= start_byte),
+            start_line INTEGER NOT NULL CHECK(start_line >= 1),
+            start_column INTEGER NOT NULL CHECK(start_column >= 1),
+            end_line INTEGER NOT NULL CHECK(end_line >= start_line),
+            end_column INTEGER NOT NULL CHECK(end_column >= 1),
+            indexed_at_unix INTEGER NOT NULL,
+            FOREIGN KEY(file_path) REFERENCES workspace_files(path) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_workspace_symbols_file_path
+            ON workspace_symbols(file_path);
+
+        CREATE INDEX IF NOT EXISTS idx_workspace_symbols_fully_qualified_name
+            ON workspace_symbols(fully_qualified_name);
+
+        CREATE INDEX IF NOT EXISTS idx_workspace_symbols_kind_name
+            ON workspace_symbols(kind, name);
+
+        INSERT INTO schema_migrations(version, name, applied_at_unix)
+        VALUES (2, 'workspace_symbols', strftime('%s', 'now'))
+        ON CONFLICT(version) DO NOTHING;
+
+        PRAGMA user_version = 2;
         ",
     )?;
     Ok(())
@@ -192,10 +378,13 @@ fn to_sqlite_error(error: std::io::Error) -> rusqlite::Error {
 }
 
 fn apply_index_db_write(
-    store: &dyn WorkspaceIndexStore,
+    store: &dyn WorkspaceIndexWriteStore,
     operation: &IndexDbWriteOperation,
 ) -> rusqlite::Result<()> {
     match operation {
+        IndexDbWriteOperation::ReplaceFileSymbols { file_symbols } => {
+            store.replace_file_symbols(&workspace_file_symbols(file_symbols))
+        }
         IndexDbWriteOperation::RemoveFile { path } => store.remove_file(path),
         IndexDbWriteOperation::UpsertFileMetadata { metadata } => {
             store.upsert_file(&workspace_file_record(metadata))
@@ -213,6 +402,51 @@ fn workspace_file_record(metadata: &IndexFileMetadata) -> WorkspaceFileRecord {
     }
 }
 
+fn workspace_file_symbols(file_symbols: &IndexFileSymbols) -> WorkspaceFileSymbols {
+    WorkspaceFileSymbols {
+        file_path: file_symbols.file_path.clone(),
+        relative_path: file_symbols.relative_path.clone(),
+        symbols: file_symbols
+            .symbols
+            .iter()
+            .map(workspace_symbol_record_from_index)
+            .collect(),
+    }
+}
+
+fn workspace_symbol_record_from_index(symbol: &IndexSymbolRecord) -> WorkspaceSymbolRecord {
+    WorkspaceSymbolRecord {
+        container_name: symbol.container_name.clone(),
+        fully_qualified_name: symbol.fully_qualified_name.clone(),
+        kind: workspace_symbol_kind(symbol.kind),
+        name: symbol.name.clone(),
+        range: workspace_symbol_range(&symbol.range),
+    }
+}
+
+fn workspace_symbol_kind(kind: IndexSymbolKind) -> WorkspaceSymbolKind {
+    match kind {
+        IndexSymbolKind::Class => WorkspaceSymbolKind::Class,
+        IndexSymbolKind::Constant => WorkspaceSymbolKind::Constant,
+        IndexSymbolKind::Enum => WorkspaceSymbolKind::Enum,
+        IndexSymbolKind::Function => WorkspaceSymbolKind::Function,
+        IndexSymbolKind::Interface => WorkspaceSymbolKind::Interface,
+        IndexSymbolKind::Method => WorkspaceSymbolKind::Method,
+        IndexSymbolKind::Trait => WorkspaceSymbolKind::Trait,
+    }
+}
+
+fn workspace_symbol_range(range: &IndexSymbolRange) -> WorkspaceSymbolRange {
+    WorkspaceSymbolRange {
+        end_byte: range.end_byte,
+        end_column: range.end_column,
+        end_line: range.end_line,
+        start_byte: range.start_byte,
+        start_column: range.start_column,
+        start_line: range.start_line,
+    }
+}
+
 fn stable_workspace_hash(value: &str) -> u64 {
     let mut hash = FNV_OFFSET_BASIS;
 
@@ -224,16 +458,58 @@ fn stable_workspace_hash(value: &str) -> u64 {
     hash
 }
 
+fn workspace_symbol_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceSymbolRecord> {
+    let kind_text: String = row.get(0)?;
+    let kind = match WorkspaceSymbolKind::from_storage_value(&kind_text) {
+        Some(kind) => kind,
+        None => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                0,
+                Type::Text,
+                Box::new(InvalidWorkspaceSymbolKind(kind_text)),
+            ))
+        }
+    };
+
+    Ok(WorkspaceSymbolRecord {
+        container_name: row.get(3)?,
+        fully_qualified_name: row.get(2)?,
+        kind,
+        name: row.get(1)?,
+        range: WorkspaceSymbolRange {
+            end_byte: row.get(5)?,
+            end_column: row.get(9)?,
+            end_line: row.get(8)?,
+            start_byte: row.get(4)?,
+            start_column: row.get(7)?,
+            start_line: row.get(6)?,
+        },
+    })
+}
+
+#[derive(Debug)]
+struct InvalidWorkspaceSymbolKind(String);
+
+impl fmt::Display for InvalidWorkspaceSymbolKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "invalid workspace symbol kind: {}", self.0)
+    }
+}
+
+impl Error for InvalidWorkspaceSymbolKind {}
+
 #[cfg(test)]
 mod tests {
     use super::{
         commit_index_db_write, workspace_index_path, IndexCommitOutcome, SqliteWorkspaceIndex,
-        WorkspaceFileRecord, WorkspaceIndexStore,
+        WorkspaceFileRecord, WorkspaceFileSymbols, WorkspaceIndexStore, WorkspaceSymbolKind,
+        WorkspaceSymbolRange, WorkspaceSymbolRecord, WorkspaceSymbolStore,
     };
     use crate::job_scheduler::{
         InMemoryIndexJobScheduler, IndexCommitGate, IndexCommitPermission, IndexCommitScope,
-        IndexDbWriteOperation, IndexFileMetadata, IndexGenerationGuard, IndexJobPayload,
-        IndexJobScheduler, ScheduleIndexJobRequest,
+        IndexDbWriteOperation, IndexFileMetadata, IndexFileSymbols, IndexGenerationGuard,
+        IndexJobPayload, IndexJobScheduler, IndexSymbolKind, IndexSymbolRange, IndexSymbolRecord,
+        ScheduleIndexJobRequest,
     };
     use std::{
         fs,
@@ -263,8 +539,8 @@ mod tests {
 
         assert_eq!(journal_mode.to_lowercase(), "wal");
         assert_eq!(busy_timeout, 5_000);
-        assert_eq!(migration_count, 1);
-        assert_eq!(index.summary().expect("summary").schema_version, 1);
+        assert_eq!(migration_count, 2);
+        assert_eq!(index.summary().expect("summary").schema_version, 2);
     }
 
     #[test]
@@ -294,6 +570,162 @@ mod tests {
             .remove_file("/project/src/User.php")
             .expect("remove file");
         assert_eq!(index.summary().expect("summary").file_count, 0);
+    }
+
+    #[test]
+    fn replaces_file_symbols_transactionally() {
+        let database_path = temp_database_path("symbols-replace");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed file");
+
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![
+                    symbol("User", "App\\User", WorkspaceSymbolKind::Class, 10),
+                    symbol("name", "App\\User::name", WorkspaceSymbolKind::Method, 20),
+                ],
+            ))
+            .expect("replace symbols");
+        let initial_symbols = index
+            .list_file_symbols("/project/src/User.php")
+            .expect("initial symbols");
+
+        assert_eq!(initial_symbols.len(), 2);
+        assert_eq!(initial_symbols[0].fully_qualified_name, "App\\User");
+        assert_eq!(initial_symbols[1].fully_qualified_name, "App\\User::name");
+
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![symbol(
+                    "UserRepository",
+                    "App\\UserRepository",
+                    WorkspaceSymbolKind::Interface,
+                    30,
+                )],
+            ))
+            .expect("replace symbols again");
+        let replaced_symbols = index
+            .list_file_symbols("/project/src/User.php")
+            .expect("replaced symbols");
+
+        assert_eq!(replaced_symbols.len(), 1);
+        assert_eq!(
+            replaced_symbols[0].fully_qualified_name,
+            "App\\UserRepository"
+        );
+    }
+
+    #[test]
+    fn replacing_symbols_does_not_touch_other_files() {
+        let database_path = temp_database_path("symbols-other-file");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed user file");
+        index
+            .upsert_file(&file_record("/project/src/Order.php", 128))
+            .expect("seed order file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![symbol("User", "App\\User", WorkspaceSymbolKind::Class, 10)],
+            ))
+            .expect("seed user symbols");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/Order.php",
+                vec![symbol(
+                    "Order",
+                    "App\\Order",
+                    WorkspaceSymbolKind::Class,
+                    15,
+                )],
+            ))
+            .expect("seed order symbols");
+
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![symbol(
+                    "user_helper",
+                    "App\\user_helper",
+                    WorkspaceSymbolKind::Function,
+                    25,
+                )],
+            ))
+            .expect("replace user symbols");
+        let order_symbols = index
+            .list_file_symbols("/project/src/Order.php")
+            .expect("order symbols");
+
+        assert_eq!(order_symbols.len(), 1);
+        assert_eq!(order_symbols[0].fully_qualified_name, "App\\Order");
+    }
+
+    #[test]
+    fn removing_file_cascades_symbol_rows() {
+        let database_path = temp_database_path("symbols-cascade");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![symbol("User", "App\\User", WorkspaceSymbolKind::Class, 10)],
+            ))
+            .expect("seed symbols");
+
+        index
+            .remove_file("/project/src/User.php")
+            .expect("remove file");
+
+        assert!(index
+            .list_file_symbols("/project/src/User.php")
+            .expect("symbols")
+            .is_empty());
+    }
+
+    #[test]
+    fn failed_symbol_replace_rolls_back_existing_symbols() {
+        let database_path = temp_database_path("symbols-rollback");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![symbol("User", "App\\User", WorkspaceSymbolKind::Class, 10)],
+            ))
+            .expect("seed symbols");
+
+        let result = index.replace_file_symbols(&WorkspaceFileSymbols {
+            file_path: "/project/src/User.php".to_string(),
+            relative_path: "src/User.php".to_string(),
+            symbols: vec![WorkspaceSymbolRecord {
+                range: WorkspaceSymbolRange {
+                    end_byte: 10,
+                    end_column: 1,
+                    end_line: 1,
+                    start_byte: 20,
+                    start_column: 1,
+                    start_line: 1,
+                },
+                ..symbol("Broken", "App\\Broken", WorkspaceSymbolKind::Class, 20)
+            }],
+        });
+        let symbols = index
+            .list_file_symbols("/project/src/User.php")
+            .expect("symbols after rollback");
+
+        assert!(result.is_err());
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].fully_qualified_name, "App\\User");
     }
 
     #[test]
@@ -355,6 +787,43 @@ mod tests {
 
         assert_eq!(outcome, IndexCommitOutcome::SkippedStale);
         assert_eq!(index.summary().expect("summary").file_count, 1);
+    }
+
+    #[test]
+    fn guarded_symbol_replace_does_not_replace_when_stale() {
+        let database_path = temp_database_path("guard-stale-symbols");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![symbol("User", "App\\User", WorkspaceSymbolKind::Class, 10)],
+            ))
+            .expect("seed current symbols");
+        let gate = StaticCommitGate(IndexCommitPermission::Stale);
+        let operation = IndexDbWriteOperation::ReplaceFileSymbols {
+            file_symbols: index_file_symbols(
+                "/project/src/User.php",
+                vec![index_symbol(
+                    "Broken",
+                    "App\\Broken",
+                    IndexSymbolKind::Class,
+                    20,
+                )],
+            ),
+        };
+
+        let outcome = commit_index_db_write(&index, &gate, &commit_scope(1), &operation)
+            .expect("skip stale symbols");
+        let symbols = index
+            .list_file_symbols("/project/src/User.php")
+            .expect("symbols");
+
+        assert_eq!(outcome, IndexCommitOutcome::SkippedStale);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].fully_qualified_name, "App\\User");
     }
 
     #[test]
@@ -447,6 +916,66 @@ mod tests {
             path: path.to_string(),
             relative_path: path.strip_prefix("/project/").unwrap_or(path).to_string(),
             size_bytes,
+        }
+    }
+
+    fn file_symbols(path: &str, symbols: Vec<WorkspaceSymbolRecord>) -> WorkspaceFileSymbols {
+        WorkspaceFileSymbols {
+            file_path: path.to_string(),
+            relative_path: path.strip_prefix("/project/").unwrap_or(path).to_string(),
+            symbols,
+        }
+    }
+
+    fn index_file_symbols(path: &str, symbols: Vec<IndexSymbolRecord>) -> IndexFileSymbols {
+        IndexFileSymbols {
+            file_path: path.to_string(),
+            relative_path: path.strip_prefix("/project/").unwrap_or(path).to_string(),
+            symbols,
+        }
+    }
+
+    fn symbol(
+        name: &str,
+        fully_qualified_name: &str,
+        kind: WorkspaceSymbolKind,
+        start_byte: i64,
+    ) -> WorkspaceSymbolRecord {
+        WorkspaceSymbolRecord {
+            container_name: None,
+            fully_qualified_name: fully_qualified_name.to_string(),
+            kind,
+            name: name.to_string(),
+            range: WorkspaceSymbolRange {
+                end_byte: start_byte + 5,
+                end_column: 6,
+                end_line: 1,
+                start_byte,
+                start_column: 1,
+                start_line: 1,
+            },
+        }
+    }
+
+    fn index_symbol(
+        name: &str,
+        fully_qualified_name: &str,
+        kind: IndexSymbolKind,
+        start_byte: i64,
+    ) -> IndexSymbolRecord {
+        IndexSymbolRecord {
+            container_name: None,
+            fully_qualified_name: fully_qualified_name.to_string(),
+            kind,
+            name: name.to_string(),
+            range: IndexSymbolRange {
+                end_byte: start_byte + 5,
+                end_column: 6,
+                end_line: 1,
+                start_byte,
+                start_column: 1,
+                start_line: 1,
+            },
         }
     }
 

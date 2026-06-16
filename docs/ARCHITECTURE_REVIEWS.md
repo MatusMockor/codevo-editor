@@ -1130,6 +1130,43 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - `coderabbit review --agent --fast --base main` passed with 0 findings
 
+## 2026-06-15: Symbol DB Writes
+
+Scope reviewed:
+
+- SQLite schema version 2 migration
+- `workspace_symbols` table and query indexes
+- `WorkspaceSymbolStore` contract
+- `WorkspaceFileSymbols` and symbol value objects
+- transactional per-file symbol replacement
+- guarded DB-write command for replacing file symbols
+- symbol rollback, file isolation, and file delete cascade tests
+
+### SOLID Review
+
+- Single Responsibility: acceptable. `index.rs` persists workspace file and symbol records; PHP parsing/extraction remains in parser modules.
+- Open/Closed: acceptable. Future parse jobs can add symbol write operations through the symbol store contract without changing workspace file metadata writes.
+- Liskov Substitution: acceptable. The `WorkspaceSymbolStore` trait can be backed by SQLite or an in-memory test adapter with the same replace/list semantics.
+- Interface Segregation: improved. Symbol persistence has a focused store trait separate from `WorkspaceIndexStore`.
+- Dependency Inversion: acceptable. Higher-level indexing code can depend on the symbol store abstraction rather than concrete SQLite transactions.
+
+### Pattern Review
+
+- Repository pattern: `SqliteWorkspaceIndex` implements focused storage traits for metadata and symbols.
+- Unit of Work pattern: `replace_file_symbols` deletes and inserts one file's symbol set inside a single transaction.
+- Value object pattern: symbol kind, range, and record structs carry storage data without parser behavior.
+- Migration pattern: schema version 2 adds symbol tables independently of file metadata.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml index::tests::`
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- `coderabbit review --agent --fast --base main` passed with 0 findings
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

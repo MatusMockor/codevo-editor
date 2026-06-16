@@ -19,8 +19,46 @@ pub struct IndexFileMetadata {
     pub size_bytes: i64,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IndexFileSymbols {
+    pub file_path: String,
+    pub relative_path: String,
+    pub symbols: Vec<IndexSymbolRecord>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IndexSymbolRecord {
+    pub container_name: Option<String>,
+    pub fully_qualified_name: String,
+    pub kind: IndexSymbolKind,
+    pub name: String,
+    pub range: IndexSymbolRange,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum IndexSymbolKind {
+    Class,
+    Constant,
+    Enum,
+    Function,
+    Interface,
+    Method,
+    Trait,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IndexSymbolRange {
+    pub end_byte: i64,
+    pub end_column: i64,
+    pub end_line: i64,
+    pub start_byte: i64,
+    pub start_column: i64,
+    pub start_line: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexDbWriteOperation {
+    ReplaceFileSymbols { file_symbols: IndexFileSymbols },
     RemoveFile { path: String },
     UpsertFileMetadata { metadata: IndexFileMetadata },
 }
