@@ -69,17 +69,18 @@ Completed:
 - Added PHP file outlines in the file tree backed by per-file indexed symbols.
 - Added soft, PHP-language, and hard workspace reindex commands with background PHP symbol parsing.
 - Added a lazy-loaded xterm.js terminal view in the bottom panel with Problems/Terminal switching.
+- Added a trusted-workspace Rust PTY service with terminal session start/input/resize/stop commands and output events.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 72 frontend tests
+- `npm test`: passing, 74 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 137 Rust tests
+- `cargo test`: passing, 142 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
-- Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Terminal switching, xterm rendering, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after the xterm.js view slice.
+- Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Rust PTY service slice.
 
 Known issues:
 
@@ -88,4 +89,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add Rust PTY service.
+1. Add terminal profiles.

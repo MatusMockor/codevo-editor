@@ -28,6 +28,7 @@ import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGa
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
+import { TauriTerminalGateway } from "./infrastructure/tauriTerminalGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import "./App.css";
@@ -52,6 +53,7 @@ const languageServerDocumentSyncGateway =
 const languageServerDiagnosticsGateway =
   new TauriLanguageServerDiagnosticsGateway();
 const languageServerFeaturesGateway = new TauriLanguageServerFeaturesGateway();
+const terminalGateway = new TauriTerminalGateway();
 const settingsGateway = new BrowserSettingsGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 
@@ -274,6 +276,8 @@ function App() {
           notices={workbench.notices}
           onClearProblems={workbench.clearNotices}
           onSelectView={workbench.setBottomPanelView}
+          terminalGateway={terminalGateway}
+          terminalRootPath={workbench.workspaceRoot}
         />
       </section>
 

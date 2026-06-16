@@ -5,6 +5,7 @@ import {
   bottomPanelLabel,
   type BottomPanelView,
 } from "../domain/bottomPanel";
+import type { TerminalGateway } from "../domain/terminal";
 import { ProblemsPanel } from "./ProblemsPanel";
 
 interface BottomPanelProps {
@@ -12,6 +13,8 @@ interface BottomPanelProps {
   notices: WorkbenchNotice[];
   onClearProblems(): void;
   onSelectView(view: BottomPanelView): void;
+  terminalGateway: TerminalGateway;
+  terminalRootPath: string | null;
 }
 
 const bottomPanelViews: BottomPanelView[] = ["problems", "terminal"];
@@ -26,6 +29,8 @@ export function BottomPanel({
   notices,
   onClearProblems,
   onSelectView,
+  terminalGateway,
+  terminalRootPath,
 }: BottomPanelProps) {
   const [terminalMounted, setTerminalMounted] = useState(
     activeView === "terminal",
@@ -88,7 +93,11 @@ export function BottomPanel({
               />
             }
           >
-            <LazyTerminalPanel isActive={activeView === "terminal"} />
+            <LazyTerminalPanel
+              isActive={activeView === "terminal"}
+              rootPath={terminalRootPath}
+              terminalGateway={terminalGateway}
+            />
           </Suspense>
         ) : null}
       </div>

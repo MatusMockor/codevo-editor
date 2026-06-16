@@ -1401,3 +1401,35 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test for Problems/Terminal switching and nonblank xterm render
 - `coderabbit review --agent --fast --base main`: passing with 0 findings
+
+## 2026-06-16: Rust PTY Service
+
+Scope reviewed:
+
+- `portable-pty` backend adapter
+- terminal DTOs, output/status events, and Tauri commands
+- `TerminalSupervisor` session lifecycle, reader/waiter threads, input writer, resize, and stop
+- frontend terminal gateway and xterm streaming session helper
+- trusted-workspace guard before shell startup
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Terminal DTOs live in `terminal.rs`, PTY lifecycle lives in `terminal_session.rs`, Tauri commands adapt IPC, and xterm streaming lives in the component helper.
+- Open/Closed: acceptable. Additional terminal sessions and profiles can extend the session/gateway contracts without changing Problems or editor tabs.
+- Liskov Substitution: improved. Tests use fake `TerminalPtySpawner`, child, killer, resizer, writer, and event sink implementations against narrow traits.
+- Interface Segregation: acceptable. Input, resize, child waiting, process killing, output events, and frontend gateway calls use focused contracts.
+- Dependency Inversion: acceptable. Frontend terminal code depends on `TerminalGateway`; backend supervisor depends on PTY traits rather than raw `portable-pty` types.
+
+### Pattern Review
+
+- Adapter pattern: `PortablePtySpawner` adapts `portable-pty`; `TauriTerminalGateway` adapts IPC to the frontend port; `TerminalPanel` adapts xterm.
+- Observer pattern: backend terminal output and status are emitted as events, and frontend output subscription writes to xterm.
+- Repository-like supervisor: `TerminalSupervisor` owns session lookup and lifecycle state behind a focused API.
+- Command pattern: Tauri commands expose start, input, resize, and stop operations.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml terminal_session`
+- `npm run check`
+- `npm test -- terminalSession tauriTerminalGateway`
+- Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings

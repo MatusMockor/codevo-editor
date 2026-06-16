@@ -1,19 +1,26 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
+import type { TerminalGateway } from "../domain/terminal";
 import {
-  createReadonlyTerminalSession,
-  type ReadonlyTerminalSession,
+  createTerminalSession,
+  type TerminalSession,
 } from "./terminalSession";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPanelProps {
   isActive: boolean;
+  rootPath: string | null;
+  terminalGateway: TerminalGateway;
 }
 
-export function TerminalPanel({ isActive }: TerminalPanelProps) {
+export function TerminalPanel({
+  isActive,
+  rootPath,
+  terminalGateway,
+}: TerminalPanelProps) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
-  const sessionRef = useRef<ReadonlyTerminalSession | null>(null);
+  const sessionRef = useRef<TerminalSession | null>(null);
 
   useEffect(() => {
     const host = terminalHostRef.current;
@@ -24,7 +31,7 @@ export function TerminalPanel({ isActive }: TerminalPanelProps) {
 
     const terminal = new Terminal({
       cursorBlink: true,
-      disableStdin: true,
+      disableStdin: false,
       fontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: 13,
       lineHeight: 1.25,
@@ -53,15 +60,25 @@ export function TerminalPanel({ isActive }: TerminalPanelProps) {
       },
     });
     const fitAddon = new FitAddon();
-    const session = createReadonlyTerminalSession({
+    const session = createTerminalSession({
       cancelFrame: (frameId) => cancelAnimationFrame(frameId),
       createResizeObserver: (callback) => new ResizeObserver(callback),
       fitAddon,
+      gateway: terminalGateway,
       host,
+      rootPath,
       scheduleFrame: (callback) => requestAnimationFrame(callback),
       terminal: {
+        get cols() {
+          return terminal.cols;
+        },
+        get rows() {
+          return terminal.rows;
+        },
         dispose: () => terminal.dispose(),
         loadAddon: (addon) => terminal.loadAddon(addon as FitAddon),
+        onData: (listener) => terminal.onData(listener),
+        onResize: (listener) => terminal.onResize(listener),
         open: (container) => terminal.open(container),
         write: (data) => terminal.write(data),
       },
@@ -72,7 +89,7 @@ export function TerminalPanel({ isActive }: TerminalPanelProps) {
       sessionRef.current = null;
       session.dispose();
     };
-  }, []);
+  }, [rootPath, terminalGateway]);
 
   useEffect(() => {
     if (!isActive) {

@@ -19,6 +19,8 @@ pub mod php_tree;
 mod project;
 mod search;
 mod smart_mode;
+mod terminal;
+mod terminal_session;
 mod tools;
 mod trust;
 mod workspace;
@@ -63,6 +65,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
+use terminal::{AppHandleTerminalEventSink, TerminalRuntimeStatus, TerminalSize};
+use terminal_session::{PortablePtySpawner, TerminalSupervisor};
 use tools::{LocalPhpToolDetector, PhpToolAvailability, PhpToolDetector};
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
@@ -491,6 +495,56 @@ fn stop_php_language_server(
 }
 
 #[tauri::command]
+fn start_terminal_session(
+    root_path: String,
+    size: TerminalSize,
+    app: AppHandle,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+    supervisor: State<'_, TerminalSupervisor>,
+) -> Result<TerminalRuntimeStatus, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    let root_label = root.to_string_lossy().to_string();
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_label)
+        .trusted;
+
+    if !trusted {
+        return Err("Workspace must be trusted to start a terminal.".to_string());
+    }
+
+    let sink = Arc::new(AppHandleTerminalEventSink::new(app));
+    supervisor.start(root, size, &PortablePtySpawner, sink)
+}
+
+#[tauri::command]
+fn write_terminal_input(
+    session_id: u64,
+    data: String,
+    supervisor: State<'_, TerminalSupervisor>,
+) -> Result<(), String> {
+    supervisor.write_input(session_id, &data)
+}
+
+#[tauri::command]
+fn resize_terminal_session(
+    session_id: u64,
+    size: TerminalSize,
+    supervisor: State<'_, TerminalSupervisor>,
+) -> Result<(), String> {
+    supervisor.resize(session_id, size)
+}
+
+#[tauri::command]
+fn stop_terminal_session(
+    session_id: u64,
+    supervisor: State<'_, TerminalSupervisor>,
+) -> Result<TerminalRuntimeStatus, String> {
+    supervisor.stop(session_id)
+}
+
+#[tauri::command]
 fn text_document_did_open(
     document: TextDocumentContent,
     supervisor: State<'_, LanguageServerSupervisor>,
@@ -688,6 +742,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Mutex::new(SmartModeService::new()))
         .manage(LanguageServerSupervisor::new())
+        .manage(TerminalSupervisor::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -713,6 +768,7 @@ pub fn run() {
             read_text_file,
             remove_workspace_index_file,
             rename_path,
+            resize_terminal_session,
             search_files,
             search_project_symbols,
             search_text,
@@ -721,7 +777,9 @@ pub fn run() {
             start_initial_metadata_scan,
             start_workspace_reindex,
             start_php_language_server,
+            start_terminal_session,
             stop_php_language_server,
+            stop_terminal_session,
             text_document_completion,
             text_document_definition,
             text_document_did_change,
@@ -730,6 +788,7 @@ pub fn run() {
             text_document_did_save,
             text_document_hover,
             upsert_workspace_index_file,
+            write_terminal_input,
             write_text_file
         ])
         .run(tauri::generate_context!())
