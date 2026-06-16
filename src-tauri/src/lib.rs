@@ -1,4 +1,5 @@
-mod ignore_matcher;
+pub mod file_watcher;
+pub mod ignore_matcher;
 mod index;
 mod lsp;
 mod lsp_diagnostics;

@@ -90,7 +90,7 @@ Scale:
 | --- | --- | --- | --- | --- |
 | P5-01 | SQLite workspace DB | L | Done | Migrations, WAL, busy timeout. |
 | P5-02 | Ignore matcher | M | Done | `.gitignore` behavior shared by scan/events. |
-| P5-03 | Watcher abstraction | L | Pending | Watchman/native fallback expose same events. |
+| P5-03 | Watcher abstraction | L | Done | Watchman/native fallback expose same events. |
 | P5-04 | Job scheduler | L | Pending | Watch, metadata, parse, write, maintenance queues. |
 | P5-05 | Cancellation/generation | M | Pending | Stale jobs cannot commit. |
 | P5-06 | Initial metadata scan | L | Pending | Eligible files recorded without blocking UI. |

@@ -54,6 +54,7 @@ Completed:
 - Added navigation back/forward stack with command-palette actions and keyboard shortcuts.
 - Added SQLite workspace index database foundation with migrations, WAL, busy timeout, and file record commands.
 - Added shared ignore matcher with `.gitignore` scopes, default heavy-folder excludes, and workspace file-search integration.
+- Added workspace watcher abstraction with normalized native/Watchman event shape and Watchman-to-native fallback strategy.
 
 Current verification:
 
@@ -61,10 +62,10 @@ Current verification:
 - `npm test`: passing, 53 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 67 Rust tests
+- `cargo test`: passing, 76 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after shared ignore matcher.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after watcher abstraction.
 
 Known issues:
 
@@ -73,4 +74,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add watcher abstraction with Watchman/native-compatible event shape.
+1. Add job scheduler for watch, metadata, parse, write, and maintenance queues.

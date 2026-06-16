@@ -742,6 +742,39 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test
 
+## 2026-06-15: Watcher Abstraction
+
+Scope reviewed:
+
+- normalized `WorkspaceWatchEvent` shape for native and Watchman sources
+- native `notify` adapter and Watchman subscription parser
+- preferred watcher fallback strategy
+- ignore matcher integration for watcher events
+- tests for create/modify/delete/rename, Watchman payloads, rescan hints, ignored paths, and fallback selection
+
+### SOLID Review
+
+- Single Responsibility: acceptable. `file_watcher.rs` owns watcher event contracts and backend adapters only; it does not schedule jobs, read file contents, parse code, or write SQLite rows.
+- Open/Closed: acceptable. New watcher backends can implement `WorkspaceFileWatcher` without changing normalized event consumers.
+- Liskov Substitution: acceptable. Native, Watchman, and fake test watchers all satisfy the same watch request/session contract.
+- Interface Segregation: acceptable. Event sinks, watcher sessions, backend availability, and ignore matching remain separate interfaces.
+- Dependency Inversion: acceptable. Future index scheduling can depend on `WorkspaceFileWatcher` and `WorkspaceWatchEventSink`, not concrete `notify` or Watchman process details.
+
+### Pattern Review
+
+- Adapter pattern: native `notify` events and Watchman subscription payloads are adapted into one workspace event shape.
+- Strategy pattern: `PreferredWorkspaceFileWatcher` chooses Watchman or native watching behind the shared watcher interface.
+- Observer pattern: `WorkspaceWatchEventSink` publishes event batches without coupling producers to future scheduler/indexer consumers.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+
 ## 2026-06-15: Shared Ignore Matcher
 
 Scope reviewed:
