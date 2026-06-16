@@ -417,6 +417,10 @@ mod tests {
                     "App\\Domain\\User::TYPE".to_string()
                 ),
                 (
+                    PhpSymbolKind::Constant,
+                    "App\\Domain\\User::ALIASES".to_string()
+                ),
+                (
                     PhpSymbolKind::Property,
                     "App\\Domain\\User::$displayName".to_string()
                 ),
@@ -492,6 +496,7 @@ enum UserStatus: string
 final class User
 {
     public const TYPE = 'user';
+    private const array ALIASES = [];
     private string $displayName = 'Matus';
 
     public function name(): string

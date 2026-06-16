@@ -23,9 +23,10 @@ impl TreeSitterPhpParser {
 
 impl PhpSyntaxParser for TreeSitterPhpParser {
     fn parse(&mut self, source: &str) -> Result<PhpSyntaxTree, PhpParseError> {
+        let parse_source = normalize_php_source_for_parser(source);
         let tree = self
             .parser
-            .parse(source, None)
+            .parse(parse_source.as_str(), None)
             .ok_or(PhpParseError::ParseCancelled)?;
 
         Ok(PhpSyntaxTree::from_tree(tree))
@@ -177,6 +178,109 @@ fn diagnostic_end_character(
     end_character
 }
 
+fn normalize_php_source_for_parser(source: &str) -> String {
+    let mut normalized = source.as_bytes().to_vec();
+    let mut offset = 0;
+
+    while let Some(relative_offset) = source[offset..].find("const") {
+        let keyword_start = offset + relative_offset;
+        let keyword_end = keyword_start + "const".len();
+        offset = keyword_end;
+
+        if !is_keyword_at(source.as_bytes(), keyword_start, keyword_end) {
+            continue;
+        }
+
+        replace_typed_const_annotation(source.as_bytes(), &mut normalized, keyword_end);
+    }
+
+    String::from_utf8(normalized).unwrap_or_else(|_| source.to_string())
+}
+
+fn replace_typed_const_annotation(source: &[u8], normalized: &mut [u8], const_end: usize) {
+    let declaration_end = match const_declaration_value_offset(source, const_end) {
+        Some(declaration_end) => declaration_end,
+        None => return,
+    };
+    let identifiers = identifiers_in_range(source, const_end, declaration_end);
+
+    if identifiers.len() < 2 {
+        return;
+    }
+
+    let constant_name_start = match identifiers.last() {
+        Some((constant_name_start, _)) => *constant_name_start,
+        None => return,
+    };
+
+    for index in const_end..constant_name_start {
+        if is_horizontal_whitespace(source[index]) {
+            continue;
+        }
+
+        normalized[index] = b' ';
+    }
+}
+
+fn const_declaration_value_offset(source: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+
+    while index < source.len() {
+        match source[index] {
+            b'=' => return Some(index),
+            b'\n' | b';' | b'{' | b'}' => return None,
+            _ => index += 1,
+        }
+    }
+
+    None
+}
+
+fn identifiers_in_range(source: &[u8], start: usize, end: usize) -> Vec<(usize, usize)> {
+    let mut identifiers = Vec::new();
+    let mut index = start;
+
+    while index < end {
+        if !is_identifier_start(source[index]) {
+            index += 1;
+            continue;
+        }
+
+        let identifier_start = index;
+        index += 1;
+
+        while index < end && is_identifier_continue(source[index]) {
+            index += 1;
+        }
+
+        identifiers.push((identifier_start, index));
+    }
+
+    identifiers
+}
+
+fn is_keyword_at(source: &[u8], start: usize, end: usize) -> bool {
+    let before = start
+        .checked_sub(1)
+        .and_then(|index| source.get(index))
+        .copied();
+    let after = source.get(end).copied();
+
+    !before.is_some_and(is_identifier_continue) && !after.is_some_and(is_identifier_continue)
+}
+
+fn is_identifier_start(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphabetic()
+}
+
+fn is_identifier_continue(byte: u8) -> bool {
+    byte == b'_' || byte.is_ascii_alphanumeric()
+}
+
+fn is_horizontal_whitespace(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t')
+}
+
 #[cfg(test)]
 mod tests {
     use super::{PhpSyntaxParser, TreeSitterPhpParser};
@@ -194,6 +298,20 @@ mod tests {
         assert!(!summary.has_missing_nodes);
         assert_eq!(summary.error_count, 0);
         assert_eq!(tree.root().kind(), "program");
+    }
+
+    #[test]
+    fn parses_php_83_typed_class_constants_without_errors() {
+        let mut parser = TreeSitterPhpParser::new().expect("parser");
+        let tree = parser
+            .parse(typed_class_constant_fixture())
+            .expect("parse typed constants");
+        let summary = tree.summary();
+
+        assert_eq!(summary.root_end_byte, typed_class_constant_fixture().len());
+        assert!(!summary.has_error);
+        assert!(!summary.has_missing_nodes);
+        assert_eq!(summary.error_count, 0);
     }
 
     #[test]
@@ -244,6 +362,18 @@ final class User
     public function name(): string
     {
         return
+"#
+    }
+
+    fn typed_class_constant_fixture() -> &'static str {
+        r#"<?php
+
+final class Taxonomy
+{
+    private const array SENIORITY = [
+        'OWNER' => 'Owner',
+    ];
+}
 "#
     }
 }
