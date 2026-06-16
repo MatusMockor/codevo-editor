@@ -1,4 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import {
@@ -145,6 +147,8 @@ interface OpenFileOptions {
   recordNavigation?: boolean;
 }
 
+const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
+
 export type SidebarView = "files" | "php";
 
 export function useWorkbenchController(
@@ -285,6 +289,7 @@ export function useWorkbenchController(
   >({});
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const activeDocumentRef = useRef<EditorDocument | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
   const lastPhpFileOutlineRefreshKeyRef = useRef<string | null>(null);
@@ -298,6 +303,10 @@ export function useWorkbenchController(
     .map((path) => documents[path])
     .filter((document): document is EditorDocument => Boolean(document));
   const dirtyCount = openDocuments.filter(isDirty).length;
+
+  useEffect(() => {
+    activeDocumentRef.current = activeDocument;
+  }, [activeDocument]);
 
   const reportError = useCallback((source: string, error: unknown) => {
     const nextMessage = String(error);
@@ -1648,6 +1657,39 @@ export function useWorkbenchController(
     },
     [activePath, documents, previewPath, prompter, syncClosedDocument],
   );
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    let active = true;
+    let unlisten: TauriUnlistenFn | null = null;
+
+    listen(CLOSE_ACTIVE_TAB_EVENT, () => {
+      const document = activeDocumentRef.current;
+
+      if (!document) {
+        return;
+      }
+
+      closeDocument(document.path);
+    })
+      .then((dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+
+        unlisten = dispose;
+      })
+      .catch((error) => reportError("Shortcuts", error));
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [closeDocument, reportError]);
 
   const updateActiveDocument = useCallback(
     (content: string) => {

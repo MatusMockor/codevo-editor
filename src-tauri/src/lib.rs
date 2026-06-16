@@ -68,7 +68,10 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{
+    menu::{Menu, MenuItemBuilder, SubmenuBuilder},
+    AppHandle, Emitter, Manager, State,
+};
 use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize};
 use terminal_session::{
     LocalTerminalProfileProvider, PortablePtySpawner, TerminalProfileProvider, TerminalSupervisor,
@@ -78,6 +81,9 @@ use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
     FileEntry, FileSearchResult, LocalWorkspaceFileRepository, WorkspaceFileRepository,
 };
+
+const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
+const CLOSE_ACTIVE_TAB_MENU_ID: &str = "close-active-tab";
 
 #[tauri::command]
 fn create_directory(path: String) -> Result<(), String> {
@@ -311,6 +317,15 @@ fn path_file_label(path: &str) -> String {
         .and_then(|file_name| file_name.to_str())
         .map(ToString::to_string)
         .unwrap_or_else(|| path.to_string())
+}
+
+fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let close_tab = MenuItemBuilder::with_id(CLOSE_ACTIVE_TAB_MENU_ID, "Close Tab")
+        .accelerator("CmdOrCtrl+W")
+        .build(app)?;
+    let file = SubmenuBuilder::new(app, "File").item(&close_tab).build()?;
+
+    Menu::with_items(app, &[&file])
 }
 
 fn resolve_workspace_path(root_path: &Path, path: &str) -> Result<PathBuf, String> {
@@ -824,6 +839,14 @@ mod tests {
 pub fn run() {
     tauri::Builder::default()
         .enable_macos_default_menu(false)
+        .menu(application_menu)
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() != CLOSE_ACTIVE_TAB_MENU_ID {
+                return;
+            }
+
+            let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
+        })
         .manage(Mutex::new(SmartModeService::new()))
         .manage(LanguageServerSupervisor::new())
         .manage(TerminalSupervisor::new())
