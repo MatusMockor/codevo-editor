@@ -99,6 +99,7 @@ pub enum WorkspaceSymbolKind {
     Function,
     Interface,
     Method,
+    Property,
     Trait,
 }
 
@@ -111,6 +112,7 @@ impl WorkspaceSymbolKind {
             Self::Function => "function",
             Self::Interface => "interface",
             Self::Method => "method",
+            Self::Property => "property",
             Self::Trait => "trait",
         }
     }
@@ -123,6 +125,7 @@ impl WorkspaceSymbolKind {
             "function" => Some(Self::Function),
             "interface" => Some(Self::Interface),
             "method" => Some(Self::Method),
+            "property" => Some(Self::Property),
             "trait" => Some(Self::Trait),
             _ => None,
         }
@@ -432,7 +435,7 @@ impl WorkspacePhpFileOutlineStore for SqliteWorkspaceIndex {
                 AND container_symbols.fully_qualified_name = workspace_symbols.container_name
                 AND container_symbols.kind IN ('class', 'interface', 'trait', 'enum')
             WHERE workspace_symbols.file_path = ?
-                AND workspace_symbols.kind IN ('class', 'interface', 'trait', 'enum', 'function', 'method', 'constant')
+                AND workspace_symbols.kind IN ('class', 'interface', 'trait', 'enum', 'function', 'method', 'property', 'constant')
             ORDER BY workspace_symbols.ordinal
             ",
         )?;
@@ -467,7 +470,7 @@ impl WorkspacePhpTreeStore for SqliteWorkspaceIndex {
                 ON container_symbols.file_path = workspace_symbols.file_path
                 AND container_symbols.fully_qualified_name = workspace_symbols.container_name
                 AND container_symbols.kind IN ('class', 'interface', 'trait', 'enum')
-            WHERE workspace_symbols.kind IN ('class', 'interface', 'trait', 'enum', 'function', 'method', 'constant')
+            WHERE workspace_symbols.kind IN ('class', 'interface', 'trait', 'enum', 'function', 'method', 'property', 'constant')
             ORDER BY lower(workspace_symbols.fully_qualified_name), workspace_symbols.ordinal
             ",
         )?;
@@ -675,6 +678,7 @@ fn workspace_symbol_kind(kind: IndexSymbolKind) -> WorkspaceSymbolKind {
         IndexSymbolKind::Function => WorkspaceSymbolKind::Function,
         IndexSymbolKind::Interface => WorkspaceSymbolKind::Interface,
         IndexSymbolKind::Method => WorkspaceSymbolKind::Method,
+        IndexSymbolKind::Property => WorkspaceSymbolKind::Property,
         IndexSymbolKind::Trait => WorkspaceSymbolKind::Trait,
     }
 }
@@ -817,6 +821,7 @@ fn php_file_outline_node_kind(kind: WorkspaceSymbolKind) -> PhpFileOutlineNodeKi
         WorkspaceSymbolKind::Function => PhpFileOutlineNodeKind::Function,
         WorkspaceSymbolKind::Interface => PhpFileOutlineNodeKind::Interface,
         WorkspaceSymbolKind::Method => PhpFileOutlineNodeKind::Method,
+        WorkspaceSymbolKind::Property => PhpFileOutlineNodeKind::Property,
         WorkspaceSymbolKind::Trait => PhpFileOutlineNodeKind::Trait,
     }
 }
@@ -877,6 +882,7 @@ fn php_tree_node_kind(kind: WorkspaceSymbolKind) -> PhpTreeNodeKind {
         WorkspaceSymbolKind::Function => PhpTreeNodeKind::Function,
         WorkspaceSymbolKind::Interface => PhpTreeNodeKind::Interface,
         WorkspaceSymbolKind::Method => PhpTreeNodeKind::Method,
+        WorkspaceSymbolKind::Property => PhpTreeNodeKind::Property,
         WorkspaceSymbolKind::Trait => PhpTreeNodeKind::Trait,
     }
 }

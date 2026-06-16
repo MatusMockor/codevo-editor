@@ -190,6 +190,14 @@ export function phpMethodPosition(
   );
 }
 
+export function phpExtendsClassName(source: string): string | null {
+  const match =
+    /\b(?:class|interface)\s+[A-Za-z_][A-Za-z0-9_]*[^{;]*?\bextends\s+(\\?[A-Za-z_][A-Za-z0-9_\\]*)\b/m.exec(
+      source,
+    );
+  return match?.[1]?.trim().replace(/^\\+/, "") || null;
+}
+
 function methodCallContextAt(
   source: string,
   identifier: IdentifierAtOffset,

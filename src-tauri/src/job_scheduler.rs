@@ -43,6 +43,7 @@ pub enum IndexSymbolKind {
     Function,
     Interface,
     Method,
+    Property,
     Trait,
 }
 

@@ -554,6 +554,7 @@ function createControllerDependencies({
     },
     phpFileOutlineGateway: {
       getPhpFileOutline: vi.fn(async () => ({ nodes: [] })),
+      parsePhpFileOutline: vi.fn(async () => ({ nodes: [] })),
     },
     phpTreeGateway: {
       getPhpTree: vi.fn(async () => ({ nodes: [] })),

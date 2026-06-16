@@ -31,6 +31,7 @@ pub enum PhpFileOutlineNodeKind {
     Function,
     Interface,
     Method,
+    Property,
     Trait,
 }
 

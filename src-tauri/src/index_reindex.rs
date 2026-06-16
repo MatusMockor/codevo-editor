@@ -350,6 +350,7 @@ fn workspace_symbol_kind(kind: PhpSymbolKind) -> WorkspaceSymbolKind {
         PhpSymbolKind::Function => WorkspaceSymbolKind::Function,
         PhpSymbolKind::Interface => WorkspaceSymbolKind::Interface,
         PhpSymbolKind::Method => WorkspaceSymbolKind::Method,
+        PhpSymbolKind::Property => WorkspaceSymbolKind::Property,
         PhpSymbolKind::Trait => WorkspaceSymbolKind::Trait,
     }
 }

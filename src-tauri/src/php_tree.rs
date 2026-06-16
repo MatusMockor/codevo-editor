@@ -32,6 +32,7 @@ pub enum PhpTreeNodeKind {
     Interface,
     Method,
     Namespace,
+    Property,
     Trait,
 }
 

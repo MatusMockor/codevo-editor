@@ -29,4 +29,12 @@ export class TauriPhpFileOutlineGateway implements PhpFileOutlineGateway {
 
     return this.invokeCommand("get_php_file_outline", { path, root });
   }
+
+  parsePhpFileOutline(path: string, source: string): Promise<PhpFileOutline> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve(emptyPhpFileOutline());
+    }
+
+    return this.invokeCommand("parse_php_file_outline", { path, source });
+  }
 }

@@ -11,6 +11,7 @@ import type {
 } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import { BottomPanel } from "./components/BottomPanel";
+import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
@@ -160,13 +161,6 @@ function App() {
   const indexLabel = useMemo(
     () => indexProgressLabel(workbench.indexProgress),
     [workbench.indexProgress],
-  );
-  const activeOutline = workbench.activeDocument
-    ? workbench.phpFileOutlinesByPath[workbench.activeDocument.path] ?? null
-    : null;
-  const activeOutlineLoading = Boolean(
-    workbench.activeDocument &&
-      workbench.loadingPhpFileOutlinePaths.has(workbench.activeDocument.path),
   );
   const monacoTheme = useMemo(
     () =>
@@ -442,7 +436,28 @@ function App() {
           }
           languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
           monacoTheme={monacoTheme}
+          onCloseActiveTab={() => {
+            if (workbench.activeDocument) {
+              workbench.closeDocument(workbench.activeDocument.path);
+            }
+          }}
           onCursorPositionChange={workbench.updateActiveEditorPosition}
+          onGoBack={() => void workbench.navigateBackward()}
+          onGoForward={() => void workbench.navigateForwardInHistory()}
+          onGoToDefinition={() => void workbench.goToDefinition()}
+          onOpenClass={() => {
+            if (workbench.workspaceRoot) {
+              workbench.setQuickOpenOpen(false);
+              workbench.setClassOpenOpen(true);
+            }
+          }}
+          onOpenFile={() => {
+            if (workbench.workspaceRoot) {
+              workbench.setClassOpenOpen(false);
+              workbench.setQuickOpenOpen(true);
+            }
+          }}
+          onOpenFileStructure={workbench.openFileStructure}
           onChange={workbench.updateActiveDocument}
           onLanguageServerError={workbench.reportLanguageServerError}
           onRevealTargetHandled={workbench.clearEditorRevealTarget}
@@ -506,6 +521,16 @@ function App() {
         results={workbench.quickOpenResults}
       />
 
+      <ClassOpen
+        isLoading={workbench.classOpenLoading}
+        isOpen={workbench.classOpenOpen}
+        onChangeQuery={workbench.setClassOpenQuery}
+        onClose={() => workbench.setClassOpenOpen(false)}
+        onOpen={workbench.openClassSearchResult}
+        query={workbench.classOpenQuery}
+        results={workbench.classOpenResults}
+      />
+
       <TextSearch
         isLoading={workbench.textSearchLoading}
         isOpen={workbench.textSearchOpen}
@@ -518,11 +543,12 @@ function App() {
 
       <FileStructure
         fileName={workbench.activeDocument?.name ?? null}
-        isLoading={activeOutlineLoading}
+        isLoading={workbench.fileStructureLoading}
         isOpen={workbench.fileStructureOpen}
         onClose={() => workbench.setFileStructureOpen(false)}
         onOpenNode={workbench.openPhpFileOutlineNode}
-        outline={activeOutline}
+        outline={workbench.fileStructureOutline}
+        scope={workbench.fileStructureScope}
       />
 
       <LanguageServerSetup

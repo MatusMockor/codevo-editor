@@ -26,7 +26,14 @@ interface EditorSurfaceProps {
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   monacoTheme: "vs" | "vs-dark";
+  onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
+  onGoBack(): void;
+  onGoForward(): void;
+  onGoToDefinition(): void;
+  onOpenClass(): void;
+  onOpenFile(): void;
+  onOpenFileStructure(): void;
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
   onRevealTargetHandled(): void;
@@ -41,7 +48,14 @@ export function EditorSurface({
   languageServerFeaturesGateway,
   languageServerRuntimeStatus,
   monacoTheme,
+  onCloseActiveTab,
   onCursorPositionChange,
+  onGoBack,
+  onGoForward,
+  onGoToDefinition,
+  onOpenClass,
+  onOpenFile,
+  onOpenFileStructure,
   onChange,
   onLanguageServerError,
   onRevealTargetHandled,
@@ -108,6 +122,72 @@ export function EditorSurface({
 
     return () => disposable.dispose();
   }, [editorApi, onCursorPositionChange]);
+
+  useEffect(() => {
+    if (!editorApi || !monacoApi) {
+      return;
+    }
+
+    const keyMod = monacoApi.KeyMod.CtrlCmd;
+    const disposables = [
+      editorApi.addAction({
+        id: "mockor.goToDefinition",
+        label: "Go to Definition",
+        keybindings: [keyMod | monacoApi.KeyCode.KeyB],
+        run: onGoToDefinition,
+      }),
+      editorApi.addAction({
+        id: "mockor.openClass",
+        label: "Open Class",
+        keybindings: [keyMod | monacoApi.KeyCode.KeyO],
+        run: onOpenClass,
+      }),
+      editorApi.addAction({
+        id: "mockor.openFile",
+        label: "Open File",
+        keybindings: [keyMod | monacoApi.KeyCode.KeyP],
+        run: onOpenFile,
+      }),
+      editorApi.addAction({
+        id: "mockor.fileStructure",
+        label: "File Structure",
+        keybindings: [keyMod | monacoApi.KeyCode.KeyR],
+        run: onOpenFileStructure,
+      }),
+      editorApi.addAction({
+        id: "mockor.closeTab",
+        label: "Close Tab",
+        keybindings: [keyMod | monacoApi.KeyCode.KeyW],
+        run: onCloseActiveTab,
+      }),
+      editorApi.addAction({
+        id: "mockor.goBack",
+        label: "Go Back",
+        keybindings: [keyMod | monacoApi.KeyCode.BracketLeft],
+        run: onGoBack,
+      }),
+      editorApi.addAction({
+        id: "mockor.goForward",
+        label: "Go Forward",
+        keybindings: [keyMod | monacoApi.KeyCode.BracketRight],
+        run: onGoForward,
+      }),
+    ];
+
+    return () => {
+      disposables.forEach((disposable) => disposable?.dispose());
+    };
+  }, [
+    editorApi,
+    monacoApi,
+    onCloseActiveTab,
+    onGoBack,
+    onGoForward,
+    onGoToDefinition,
+    onOpenClass,
+    onOpenFile,
+    onOpenFileStructure,
+  ]);
 
   useEffect(() => {
     if (!editorApi) {

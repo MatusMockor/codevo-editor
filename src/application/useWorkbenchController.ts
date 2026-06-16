@@ -75,6 +75,7 @@ import {
   emptyPhpFileOutline,
   type PhpFileOutline,
   type PhpFileOutlineGateway,
+  type PhpFileStructureScope,
   type PhpFileOutlineNode,
 } from "../domain/phpFileOutline";
 import {
@@ -85,6 +86,7 @@ import {
 } from "../domain/phpTree";
 import {
   phpClassPathCandidates,
+  phpExtendsClassName,
   phpIdentifierContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
@@ -199,12 +201,18 @@ export function useWorkbenchController(
   const [phpFileOutlinesByPath, setPhpFileOutlinesByPath] = useState<
     Record<string, PhpFileOutline>
   >({});
+  const [phpInheritedFileOutlinesByPath, setPhpInheritedFileOutlinesByPath] =
+    useState<Record<string, PhpFileOutline>>({});
   const [expandedPhpFilePaths, setExpandedPhpFilePaths] = useState<Set<string>>(
     new Set(),
   );
   const [loadingPhpFileOutlinePaths, setLoadingPhpFileOutlinePaths] = useState<
     Set<string>
   >(new Set());
+  const [
+    loadingInheritedPhpFileOutlinePaths,
+    setLoadingInheritedPhpFileOutlinePaths,
+  ] = useState<Set<string>>(new Set());
   const [phpFileOutlineExpandedNodeIds, setPhpFileOutlineExpandedNodeIds] =
     useState<Set<string>>(new Set());
   const [editorRevealTarget, setEditorRevealTarget] =
@@ -233,6 +241,12 @@ export function useWorkbenchController(
   const [quickOpenResults, setQuickOpenResults] = useState<FileSearchResult[]>(
     [],
   );
+  const [classOpenOpen, setClassOpenOpen] = useState(false);
+  const [classOpenQuery, setClassOpenQuery] = useState("");
+  const [classOpenLoading, setClassOpenLoading] = useState(false);
+  const [classOpenResults, setClassOpenResults] = useState<
+    ProjectSymbolSearchResult[]
+  >([]);
   const [textSearchOpen, setTextSearchOpen] = useState(false);
   const [textSearchQuery, setTextSearchQuery] = useState("");
   const [textSearchLoading, setTextSearchLoading] = useState(false);
@@ -247,6 +261,8 @@ export function useWorkbenchController(
     useState<WorkspaceSettings>(defaultWorkspaceSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fileStructureOpen, setFileStructureOpen] = useState(false);
+  const [fileStructureScope, setFileStructureScope] =
+    useState<PhpFileStructureScope>("current");
   const [intelligenceMode, setIntelligenceMode] =
     useState<IntelligenceMode>("basic");
   const hasRestoredRef = useRef(false);
@@ -872,9 +888,15 @@ export function useWorkbenchController(
       setPhpTreeExpandedNodeIds(new Set());
       setPhpTreeLoading(false);
       setPhpFileOutlinesByPath({});
+      setPhpInheritedFileOutlinesByPath({});
       setExpandedPhpFilePaths(new Set());
       setLoadingPhpFileOutlinePaths(new Set());
+      setLoadingInheritedPhpFileOutlinePaths(new Set());
       setPhpFileOutlineExpandedNodeIds(new Set());
+      setClassOpenOpen(false);
+      setClassOpenQuery("");
+      setClassOpenResults([]);
+      setFileStructureScope("current");
       lastPhpFileOutlineRefreshKeyRef.current = null;
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
@@ -1199,6 +1221,19 @@ export function useWorkbenchController(
     [openFile],
   );
 
+  const readPhpFileOutlineSource = useCallback(
+    async (path: string): Promise<string> => {
+      const openDocument = documents[path];
+
+      if (openDocument) {
+        return openDocument.content;
+      }
+
+      return workspaceFiles.readTextFile(path);
+    },
+    [documents, workspaceFiles],
+  );
+
   const loadPhpFileOutline = useCallback(
     async (path: string) => {
       if (!workspaceRoot) {
@@ -1213,10 +1248,21 @@ export function useWorkbenchController(
       setLoadingPhpFileOutlinePaths((current) => new Set(current).add(path));
 
       try {
-        const outline = await phpFileOutlineGateway.getPhpFileOutline(
+        const indexedOutline = await phpFileOutlineGateway.getPhpFileOutline(
           requestedRoot,
           path,
         );
+
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        let outline = indexedOutline;
+
+        if (indexedOutline.nodes.length === 0 && isPhpPath(path)) {
+          const source = await readPhpFileOutlineSource(path);
+          outline = await phpFileOutlineGateway.parsePhpFileOutline(path, source);
+        }
 
         if (currentWorkspaceRootRef.current !== requestedRoot) {
           return;
@@ -1249,7 +1295,108 @@ export function useWorkbenchController(
         });
       }
     },
-    [phpFileOutlineGateway, reportError, workspaceRoot],
+    [
+      phpFileOutlineGateway,
+      readPhpFileOutlineSource,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
+  const loadInheritedPhpFileOutline = useCallback(
+    async (path: string) => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        setPhpInheritedFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: emptyPhpFileOutline(),
+        }));
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setLoadingInheritedPhpFileOutlinePaths((current) =>
+        new Set(current).add(path),
+      );
+
+      try {
+        const source = await readPhpFileOutlineSource(path);
+        const parentClassName = phpExtendsClassName(source);
+        const resolvedParentClassName = parentClassName
+          ? resolvePhpClassName(source, parentClassName)
+          : null;
+
+        if (!resolvedParentClassName) {
+          setPhpInheritedFileOutlinesByPath((current) => ({
+            ...current,
+            [path]: emptyPhpFileOutline(),
+          }));
+          return;
+        }
+
+        for (const parentPath of phpClassPathCandidates(
+          requestedRoot,
+          workspaceDescriptor.php,
+          resolvedParentClassName,
+        )) {
+          try {
+            const parentSource = await readPhpFileOutlineSource(parentPath);
+            const outline = await phpFileOutlineGateway.parsePhpFileOutline(
+              parentPath,
+              parentSource,
+            );
+
+            if (currentWorkspaceRootRef.current !== requestedRoot) {
+              return;
+            }
+
+            setPhpInheritedFileOutlinesByPath((current) => ({
+              ...current,
+              [path]: outline,
+            }));
+            setMessage(null);
+            return;
+          } catch {
+            continue;
+          }
+        }
+
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setPhpInheritedFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: emptyPhpFileOutline(),
+        }));
+      } catch (error) {
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setPhpInheritedFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: emptyPhpFileOutline(),
+        }));
+        reportError("PHP Inherited Structure", error);
+      } finally {
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setLoadingInheritedPhpFileOutlinePaths((current) => {
+          const next = new Set(current);
+          next.delete(path);
+          return next;
+        });
+      }
+    },
+    [
+      phpFileOutlineGateway,
+      readPhpFileOutlineSource,
+      reportError,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
   );
 
   const togglePhpFileOutline = useCallback(
@@ -1306,22 +1453,39 @@ export function useWorkbenchController(
 
     setPaletteOpen(false);
     setQuickOpenOpen(false);
+    setClassOpenOpen(false);
     setTextSearchOpen(false);
     setSettingsOpen(false);
+    const nextScope =
+      fileStructureOpen && fileStructureScope === "current"
+        ? "inherited"
+        : "current";
+    setFileStructureScope(nextScope);
     setFileStructureOpen(true);
 
     if (
-      phpFileOutlinesByPath[activeDocument.path] ||
-      loadingPhpFileOutlinePaths.has(activeDocument.path)
+      !phpFileOutlinesByPath[activeDocument.path] &&
+      !loadingPhpFileOutlinePaths.has(activeDocument.path)
     ) {
-      return;
+      void loadPhpFileOutline(activeDocument.path);
     }
 
-    void loadPhpFileOutline(activeDocument.path);
+    if (
+      nextScope === "inherited" &&
+      !phpInheritedFileOutlinesByPath[activeDocument.path] &&
+      !loadingInheritedPhpFileOutlinePaths.has(activeDocument.path)
+    ) {
+      void loadInheritedPhpFileOutline(activeDocument.path);
+    }
   }, [
     activeDocument,
+    fileStructureOpen,
+    fileStructureScope,
+    loadInheritedPhpFileOutline,
     loadPhpFileOutline,
+    loadingInheritedPhpFileOutlinePaths,
     loadingPhpFileOutlinePaths,
+    phpInheritedFileOutlinesByPath,
     phpFileOutlinesByPath,
   ]);
 
@@ -1546,6 +1710,30 @@ export function useWorkbenchController(
     [openFile],
   );
 
+  const openClassSearchResult = useCallback(
+    async (result: ProjectSymbolSearchResult) => {
+      const opened = await openFile({
+        kind: "file",
+        name: getFileName(result.path),
+        path: result.path,
+      });
+
+      if (!opened) {
+        return;
+      }
+
+      setClassOpenOpen(false);
+      setEditorRevealTarget({
+        path: result.path,
+        position: editorPositionFromProjectSymbol(result),
+      });
+      setMessage(
+        `Opened ${result.name} ${result.relativePath}:${result.lineNumber}:${result.column}`,
+      );
+    },
+    [openFile],
+  );
+
   const openTextSearchResult = useCallback(
     async (result: TextSearchResult) => {
       await openFile({
@@ -1588,21 +1776,65 @@ export function useWorkbenchController(
 
       if (documents[path]) {
         setActivePath(path);
+        setEditorRevealTarget({
+          path,
+          position,
+        });
+        setMessage(
+          `Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`,
+        );
+        return true;
       }
 
-      if (!documents[path]) {
-        const opened = await openFile(
-          {
-            kind: "file",
+      if (activeDocument && !isDirty(activeDocument)) {
+        try {
+          const content = await workspaceFiles.readTextFile(path);
+          const document: EditorDocument = {
+            content,
+            language: detectLanguage(path),
             name: getFileName(path),
             path,
-          },
-          { recordNavigation: false },
-        );
+            savedContent: content,
+          };
+          const replacedPath = activeDocument.path;
+          void syncClosedDocument(activeDocument);
 
-        if (!opened) {
+          setDocuments((current) => {
+            const next = { ...current };
+            delete next[replacedPath];
+            next[path] = document;
+            return next;
+          });
+          setOpenPaths((current) =>
+            current.map((openPath) => (openPath === replacedPath ? path : openPath)),
+          );
+          setPreviewPath((current) => (current === replacedPath ? path : current));
+          setActivePath(path);
+          setEditorRevealTarget({
+            path,
+            position,
+          });
+          setMessage(
+            `Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`,
+          );
+          return true;
+        } catch (error) {
+          reportError("Open Navigation Target", error);
           return false;
         }
+      }
+
+      const opened = await openFile(
+        {
+          kind: "file",
+          name: getFileName(path),
+          path,
+        },
+        { preview: true, recordNavigation: false },
+      );
+
+      if (!opened) {
+        return false;
       }
 
       setEditorRevealTarget({
@@ -1614,7 +1846,15 @@ export function useWorkbenchController(
       );
       return true;
     },
-    [documents, openFile, recordCurrentNavigationLocation],
+    [
+      activeDocument,
+      documents,
+      openFile,
+      recordCurrentNavigationLocation,
+      reportError,
+      syncClosedDocument,
+      workspaceFiles,
+    ],
   );
 
   const readNavigationFileContent = useCallback(
@@ -2350,6 +2590,7 @@ export function useWorkbenchController(
   const openSettingsPanel = useCallback(() => {
     setPaletteOpen(false);
     setQuickOpenOpen(false);
+    setClassOpenOpen(false);
     setTextSearchOpen(false);
     setLanguageServerSetupOpen(false);
     setFileStructureOpen(false);
@@ -2363,7 +2604,6 @@ export function useWorkbenchController(
       id: "workspace.open",
       title: "Open Workspace",
       category: "Workspace",
-      shortcut: "Cmd+O",
       isEnabled: () => true,
       run: openWorkspace,
     });
@@ -2400,7 +2640,22 @@ export function useWorkbenchController(
       category: "File",
       shortcut: "Cmd+P",
       isEnabled: (context) => context.hasWorkspace,
-      run: () => setQuickOpenOpen(true),
+      run: () => {
+        setClassOpenOpen(false);
+        setQuickOpenOpen(true);
+      },
+    });
+
+    registry.register({
+      id: "class.quickOpen",
+      title: "Open Class",
+      category: "PHP",
+      shortcut: "Cmd+O",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        setQuickOpenOpen(false);
+        setClassOpenOpen(true);
+      },
     });
 
     registry.register({
@@ -2416,7 +2671,7 @@ export function useWorkbenchController(
       id: "navigation.back",
       title: "Go Back",
       category: "Navigation",
-      shortcut: "Cmd+Alt+Left",
+      shortcut: "Cmd+[",
       isEnabled: () => navigationHistory.backStack.length > 0,
       run: navigateBackward,
     });
@@ -2425,7 +2680,7 @@ export function useWorkbenchController(
       id: "navigation.forward",
       title: "Go Forward",
       category: "Navigation",
-      shortcut: "Cmd+Alt+Right",
+      shortcut: "Cmd+]",
       isEnabled: () => navigationHistory.forwardStack.length > 0,
       run: navigateForwardInHistory,
     });
@@ -2462,6 +2717,19 @@ export function useWorkbenchController(
       isEnabled: (context) =>
         context.hasActiveDocument && context.activeDocumentDirty,
       run: saveActiveDocument,
+    });
+
+    registry.register({
+      id: "editor.closeTab",
+      title: "Close Tab",
+      category: "Editor",
+      shortcut: "Cmd+W",
+      isEnabled: (context) => context.hasActiveDocument,
+      run: () => {
+        if (activeDocument) {
+          closeDocument(activeDocument.path);
+        }
+      },
     });
 
     registry.register({
@@ -2631,6 +2899,7 @@ export function useWorkbenchController(
     return registry;
   }, [
     activeDocument,
+    closeDocument,
     createDirectory,
     createFile,
     deleteActiveDocument,
@@ -2793,6 +3062,14 @@ export function useWorkbenchController(
         return;
       }
 
+      if (event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        if (activeDocument) {
+          closeDocument(activeDocument.path);
+        }
+        return;
+      }
+
       if (event.key.toLowerCase() === "r") {
         event.preventDefault();
         openFileStructure();
@@ -2829,21 +3106,38 @@ export function useWorkbenchController(
         return;
       }
 
+      if (!event.altKey && event.key === "[") {
+        event.preventDefault();
+        void navigateBackward();
+        return;
+      }
+
+      if (!event.altKey && event.key === "]") {
+        event.preventDefault();
+        void navigateForwardInHistory();
+        return;
+      }
+
       if (event.key.toLowerCase() === "k") {
         event.preventDefault();
+        setClassOpenOpen(false);
         setPaletteOpen(true);
         return;
       }
 
       if (event.key.toLowerCase() === "o") {
         event.preventDefault();
-        void openWorkspace();
+        if (workspaceRoot) {
+          setQuickOpenOpen(false);
+          setClassOpenOpen(true);
+        }
         return;
       }
 
       if (event.key.toLowerCase() === "p") {
         event.preventDefault();
         if (workspaceRoot) {
+          setClassOpenOpen(false);
           setQuickOpenOpen(true);
         }
         return;
@@ -2860,13 +3154,14 @@ export function useWorkbenchController(
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    activeDocument,
+    closeDocument,
     goToDefinition,
     goToImplementation,
     navigateBackward,
     navigateForwardInHistory,
     openFileStructure,
     openSettingsPanel,
-    openWorkspace,
     saveActiveDocument,
     toggleBottomPanel,
     workspaceRoot,
@@ -2984,6 +3279,58 @@ export function useWorkbenchController(
       window.clearTimeout(timeout);
     };
   }, [fileSearch, quickOpenOpen, quickOpenQuery, reportError, workspaceRoot]);
+
+  useEffect(() => {
+    if (!classOpenOpen || !workspaceRoot || !classOpenQuery.trim()) {
+      setClassOpenResults([]);
+      setClassOpenLoading(false);
+      return;
+    }
+
+    let active = true;
+    setClassOpenLoading(true);
+
+    const timeout = window.setTimeout(() => {
+      projectSymbolSearch
+        .searchProjectSymbols(workspaceRoot, classOpenQuery, 120)
+        .then((results) => {
+          if (!active) {
+            return;
+          }
+
+          setClassOpenResults(
+            results.filter((result) => result.kind === "class").slice(0, 80),
+          );
+          setMessage(null);
+        })
+        .catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setClassOpenResults([]);
+          reportError("Open Class", error);
+        })
+        .finally(() => {
+          if (!active) {
+            return;
+          }
+
+          setClassOpenLoading(false);
+        });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    classOpenOpen,
+    classOpenQuery,
+    projectSymbolSearch,
+    reportError,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!textSearchOpen || !workspaceRoot || !textSearchQuery.trim()) {
@@ -3190,10 +3537,42 @@ export function useWorkbenchController(
     [resetLanguageServerDocuments],
   );
 
+  const fileStructureOutline = useMemo(() => {
+    if (!activeDocument) {
+      return null;
+    }
+
+    const currentOutline = phpFileOutlinesByPath[activeDocument.path] ?? null;
+
+    if (fileStructureScope === "current") {
+      return currentOutline;
+    }
+
+    return mergePhpFileOutlines(
+      currentOutline,
+      phpInheritedFileOutlinesByPath[activeDocument.path] ?? null,
+    );
+  }, [
+    activeDocument,
+    fileStructureScope,
+    phpFileOutlinesByPath,
+    phpInheritedFileOutlinesByPath,
+  ]);
+  const fileStructureLoading = Boolean(
+    activeDocument &&
+      (loadingPhpFileOutlinePaths.has(activeDocument.path) ||
+        (fileStructureScope === "inherited" &&
+          loadingInheritedPhpFileOutlinePaths.has(activeDocument.path))),
+  );
+
   return {
     activeDocument,
     activePath,
     appSettings,
+    classOpenLoading,
+    classOpenOpen,
+    classOpenQuery,
+    classOpenResults,
     closeDocument,
     commandContext,
     commands: commandRegistry.list(),
@@ -3201,8 +3580,12 @@ export function useWorkbenchController(
     entriesByDirectory,
     expandedDirectories,
     expandedPhpFilePaths,
+    fileStructureLoading,
+    fileStructureOutline,
     fileStructureOpen,
+    fileStructureScope,
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
+    goToDefinition,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
     bottomPanelVisible,
     bottomPanelView,
@@ -3221,6 +3604,7 @@ export function useWorkbenchController(
     openFile,
     openFileStructure,
     openPhpFileOutlineNode,
+    openClassSearchResult,
     previewFile,
     previewPath,
     openSettingsPanel,
@@ -3238,6 +3622,8 @@ export function useWorkbenchController(
     quickOpenResults,
     clearNotices: () => setNotices([]),
     notices,
+    navigateBackward,
+    navigateForwardInHistory,
     reportCommandError: (error: unknown) => reportError("Command", error),
     reportLanguageServerError,
     refreshPhpTree,
@@ -3247,6 +3633,8 @@ export function useWorkbenchController(
     hideBottomPanel,
     showBottomPanelView,
     setPaletteOpen,
+    setClassOpenOpen,
+    setClassOpenQuery,
     setQuickOpenOpen,
     setSidebarView,
     setQuickOpenQuery,
@@ -3305,6 +3693,26 @@ function identifierAtEditorPosition(
   }
 
   return null;
+}
+
+function mergePhpFileOutlines(
+  currentOutline: PhpFileOutline | null,
+  inheritedOutline: PhpFileOutline | null,
+): PhpFileOutline | null {
+  if (!currentOutline && !inheritedOutline) {
+    return null;
+  }
+
+  return {
+    nodes: [
+      ...(currentOutline?.nodes ?? []),
+      ...(inheritedOutline?.nodes ?? []),
+    ],
+  };
+}
+
+function isPhpPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".php");
 }
 
 function bestIndexedSymbolMatch(

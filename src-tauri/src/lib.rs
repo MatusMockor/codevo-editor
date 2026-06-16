@@ -54,8 +54,11 @@ use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink, LanguageServerRuntimeStatus,
     LanguageServerSupervisor, StatusSink,
 };
-use php_file_outline::PhpFileOutline;
+use php_file_outline::{
+    build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
+};
 use php_parser::{PhpSyntaxDiagnostic, PhpSyntaxParser, TreeSitterPhpParser};
+use php_symbols::{PhpSymbolExtractor, PhpSymbolKind, TreeSitterPhpSymbolExtractor};
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
@@ -139,6 +142,31 @@ fn parse_php_syntax(source: String) -> Result<Vec<PhpSyntaxDiagnostic>, String> 
     let mut parser = TreeSitterPhpParser::new().map_err(|error| error.to_string())?;
     let tree = parser.parse(&source).map_err(|error| error.to_string())?;
     Ok(tree.diagnostics())
+}
+
+#[tauri::command]
+fn parse_php_file_outline(path: String, source: String) -> Result<PhpFileOutline, String> {
+    let mut parser = TreeSitterPhpParser::new().map_err(|error| error.to_string())?;
+    let tree = parser.parse(&source).map_err(|error| error.to_string())?;
+    let extractor = TreeSitterPhpSymbolExtractor;
+    let symbols = extractor.extract(&tree, &source);
+    let relative_path = path_file_label(&path);
+    let records: Vec<PhpFileOutlineSymbolRecord> = symbols
+        .into_iter()
+        .map(|symbol| PhpFileOutlineSymbolRecord {
+            column: symbol.range.start_column as i64,
+            container_kind: None,
+            container_name: symbol.container_name,
+            fully_qualified_name: symbol.fully_qualified_name,
+            kind: php_file_outline_node_kind_from_symbol(symbol.kind),
+            line_number: symbol.range.start_line as i64,
+            name: symbol.name,
+            path: path.clone(),
+            relative_path: relative_path.clone(),
+        })
+        .collect();
+
+    Ok(build_php_file_outline(&records))
 }
 
 #[tauri::command]
@@ -262,6 +290,27 @@ fn ensure_path_in_workspace(root_path: &Path, path: &str) -> Result<(), String> 
     }
 
     Err("Index path is outside the workspace root.".to_string())
+}
+
+fn php_file_outline_node_kind_from_symbol(kind: PhpSymbolKind) -> PhpFileOutlineNodeKind {
+    match kind {
+        PhpSymbolKind::Class => PhpFileOutlineNodeKind::Class,
+        PhpSymbolKind::Constant => PhpFileOutlineNodeKind::Constant,
+        PhpSymbolKind::Enum => PhpFileOutlineNodeKind::Enum,
+        PhpSymbolKind::Function => PhpFileOutlineNodeKind::Function,
+        PhpSymbolKind::Interface => PhpFileOutlineNodeKind::Interface,
+        PhpSymbolKind::Method => PhpFileOutlineNodeKind::Method,
+        PhpSymbolKind::Property => PhpFileOutlineNodeKind::Property,
+        PhpSymbolKind::Trait => PhpFileOutlineNodeKind::Trait,
+    }
+}
+
+fn path_file_label(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| path.to_string())
 }
 
 fn resolve_workspace_path(root_path: &Path, path: &str) -> Result<PathBuf, String> {
@@ -774,6 +823,7 @@ mod tests {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .enable_macos_default_menu(false)
         .manage(Mutex::new(SmartModeService::new()))
         .manage(LanguageServerSupervisor::new())
         .manage(TerminalSupervisor::new())
@@ -798,6 +848,7 @@ pub fn run() {
             get_workspace_trust,
             initialize_workspace_index,
             list_terminal_profiles,
+            parse_php_file_outline,
             parse_php_syntax,
             plan_php_language_server,
             read_directory,

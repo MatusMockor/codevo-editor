@@ -7,6 +7,7 @@ export type PhpTreeNodeKind =
   | "interface"
   | "method"
   | "namespace"
+  | "property"
   | "trait";
 
 export interface PhpTreeNode {

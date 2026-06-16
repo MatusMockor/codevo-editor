@@ -15,6 +15,9 @@ describe("TauriPhpFileOutlineGateway", () => {
     await expect(
       gateway.getPhpFileOutline("/workspace", "/workspace/src/User.php"),
     ).resolves.toEqual({ nodes: [] });
+    await expect(
+      gateway.parsePhpFileOutline("/workspace/src/User.php", "<?php"),
+    ).resolves.toEqual({ nodes: [] });
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
@@ -43,6 +46,37 @@ describe("TauriPhpFileOutlineGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith("get_php_file_outline", {
       path: "/workspace/src/User.php",
       root: "/workspace",
+    });
+  });
+
+  it("delegates direct outline parsing inside Tauri", async () => {
+    const outline: PhpFileOutline = {
+      nodes: [
+        {
+          children: [],
+          column: 5,
+          fullyQualifiedName: "App\\Domain\\User",
+          id: "symbol:App\\Domain\\User",
+          kind: "class",
+          label: "User",
+          lineNumber: 12,
+          path: "/workspace/src/User.php",
+          relativePath: "src/User.php",
+        },
+      ],
+    };
+    const invokeCommand = vi.fn<InvokeCommand>(async () => outline);
+    const gateway = new TauriPhpFileOutlineGateway(invokeCommand, () => true);
+
+    await expect(
+      gateway.parsePhpFileOutline(
+        "/workspace/src/User.php",
+        "<?php class User {}",
+      ),
+    ).resolves.toEqual(outline);
+    expect(invokeCommand).toHaveBeenCalledWith("parse_php_file_outline", {
+      path: "/workspace/src/User.php",
+      source: "<?php class User {}",
     });
   });
 });

@@ -33,6 +33,7 @@ pub enum PhpSymbolKind {
     Function,
     Interface,
     Method,
+    Property,
     Trait,
 }
 
@@ -95,6 +96,9 @@ fn extract_node(
         }
         "method_declaration" => {
             extract_method(node, source, context, symbols);
+        }
+        "property_declaration" => {
+            extract_properties(node, source, context, symbols);
         }
         "const_declaration" => {
             extract_constants(node, source, context, symbols);
@@ -217,6 +221,67 @@ fn extract_method(
         name,
         range: symbol_range(node),
     });
+    extract_promoted_properties(node, source, context, symbols);
+}
+
+fn extract_properties(
+    node: Node<'_>,
+    source: &str,
+    context: &PhpSymbolContext,
+    symbols: &mut Vec<PhpSymbol>,
+) {
+    let mut cursor = node.walk();
+
+    for child in node.named_children(&mut cursor) {
+        if child.kind() != "property_element" {
+            continue;
+        }
+
+        extract_property(child, source, context, symbols);
+    }
+}
+
+fn extract_promoted_properties(
+    node: Node<'_>,
+    source: &str,
+    context: &PhpSymbolContext,
+    symbols: &mut Vec<PhpSymbol>,
+) {
+    let mut cursor = node.walk();
+
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "property_promotion_parameter" {
+            extract_property(child, source, context, symbols);
+            continue;
+        }
+
+        extract_promoted_properties(child, source, context, symbols);
+    }
+}
+
+fn extract_property(
+    node: Node<'_>,
+    source: &str,
+    context: &PhpSymbolContext,
+    symbols: &mut Vec<PhpSymbol>,
+) {
+    let name = match property_name(node, source) {
+        Some(name) => name,
+        None => return,
+    };
+    let container_name = match context.container_name.clone() {
+        Some(container_name) => container_name,
+        None => return,
+    };
+    let fully_qualified_name = member_name(&container_name, &name);
+
+    symbols.push(PhpSymbol {
+        container_name: Some(container_name),
+        fully_qualified_name,
+        kind: PhpSymbolKind::Property,
+        name,
+        range: symbol_range(node),
+    });
 }
 
 fn extract_constants(
@@ -254,6 +319,12 @@ fn extract_constants(
 
 fn namespace_name(node: Node<'_>, source: &str) -> Option<String> {
     field_text(node, "name", source)
+}
+
+fn property_name(node: Node<'_>, source: &str) -> Option<String> {
+    let raw_name = field_text(node, "name", source)
+        .or_else(|| first_named_child_text(node, "variable_name", source))?;
+    Some(raw_name.trim().trim_start_matches('&').to_string())
 }
 
 fn field_text(node: Node<'_>, field: &str, source: &str) -> Option<String> {
@@ -345,6 +416,10 @@ mod tests {
                     PhpSymbolKind::Constant,
                     "App\\Domain\\User::TYPE".to_string()
                 ),
+                (
+                    PhpSymbolKind::Property,
+                    "App\\Domain\\User::$displayName".to_string()
+                ),
                 (PhpSymbolKind::Method, "App\\Domain\\User::name".to_string()),
                 (PhpSymbolKind::Function, "App\\Domain\\helper".to_string()),
                 (
@@ -417,6 +492,7 @@ enum UserStatus: string
 final class User
 {
     public const TYPE = 'user';
+    private string $displayName = 'Matus';
 
     public function name(): string
     {

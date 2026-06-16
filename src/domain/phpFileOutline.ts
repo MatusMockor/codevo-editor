@@ -8,6 +8,7 @@ export type PhpFileOutlineNodeKind =
   | "function"
   | "interface"
   | "method"
+  | "property"
   | "trait";
 
 export interface PhpFileOutlineNode {
@@ -26,6 +27,8 @@ export interface PhpFileOutline {
   nodes: PhpFileOutlineNode[];
 }
 
+export type PhpFileStructureScope = "current" | "inherited";
+
 export interface FlatPhpFileOutlineNode {
   depth: number;
   node: PhpFileOutlineNode;
@@ -33,6 +36,7 @@ export interface FlatPhpFileOutlineNode {
 
 export interface PhpFileOutlineGateway {
   getPhpFileOutline(root: string, path: string): Promise<PhpFileOutline>;
+  parsePhpFileOutline(path: string, source: string): Promise<PhpFileOutline>;
 }
 
 export function emptyPhpFileOutline(): PhpFileOutline {
