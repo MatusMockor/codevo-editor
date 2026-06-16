@@ -55,6 +55,7 @@ use lsp_session::{
     LanguageServerSupervisor, StatusSink,
 };
 use php_file_outline::PhpFileOutline;
+use php_parser::{PhpSyntaxDiagnostic, PhpSyntaxParser, TreeSitterPhpParser};
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
@@ -131,6 +132,13 @@ fn get_workspace_trust(
 ) -> Result<WorkspaceTrustState, String> {
     let service = service.lock().map_err(|error| error.to_string())?;
     Ok(service.get(&root_path))
+}
+
+#[tauri::command]
+fn parse_php_syntax(source: String) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
+    let mut parser = TreeSitterPhpParser::new().map_err(|error| error.to_string())?;
+    let tree = parser.parse(&source).map_err(|error| error.to_string())?;
+    Ok(tree.diagnostics())
 }
 
 #[tauri::command]
@@ -790,6 +798,7 @@ pub fn run() {
             get_workspace_trust,
             initialize_workspace_index,
             list_terminal_profiles,
+            parse_php_syntax,
             plan_php_language_server,
             read_directory,
             read_text_file,

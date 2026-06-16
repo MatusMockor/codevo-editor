@@ -9,6 +9,10 @@ import type {
 } from "../domain/languageServerFeatures";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import type {
+  PhpSyntaxDiagnostic,
+  PhpSyntaxDiagnosticsGateway,
+} from "../domain/phpSyntaxDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import { getTabId, getTabPanelId } from "./tabIds";
@@ -25,6 +29,7 @@ interface EditorSurfaceProps {
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
   onRevealTargetHandled(): void;
+  phpSyntaxDiagnosticsGateway: PhpSyntaxDiagnosticsGateway;
 }
 
 export function EditorSurface({
@@ -39,6 +44,7 @@ export function EditorSurface({
   onChange,
   onLanguageServerError,
   onRevealTargetHandled,
+  phpSyntaxDiagnosticsGateway,
 }: EditorSurfaceProps) {
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
@@ -157,6 +163,56 @@ export function EditorSurface({
     });
   }, [activeDocument, languageServerDiagnosticsByPath, monacoApi]);
 
+  useEffect(() => {
+    if (!monacoApi) {
+      return;
+    }
+
+    if (!activeDocument) {
+      return;
+    }
+
+    const model = modelForPath(monacoApi, activeDocument.path);
+
+    if (!model) {
+      return;
+    }
+
+    if (activeDocument.language !== "php") {
+      monacoApi.editor.setModelMarkers(model, "php-syntax", []);
+      return;
+    }
+
+    let active = true;
+    const timeout = window.setTimeout(() => {
+      phpSyntaxDiagnosticsGateway
+        .validate(activeDocument.content)
+        .then((diagnostics) => {
+          if (!active) {
+            return;
+          }
+
+          monacoApi.editor.setModelMarkers(
+            model,
+            "php-syntax",
+            diagnostics.map((diagnostic) =>
+              toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
+            ),
+          );
+        })
+        .catch((error) => errorReporterRef.current(error));
+    }, 160);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    activeDocument,
+    monacoApi,
+    phpSyntaxDiagnosticsGateway,
+  ]);
+
   if (!activeDocument) {
     return (
       <div className="empty-editor">
@@ -229,6 +285,38 @@ function diagnosticSeverity(
   }
 
   return monaco.MarkerSeverity.Info;
+}
+
+function toMonacoSyntaxDiagnosticMarker(
+  monaco: typeof Monaco,
+  diagnostic: PhpSyntaxDiagnostic,
+): Monaco.editor.IMarkerData {
+  return {
+    endColumn: syntaxDiagnosticEndColumn(diagnostic),
+    endLineNumber: diagnostic.endLine + 1,
+    message: diagnostic.message,
+    severity: monaco.MarkerSeverity.Error,
+    source: "PHP Syntax",
+    startColumn: diagnostic.character + 1,
+    startLineNumber: diagnostic.line + 1,
+  };
+}
+
+function syntaxDiagnosticEndColumn(diagnostic: PhpSyntaxDiagnostic): number {
+  if (diagnostic.endLine === diagnostic.line) {
+    return Math.max(diagnostic.endCharacter + 1, diagnostic.character + 2);
+  }
+
+  return diagnostic.endCharacter + 1;
+}
+
+function modelForPath(
+  monaco: typeof Monaco,
+  path: string,
+): Monaco.editor.ITextModel | null {
+  return monaco.editor
+    .getModels()
+    .find((model) => modelPath(model) === path) ?? null;
 }
 
 function modelPath(model: Monaco.editor.ITextModel): string | null {

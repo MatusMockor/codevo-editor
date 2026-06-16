@@ -4,7 +4,6 @@ import {
   Save,
   Search,
   Settings as SettingsIcon,
-  Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
@@ -30,7 +29,10 @@ import {
   type LanguageServerRuntimeStatus,
 } from "./domain/languageServerRuntime";
 import type { LanguageServerPlan } from "./domain/languageServer";
-import { indexProgressLabel } from "./domain/indexProgress";
+import {
+  indexProgressLabel,
+  type IndexProgressState,
+} from "./domain/indexProgress";
 import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
@@ -45,6 +47,7 @@ import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServer
 import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
+import { TauriPhpSyntaxDiagnosticsGateway } from "./infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriTerminalGateway } from "./infrastructure/tauriTerminalGateway";
@@ -64,6 +67,7 @@ const smartModeGateway = new TauriSmartModeGateway();
 const workspaceTrustGateway = new TauriWorkspaceTrustGateway();
 const indexProgressGateway = new TauriIndexProgressGateway();
 const phpFileOutlineGateway = new TauriPhpFileOutlineGateway();
+const phpSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 const phpTreeGateway = new TauriPhpTreeGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
@@ -270,14 +274,6 @@ function App() {
           <Save aria-hidden="true" size={20} />
         </button>
         <button
-          disabled={!workbench.workspaceRoot}
-          onClick={workbench.toggleSmartMode}
-          title="Toggle Smart mode"
-          type="button"
-        >
-          <Zap aria-hidden="true" size={20} />
-        </button>
-        <button
           className="activity-bar-secondary"
           onClick={workbench.openSettingsPanel}
           title="Settings"
@@ -375,30 +371,25 @@ function App() {
 
       <section className="editor-workbench">
         <header className="workbench-toolbar">
-          <div aria-label="Editor intelligence mode" className="mode-switch">
-            <button
-              aria-pressed={workbench.intelligenceMode === "basic"}
-              className={
-                workbench.intelligenceMode === "basic" ? "active" : ""
-              }
-              disabled={!workbench.workspaceRoot}
-              onClick={() => workbench.setSmartMode("basic")}
-              type="button"
-            >
-              Light
-            </button>
-            <button
-              aria-pressed={workbench.intelligenceMode !== "basic"}
-              className={
-                workbench.intelligenceMode !== "basic" ? "active" : ""
-              }
-              disabled={!workbench.workspaceRoot}
-              onClick={() => workbench.setSmartMode("fullSmart")}
-              type="button"
-            >
-              Smart
-            </button>
-          </div>
+          <button
+            aria-pressed={workbench.intelligenceMode !== "basic"}
+            className={
+              workbench.intelligenceMode !== "basic"
+                ? "smart-mode-switch active"
+                : "smart-mode-switch"
+            }
+            disabled={!workbench.workspaceRoot}
+            onClick={workbench.toggleSmartMode}
+            type="button"
+          >
+            <span className="switch-track" aria-hidden="true">
+              <span className="switch-thumb" />
+            </span>
+            <span>Smart Mode</span>
+            <strong>
+              {workbench.intelligenceMode === "basic" ? "Off" : "On"}
+            </strong>
+          </button>
           <span className="toolbar-status">
             {smartModeSummary(
               Boolean(workbench.workspaceRoot),
@@ -408,6 +399,11 @@ function App() {
               workbench.workspaceTrust?.trusted ?? false,
             )}
           </span>
+          {workbench.workspaceRoot ? (
+            <span className="toolbar-status">
+              {indexToolbarLabel(workbench.indexProgress)}
+            </span>
+          ) : null}
           {workbench.workspaceRoot && !workbench.workspaceTrust?.trusted ? (
             <button
               className="toolbar-action"
@@ -417,9 +413,24 @@ function App() {
               Trust
             </button>
           ) : null}
-          {workbench.workspaceSettings.autoSave ? (
-            <span className="toolbar-status">Auto Save</span>
-          ) : null}
+          <button
+            aria-pressed={workbench.workspaceSettings.autoSave}
+            className={
+              workbench.workspaceSettings.autoSave
+                ? "toolbar-toggle active"
+                : "toolbar-toggle"
+            }
+            disabled={!workbench.workspaceRoot}
+            onClick={() =>
+              workbench.setAutoSave(!workbench.workspaceSettings.autoSave)
+            }
+            type="button"
+          >
+            Auto Save
+            <strong>
+              {workbench.workspaceSettings.autoSave ? "On" : "Off"}
+            </strong>
+          </button>
         </header>
         <EditorTabs
           activePath={workbench.activePath}
@@ -445,6 +456,7 @@ function App() {
           onChange={workbench.updateActiveDocument}
           onLanguageServerError={workbench.reportLanguageServerError}
           onRevealTargetHandled={workbench.clearEditorRevealTarget}
+          phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
         />
         <BottomPanel
           activeView={workbench.bottomPanelView}
@@ -584,6 +596,16 @@ function smartModeSummary(
   }
 
   return "Lightweight";
+}
+
+function indexToolbarLabel(progress: IndexProgressState): string {
+  const label = indexProgressLabel(progress);
+
+  if (label) {
+    return label;
+  }
+
+  return "Index: idle";
 }
 
 function usePrefersLightTheme(): boolean {

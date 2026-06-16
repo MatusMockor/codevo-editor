@@ -12,6 +12,7 @@ export interface AppSettings {
 
 export interface WorkspaceSettings {
   autoSave: boolean;
+  autoSaveConfigured: boolean;
   extraIgnorePatterns: string[];
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
@@ -46,7 +47,8 @@ export function defaultAppSettings(): AppSettings {
 
 export function defaultWorkspaceSettings(): WorkspaceSettings {
   return {
-    autoSave: false,
+    autoSave: true,
+    autoSaveConfigured: true,
     extraIgnorePatterns: [],
     intelligenceMode: "basic",
     intelephensePath: null,
@@ -93,7 +95,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
 
   return {
     autoSave:
-      typeof value.autoSave === "boolean" ? value.autoSave : defaults.autoSave,
+      value.autoSaveConfigured === true && typeof value.autoSave === "boolean"
+        ? value.autoSave
+        : defaults.autoSave,
+    autoSaveConfigured: true,
     extraIgnorePatterns: normalizePatternList(
       value.extraIgnorePatterns,
       defaults.extraIgnorePatterns,

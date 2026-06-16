@@ -10,7 +10,8 @@ describe("BrowserSettingsGateway", () => {
       theme: "dark",
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
-      autoSave: false,
+      autoSave: true,
+      autoSaveConfigured: true,
       extraIgnorePatterns: [],
       intelligenceMode: "basic",
       intelephensePath: null,
@@ -35,6 +36,7 @@ describe("BrowserSettingsGateway", () => {
     });
     await gateway.saveWorkspaceSettings("/project", {
       autoSave: true,
+      autoSaveConfigured: true,
       extraIgnorePatterns: ["var/cache"],
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
@@ -54,6 +56,7 @@ describe("BrowserSettingsGateway", () => {
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
       autoSave: true,
+      autoSaveConfigured: true,
       extraIgnorePatterns: ["var/cache"],
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
@@ -79,7 +82,8 @@ describe("BrowserSettingsGateway", () => {
       theme: "dark",
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
-      autoSave: false,
+      autoSave: true,
+      autoSaveConfigured: true,
       extraIgnorePatterns: [],
       intelligenceMode: "basic",
       intelephensePath: null,

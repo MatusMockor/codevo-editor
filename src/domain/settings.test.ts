@@ -20,7 +20,8 @@ describe("settings defaults", () => {
       theme: "dark",
     });
     expect(defaultWorkspaceSettings()).toEqual({
-      autoSave: false,
+      autoSave: true,
+      autoSaveConfigured: true,
       extraIgnorePatterns: [],
       intelligenceMode: "basic",
       intelephensePath: null,
@@ -69,6 +70,7 @@ describe("normalizeWorkspaceSettings", () => {
     expect(
       normalizeWorkspaceSettings({
         autoSave: true,
+        autoSaveConfigured: true,
         extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
         intelligenceMode: "lightSmart",
         intelephensePath: "/tools/intelephense",
@@ -87,6 +89,7 @@ describe("normalizeWorkspaceSettings", () => {
       }),
     ).toEqual({
       autoSave: true,
+      autoSaveConfigured: true,
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
@@ -108,6 +111,19 @@ describe("normalizeWorkspaceSettings", () => {
       ...defaultWorkspaceSettings(),
       intelligenceMode: "lightSmart",
     });
+    expect(
+      normalizeWorkspaceSettings({
+        autoSave: false,
+        intelligenceMode: "basic",
+      }).autoSave,
+    ).toBe(true);
+    expect(
+      normalizeWorkspaceSettings({
+        autoSave: false,
+        autoSaveConfigured: true,
+        intelligenceMode: "basic",
+      }).autoSave,
+    ).toBe(false);
   });
 
   it("falls back for invalid workspace settings", () => {

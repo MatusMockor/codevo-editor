@@ -241,6 +241,7 @@ export function useWorkbenchController(
   const openFileRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
+  const autoStartedLanguageServerRootRef = useRef<string | null>(null);
   const documentVersionsRef = useRef<Record<string, number>>({});
   const documentVersionsByUriRef = useRef<Record<string, number>>({});
   const syncedDocumentPathsRef = useRef<Set<string>>(new Set());
@@ -471,6 +472,36 @@ export function useWorkbenchController(
       );
     },
     [],
+  );
+
+  const startInitialIndexScan = useCallback(
+    async (rootPath: string) => {
+      pendingIndexScanRef.current = true;
+
+      try {
+        const started = await indexProgressGateway.startInitialMetadataScan(
+          rootPath,
+        );
+        activeIndexRootRef.current = started.rootPath;
+
+        if (!pendingIndexScanRef.current) {
+          return;
+        }
+
+        setIndexProgress(startIndexProgress(started));
+        setIndexHealthLogs((current) =>
+          prependIndexHealthLog(
+            current,
+            createIndexHealthLogEntry("info", rootPath, "Indexing workspace."),
+          ),
+        );
+        setMessage("Indexing workspace.");
+      } catch (error) {
+        pendingIndexScanRef.current = false;
+        reportError("Index", error);
+      }
+    },
+    [indexProgressGateway, reportError],
   );
 
   const nextDocumentVersion = useCallback((path: string): number => {
@@ -829,6 +860,7 @@ export function useWorkbenchController(
       lastPhpFileOutlineRefreshKeyRef.current = null;
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
+      autoStartedLanguageServerRootRef.current = null;
 
       try {
         await persistAppSettings({
@@ -851,6 +883,7 @@ export function useWorkbenchController(
       await loadDirectory(path);
       await restoreWorkspaceSession(path, workspaceSettings.session);
       workspaceSessionRestoredRef.current = true;
+      void startInitialIndexScan(path);
 
       try {
         const trust = await workspaceTrustGateway.getTrust(path);
@@ -880,6 +913,7 @@ export function useWorkbenchController(
       restoreWorkspaceSession,
       settingsGateway,
       smartModeGateway,
+      startInitialIndexScan,
       stopLanguageServerRuntime,
       workspaceDetection,
       workspaceTrustGateway,
@@ -1340,6 +1374,26 @@ export function useWorkbenchController(
     return () => window.clearTimeout(timer);
   }, [activeDocument, saveActiveDocument, workspaceSettings.autoSave]);
 
+  const setAutoSave = useCallback(
+    async (autoSave: boolean) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      try {
+        await persistWorkspaceSettings(workspaceRoot, {
+          ...workspaceSettingsRef.current,
+          autoSave,
+          autoSaveConfigured: true,
+        });
+        setMessage(autoSave ? "Auto Save enabled." : "Auto Save disabled.");
+      } catch (error) {
+        reportError("Auto Save", error);
+      }
+    },
+    [persistWorkspaceSettings, reportError, workspaceRoot],
+  );
+
   const setSmartMode = useCallback(
     async (mode: IntelligenceMode) => {
       if (!workspaceRoot) {
@@ -1352,6 +1406,10 @@ export function useWorkbenchController(
 
       try {
         const state = await smartModeGateway.setMode(mode);
+        if (state.mode !== "basic") {
+          autoStartedLanguageServerRootRef.current = null;
+        }
+
         setIntelligenceMode(state.mode);
         setMessage(state.message);
         await persistWorkspaceSettings(workspaceRoot, {
@@ -2220,6 +2278,51 @@ export function useWorkbenchController(
   };
 
   useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    if (intelligenceMode === "basic") {
+      return;
+    }
+
+    if (!workspaceTrust?.trusted) {
+      return;
+    }
+
+    if (languageServerPlan?.status !== "ready") {
+      return;
+    }
+
+    if (isLanguageServerActive(languageServerRuntimeStatus)) {
+      return;
+    }
+
+    if (languageServerRuntimeStatus?.kind === "crashed") {
+      return;
+    }
+
+    if (autoStartedLanguageServerRootRef.current === workspaceRoot) {
+      return;
+    }
+
+    autoStartedLanguageServerRootRef.current = workspaceRoot;
+    languageServerRuntimeGateway
+      .start(workspaceRoot)
+      .then(handleLanguageServerRuntimeStatus)
+      .catch(reportLanguageServerError);
+  }, [
+    handleLanguageServerRuntimeStatus,
+    intelligenceMode,
+    languageServerPlan,
+    languageServerRuntimeGateway,
+    languageServerRuntimeStatus,
+    reportLanguageServerError,
+    workspaceRoot,
+    workspaceTrust,
+  ]);
+
+  useEffect(() => {
     if (sidebarView !== "php") {
       return;
     }
@@ -2752,6 +2855,7 @@ export function useWorkbenchController(
     setTextSearchOpen,
     setTextSearchQuery,
     setLanguageServerSetupOpen,
+    setAutoSave,
     setFileStructureOpen,
     setSmartMode,
     pinDocument,

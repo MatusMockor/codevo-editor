@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::{error::Error, fmt};
 use tree_sitter::{Node, Parser, Tree};
 
@@ -63,6 +64,12 @@ impl PhpSyntaxTree {
         &self.summary
     }
 
+    pub fn diagnostics(&self) -> Vec<PhpSyntaxDiagnostic> {
+        let mut diagnostics = Vec::new();
+        collect_diagnostics(self.root(), &mut diagnostics);
+        diagnostics
+    }
+
     fn from_tree(tree: Tree) -> Self {
         let root = tree.root_node();
         let summary = PhpSyntaxTreeSummary {
@@ -86,6 +93,16 @@ pub struct PhpSyntaxTreeSummary {
     pub root_end_byte: usize,
     pub root_kind: String,
     pub root_start_byte: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhpSyntaxDiagnostic {
+    pub character: usize,
+    pub end_character: usize,
+    pub end_line: usize,
+    pub line: usize,
+    pub message: String,
 }
 
 fn count_error_nodes(node: Node<'_>) -> usize {
@@ -113,6 +130,51 @@ fn contains_missing_nodes(node: Node<'_>) -> bool {
     }
 
     false
+}
+
+fn collect_diagnostics(node: Node<'_>, diagnostics: &mut Vec<PhpSyntaxDiagnostic>) {
+    if node.is_error() {
+        diagnostics.push(syntax_diagnostic(node, "PHP syntax error.".to_string()));
+    }
+
+    if node.is_missing() {
+        diagnostics.push(syntax_diagnostic(
+            node,
+            format!("Missing PHP syntax: {}.", node.kind()),
+        ));
+    }
+
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        collect_diagnostics(child, diagnostics);
+    }
+}
+
+fn syntax_diagnostic(node: Node<'_>, message: String) -> PhpSyntaxDiagnostic {
+    let start = node.start_position();
+    let end = node.end_position();
+
+    PhpSyntaxDiagnostic {
+        character: start.column,
+        end_character: diagnostic_end_character(start.row, start.column, end.row, end.column),
+        end_line: end.row,
+        line: start.row,
+        message,
+    }
+}
+
+fn diagnostic_end_character(
+    start_line: usize,
+    start_character: usize,
+    end_line: usize,
+    end_character: usize,
+) -> usize {
+    if start_line == end_line && end_character <= start_character {
+        return start_character + 1;
+    }
+
+    end_character
 }
 
 #[cfg(test)]
@@ -143,6 +205,18 @@ mod tests {
         assert_eq!(summary.root_end_byte, incomplete_php_fixture().len());
         assert!(summary.has_error);
         assert!(summary.error_count > 0 || summary.has_missing_nodes);
+    }
+
+    #[test]
+    fn reports_recoverable_syntax_diagnostics() {
+        let mut parser = TreeSitterPhpParser::new().expect("parser");
+        let tree = parser.parse(incomplete_php_fixture()).expect("parse PHP");
+        let diagnostics = tree.diagnostics();
+
+        assert!(!diagnostics.is_empty());
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("syntax")));
     }
 
     fn valid_php_fixture() -> &'static str {
