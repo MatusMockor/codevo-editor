@@ -1,3 +1,4 @@
+pub mod composer;
 pub mod file_watcher;
 pub mod ignore_matcher;
 pub mod index;
@@ -86,7 +87,7 @@ fn delete_path(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn detect_workspace(path: String) -> Result<WorkspaceDescriptor, String> {
-    let detector = ComposerWorkspaceDetector;
+    let detector = ComposerWorkspaceDetector::default();
     detector
         .detect(&PathBuf::from(path))
         .map_err(|error| error.to_string())
@@ -297,7 +298,7 @@ fn build_php_language_server_plan(
         let service = trust.lock().map_err(|error| error.to_string())?;
         service.get(root_path).trusted
     };
-    let descriptor = ComposerWorkspaceDetector
+    let descriptor = ComposerWorkspaceDetector::default()
         .detect(&root)
         .map_err(|error| error.to_string())?;
     let tools = LocalPhpToolDetector

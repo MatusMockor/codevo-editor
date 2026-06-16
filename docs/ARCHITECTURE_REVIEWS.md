@@ -1094,6 +1094,42 @@ Scope reviewed:
 - Browser smoke test
 - `coderabbit review --agent --fast --base main` passed with 0 findings
 
+## 2026-06-15: Composer Metadata Detector
+
+Scope reviewed:
+
+- `ComposerMetadataDetector` abstraction
+- `LocalComposerMetadataDetector` parser for `composer.json`
+- `composer.lock` package and dev-package metadata
+- `vendor/composer/installed.json` object and legacy array metadata
+- root PSR-4 and classmap roots
+- package PSR-4/classmap roots, version, type, dev, and install path metadata
+- workspace descriptor and TypeScript contract expansion
+
+### SOLID Review
+
+- Single Responsibility: acceptable. `composer.rs` parses Composer data files only; `project.rs` adapts the result into a workspace descriptor and SQLite writes remain outside this slice.
+- Open/Closed: acceptable. Additional Composer metadata sources can extend the detector without changing Tauri commands or workspace file services.
+- Liskov Substitution: acceptable. `ComposerMetadataDetector` lets workspace detection use any compatible metadata provider.
+- Interface Segregation: acceptable. Composer detection exposes package/autoload data only, not file-tree, LSP, parser, or index write behavior.
+- Dependency Inversion: improved. Workspace detection depends on the Composer detector trait rather than inline JSON parsing.
+
+### Pattern Review
+
+- Detector/Strategy pattern: Composer metadata lookup is a swappable strategy.
+- Adapter pattern: `ComposerWorkspaceDetector` adapts Composer project metadata into the UI-facing workspace descriptor.
+- Value object pattern: Composer roots and packages carry parsed data without side effects.
+- Repository boundary deferred: SQLite persistence is intentionally reserved for the symbol/index write slice.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- `coderabbit review --agent --fast --base main` passed with 0 findings
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

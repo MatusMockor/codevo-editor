@@ -1,6 +1,9 @@
+use crate::composer::{
+    ComposerClassmapRoot, ComposerMetadataDetector, ComposerPackageMetadata, ComposerPsr4Root,
+    LocalComposerMetadataDetector,
+};
 use serde::Serialize;
-use serde_json::Value;
-use std::{fs, io, path::Path};
+use std::{io, path::Path};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,26 +15,36 @@ pub struct WorkspaceDescriptor {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PhpProjectDescriptor {
+    pub classmap_roots: Vec<ComposerClassmapRoot>,
     pub has_composer: bool,
     pub package_name: Option<String>,
-    pub psr4_roots: Vec<Psr4Root>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Psr4Root {
-    pub namespace: String,
-    pub paths: Vec<String>,
-    pub dev: bool,
+    pub packages: Vec<ComposerPackageMetadata>,
+    pub psr4_roots: Vec<ComposerPsr4Root>,
 }
 
 pub trait WorkspaceDetector {
     fn detect(&self, root: &Path) -> io::Result<WorkspaceDescriptor>;
 }
 
-pub struct ComposerWorkspaceDetector;
+pub struct ComposerWorkspaceDetector<D: ComposerMetadataDetector = LocalComposerMetadataDetector> {
+    composer_detector: D,
+}
 
-impl WorkspaceDetector for ComposerWorkspaceDetector {
+impl ComposerWorkspaceDetector<LocalComposerMetadataDetector> {
+    pub fn new() -> Self {
+        Self {
+            composer_detector: LocalComposerMetadataDetector,
+        }
+    }
+}
+
+impl Default for ComposerWorkspaceDetector<LocalComposerMetadataDetector> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<D: ComposerMetadataDetector> WorkspaceDetector for ComposerWorkspaceDetector<D> {
     fn detect(&self, root: &Path) -> io::Result<WorkspaceDescriptor> {
         if !root.is_dir() {
             return Err(io::Error::new(
@@ -40,76 +53,27 @@ impl WorkspaceDetector for ComposerWorkspaceDetector {
             ));
         }
 
-        let composer_path = root.join("composer.json");
-
-        if !composer_path.is_file() {
-            return Ok(WorkspaceDescriptor {
-                root_path: root.to_string_lossy().to_string(),
-                php: None,
-            });
-        }
-
-        let composer = fs::read_to_string(composer_path)?;
-        let composer: Value = serde_json::from_str(&composer).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid composer.json: {error}"),
-            )
-        })?;
+        let metadata = match self.composer_detector.detect(root)? {
+            Some(metadata) => metadata,
+            None => {
+                return Ok(WorkspaceDescriptor {
+                    root_path: root.to_string_lossy().to_string(),
+                    php: None,
+                })
+            }
+        };
 
         Ok(WorkspaceDescriptor {
             root_path: root.to_string_lossy().to_string(),
             php: Some(PhpProjectDescriptor {
+                classmap_roots: metadata.classmap_roots,
                 has_composer: true,
-                package_name: composer
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                psr4_roots: collect_psr4_roots(&composer),
+                package_name: metadata.root_package_name,
+                packages: metadata.packages,
+                psr4_roots: metadata.psr4_roots,
             }),
         })
     }
-}
-
-fn collect_psr4_roots(composer: &Value) -> Vec<Psr4Root> {
-    let mut roots = Vec::new();
-    append_psr4_roots(composer, "autoload", false, &mut roots);
-    append_psr4_roots(composer, "autoload-dev", true, &mut roots);
-    roots
-}
-
-fn append_psr4_roots(composer: &Value, key: &str, dev: bool, roots: &mut Vec<Psr4Root>) {
-    let Some(psr4) = composer
-        .get(key)
-        .and_then(|autoload| autoload.get("psr-4"))
-        .and_then(Value::as_object)
-    else {
-        return;
-    };
-
-    for (namespace, paths) in psr4 {
-        roots.push(Psr4Root {
-            namespace: namespace.to_string(),
-            paths: normalize_composer_paths(paths),
-            dev,
-        });
-    }
-}
-
-fn normalize_composer_paths(value: &Value) -> Vec<String> {
-    if let Some(path) = value.as_str() {
-        return vec![path.to_string()];
-    }
-
-    if let Some(paths) = value.as_array() {
-        return paths
-            .iter()
-            .filter_map(Value::as_str)
-            .map(ToString::to_string)
-            .collect();
-    }
-
-    Vec::new()
 }
 
 #[cfg(test)]
@@ -120,7 +84,7 @@ mod tests {
     #[test]
     fn detects_absence_of_php_composer_project() {
         let root = create_temp_dir("workspace-no-composer");
-        let detector = ComposerWorkspaceDetector;
+        let detector = ComposerWorkspaceDetector::default();
 
         let descriptor = detector.detect(&root).expect("detect workspace");
 
@@ -141,7 +105,21 @@ mod tests {
         )
         .expect("write composer");
 
-        let detector = ComposerWorkspaceDetector;
+        fs::write(
+            root.join("composer.lock"),
+            r#"{
+              "packages": [
+                {
+                  "name": "vendor/package",
+                  "version": "1.2.3",
+                  "autoload": { "psr-4": { "Vendor\\Package\\": "src/" } }
+                }
+              ]
+            }"#,
+        )
+        .expect("write lock");
+
+        let detector = ComposerWorkspaceDetector::default();
         let descriptor = detector.detect(&root).expect("detect workspace");
         let php = descriptor.php.expect("php descriptor");
 
@@ -152,6 +130,8 @@ mod tests {
         assert!(!php.psr4_roots[0].dev);
         assert_eq!(php.psr4_roots[1].paths, vec!["tests/", "spec/"]);
         assert!(php.psr4_roots[1].dev);
+        assert_eq!(php.packages[0].name, "vendor/package");
+        assert_eq!(php.packages[0].psr4_roots[0].namespace, "Vendor\\Package\\");
         fs::remove_dir_all(root).expect("cleanup");
     }
 

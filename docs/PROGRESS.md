@@ -62,6 +62,7 @@ Completed:
 - Added index progress UI plumbing with a Tauri gateway, command-palette scan action, status bar counts/phases, and Problems notices for scan errors.
 - Added tree-sitter PHP parser foundation with tolerant valid/incomplete PHP fixture coverage.
 - Added PHP symbol extraction for namespaced classes, interfaces, traits, enums, methods, functions, and constants.
+- Added Composer metadata detection for root PSR-4/classmap roots plus lock/installed package metadata as data.
 
 Current verification:
 
@@ -69,10 +70,10 @@ Current verification:
 - `npm test`: passing, 59 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 109 Rust tests
+- `cargo test`: passing, 115 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
 - Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after PHP symbol extraction.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after Composer detector enhancements.
 
 Known issues:
 
@@ -81,4 +82,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add Composer detector enhancements for PSR-4 roots, classmaps, and package metadata in the structural index.
+1. Add transactional symbol DB writes for per-file PHP symbols.

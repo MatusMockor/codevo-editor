@@ -308,8 +308,10 @@ mod tests {
         WorkspaceDescriptor {
             root_path: root.to_string_lossy().to_string(),
             php: Some(PhpProjectDescriptor {
+                classmap_roots: Vec::new(),
                 has_composer: true,
                 package_name: Some("example/app".to_string()),
+                packages: Vec::new(),
                 psr4_roots: Vec::new(),
             }),
         }

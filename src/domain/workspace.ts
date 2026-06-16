@@ -26,9 +26,26 @@ export interface WorkspaceDescriptor {
 }
 
 export interface PhpProjectDescriptor {
+  classmapRoots: ClassmapRoot[];
   hasComposer: boolean;
   packageName: string | null;
+  packages: ComposerPackageDescriptor[];
   psr4Roots: Psr4Root[];
+}
+
+export interface ClassmapRoot {
+  paths: string[];
+  dev: boolean;
+}
+
+export interface ComposerPackageDescriptor {
+  classmapRoots: ClassmapRoot[];
+  dev: boolean;
+  installPath: string | null;
+  name: string;
+  packageType: string | null;
+  psr4Roots: Psr4Root[];
+  version: string | null;
 }
 
 export interface Psr4Root {
