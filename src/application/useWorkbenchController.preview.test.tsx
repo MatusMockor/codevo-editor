@@ -22,6 +22,7 @@ import {
 } from "../domain/languageServerRuntime";
 import type { PhpFileOutlineGateway } from "../domain/phpFileOutline";
 import type { PhpTreeGateway } from "../domain/phpTree";
+import type { ProjectSymbolSearchResult } from "../domain/projectSymbols";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -161,15 +162,85 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("uses the project index for go to definition when the language server is unavailable", async () => {
+    const controllerPath = "/workspace/src/CommentController.php";
+    const agentPath = "/workspace/src/CommentsAgent.php";
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 13,
+        containerName: null,
+        fullyQualifiedName: "App\\CommentsAgent",
+        kind: "class",
+        lineNumber: 4,
+        name: "CommentsAgent",
+        path: agentPath,
+        relativePath: "src/CommentsAgent.php",
+      },
+    ];
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return "<?php\n$agent = new CommentsAgent();\n";
+        }
+
+        return "<?php\nfinal class CommentsAgent {}\n";
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 23,
+        lineNumber: 2,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).toHaveBeenCalledWith("/workspace", "CommentsAgent", 25);
+    expect(getWorkbench().activePath).toBe(agentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: agentPath,
+      position: {
+        column: 13,
+        lineNumber: 4,
+      },
+    });
+  });
+
   function renderController({
+    appSettings = defaultAppSettings(),
+    projectSymbols = [],
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
   }: {
+    appSettings?: ReturnType<typeof defaultAppSettings>;
+    projectSymbols?: ProjectSymbolSearchResult[];
     readTextFile?: (path: string) => Promise<string>;
     runtimeStatus?: LanguageServerRuntimeStatus;
   } = {}) {
     let workbench: WorkbenchController | null = null;
     const dependencies = createControllerDependencies({
+      appSettings,
+      projectSymbols,
       readTextFile,
       runtimeStatus,
     });
@@ -227,9 +298,13 @@ function WorkbenchHarness({
 }
 
 function createControllerDependencies({
+  appSettings,
+  projectSymbols,
   readTextFile,
   runtimeStatus,
 }: {
+  appSettings: ReturnType<typeof defaultAppSettings>;
+  projectSymbols: ProjectSymbolSearchResult[];
   readTextFile(path: string): Promise<string>;
   runtimeStatus: LanguageServerRuntimeStatus;
 }): ControllerDependencies {
@@ -263,6 +338,9 @@ function createControllerDependencies({
         intelephense: null,
         phpactor: null,
       })),
+    },
+    projectSymbols: {
+      searchProjectSymbols: vi.fn(async () => projectSymbols),
     },
     textSearch: {
       searchText: vi.fn(async () => []),
@@ -323,7 +401,7 @@ function createControllerDependencies({
       prompt: vi.fn(() => null),
     },
     settingsGateway: {
-      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadAppSettings: vi.fn(async () => appSettings),
       loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
       saveAppSettings: vi.fn(async () => undefined),
       saveWorkspaceSettings: vi.fn(async () => undefined),
@@ -371,6 +449,14 @@ function createDeferred<T>(): Deferred<T> {
       resolveValue?.(value);
     },
   };
+}
+
+async function flushAsyncTurns(count = 12): Promise<void> {
+  await act(async () => {
+    for (let index = 0; index < count; index += 1) {
+      await Promise.resolve();
+    }
+  });
 }
 
 function fileEntry(path: string, name: string): FileEntry {

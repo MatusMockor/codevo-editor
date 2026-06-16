@@ -1,7 +1,6 @@
 import {
   FolderOpen,
   RefreshCw,
-  Save,
   Search,
   Settings as SettingsIcon,
 } from "lucide-react";
@@ -37,7 +36,7 @@ import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
 } from "./domain/settings";
-import { isDirty, type IntelligenceMode } from "./domain/workspace";
+import type { IntelligenceMode } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import { TauriLanguageServerDiagnosticsGateway } from "./infrastructure/tauriLanguageServerDiagnosticsGateway";
@@ -47,6 +46,7 @@ import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServer
 import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
+import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
 import { TauriPhpSyntaxDiagnosticsGateway } from "./infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
@@ -56,11 +56,13 @@ import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrust
 import "./App.css";
 
 const workspaceGateway = new TauriWorkspaceGateway();
+const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
 const workspaceGateways = {
   detection: workspaceGateway,
   fileSearch: workspaceGateway,
   files: workspaceGateway,
   phpTools: workspaceGateway,
+  projectSymbols: projectSymbolSearchGateway,
   textSearch: workspaceGateway,
 };
 const smartModeGateway = new TauriSmartModeGateway();
@@ -99,10 +101,6 @@ function App() {
     settingsGateway,
     workbenchPrompter,
   );
-  const activeDocumentDirty = Boolean(
-    workbench.activeDocument && isDirty(workbench.activeDocument),
-  );
-
   const activeLanguage = useMemo(
     () => workbench.activeDocument?.language ?? null,
     [workbench.activeDocument],
@@ -264,14 +262,6 @@ function App() {
           type="button"
         >
           <Search aria-hidden="true" size={20} />
-        </button>
-        <button
-          disabled={!activeDocumentDirty}
-          onClick={workbench.saveActiveDocument}
-          title="Save"
-          type="button"
-        >
-          <Save aria-hidden="true" size={20} />
         </button>
         <button
           className="activity-bar-secondary"
@@ -458,23 +448,26 @@ function App() {
           onRevealTargetHandled={workbench.clearEditorRevealTarget}
           phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
         />
-        <BottomPanel
-          activeView={workbench.bottomPanelView}
-          indexHealthLogs={workbench.indexHealthLogs}
-          indexProgress={workbench.indexProgress}
-          notices={workbench.notices}
-          onClearProblems={workbench.clearNotices}
-          onHardReindex={workbench.startHardReindex}
-          onPhpReindex={workbench.startPhpReindex}
-          onResizeStart={startBottomPanelResize}
-          onSelectView={workbench.setBottomPanelView}
-          onSoftReindex={workbench.startIndexScan}
-          onTrustWorkspace={workbench.toggleWorkspaceTrust}
-          terminalGateway={terminalGateway}
-          terminalTheme={terminalTheme}
-          workspaceTrusted={workbench.workspaceTrust?.trusted ?? false}
-          workspaceRoot={workbench.workspaceRoot}
-        />
+        {workbench.bottomPanelVisible ? (
+          <BottomPanel
+            activeView={workbench.bottomPanelView}
+            indexHealthLogs={workbench.indexHealthLogs}
+            indexProgress={workbench.indexProgress}
+            notices={workbench.notices}
+            onClearProblems={workbench.clearNotices}
+            onClose={workbench.hideBottomPanel}
+            onHardReindex={workbench.startHardReindex}
+            onPhpReindex={workbench.startPhpReindex}
+            onResizeStart={startBottomPanelResize}
+            onSelectView={workbench.showBottomPanelView}
+            onSoftReindex={workbench.startIndexScan}
+            onTrustWorkspace={workbench.toggleWorkspaceTrust}
+            terminalGateway={terminalGateway}
+            terminalTheme={terminalTheme}
+            workspaceTrusted={workbench.workspaceTrust?.trusted ?? false}
+            workspaceRoot={workbench.workspaceRoot}
+          />
+        ) : null}
       </section>
 
       <StatusBar

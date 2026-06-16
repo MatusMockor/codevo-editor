@@ -13,6 +13,7 @@ import type {
   PhpSyntaxDiagnostic,
   PhpSyntaxDiagnosticsGateway,
 } from "../domain/phpSyntaxDiagnostics";
+import { suspiciousPhpBareIdentifierDiagnostics } from "../domain/phpSyntaxDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import { getTabId, getTabPanelId } from "./tabIds";
@@ -192,10 +193,13 @@ export function EditorSurface({
             return;
           }
 
+          const localDiagnostics = suspiciousPhpBareIdentifierDiagnostics(
+            activeDocument.content,
+          );
           monacoApi.editor.setModelMarkers(
             model,
             "php-syntax",
-            diagnostics.map((diagnostic) =>
+            [...diagnostics, ...localDiagnostics].map((diagnostic) =>
               toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
             ),
           );

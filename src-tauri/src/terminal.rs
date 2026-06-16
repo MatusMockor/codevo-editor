@@ -29,23 +29,29 @@ impl Default for TerminalSize {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TerminalRuntimeStatus {
     Starting {
+        #[serde(rename = "sessionId")]
         session_id: u64,
     },
     Running {
         cols: u16,
         cwd: String,
         rows: u16,
+        #[serde(rename = "sessionId")]
         session_id: u64,
     },
     Stopped {
+        #[serde(rename = "sessionId")]
         session_id: u64,
     },
     Exited {
+        #[serde(rename = "exitCode")]
         exit_code: Option<u32>,
+        #[serde(rename = "sessionId")]
         session_id: u64,
     },
     Crashed {
         message: String,
+        #[serde(rename = "sessionId")]
         session_id: u64,
     },
 }
@@ -91,5 +97,51 @@ impl TerminalEventSink for AppHandleTerminalEventSink {
         use tauri::Emitter;
 
         let _ = self.app.emit(TERMINAL_STATUS_EVENT, status);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TerminalRuntimeStatus;
+    use serde_json::json;
+
+    #[test]
+    fn runtime_status_serializes_frontend_session_fields() {
+        assert_eq!(
+            serde_json::to_value(TerminalRuntimeStatus::Running {
+                cols: 80,
+                cwd: "/workspace".to_string(),
+                rows: 24,
+                session_id: 1,
+            })
+            .expect("terminal status should serialize"),
+            json!({
+                "cols": 80,
+                "cwd": "/workspace",
+                "kind": "running",
+                "rows": 24,
+                "sessionId": 1,
+            }),
+        );
+        assert_eq!(
+            serde_json::to_value(TerminalRuntimeStatus::Exited {
+                exit_code: Some(7),
+                session_id: 2,
+            })
+            .expect("terminal status should serialize"),
+            json!({
+                "exitCode": 7,
+                "kind": "exited",
+                "sessionId": 2,
+            }),
+        );
+        assert_eq!(
+            serde_json::to_value(TerminalRuntimeStatus::Starting { session_id: 3 })
+                .expect("terminal status should serialize"),
+            json!({
+                "kind": "starting",
+                "sessionId": 3,
+            }),
+        );
     }
 }

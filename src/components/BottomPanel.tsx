@@ -1,4 +1,4 @@
-import { ShieldCheck, X } from "lucide-react";
+import { PanelBottomClose, ShieldCheck, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import type { PointerEvent } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
@@ -21,6 +21,7 @@ interface BottomPanelProps {
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
   onClearProblems(): void;
+  onClose(): void;
   onHardReindex(): void;
   onPhpReindex(): void;
   onResizeStart(event: PointerEvent<HTMLDivElement>): void;
@@ -46,6 +47,7 @@ export function BottomPanel({
   indexProgress,
   notices,
   onClearProblems,
+  onClose,
   onHardReindex,
   onPhpReindex,
   onResizeStart,
@@ -190,6 +192,14 @@ export function BottomPanel({
             ))}
           </select>
         ) : null}
+        <button
+          className="bottom-panel-action"
+          onClick={onClose}
+          title="Hide panel"
+          type="button"
+        >
+          <PanelBottomClose aria-hidden="true" size={14} />
+        </button>
       </header>
       <div className="bottom-panel-body">
         {activePanel}

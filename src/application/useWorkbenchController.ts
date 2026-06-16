@@ -83,6 +83,10 @@ import {
   type PhpTreeGateway,
   type PhpTreeNode,
 } from "../domain/phpTree";
+import type {
+  ProjectSymbolSearchGateway,
+  ProjectSymbolSearchResult,
+} from "../domain/projectSymbols";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -119,6 +123,7 @@ export interface WorkbenchWorkspaceGateways {
   fileSearch: FileSearchGateway;
   files: WorkspaceFileGateway;
   phpTools: PhpToolGateway;
+  projectSymbols: ProjectSymbolSearchGateway;
   textSearch: TextSearchGateway;
 }
 
@@ -149,6 +154,7 @@ export function useWorkbenchController(
     fileSearch,
     files: workspaceFiles,
     phpTools: phpToolGateway,
+    projectSymbols: projectSymbolSearch,
     textSearch,
   } = workspaceGateways;
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
@@ -173,6 +179,7 @@ export function useWorkbenchController(
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
   const [bottomPanelView, setBottomPanelView] =
     useState<BottomPanelView>("problems");
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(true);
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState<
@@ -1547,20 +1554,33 @@ export function useWorkbenchController(
     activeEditorPositionRef.current = position;
   }, []);
 
+  const showBottomPanelView = useCallback((view: BottomPanelView) => {
+    setBottomPanelView(view);
+    setBottomPanelVisible(true);
+  }, []);
+
+  const hideBottomPanel = useCallback(() => {
+    setBottomPanelVisible(false);
+  }, []);
+
+  const toggleBottomPanel = useCallback(() => {
+    setBottomPanelVisible((visible) => !visible);
+  }, []);
+
   const goToLanguageServerLocation = useCallback(async (
     feature: Extract<LanguageServerFeature, "definition" | "implementation">,
     label: string,
-  ) => {
+  ): Promise<boolean> => {
     if (!activeDocument) {
-      return;
+      return false;
     }
 
     if (!isLanguageServerDocument(activeDocument)) {
-      return;
+      return false;
     }
 
     if (languageServerRuntimeStatus?.kind !== "running") {
-      return;
+      return false;
     }
 
     if (
@@ -1569,13 +1589,13 @@ export function useWorkbenchController(
         feature,
       )
     ) {
-      return;
+      return false;
     }
 
     const editorPosition = activeEditorPositionRef.current;
 
     if (!editorPosition) {
-      return;
+      return false;
     }
 
     try {
@@ -1586,14 +1606,14 @@ export function useWorkbenchController(
       const [target] = locations;
 
       if (!target) {
-        return;
+        return false;
       }
 
       const targetPath = pathFromLanguageServerUri(target.uri);
 
       if (!targetPath) {
         setMessage(`Could not open ${label} target.`);
-        return;
+        return false;
       }
 
       recordCurrentNavigationLocation();
@@ -1621,8 +1641,10 @@ export function useWorkbenchController(
       setMessage(
         `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
       );
+      return true;
     } catch (error) {
       reportLanguageServerError(error);
+      return false;
     }
   }, [
     activeDocument,
@@ -1635,9 +1657,103 @@ export function useWorkbenchController(
     reportLanguageServerError,
   ]);
 
+  const goToIndexedSymbolDefinition = useCallback(async (): Promise<boolean> => {
+    if (!activeDocument) {
+      return false;
+    }
+
+    if (!workspaceRoot) {
+      return false;
+    }
+
+    const editorPosition = activeEditorPositionRef.current;
+
+    if (!editorPosition) {
+      return false;
+    }
+
+    const symbolName = identifierAtEditorPosition(
+      activeDocument.content,
+      editorPosition,
+    );
+
+    if (!symbolName) {
+      return false;
+    }
+
+    try {
+      const symbols = await projectSymbolSearch.searchProjectSymbols(
+        workspaceRoot,
+        symbolName,
+        25,
+      );
+      const target = bestIndexedSymbolMatch(
+        symbols,
+        symbolName,
+        activeDocument.path,
+      );
+
+      if (!target) {
+        setMessage(`No indexed symbol found for ${symbolName}.`);
+        return false;
+      }
+
+      recordCurrentNavigationLocation();
+
+      if (documents[target.path]) {
+        setActivePath(target.path);
+      }
+
+      if (!documents[target.path]) {
+        const opened = await openFile(
+          {
+            kind: "file",
+            name: getFileName(target.path),
+            path: target.path,
+          },
+          { recordNavigation: false },
+        );
+
+        if (!opened) {
+          return false;
+        }
+      }
+
+      const targetPosition = editorPositionFromProjectSymbol(target);
+      setEditorRevealTarget({
+        path: target.path,
+        position: targetPosition,
+      });
+      setMessage(
+        `Opened indexed symbol ${target.name} ${target.relativePath}:${targetPosition.lineNumber}:${targetPosition.column}`,
+      );
+      return true;
+    } catch (error) {
+      reportError("Go to Definition", error);
+      return false;
+    }
+  }, [
+    activeDocument,
+    documents,
+    openFile,
+    projectSymbolSearch,
+    recordCurrentNavigationLocation,
+    reportError,
+    workspaceRoot,
+  ]);
+
   const goToDefinition = useCallback(async () => {
-    await goToLanguageServerLocation("definition", "definition");
-  }, [goToLanguageServerLocation]);
+    const openedLanguageServerTarget = await goToLanguageServerLocation(
+      "definition",
+      "definition",
+    );
+
+    if (openedLanguageServerTarget) {
+      return;
+    }
+
+    await goToIndexedSymbolDefinition();
+  }, [goToIndexedSymbolDefinition, goToLanguageServerLocation]);
 
   const goToImplementation = useCallback(async () => {
     await goToLanguageServerLocation("implementation", "implementation");
@@ -2084,13 +2200,7 @@ export function useWorkbenchController(
       title: "Go to Definition",
       category: "Editor",
       shortcut: "Cmd+B",
-      isEnabled: () =>
-        Boolean(activeDocument) &&
-        languageServerRuntimeStatus?.kind === "running" &&
-        canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "definition",
-        ),
+      isEnabled: () => Boolean(activeDocument),
       run: goToDefinition,
     });
 
@@ -2143,7 +2253,7 @@ export function useWorkbenchController(
       title: "Show Problems",
       category: "Workbench",
       isEnabled: () => true,
-      run: () => setBottomPanelView("problems"),
+      run: () => showBottomPanelView("problems"),
     });
 
     registry.register({
@@ -2151,7 +2261,16 @@ export function useWorkbenchController(
       title: "Show Index",
       category: "Index",
       isEnabled: () => true,
-      run: () => setBottomPanelView("index"),
+      run: () => showBottomPanelView("index"),
+    });
+
+    registry.register({
+      id: "panel.toggle",
+      title: "Toggle Panel",
+      category: "Workbench",
+      shortcut: "Cmd+J",
+      isEnabled: () => true,
+      run: toggleBottomPanel,
     });
 
     registry.register({
@@ -2160,7 +2279,7 @@ export function useWorkbenchController(
       category: "Terminal",
       shortcut: "Ctrl+`",
       isEnabled: () => true,
-      run: () => setBottomPanelView("terminal"),
+      run: () => showBottomPanelView("terminal"),
     });
 
     registry.register({
@@ -2258,11 +2377,13 @@ export function useWorkbenchController(
     refreshPhpTree,
     renameActiveDocument,
     saveActiveDocument,
+    showBottomPanelView,
     startHardReindex,
     startLanguageServer,
     startIndexScan,
     startPhpReindex,
     stopLanguageServer,
+    toggleBottomPanel,
     toggleSmartMode,
     toggleWorkspaceTrust,
     indexProgress,
@@ -2409,6 +2530,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        toggleBottomPanel();
+        return;
+      }
+
       if (!event.altKey && event.key.toLowerCase() === "b") {
         event.preventDefault();
         void goToDefinition();
@@ -2472,6 +2599,7 @@ export function useWorkbenchController(
     openSettingsPanel,
     openWorkspace,
     saveActiveDocument,
+    toggleBottomPanel,
     workspaceRoot,
   ]);
 
@@ -2807,6 +2935,7 @@ export function useWorkbenchController(
     fileStructureOpen,
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
+    bottomPanelVisible,
     bottomPanelView,
     editorRevealTarget,
     indexHealthLogs,
@@ -2846,7 +2975,8 @@ export function useWorkbenchController(
     saveActiveDocument,
     saveWorkbenchSettings,
     setActivePath: activateDocument,
-    setBottomPanelView,
+    hideBottomPanel,
+    showBottomPanelView,
     setPaletteOpen,
     setQuickOpenOpen,
     setSidebarView,
@@ -2885,6 +3015,62 @@ export function useWorkbenchController(
     workspaceRoot,
     workspaceSettings,
     workspaceTrust,
+  };
+}
+
+function identifierAtEditorPosition(
+  source: string,
+  position: EditorPosition,
+): string | null {
+  const line = source.split(/\r?\n/)[position.lineNumber - 1] ?? "";
+  const cursorIndex = Math.max(0, Math.min(line.length, position.column - 1));
+  const matches = line.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g);
+
+  for (const match of matches) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+
+    if (cursorIndex >= start && cursorIndex <= end) {
+      return match[0];
+    }
+  }
+
+  return null;
+}
+
+function bestIndexedSymbolMatch(
+  symbols: ProjectSymbolSearchResult[],
+  query: string,
+  activePath: string,
+): ProjectSymbolSearchResult | null {
+  const normalizedQuery = query.toLowerCase();
+  const exactMatchOutsideActiveFile = symbols.find(
+    (symbol) =>
+      symbol.path !== activePath &&
+      symbol.name.toLowerCase() === normalizedQuery,
+  );
+
+  if (exactMatchOutsideActiveFile) {
+    return exactMatchOutsideActiveFile;
+  }
+
+  const exactMatch = symbols.find(
+    (symbol) => symbol.name.toLowerCase() === normalizedQuery,
+  );
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  return symbols[0] ?? null;
+}
+
+function editorPositionFromProjectSymbol(
+  symbol: ProjectSymbolSearchResult,
+): EditorPosition {
+  return {
+    column: Math.max(1, Number(symbol.column)),
+    lineNumber: Math.max(1, Number(symbol.lineNumber)),
   };
 }
 
