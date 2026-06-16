@@ -25,6 +25,7 @@ import { TauriLanguageServerFeaturesGateway } from "./infrastructure/tauriLangua
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
 import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
+import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
@@ -42,6 +43,7 @@ const workspaceGateways = {
 const smartModeGateway = new TauriSmartModeGateway();
 const workspaceTrustGateway = new TauriWorkspaceTrustGateway();
 const indexProgressGateway = new TauriIndexProgressGateway();
+const phpFileOutlineGateway = new TauriPhpFileOutlineGateway();
 const phpTreeGateway = new TauriPhpTreeGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
@@ -59,6 +61,7 @@ function App() {
     smartModeGateway,
     workspaceTrustGateway,
     indexProgressGateway,
+    phpFileOutlineGateway,
     phpTreeGateway,
     languageServerGateway,
     languageServerRuntimeGateway,
@@ -228,10 +231,19 @@ function App() {
           <FileTree
             activePath={workbench.activePath}
             entriesByDirectory={workbench.entriesByDirectory}
+            expandedPhpFilePaths={workbench.expandedPhpFilePaths}
             expandedDirectories={workbench.expandedDirectories}
+            loadingPhpFileOutlinePaths={workbench.loadingPhpFileOutlinePaths}
             loadingDirectories={workbench.loadingDirectories}
             onOpenFile={workbench.openFile}
+            onOpenPhpFileOutlineNode={workbench.openPhpFileOutlineNode}
             onToggleDirectory={workbench.toggleDirectory}
+            onTogglePhpFileOutline={workbench.togglePhpFileOutline}
+            onTogglePhpFileOutlineNode={workbench.togglePhpFileOutlineNode}
+            phpFileOutlineExpandedNodeIds={
+              workbench.phpFileOutlineExpandedNodeIds
+            }
+            phpFileOutlinesByPath={workbench.phpFileOutlinesByPath}
             rootPath={workbench.workspaceRoot}
           />
         )}

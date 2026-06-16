@@ -11,6 +11,7 @@ mod lsp_document;
 mod lsp_features;
 mod lsp_session;
 mod lsp_transport;
+pub mod php_file_outline;
 pub mod php_parser;
 pub mod php_symbols;
 pub mod php_tree;
@@ -23,7 +24,8 @@ mod workspace;
 
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
-    WorkspaceIndexStore, WorkspaceIndexSummary, WorkspacePhpTreeStore, WorkspaceSymbolSearchStore,
+    WorkspaceIndexStore, WorkspaceIndexSummary, WorkspacePhpFileOutlineStore,
+    WorkspacePhpTreeStore, WorkspaceSymbolSearchStore,
 };
 use index_scan::{
     InitialMetadataScanStart, LocalWorkspaceMetadataScanStarter, MetadataScanCompletionEvent,
@@ -47,6 +49,7 @@ use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink, LanguageServerRuntimeStatus,
     LanguageServerSupervisor, StatusSink,
 };
+use php_file_outline::PhpFileOutline;
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
@@ -231,6 +234,13 @@ fn ensure_path_in_workspace(root_path: &Path, path: &str) -> Result<(), String> 
     Err("Index path is outside the workspace root.".to_string())
 }
 
+fn resolve_workspace_path(root_path: &Path, path: &str) -> Result<PathBuf, String> {
+    ensure_path_in_workspace(root_path, path)?;
+    Ok(normalize_path(&absolute_workspace_candidate(
+        root_path, path,
+    )))
+}
+
 fn absolute_workspace_candidate(root_path: &Path, path: &str) -> PathBuf {
     let candidate = PathBuf::from(path);
 
@@ -381,6 +391,20 @@ fn get_php_tree(app: AppHandle, root: String) -> Result<PhpTree, String> {
     let root = canonicalize_workspace_root(&root)?;
     let index = open_workspace_index(&app, &root)?;
     index.load_php_tree().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_php_file_outline(
+    app: AppHandle,
+    root: String,
+    path: String,
+) -> Result<PhpFileOutline, String> {
+    let root = canonicalize_workspace_root(&root)?;
+    let path = resolve_workspace_path(&root, &path)?;
+    let index = open_workspace_index(&app, &root)?;
+    index
+        .load_php_file_outline(&path.to_string_lossy())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -662,6 +686,7 @@ pub fn run() {
             delete_path,
             detect_php_tools,
             detect_workspace,
+            get_php_file_outline,
             get_php_language_server_status,
             get_php_tree,
             get_smart_mode_state,

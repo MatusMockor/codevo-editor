@@ -189,6 +189,7 @@ button {
   color: #8f9aaa;
 }
 
+.php-file-outline-row small,
 .php-tree-row small {
   font-size: 10px;
   text-transform: uppercase;

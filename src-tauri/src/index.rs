@@ -2,6 +2,9 @@ use crate::job_scheduler::{
     IndexCommitGate, IndexCommitPermission, IndexCommitScope, IndexDbWriteOperation,
     IndexFileMetadata, IndexFileSymbols, IndexSymbolKind, IndexSymbolRange, IndexSymbolRecord,
 };
+use crate::php_file_outline::{
+    build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
+};
 use crate::php_tree::{build_php_tree, PhpTree, PhpTreeNodeKind, PhpTreeSymbolRecord};
 use rusqlite::{params, types::Type, Connection};
 use serde::{Deserialize, Serialize};
@@ -59,6 +62,10 @@ pub trait WorkspaceSymbolSearchStore {
 
 pub trait WorkspacePhpTreeStore {
     fn load_php_tree(&self) -> rusqlite::Result<PhpTree>;
+}
+
+pub trait WorkspacePhpFileOutlineStore {
+    fn load_php_file_outline(&self, file_path: &str) -> rusqlite::Result<PhpFileOutline>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -398,6 +405,42 @@ impl WorkspaceSymbolSearchStore for SqliteWorkspaceIndex {
     }
 }
 
+impl WorkspacePhpFileOutlineStore for SqliteWorkspaceIndex {
+    fn load_php_file_outline(&self, file_path: &str) -> rusqlite::Result<PhpFileOutline> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                workspace_symbols.kind,
+                workspace_symbols.name,
+                workspace_symbols.fully_qualified_name,
+                workspace_symbols.container_name,
+                workspace_symbols.file_path,
+                workspace_files.relative_path,
+                workspace_symbols.start_line,
+                workspace_symbols.start_column,
+                container_symbols.kind
+            FROM workspace_symbols
+            JOIN workspace_files ON workspace_files.path = workspace_symbols.file_path
+            LEFT JOIN workspace_symbols container_symbols
+                ON container_symbols.file_path = workspace_symbols.file_path
+                AND container_symbols.fully_qualified_name = workspace_symbols.container_name
+                AND container_symbols.kind IN ('class', 'interface', 'trait', 'enum')
+            WHERE workspace_symbols.file_path = ?
+                AND workspace_symbols.kind IN ('class', 'interface', 'trait', 'enum', 'function', 'method', 'constant')
+            ORDER BY workspace_symbols.ordinal
+            ",
+        )?;
+        let rows = statement.query_map([file_path], php_file_outline_symbol_record)?;
+        let mut symbols = Vec::new();
+
+        for row in rows {
+            symbols.push(row?);
+        }
+
+        Ok(build_php_file_outline(&symbols))
+    }
+}
+
 impl WorkspacePhpTreeStore for SqliteWorkspaceIndex {
     fn load_php_tree(&self) -> rusqlite::Result<PhpTree> {
         let mut statement = self.connection.prepare(
@@ -653,6 +696,70 @@ fn project_symbol_search_result(
     })
 }
 
+fn php_file_outline_symbol_record(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<PhpFileOutlineSymbolRecord> {
+    let kind_text: String = row.get(0)?;
+    let kind = required_php_file_outline_node_kind(kind_text, 0)?;
+    let container_kind = optional_php_file_outline_node_kind(row.get(8)?, 8)?;
+
+    Ok(PhpFileOutlineSymbolRecord {
+        column: row.get(7)?,
+        container_kind,
+        container_name: row.get(3)?,
+        fully_qualified_name: row.get(2)?,
+        kind,
+        line_number: row.get(6)?,
+        name: row.get(1)?,
+        path: row.get(4)?,
+        relative_path: row.get(5)?,
+    })
+}
+
+fn required_php_file_outline_node_kind(
+    kind_text: String,
+    column: usize,
+) -> rusqlite::Result<PhpFileOutlineNodeKind> {
+    let kind = match WorkspaceSymbolKind::from_storage_value(&kind_text) {
+        Some(kind) => kind,
+        None => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                column,
+                Type::Text,
+                Box::new(InvalidWorkspaceSymbolKind(kind_text)),
+            ))
+        }
+    };
+
+    Ok(php_file_outline_node_kind(kind))
+}
+
+fn optional_php_file_outline_node_kind(
+    kind_text: Option<String>,
+    column: usize,
+) -> rusqlite::Result<Option<PhpFileOutlineNodeKind>> {
+    let kind_text = match kind_text {
+        Some(kind_text) => kind_text,
+        None => return Ok(None),
+    };
+
+    Ok(Some(required_php_file_outline_node_kind(
+        kind_text, column,
+    )?))
+}
+
+fn php_file_outline_node_kind(kind: WorkspaceSymbolKind) -> PhpFileOutlineNodeKind {
+    match kind {
+        WorkspaceSymbolKind::Class => PhpFileOutlineNodeKind::Class,
+        WorkspaceSymbolKind::Constant => PhpFileOutlineNodeKind::Constant,
+        WorkspaceSymbolKind::Enum => PhpFileOutlineNodeKind::Enum,
+        WorkspaceSymbolKind::Function => PhpFileOutlineNodeKind::Function,
+        WorkspaceSymbolKind::Interface => PhpFileOutlineNodeKind::Interface,
+        WorkspaceSymbolKind::Method => PhpFileOutlineNodeKind::Method,
+        WorkspaceSymbolKind::Trait => PhpFileOutlineNodeKind::Trait,
+    }
+}
+
 fn php_tree_symbol_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhpTreeSymbolRecord> {
     let kind_text: String = row.get(0)?;
     let kind = required_php_tree_node_kind(kind_text, 0)?;
@@ -742,9 +849,10 @@ impl Error for InvalidWorkspaceSymbolKind {}
 mod tests {
     use super::{
         commit_index_db_write, workspace_index_path, IndexCommitOutcome, SqliteWorkspaceIndex,
-        WorkspaceFileRecord, WorkspaceFileSymbols, WorkspaceIndexStore, WorkspacePhpTreeStore,
-        WorkspaceSymbolKind, WorkspaceSymbolRange, WorkspaceSymbolRecord,
-        WorkspaceSymbolSearchStore, WorkspaceSymbolStore,
+        WorkspaceFileRecord, WorkspaceFileSymbols, WorkspaceIndexStore,
+        WorkspacePhpFileOutlineStore, WorkspacePhpTreeStore, WorkspaceSymbolKind,
+        WorkspaceSymbolRange, WorkspaceSymbolRecord, WorkspaceSymbolSearchStore,
+        WorkspaceSymbolStore,
     };
     use crate::job_scheduler::{
         InMemoryIndexJobScheduler, IndexCommitGate, IndexCommitPermission, IndexCommitScope,
@@ -752,6 +860,7 @@ mod tests {
         IndexJobPayload, IndexJobScheduler, IndexSymbolKind, IndexSymbolRange, IndexSymbolRecord,
         ScheduleIndexJobRequest,
     };
+    use crate::php_file_outline::PhpFileOutlineNodeKind;
     use crate::php_tree::PhpTreeNodeKind;
     use std::{
         fs,
@@ -1231,6 +1340,57 @@ mod tests {
         assert_eq!(user.relative_path.as_deref(), Some("src/User.php"));
         assert_eq!(user.children[0].label, "name");
         assert_eq!(user.children[0].line_number, Some(20));
+    }
+
+    #[test]
+    fn loads_php_file_outline_for_one_indexed_file() {
+        let database_path = temp_database_path("php-file-outline");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed user file");
+        index
+            .upsert_file(&file_record("/project/src/Other.php", 128))
+            .expect("seed other file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![
+                    symbol("User", "App\\Domain\\User", WorkspaceSymbolKind::Class, 10),
+                    symbol_in_container(
+                        "name",
+                        "App\\Domain\\User::name",
+                        WorkspaceSymbolKind::Method,
+                        "App\\Domain\\User",
+                        20,
+                    ),
+                ],
+            ))
+            .expect("seed user symbols");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/Other.php",
+                vec![symbol(
+                    "Other",
+                    "App\\Domain\\Other",
+                    WorkspaceSymbolKind::Class,
+                    10,
+                )],
+            ))
+            .expect("seed other symbols");
+
+        let outline = index
+            .load_php_file_outline("/project/src/User.php")
+            .expect("php file outline");
+
+        assert_eq!(outline.nodes.len(), 1);
+        assert_eq!(outline.nodes[0].label, "User");
+        assert_eq!(outline.nodes[0].kind, PhpFileOutlineNodeKind::Class);
+        assert_eq!(
+            outline.nodes[0].relative_path.as_deref(),
+            Some("src/User.php")
+        );
+        assert_eq!(outline.nodes[0].children[0].label, "name");
     }
 
     #[test]

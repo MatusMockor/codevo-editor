@@ -1,25 +1,45 @@
 import { ChevronRight, FileCode2, Folder, FolderOpen } from "lucide-react";
 import type { CSSProperties } from "react";
+import {
+  canExpandPhpFileEntry,
+  type PhpFileOutline,
+  type PhpFileOutlineNode,
+} from "../domain/phpFileOutline";
 import type { FileEntry } from "../domain/workspace";
+import { PhpFileOutlineRows } from "./PhpFileOutlineRows";
 
 interface FileTreeProps {
   rootPath: string | null;
   entriesByDirectory: Record<string, FileEntry[]>;
+  expandedPhpFilePaths: Set<string>;
   expandedDirectories: Set<string>;
   loadingDirectories: Set<string>;
+  loadingPhpFileOutlinePaths: Set<string>;
+  phpFileOutlineExpandedNodeIds: Set<string>;
+  phpFileOutlinesByPath: Record<string, PhpFileOutline>;
   activePath: string | null;
   onOpenFile(entry: FileEntry): void;
+  onOpenPhpFileOutlineNode(node: PhpFileOutlineNode): void;
   onToggleDirectory(path: string): void;
+  onTogglePhpFileOutline(path: string): void;
+  onTogglePhpFileOutlineNode(id: string): void;
 }
 
 export function FileTree({
   rootPath,
   entriesByDirectory,
+  expandedPhpFilePaths,
   expandedDirectories,
   loadingDirectories,
+  loadingPhpFileOutlinePaths,
+  phpFileOutlineExpandedNodeIds,
+  phpFileOutlinesByPath,
   activePath,
   onOpenFile,
+  onOpenPhpFileOutlineNode,
   onToggleDirectory,
+  onTogglePhpFileOutline,
+  onTogglePhpFileOutlineNode,
 }: FileTreeProps) {
   if (!rootPath) {
     return (
@@ -38,12 +58,19 @@ export function FileTree({
           activePath={activePath}
           entriesByDirectory={entriesByDirectory}
           entry={entry}
+          expandedPhpFilePaths={expandedPhpFilePaths}
           expandedDirectories={expandedDirectories}
           key={entry.path}
           level={0}
           loadingDirectories={loadingDirectories}
+          loadingPhpFileOutlinePaths={loadingPhpFileOutlinePaths}
           onOpenFile={onOpenFile}
+          onOpenPhpFileOutlineNode={onOpenPhpFileOutlineNode}
           onToggleDirectory={onToggleDirectory}
+          onTogglePhpFileOutline={onTogglePhpFileOutline}
+          onTogglePhpFileOutlineNode={onTogglePhpFileOutlineNode}
+          phpFileOutlineExpandedNodeIds={phpFileOutlineExpandedNodeIds}
+          phpFileOutlinesByPath={phpFileOutlinesByPath}
         />
       ))}
     </nav>
@@ -54,37 +81,69 @@ interface TreeEntryProps {
   entry: FileEntry;
   level: number;
   entriesByDirectory: Record<string, FileEntry[]>;
+  expandedPhpFilePaths: Set<string>;
   expandedDirectories: Set<string>;
   loadingDirectories: Set<string>;
+  loadingPhpFileOutlinePaths: Set<string>;
+  phpFileOutlineExpandedNodeIds: Set<string>;
+  phpFileOutlinesByPath: Record<string, PhpFileOutline>;
   activePath: string | null;
   onOpenFile(entry: FileEntry): void;
+  onOpenPhpFileOutlineNode(node: PhpFileOutlineNode): void;
   onToggleDirectory(path: string): void;
+  onTogglePhpFileOutline(path: string): void;
+  onTogglePhpFileOutlineNode(id: string): void;
 }
 
 function TreeEntry({
   entry,
   level,
   entriesByDirectory,
+  expandedPhpFilePaths,
   expandedDirectories,
   loadingDirectories,
+  loadingPhpFileOutlinePaths,
+  phpFileOutlineExpandedNodeIds,
+  phpFileOutlinesByPath,
   activePath,
   onOpenFile,
+  onOpenPhpFileOutlineNode,
   onToggleDirectory,
+  onTogglePhpFileOutline,
+  onTogglePhpFileOutlineNode,
 }: TreeEntryProps) {
   const isDirectory = entry.kind === "directory";
-  const isExpanded = expandedDirectories.has(entry.path);
-  const isLoading = loadingDirectories.has(entry.path);
+  const isPhpFileEntry = canExpandPhpFileEntry(entry);
+  const isExpandable = isDirectory || isPhpFileEntry;
+  const isExpanded = isDirectory
+    ? expandedDirectories.has(entry.path)
+    : expandedPhpFilePaths.has(entry.path);
+  const isLoading = isDirectory
+    ? loadingDirectories.has(entry.path)
+    : loadingPhpFileOutlinePaths.has(entry.path);
   const children = entriesByDirectory[entry.path] || [];
+  const phpFileOutline = phpFileOutlinesByPath[entry.path];
+  const hasEmptyPhpSymbols = Boolean(
+    isPhpFileEntry &&
+      isExpanded &&
+      phpFileOutline &&
+      phpFileOutline.nodes.length === 0 &&
+      !isLoading,
+  );
 
   return (
     <div className="tree-row-group">
       <button
-        aria-expanded={isDirectory ? isExpanded : undefined}
+        aria-expanded={isExpandable ? isExpanded : undefined}
         className={entry.path === activePath ? "tree-row active" : "tree-row"}
         onClick={() => {
           if (isDirectory) {
             onToggleDirectory(entry.path);
             return;
+          }
+
+          if (isPhpFileEntry) {
+            onTogglePhpFileOutline(entry.path);
           }
 
           onOpenFile(entry);
@@ -95,7 +154,7 @@ function TreeEntry({
       >
         <ChevronRight
           aria-hidden="true"
-          className={getChevronClassName(isDirectory, isExpanded)}
+          className={getChevronClassName(isExpandable, isExpanded)}
           size={15}
         />
         {isDirectory ? (
@@ -109,6 +168,7 @@ function TreeEntry({
         )}
         <span>{entry.name}</span>
         {isLoading ? <small aria-live="polite">Loading...</small> : null}
+        {hasEmptyPhpSymbols ? <small>No symbols</small> : null}
       </button>
 
       {isDirectory && isExpanded
@@ -117,21 +177,38 @@ function TreeEntry({
               activePath={activePath}
               entriesByDirectory={entriesByDirectory}
               entry={child}
+              expandedPhpFilePaths={expandedPhpFilePaths}
               expandedDirectories={expandedDirectories}
               key={child.path}
               level={level + 1}
               loadingDirectories={loadingDirectories}
+              loadingPhpFileOutlinePaths={loadingPhpFileOutlinePaths}
               onOpenFile={onOpenFile}
+              onOpenPhpFileOutlineNode={onOpenPhpFileOutlineNode}
               onToggleDirectory={onToggleDirectory}
+              onTogglePhpFileOutline={onTogglePhpFileOutline}
+              onTogglePhpFileOutlineNode={onTogglePhpFileOutlineNode}
+              phpFileOutlineExpandedNodeIds={phpFileOutlineExpandedNodeIds}
+              phpFileOutlinesByPath={phpFileOutlinesByPath}
             />
           ))
         : null}
+
+      {isPhpFileEntry && isExpanded && phpFileOutline ? (
+        <PhpFileOutlineRows
+          expandedNodeIds={phpFileOutlineExpandedNodeIds}
+          level={level + 1}
+          nodes={phpFileOutline.nodes}
+          onOpenNode={onOpenPhpFileOutlineNode}
+          onToggleNode={onTogglePhpFileOutlineNode}
+        />
+      ) : null}
     </div>
   );
 }
 
-function getChevronClassName(isDirectory: boolean, isExpanded: boolean): string {
-  if (!isDirectory) {
+function getChevronClassName(isExpandable: boolean, isExpanded: boolean): string {
+  if (!isExpandable) {
     return "tree-chevron placeholder";
   }
 

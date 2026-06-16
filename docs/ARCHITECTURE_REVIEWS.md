@@ -1285,3 +1285,43 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test for sidebar tabs and non-Tauri fallback
 - `coderabbit review --agent --fast --base main` passed with 0 findings after fixing the placeholder container kind finding
+
+## 2026-06-16: PHP File Outlines In File Tree
+
+Scope reviewed:
+
+- `php_file_outline.rs` file-scoped read-model builder
+- `WorkspacePhpFileOutlineStore` SQLite read-side contract
+- Tauri `get_php_file_outline` command with workspace path guard
+- TypeScript PHP file outline domain, helper, and Tauri gateway adapter
+- workbench controller cache/loading/expanded state for per-file outlines
+- file tree renderer extension for expandable PHP files
+
+### SOLID Review
+
+- Single Responsibility: acceptable. File outlines are separate from project PHP tree loading, filesystem directory reads, and parser/index writes.
+- Open/Closed: acceptable. Additional outline node kinds or richer display metadata can extend the outline read model without changing file tree directory loading.
+- Liskov Substitution: acceptable. `WorkspacePhpFileOutlineStore` and `PhpFileOutlineGateway` can be replaced by alternate implementations with the same file-scoped contract.
+- Interface Segregation: improved. File outline loading is its own port, separate from project symbol search and project PHP tree gateways.
+- Dependency Inversion: acceptable. The controller depends on the outline gateway abstraction; `FileTree` receives data/callbacks and does not invoke Tauri.
+
+### Pattern Review
+
+- Repository pattern: `SqliteWorkspaceIndex` exposes file outline reads through a focused store trait.
+- Builder/Composite pattern: `build_php_file_outline` maps flat per-file symbols into expandable type/member nodes.
+- Adapter pattern: Tauri command and frontend gateway adapt IPC to the domain-facing outline contract.
+- Presenter/controller pattern: `useWorkbenchController` owns cache/loading/expanded orchestration while `FileTree` remains a renderer.
+- Guard pattern: workspace path validation protects the file outline command before querying SQLite.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml php_file_outline`
+- `cargo test --manifest-path src-tauri/Cargo.toml loads_php_file_outline_for_one_indexed_file`
+- `npm test -- phpFileOutline tauriPhpFileOutlineGateway`
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test for file tree shell and non-Tauri fallback
+- `coderabbit review --agent --fast --base main` passed with 0 findings

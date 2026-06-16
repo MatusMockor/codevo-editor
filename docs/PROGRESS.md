@@ -66,17 +66,18 @@ Completed:
 - Added SQLite symbol storage with transactional per-file symbol replacement, rollback coverage, and cascade cleanup when files are removed.
 - Added project symbol search over SQLite symbols with ranked class/type/function/method results and a Tauri/TypeScript gateway contract.
 - Added PHP tree panel backed by indexed namespaces, types, functions, methods, and constants.
+- Added PHP file outlines in the file tree backed by per-file indexed symbols.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 61 frontend tests
+- `npm test`: passing, 65 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 127 Rust tests
+- `cargo test`: passing, 130 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
-- Browser smoke test: passing for shell, sidebar tabs, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after PHP tree panel fixes.
+- Browser smoke test: passing for shell, sidebar tabs, file-outline UI wiring, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after PHP file outline.
 
 Known issues:
 
@@ -85,4 +86,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add PHP file member expansion in the file tree.
+1. Add reindex commands.

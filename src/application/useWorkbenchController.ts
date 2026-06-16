@@ -64,6 +64,12 @@ import {
   type NavigationLocation,
 } from "../domain/navigation";
 import {
+  emptyPhpFileOutline,
+  type PhpFileOutline,
+  type PhpFileOutlineGateway,
+  type PhpFileOutlineNode,
+} from "../domain/phpFileOutline";
+import {
   emptyPhpTree,
   type PhpTree,
   type PhpTreeGateway,
@@ -106,6 +112,7 @@ export function useWorkbenchController(
   smartModeGateway: SmartModeGateway,
   workspaceTrustGateway: WorkspaceTrustGateway,
   indexProgressGateway: IndexProgressGateway,
+  phpFileOutlineGateway: PhpFileOutlineGateway,
   phpTreeGateway: PhpTreeGateway,
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
@@ -142,6 +149,17 @@ export function useWorkbenchController(
   const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState<
     Set<string>
   >(new Set());
+  const [phpFileOutlinesByPath, setPhpFileOutlinesByPath] = useState<
+    Record<string, PhpFileOutline>
+  >({});
+  const [expandedPhpFilePaths, setExpandedPhpFilePaths] = useState<Set<string>>(
+    new Set(),
+  );
+  const [loadingPhpFileOutlinePaths, setLoadingPhpFileOutlinePaths] = useState<
+    Set<string>
+  >(new Set());
+  const [phpFileOutlineExpandedNodeIds, setPhpFileOutlineExpandedNodeIds] =
+    useState<Set<string>>(new Set());
   const [editorRevealTarget, setEditorRevealTarget] =
     useState<EditorRevealTarget | null>(null);
   const [navigationHistory, setNavigationHistory] =
@@ -192,6 +210,7 @@ export function useWorkbenchController(
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  const lastPhpFileOutlineRefreshKeyRef = useRef<string | null>(null);
 
   const activeDocument = activePath ? documents[activePath] || null : null;
   const openDocuments = openPaths
@@ -641,6 +660,11 @@ export function useWorkbenchController(
       setPhpTree(emptyPhpTree());
       setPhpTreeExpandedNodeIds(new Set());
       setPhpTreeLoading(false);
+      setPhpFileOutlinesByPath({});
+      setExpandedPhpFilePaths(new Set());
+      setLoadingPhpFileOutlinePaths(new Set());
+      setPhpFileOutlineExpandedNodeIds(new Set());
+      lastPhpFileOutlineRefreshKeyRef.current = null;
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
 
@@ -853,6 +877,127 @@ export function useWorkbenchController(
 
   const openPhpTreeNode = useCallback(
     async (node: PhpTreeNode) => {
+      if (!node.path) {
+        return;
+      }
+
+      const opened = await openFile({
+        kind: "file",
+        name: getFileName(node.path),
+        path: node.path,
+      });
+
+      if (!opened || !node.lineNumber || !node.column) {
+        return;
+      }
+
+      setEditorRevealTarget({
+        path: node.path,
+        position: {
+          column: node.column,
+          lineNumber: node.lineNumber,
+        },
+      });
+    },
+    [openFile],
+  );
+
+  const loadPhpFileOutline = useCallback(
+    async (path: string) => {
+      if (!workspaceRoot) {
+        setPhpFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: emptyPhpFileOutline(),
+        }));
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setLoadingPhpFileOutlinePaths((current) => new Set(current).add(path));
+
+      try {
+        const outline = await phpFileOutlineGateway.getPhpFileOutline(
+          requestedRoot,
+          path,
+        );
+
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setPhpFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: outline,
+        }));
+        setMessage(null);
+      } catch (error) {
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setPhpFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: emptyPhpFileOutline(),
+        }));
+        reportError("PHP File Outline", error);
+      } finally {
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setLoadingPhpFileOutlinePaths((current) => {
+          const next = new Set(current);
+          next.delete(path);
+          return next;
+        });
+      }
+    },
+    [phpFileOutlineGateway, reportError, workspaceRoot],
+  );
+
+  const togglePhpFileOutline = useCallback(
+    (path: string) => {
+      if (expandedPhpFilePaths.has(path)) {
+        setExpandedPhpFilePaths((current) => {
+          const next = new Set(current);
+          next.delete(path);
+          return next;
+        });
+        return;
+      }
+
+      setExpandedPhpFilePaths((current) => new Set(current).add(path));
+
+      if (phpFileOutlinesByPath[path] || loadingPhpFileOutlinePaths.has(path)) {
+        return;
+      }
+
+      void loadPhpFileOutline(path);
+    },
+    [
+      expandedPhpFilePaths,
+      loadPhpFileOutline,
+      loadingPhpFileOutlinePaths,
+      phpFileOutlinesByPath,
+    ],
+  );
+
+  const togglePhpFileOutlineNode = useCallback((id: string) => {
+    setPhpFileOutlineExpandedNodeIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(id)) {
+        next.delete(id);
+        return next;
+      }
+
+      next.add(id);
+      return next;
+    });
+  }, []);
+
+  const openPhpFileOutlineNode = useCallback(
+    async (node: PhpFileOutlineNode) => {
       if (!node.path) {
         return;
       }
@@ -1587,6 +1732,42 @@ export function useWorkbenchController(
   ]);
 
   useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    if (indexProgress.status !== "completed") {
+      return;
+    }
+
+    if (indexProgress.rootPath && indexProgress.rootPath !== workspaceRoot) {
+      return;
+    }
+
+    if (expandedPhpFilePaths.size === 0) {
+      return;
+    }
+
+    const refreshKey = `${indexProgress.rootPath || workspaceRoot}:${indexProgress.indexedFiles}`;
+
+    if (lastPhpFileOutlineRefreshKeyRef.current === refreshKey) {
+      return;
+    }
+
+    lastPhpFileOutlineRefreshKeyRef.current = refreshKey;
+    expandedPhpFilePaths.forEach((path) => {
+      void loadPhpFileOutline(path);
+    });
+  }, [
+    expandedPhpFilePaths,
+    indexProgress.indexedFiles,
+    indexProgress.rootPath,
+    indexProgress.status,
+    loadPhpFileOutline,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "F12") {
         event.preventDefault();
@@ -1947,20 +2128,25 @@ export function useWorkbenchController(
     dirtyCount,
     entriesByDirectory,
     expandedDirectories,
+    expandedPhpFilePaths,
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
     editorRevealTarget,
     indexProgress,
     intelligenceMode,
     loadingDirectories,
+    loadingPhpFileOutlinePaths,
     languageServerPlan,
     languageServerRuntimeStatus,
     languageServerSetupOpen,
     message,
     openDocuments,
     openFile,
+    openPhpFileOutlineNode,
     openWorkspace,
     paletteOpen,
+    phpFileOutlineExpandedNodeIds,
+    phpFileOutlinesByPath,
     phpTree,
     phpTreeExpandedNodeIds,
     phpTreeLoading,
@@ -1991,6 +2177,8 @@ export function useWorkbenchController(
     textSearchQuery,
     textSearchResults,
     toggleDirectory,
+    togglePhpFileOutline,
+    togglePhpFileOutlineNode,
     togglePhpTreeNode,
     toggleSmartMode,
     updateActiveDocument,
