@@ -1366,3 +1366,38 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test for shell and non-Tauri fallback
 - `coderabbit review --agent --fast --base main`: passing with 0 findings after the hard rebuild removed-file count fix
+
+## 2026-06-16: xterm.js Terminal View
+
+Scope reviewed:
+
+- lazy-loaded bottom panel Terminal view
+- Problems/Terminal bottom panel host and command-palette switching
+- xterm lifecycle helper with FitAddon and ResizeObserver integration
+- view-only terminal contract before PTY streaming exists
+
+### SOLID Review
+
+- Single Responsibility: acceptable. `BottomPanel` owns panel selection chrome, `ProblemsPanel` renders notices, `TerminalPanel` adapts React to xterm, and `terminalSession` owns imperative lifecycle.
+- Open/Closed: acceptable. Future PTY sessions can plug into `TerminalPanel` without changing Problems rendering or editor tabs.
+- Liskov Substitution: acceptable. `terminalSession` depends on small terminal/fit/observer shapes that tests can replace at the external-library boundary.
+- Interface Segregation: improved. Terminal lifecycle options expose only open/write/fit/dispose and no PTY/input contract yet.
+- Dependency Inversion: acceptable. The workbench controller exposes panel state; concrete xterm imports stay behind the terminal component boundary.
+
+### Pattern Review
+
+- Adapter pattern: `TerminalPanel` adapts `@xterm/xterm`, FitAddon, `ResizeObserver`, and `requestAnimationFrame` into the app component model.
+- Strategy-ready state: `BottomPanelView` selects the active bottom-panel view without coupling Problems to Terminal behavior.
+- Command pattern: command palette actions expose Problems and Terminal panel switching.
+- Lazy-loading boundary: xterm assets are loaded only when the terminal view is first activated.
+
+### Verification
+
+- `npm run check`
+- `npm test`: 72 frontend tests
+- `npm run build`
+- `npm audit --json`
+- `cargo test --manifest-path src-tauri/Cargo.toml`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test for Problems/Terminal switching and nonblank xterm render
+- `coderabbit review --agent --fast --base main`: passing with 0 findings

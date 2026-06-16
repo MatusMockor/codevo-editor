@@ -114,7 +114,7 @@ Scale:
 
 | ID | Task | Size | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| P7-01 | xterm.js view | M | Pending | Terminal panel renders. |
+| P7-01 | xterm.js view | M | Done | Terminal panel renders. |
 | P7-02 | Rust PTY service | L | Pending | Shell streams input/output. |
 | P7-03 | Terminal profiles | M | Pending | User can select shell/profile. |
 | P7-04 | Settings UI | L | Pending | Mode, PHP backend, paths, ignores, theme. |

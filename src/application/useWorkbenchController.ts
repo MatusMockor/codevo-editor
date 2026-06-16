@@ -8,6 +8,7 @@ import {
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { SmartModeGateway } from "../domain/intelligence";
+import type { BottomPanelView } from "../domain/bottomPanel";
 import {
   applyMetadataScanCompletion,
   indexProgressCompletionMessage,
@@ -145,6 +146,8 @@ export function useWorkbenchController(
     initialIndexProgress,
   );
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
+  const [bottomPanelView, setBottomPanelView] =
+    useState<BottomPanelView>("problems");
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState<
@@ -1634,6 +1637,23 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "panel.showProblems",
+      title: "Show Problems",
+      category: "Workbench",
+      isEnabled: () => true,
+      run: () => setBottomPanelView("problems"),
+    });
+
+    registry.register({
+      id: "terminal.show",
+      title: "Show Terminal",
+      category: "Terminal",
+      shortcut: "Ctrl+`",
+      isEnabled: () => true,
+      run: () => setBottomPanelView("terminal"),
+    });
+
+    registry.register({
       id: "smart.toggle",
       title: "Toggle Smart Mode",
       category: "Smart Mode",
@@ -2161,6 +2181,7 @@ export function useWorkbenchController(
     expandedPhpFilePaths,
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
+    bottomPanelView,
     editorRevealTarget,
     indexProgress,
     intelligenceMode,
@@ -2192,6 +2213,7 @@ export function useWorkbenchController(
     refreshPhpTree,
     saveActiveDocument,
     setActivePath: activateDocument,
+    setBottomPanelView,
     setPaletteOpen,
     setQuickOpenOpen,
     setSidebarView,

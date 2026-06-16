@@ -1,13 +1,13 @@
 import { FolderOpen, RefreshCw, Save, Search, Zap } from "lucide-react";
 import { useMemo } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
+import { BottomPanel } from "./components/BottomPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileTree } from "./components/FileTree";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { PhpTreePanel } from "./components/PhpTreePanel";
-import { ProblemsPanel } from "./components/ProblemsPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
@@ -269,9 +269,11 @@ function App() {
           onLanguageServerError={workbench.reportLanguageServerError}
           onRevealTargetHandled={workbench.clearEditorRevealTarget}
         />
-        <ProblemsPanel
+        <BottomPanel
+          activeView={workbench.bottomPanelView}
           notices={workbench.notices}
-          onClear={workbench.clearNotices}
+          onClearProblems={workbench.clearNotices}
+          onSelectView={workbench.setBottomPanelView}
         />
       </section>
 

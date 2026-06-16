@@ -221,16 +221,16 @@ button {
   min-height: 0;
 }
 
-.problems-panel {
+.bottom-panel {
   display: grid;
-  min-height: 132px;
-  max-height: 132px;
+  min-height: 152px;
+  max-height: 152px;
   grid-template-rows: 32px minmax(0, 1fr);
   border-top: 1px solid #272d35;
   background: #171b21;
 }
 
-.problems-header {
+.bottom-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -242,7 +242,36 @@ button {
   text-transform: uppercase;
 }
 
-.problems-header button {
+.bottom-panel-tabs {
+  display: flex;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.bottom-panel-tab {
+  min-width: 92px;
+  border: 0;
+  border-right: 1px solid #272d35;
+  background: transparent;
+  color: #8f9aaa;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 12px;
+  text-transform: uppercase;
+}
+
+.bottom-panel-tab:hover {
+  background: #252b33;
+  color: #f3f6f8;
+}
+
+.bottom-panel-tab.active {
+  background: #20262e;
+  color: #f3f6f8;
+}
+
+.bottom-panel-action {
   display: grid;
   width: 24px;
   height: 24px;
@@ -254,15 +283,40 @@ button {
   cursor: pointer;
 }
 
-.problems-header button:hover {
+.bottom-panel-action:hover {
   background: #252b33;
   color: #f3f6f8;
 }
 
+.bottom-panel-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .problems-list {
+  height: 100%;
   min-height: 0;
   overflow: auto;
   padding: 6px 8px;
+}
+
+.terminal-panel {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #111418;
+}
+
+.terminal-viewport {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 10px 6px;
+}
+
+.terminal-viewport .xterm {
+  height: 100%;
 }
 
 .problems-list p {
