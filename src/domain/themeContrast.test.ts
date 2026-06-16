@@ -57,6 +57,26 @@ describe("contrastRatio", () => {
       ".app-shell[data-theme=\"system\"]",
       "--color-active-text",
     );
+    const ayuActive = cssVariable(
+      appCss,
+      ".app-shell[data-theme=\"ayuMirage\"]",
+      "--color-active",
+    );
+    const ayuActiveText = cssVariable(
+      appCss,
+      ".app-shell[data-theme=\"ayuMirage\"]",
+      "--color-active-text",
+    );
+    const materialActive = cssVariable(
+      appCss,
+      ".app-shell[data-theme=\"materialDeepOcean\"]",
+      "--color-active",
+    );
+    const materialActiveText = cssVariable(
+      appCss,
+      ".app-shell[data-theme=\"materialDeepOcean\"]",
+      "--color-active-text",
+    );
 
     expect(appCss).toContain("color: var(--color-active-text)");
     expect(contrastRatio(darkActiveText, darkActive)).toBeGreaterThanOrEqual(
@@ -68,11 +88,19 @@ describe("contrastRatio", () => {
     expect(contrastRatio(systemActiveText, systemActive)).toBeGreaterThanOrEqual(
       minimumTextContrast,
     );
+    expect(contrastRatio(ayuActiveText, ayuActive)).toBeGreaterThanOrEqual(
+      minimumTextContrast,
+    );
+    expect(
+      contrastRatio(materialActiveText, materialActive),
+    ).toBeGreaterThanOrEqual(minimumTextContrast);
   });
 
   it("keeps terminal text colors readable in app themes", () => {
     expectTerminalThemeContrast(terminalThemeForAppTheme("dark"));
     expectTerminalThemeContrast(terminalThemeForAppTheme("light"));
+    expectTerminalThemeContrast(terminalThemeForAppTheme("ayuMirage"));
+    expectTerminalThemeContrast(terminalThemeForAppTheme("materialDeepOcean"));
     expectTerminalThemeContrast(terminalThemeForAppTheme("system", true));
     expectTerminalThemeContrast(terminalThemeForAppTheme("system", false));
   });

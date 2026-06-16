@@ -55,6 +55,15 @@ describe("normalizeAppSettings", () => {
       recentWorkspacePath: null,
       theme: "light",
     });
+    expect(
+      normalizeAppSettings({
+        recentWorkspacePath: null,
+        theme: "ayuMirage",
+      }),
+    ).toEqual({
+      recentWorkspacePath: null,
+      theme: "ayuMirage",
+    });
   });
 
   it("falls back for invalid app settings", () => {
@@ -84,7 +93,7 @@ describe("normalizeWorkspaceSettings", () => {
             "/project/src/User.php",
             " /project/README.md ",
           ],
-          sidebarView: "php",
+          sidebarView: "git",
         },
       }),
     ).toEqual({
@@ -99,7 +108,7 @@ describe("normalizeWorkspaceSettings", () => {
         activePath: "/project/src/User.php",
         bottomPanelView: "index",
         openPaths: ["/project/src/User.php", "/project/README.md"],
-        sidebarView: "php",
+        sidebarView: "git",
       },
     });
   });
@@ -179,6 +188,10 @@ describe("monacoThemeForAppTheme", () => {
     expect(monacoThemeForAppTheme("dark")).toBe("vs-dark");
     expect(monacoThemeForAppTheme("system")).toBe("vs-dark");
     expect(monacoThemeForAppTheme("system", true)).toBe("vs");
+    expect(monacoThemeForAppTheme("ayuMirage")).toBe("mockor-ayu-mirage");
+    expect(monacoThemeForAppTheme("materialDeepOcean")).toBe(
+      "mockor-material-deep-ocean",
+    );
   });
 });
 
@@ -195,6 +208,10 @@ describe("terminalThemeForAppTheme", () => {
   it("maps app themes to terminal palettes", () => {
     expect(terminalThemeForAppTheme("dark").background).toBe("#111418");
     expect(terminalThemeForAppTheme("light").background).toBe("#f4f6f8");
+    expect(terminalThemeForAppTheme("ayuMirage").background).toBe("#1f2430");
+    expect(terminalThemeForAppTheme("materialDeepOcean").background).toBe(
+      "#0f111a",
+    );
     expect(terminalThemeForAppTheme("system", true).foreground).toBe("#263240");
     expect(terminalThemeForAppTheme("system", false).foreground).toBe("#d8dee9");
   });

@@ -72,6 +72,70 @@
   color-scheme: light;
 }
 
+.app-shell[data-theme="ayuMirage"] {
+  --color-accent: #ffcc66;
+  --color-active: #3a465f;
+  --color-active-text: #fff3d4;
+  --color-active-muted: #2b3b4f;
+  --color-app: #1f2430;
+  --color-border: #343d4f;
+  --color-border-strong: #4b5770;
+  --color-control: #2a3040;
+  --color-disabled: #6f7888;
+  --color-error: #f28779;
+  --color-hover: #262c3a;
+  --color-hover-strong: #30384b;
+  --color-modal: #242b38;
+  --color-panel: #232936;
+  --color-panel-deep: #1b202b;
+  --color-sidebar: #202633;
+  --color-status: #191e28;
+  --color-success: #95e6cb;
+  --color-surface: #252c3a;
+  --color-tab: #242a37;
+  --color-tab-active: #2b3344;
+  --color-tabs: #1d2330;
+  --color-text: #cbccc6;
+  --color-text-muted: #b6becd;
+  --color-text-strong: #f8f4e3;
+  --color-text-subtle: #96a0b3;
+  --color-warning: #ffd580;
+  --color-white: #ffffff;
+  color-scheme: dark;
+}
+
+.app-shell[data-theme="materialDeepOcean"] {
+  --color-accent: #84ffff;
+  --color-active: #26345c;
+  --color-active-text: #ffffff;
+  --color-active-muted: #1d2b4d;
+  --color-app: #0f111a;
+  --color-border: #262c42;
+  --color-border-strong: #3d4663;
+  --color-control: #1a1f2e;
+  --color-disabled: #5f6b85;
+  --color-error: #f07178;
+  --color-hover: #171c2b;
+  --color-hover-strong: #202840;
+  --color-modal: #141925;
+  --color-panel: #121722;
+  --color-panel-deep: #0b0e14;
+  --color-sidebar: #111620;
+  --color-status: #090c12;
+  --color-success: #c3e88d;
+  --color-surface: #171d2b;
+  --color-tab: #151a27;
+  --color-tab-active: #1c2335;
+  --color-tabs: #10151f;
+  --color-text: #d8dee9;
+  --color-text-muted: #b7c0d3;
+  --color-text-strong: #ffffff;
+  --color-text-subtle: #8f98b3;
+  --color-warning: #ffcb6b;
+  --color-white: #ffffff;
+  color-scheme: dark;
+}
+
 @media (prefers-color-scheme: light) {
   .app-shell[data-theme="system"] {
     --color-accent: #26776d;
@@ -276,6 +340,7 @@ button {
 }
 
 .file-tree,
+.git-changes,
 .php-tree {
   min-height: 0;
   overflow: auto;
@@ -343,6 +408,87 @@ button {
 .php-tree-row small {
   font-size: 10px;
   text-transform: uppercase;
+}
+
+.git-changes-summary {
+  display: grid;
+  min-height: 30px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.git-changes-summary span,
+.git-changes-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-change-row {
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+}
+
+.git-status {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--color-panel-deep);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.git-status-added,
+.git-status-untracked {
+  background: var(--color-success);
+}
+
+.git-status-deleted,
+.git-status-conflicted {
+  background: var(--color-error);
+}
+
+.git-status-modified,
+.git-status-renamed {
+  background: var(--color-warning);
+}
+
+.git-diff-preview {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.git-diff-header {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-tabs);
+  color: var(--color-text);
+  padding: 0 12px;
+}
+
+.git-diff-header strong {
+  overflow: hidden;
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-diff-header span {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  text-transform: capitalize;
 }
 
 .tree-chevron {

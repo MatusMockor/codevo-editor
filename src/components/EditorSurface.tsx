@@ -15,7 +15,9 @@ import type {
 } from "../domain/phpSyntaxDiagnostics";
 import { suspiciousPhpBareIdentifierDiagnostics } from "../domain/phpSyntaxDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
+import type { MonacoAppTheme } from "../domain/settings";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
+import { registerMonacoAppThemes } from "./monacoThemes";
 import { getTabId, getTabPanelId } from "./tabIds";
 
 interface EditorSurfaceProps {
@@ -25,7 +27,7 @@ interface EditorSurfaceProps {
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
-  monacoTheme: "vs" | "vs-dark";
+  monacoTheme: MonacoAppTheme;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
   onGoBack(): void;
@@ -313,6 +315,7 @@ export function EditorSurface({
       role="tabpanel"
     >
       <Editor
+        beforeMount={registerMonacoAppThemes}
         height="100%"
         language={activeDocument.language}
         onChange={(value) => onChange(value || "")}

@@ -1,9 +1,18 @@
 import type { IntelligenceMode } from "./workspace";
 
-export type AppTheme = "dark" | "light" | "system";
+export const appThemeOptions = [
+  { id: "dark", label: "Dark" },
+  { id: "light", label: "Light" },
+  { id: "system", label: "System" },
+  { id: "ayuMirage", label: "Ayu Mirage" },
+  { id: "materialDeepOcean", label: "Material Deep Ocean" },
+] as const;
+
+export type AppTheme = (typeof appThemeOptions)[number]["id"];
+export type MonacoAppTheme = "vs" | "vs-dark" | "mockor-ayu-mirage" | "mockor-material-deep-ocean";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
-export type WorkspaceSessionSidebarView = "files" | "php";
+export type WorkspaceSessionSidebarView = "files" | "git" | "php";
 
 export interface AppSettings {
   recentWorkspacePath: string | null;
@@ -194,7 +203,15 @@ export function resolveAppTheme(
 export function monacoThemeForAppTheme(
   theme: AppTheme,
   prefersLight = false,
-): "vs" | "vs-dark" {
+): MonacoAppTheme {
+  if (theme === "ayuMirage") {
+    return "mockor-ayu-mirage";
+  }
+
+  if (theme === "materialDeepOcean") {
+    return "mockor-material-deep-ocean";
+  }
+
   if (resolveAppTheme(theme, prefersLight) === "light") {
     return "vs";
   }
@@ -206,6 +223,56 @@ export function terminalThemeForAppTheme(
   theme: AppTheme,
   prefersLight = false,
 ): TerminalTheme {
+  if (theme === "ayuMirage") {
+    return {
+      background: "#1f2430",
+      black: "#9aa5b7",
+      blue: "#73d0ff",
+      brightBlack: "#c0cad8",
+      brightBlue: "#9fdcff",
+      brightCyan: "#b8f4e6",
+      brightGreen: "#d5ff80",
+      brightMagenta: "#ffb8f0",
+      brightRed: "#ffc0b8",
+      brightWhite: "#f8f4e3",
+      brightYellow: "#ffe6a3",
+      cursor: "#ffcc66",
+      cyan: "#95e6cb",
+      foreground: "#cbccc6",
+      green: "#bae67e",
+      magenta: "#d4bfff",
+      red: "#f28779",
+      selectionBackground: "#33415e",
+      white: "#d9dee8",
+      yellow: "#ffd580",
+    };
+  }
+
+  if (theme === "materialDeepOcean") {
+    return {
+      background: "#0f111a",
+      black: "#8f98b3",
+      blue: "#82aaff",
+      brightBlack: "#c3c8d8",
+      brightBlue: "#b2c8ff",
+      brightCyan: "#b7ffff",
+      brightGreen: "#d1ff9e",
+      brightMagenta: "#f6c1ff",
+      brightRed: "#ffb8c8",
+      brightWhite: "#ffffff",
+      brightYellow: "#ffe6a8",
+      cursor: "#84ffff",
+      cyan: "#89ddff",
+      foreground: "#d8dee9",
+      green: "#c3e88d",
+      magenta: "#c792ea",
+      red: "#f07178",
+      selectionBackground: "#26345c",
+      white: "#d8dee9",
+      yellow: "#ffcb6b",
+    };
+  }
+
   if (resolveAppTheme(theme, prefersLight) === "light") {
     return {
       background: "#f4f6f8",
@@ -260,7 +327,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isAppTheme(value: unknown): value is AppTheme {
-  return value === "dark" || value === "light" || value === "system";
+  return appThemeOptions.some((option) => option.id === value);
 }
 
 function isIntelligenceMode(value: unknown): value is IntelligenceMode {
@@ -282,7 +349,7 @@ function isWorkspaceSessionBottomPanelView(
 function isWorkspaceSessionSidebarView(
   value: unknown,
 ): value is WorkspaceSessionSidebarView {
-  return value === "files" || value === "php";
+  return value === "files" || value === "git" || value === "php";
 }
 
 function normalizeNullableString(

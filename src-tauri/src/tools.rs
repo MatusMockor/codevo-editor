@@ -1,5 +1,8 @@
 use serde::Serialize;
-use std::{env, fs, io, path::Path};
+use std::{
+    env, fs, io,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +22,7 @@ pub struct ToolLocation {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolSource {
+    Managed,
     WorkspaceVendorBin,
     Path,
 }
@@ -39,6 +43,27 @@ impl PhpToolDetector for LocalPhpToolDetector {
 }
 
 fn find_tool(name: &str, workspace_root: Option<&Path>) -> Option<ToolLocation> {
+    let managed_override = env::var_os(managed_tool_env_var(name)).map(PathBuf::from);
+    let managed_roots = managed_tool_roots();
+
+    find_tool_with_managed_locations(
+        name,
+        workspace_root,
+        managed_override.as_deref(),
+        &managed_roots,
+    )
+}
+
+fn find_tool_with_managed_locations(
+    name: &str,
+    workspace_root: Option<&Path>,
+    managed_override: Option<&Path>,
+    managed_roots: &[PathBuf],
+) -> Option<ToolLocation> {
+    if let Some(location) = find_managed_tool(name, managed_override, managed_roots) {
+        return Some(location);
+    }
+
     if let Some(root) = workspace_root {
         if let Some(location) = find_workspace_vendor_tool(name, root) {
             return Some(location);
@@ -46,6 +71,62 @@ fn find_tool(name: &str, workspace_root: Option<&Path>) -> Option<ToolLocation> 
     }
 
     find_path_tool(name)
+}
+
+fn find_managed_tool(
+    name: &str,
+    managed_override: Option<&Path>,
+    managed_roots: &[PathBuf],
+) -> Option<ToolLocation> {
+    if let Some(path) = managed_override {
+        if is_executable_file(path) {
+            return Some(tool_location(name, path.to_path_buf(), ToolSource::Managed));
+        }
+    }
+
+    managed_roots.iter().find_map(|root| {
+        executable_names(name).into_iter().find_map(|executable| {
+            let path = root.join(&executable);
+
+            is_executable_file(&path).then(|| ToolLocation {
+                executable,
+                path: path.to_string_lossy().to_string(),
+                source: ToolSource::Managed,
+            })
+        })
+    })
+}
+
+fn managed_tool_env_var(name: &str) -> String {
+    format!(
+        "MOCKOR_EDITOR_{}_PATH",
+        name.replace('-', "_").to_ascii_uppercase()
+    )
+}
+
+fn managed_tool_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        roots.push(
+            home.join("Library")
+                .join("Application Support")
+                .join("Mockor Editor")
+                .join("tools")
+                .join("phpactor")
+                .join("vendor")
+                .join("bin"),
+        );
+        roots.push(
+            home.join(".mockor-editor")
+                .join("tools")
+                .join("phpactor")
+                .join("vendor")
+                .join("bin"),
+        );
+    }
+
+    roots
 }
 
 fn find_workspace_vendor_tool(name: &str, root: &Path) -> Option<ToolLocation> {
@@ -74,6 +155,18 @@ fn find_path_tool(name: &str) -> Option<ToolLocation> {
             })
         })
     })
+}
+
+fn tool_location(name: &str, path: PathBuf, source: ToolSource) -> ToolLocation {
+    ToolLocation {
+        executable: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(name)
+            .to_string(),
+        path: path.to_string_lossy().to_string(),
+        source,
+    }
 }
 
 fn executable_names(name: &str) -> Vec<String> {
@@ -115,11 +208,11 @@ fn is_executable_metadata(_metadata: &fs::Metadata) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{LocalPhpToolDetector, PhpToolDetector, ToolSource};
+    use super::{find_tool_with_managed_locations, ToolSource};
     use std::{fs, time::SystemTime};
 
     #[test]
-    fn detects_workspace_vendor_phpactor_before_path() {
+    fn detects_workspace_vendor_phpactor_when_managed_tools_are_absent() {
         let root = create_temp_dir("workspace-tools");
         let vendor_bin = root.join("vendor").join("bin");
         fs::create_dir_all(&vendor_bin).expect("create vendor bin");
@@ -127,13 +220,44 @@ mod tests {
         fs::write(&phpactor_path, "").expect("write phpactor");
         make_executable(&phpactor_path);
 
-        let detector = LocalPhpToolDetector;
-        let availability = detector.detect(Some(&root)).expect("detect tools");
-        let phpactor = availability.phpactor.expect("phpactor location");
+        let phpactor = find_tool_with_managed_locations("phpactor", Some(&root), None, &[])
+            .expect("phpactor location");
 
         assert!(phpactor.path.ends_with("vendor/bin/phpactor"));
         assert!(matches!(phpactor.source, ToolSource::WorkspaceVendorBin));
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn detects_managed_phpactor_before_workspace_vendor_tool() {
+        let root = create_temp_dir("workspace-tools-managed");
+        let managed = create_temp_dir("managed-tools");
+        let vendor_bin = root.join("vendor").join("bin");
+        fs::create_dir_all(&vendor_bin).expect("create vendor bin");
+        let vendor_phpactor_path = vendor_bin.join("phpactor");
+        fs::write(&vendor_phpactor_path, "").expect("write vendor phpactor");
+        make_executable(&vendor_phpactor_path);
+
+        let managed_phpactor_path = managed.join("phpactor");
+        fs::write(&managed_phpactor_path, "").expect("write managed phpactor");
+        make_executable(&managed_phpactor_path);
+
+        let phpactor = find_tool_with_managed_locations(
+            "phpactor",
+            Some(&root),
+            Some(&managed_phpactor_path),
+            &[],
+        )
+        .expect("phpactor location");
+
+        assert_eq!(
+            phpactor.path,
+            managed_phpactor_path.to_string_lossy().to_string()
+        );
+        assert!(matches!(phpactor.source, ToolSource::Managed));
+
+        fs::remove_dir_all(root).expect("cleanup root");
+        fs::remove_dir_all(managed).expect("cleanup managed");
     }
 
     #[cfg(unix)]

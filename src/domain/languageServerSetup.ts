@@ -29,25 +29,27 @@ export function createPhpactorSetupGuide(
 
   if (plan.status === "blocked") {
     return {
-      title: "PHPactor Blocked",
+      title: "PHP IDE Engine Blocked",
       message: plan.message,
       commands: [],
     };
   }
 
   return {
-    title: "PHPactor Setup",
+    title: "PHP IDE Engine Setup",
     message: plan.message,
     commands: [
       {
-        id: "composer-require",
-        label: "Install locally",
-        command: "composer require --dev phpactor/phpactor",
+        id: "managed-install",
+        label: "Install managed engine",
+        command:
+          "mkdir -p \"$HOME/Library/Application Support/Mockor Editor/tools/phpactor\" && cd \"$HOME/Library/Application Support/Mockor Editor/tools/phpactor\" && ([ -f composer.json ] || composer init --name mockor/editor-php-engine --type project --no-interaction) && composer config minimum-stability dev && composer config prefer-stable true && composer require phpactor/phpactor:2026.05.30.2 -W --no-interaction",
       },
       {
-        id: "composer-exec",
-        label: "Verify language server",
-        command: "composer exec phpactor -- language-server",
+        id: "managed-verify",
+        label: "Verify managed engine",
+        command:
+          "\"$HOME/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor\" language-server",
       },
     ],
   };

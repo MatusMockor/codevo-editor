@@ -5,6 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { emptyGitStatus, type GitGateway } from "../domain/git";
 import {
   useWorkbenchController,
   type WorkbenchWorkspaceGateways,
@@ -39,6 +40,7 @@ type WorkbenchController = ReturnType<typeof useWorkbenchController>;
 
 interface ControllerDependencies {
   documentSyncGateway: LanguageServerDocumentSyncGateway;
+  gitGateway: GitGateway;
   indexProgressGateway: IndexProgressGateway;
   languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
@@ -710,6 +712,7 @@ function WorkbenchHarness({
     dependencies.indexProgressGateway,
     dependencies.phpFileOutlineGateway,
     dependencies.phpTreeGateway,
+    dependencies.gitGateway,
     dependencies.languageServerGateway,
     dependencies.languageServerRuntimeGateway,
     dependencies.languageServerDocumentSyncGateway,
@@ -782,6 +785,15 @@ function createControllerDependencies({
 
   return {
     documentSyncGateway,
+    gitGateway: {
+      getDiff: vi.fn(async (_rootPath, change) => ({
+        change,
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    },
     indexProgressGateway: {
       clearWorkspaceIndex: vi.fn(async (rootPath) => ({
         databasePath: "/tmp/index.sqlite",

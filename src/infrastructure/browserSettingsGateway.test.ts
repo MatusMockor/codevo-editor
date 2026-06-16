@@ -32,7 +32,7 @@ describe("BrowserSettingsGateway", () => {
 
     await gateway.saveAppSettings({
       recentWorkspacePath: "/project",
-      theme: "light",
+      theme: "ayuMirage",
     });
     await gateway.saveWorkspaceSettings("/project", {
       autoSave: true,
@@ -52,7 +52,7 @@ describe("BrowserSettingsGateway", () => {
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       recentWorkspacePath: "/project",
-      theme: "light",
+      theme: "ayuMirage",
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
       autoSave: true,

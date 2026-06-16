@@ -1,11 +1,13 @@
 pub mod composer;
 pub mod file_watcher;
+pub mod git;
 pub mod ignore_matcher;
 pub mod index;
 pub mod index_reindex;
 pub mod index_scan;
 pub mod index_update;
 pub mod job_scheduler;
+pub mod js_ts_symbols;
 mod lsp;
 mod lsp_diagnostics;
 mod lsp_document;
@@ -25,6 +27,9 @@ mod tools;
 mod trust;
 mod workspace;
 
+use git::{
+    CommandGitRepositoryGateway, GitChangedFile, GitFileDiff, GitRepositoryGateway, GitStatus,
+};
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
     WorkspaceIndexMaintenanceStore, WorkspaceIndexStore, WorkspaceIndexSummary,
@@ -530,6 +535,22 @@ fn get_php_file_outline(
 }
 
 #[tauri::command]
+fn get_git_status(root_path: String) -> Result<GitStatus, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    CommandGitRepositoryGateway
+        .status(&root)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFileDiff, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    CommandGitRepositoryGateway
+        .diff(&root, &change)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn set_smart_mode(
     mode: IntelligenceMode,
     service: State<'_, Mutex<SmartModeService>>,
@@ -894,6 +915,8 @@ pub fn run() {
             detect_php_tools,
             detect_workspace,
             get_php_file_outline,
+            get_git_diff,
+            get_git_status,
             get_php_language_server_status,
             get_php_tree,
             get_smart_mode_state,

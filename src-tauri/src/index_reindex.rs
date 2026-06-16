@@ -8,6 +8,10 @@ use crate::index_scan::{
     MetadataScanCompletionEvent, MetadataScanError, MetadataScanEventSink, MetadataScanReport,
     WorkspaceMetadataScanner, WorkspaceReindexMode,
 };
+use crate::js_ts_symbols::{
+    workspace_symbol_record as js_ts_workspace_symbol_record, JsTsSymbolExtractor,
+    TextJsTsSymbolExtractor,
+};
 use crate::php_parser::{PhpSyntaxParser, TreeSitterPhpParser};
 use crate::php_symbols::{
     PhpSymbol, PhpSymbolExtractor, PhpSymbolKind, TreeSitterPhpSymbolExtractor,
@@ -139,7 +143,12 @@ pub(crate) fn run_workspace_reindex(
             index.clear_workspace_files()?;
             upsert_records(&index, &scanned_records)?;
             report.changed_files += scanned_records.len();
-            parse_records(&index, &scanned_records, "php", &mut report)?;
+            let php_records = records_for_language(&scanned_records, "php");
+            let javascript_records = records_for_language(&scanned_records, "javascript");
+            let typescript_records = records_for_language(&scanned_records, "typescript");
+            parse_records(&index, &php_records, "php", &mut report)?;
+            parse_records(&index, &javascript_records, "javascript", &mut report)?;
+            parse_records(&index, &typescript_records, "typescript", &mut report)?;
         }
         WorkspaceReindexMode::Language => {
             let language = normalized_reindex_language(request.language.as_deref())?;
@@ -154,7 +163,11 @@ pub(crate) fn run_workspace_reindex(
             upsert_records(&index, &scanned_records)?;
             report.changed_files += changed_records.len();
             let php_records = records_for_language(&changed_records, "php");
+            let javascript_records = records_for_language(&changed_records, "javascript");
+            let typescript_records = records_for_language(&changed_records, "typescript");
             parse_records(&index, &php_records, "php", &mut report)?;
+            parse_records(&index, &javascript_records, "javascript", &mut report)?;
+            parse_records(&index, &typescript_records, "typescript", &mut report)?;
         }
     }
 
@@ -184,7 +197,7 @@ fn run_background_reindex(
 fn normalized_reindex_language(language: Option<&str>) -> Result<String, WorkspaceReindexError> {
     let language = language.unwrap_or("php").trim().to_ascii_lowercase();
 
-    if language == "php" {
+    if matches!(language.as_str(), "php" | "javascript" | "typescript") {
         return Ok(language);
     }
 
@@ -261,6 +274,16 @@ fn parse_records(
     language: &str,
     report: &mut MetadataScanReport,
 ) -> Result<(), WorkspaceReindexError> {
+    if language == "javascript" || language == "typescript" {
+        let extractor = TextJsTsSymbolExtractor;
+
+        for record in records {
+            parse_js_ts_record(index, record, &extractor, report);
+        }
+
+        return Ok(());
+    }
+
     if language != "php" {
         return Err(WorkspaceReindexError::UnsupportedLanguage(
             language.to_string(),
@@ -276,6 +299,45 @@ fn parse_records(
     }
 
     Ok(())
+}
+
+fn parse_js_ts_record(
+    index: &SqliteWorkspaceIndex,
+    record: &WorkspaceFileRecord,
+    extractor: &dyn JsTsSymbolExtractor,
+    report: &mut MetadataScanReport,
+) {
+    let source = match fs::read_to_string(&record.path) {
+        Ok(source) => source,
+        Err(_) => {
+            report.record_error(
+                record.relative_path.clone(),
+                "JavaScript/TypeScript source could not be read.",
+            );
+            return;
+        }
+    };
+    let symbols = extractor.extract(&source);
+    let symbols_indexed = symbols.len();
+    let file_symbols = WorkspaceFileSymbols {
+        file_path: record.path.clone(),
+        relative_path: record.relative_path.clone(),
+        symbols: symbols
+            .into_iter()
+            .map(js_ts_workspace_symbol_record)
+            .collect(),
+    };
+
+    if index.replace_file_symbols(&file_symbols).is_err() {
+        report.record_error(
+            record.relative_path.clone(),
+            "JavaScript/TypeScript symbols could not be written.",
+        );
+        return;
+    }
+
+    report.parsed_files += 1;
+    report.symbols_indexed += symbols_indexed;
 }
 
 fn parse_record(
@@ -476,13 +538,46 @@ mod tests {
 
         let error = run_workspace_reindex(&WorkspaceReindexRequest {
             database_path,
-            language: Some("typescript".to_string()),
+            language: Some("ruby".to_string()),
             mode: WorkspaceReindexMode::Language,
             root_path: root,
         })
         .expect_err("unsupported language");
 
         assert!(error.to_string().contains("unsupported reindex language"));
+    }
+
+    #[test]
+    fn soft_reindex_indexes_typescript_symbols() {
+        let root = temp_workspace("typescript");
+        let database_path = temp_database_path("typescript");
+        fs::create_dir_all(root.join("src")).expect("src dir");
+        fs::write(
+            root.join("src/userService.ts"),
+            "export class UserService {\n  findUser() {}\n}\nexport const createUser = () => null;\n",
+        )
+        .expect("typescript file");
+
+        let report = run_workspace_reindex(&WorkspaceReindexRequest {
+            database_path: database_path.clone(),
+            language: None,
+            mode: WorkspaceReindexMode::Soft,
+            root_path: root.clone(),
+        })
+        .expect("soft reindex");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        let symbols = index
+            .list_file_symbols(&path_string(root.join("src/userService.ts")))
+            .expect("symbols");
+        let names: Vec<String> = symbols
+            .into_iter()
+            .map(|symbol| symbol.fully_qualified_name)
+            .collect();
+
+        assert_eq!(report.parsed_files, 1);
+        assert!(names.contains(&"UserService".to_string()));
+        assert!(names.contains(&"UserService.findUser".to_string()));
+        assert!(names.contains(&"createUser".to_string()));
     }
 
     fn temp_workspace(label: &str) -> PathBuf {

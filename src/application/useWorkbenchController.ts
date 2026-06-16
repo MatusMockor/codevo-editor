@@ -14,6 +14,13 @@ import {
   shouldStartLanguageServer,
   type SmartModeGateway,
 } from "../domain/intelligence";
+import {
+  emptyGitStatus,
+  type GitChangedFile,
+  type GitFileDiff,
+  type GitGateway,
+  type GitStatus,
+} from "../domain/git";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import {
   applyMetadataScanCompletion,
@@ -153,7 +160,7 @@ interface OpenFileOptions {
 
 const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
 
-export type SidebarView = "files" | "php";
+export type SidebarView = "files" | "git" | "php";
 
 export function useWorkbenchController(
   workspaceGateways: WorkbenchWorkspaceGateways,
@@ -162,6 +169,7 @@ export function useWorkbenchController(
   indexProgressGateway: IndexProgressGateway,
   phpFileOutlineGateway: PhpFileOutlineGateway,
   phpTreeGateway: PhpTreeGateway,
+  gitGateway: GitGateway,
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
@@ -203,6 +211,14 @@ export function useWorkbenchController(
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
+  const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus());
+  const [gitLoading, setGitLoading] = useState(false);
+  const [gitDiffLoading, setGitDiffLoading] = useState(false);
+  const [selectedGitChange, setSelectedGitChange] =
+    useState<GitChangedFile | null>(null);
+  const [gitDiffPreview, setGitDiffPreview] = useState<GitFileDiff | null>(
+    null,
+  );
   const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState<
     Set<string>
   >(new Set());
@@ -281,6 +297,7 @@ export function useWorkbenchController(
   const workspaceSessionRestoredRef = useRef(false);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const openFileRequestTokenRef = useRef(0);
+  const gitDiffRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
   const autoStartedLanguageServerRootRef = useRef<string | null>(null);
@@ -959,6 +976,11 @@ export function useWorkbenchController(
       setPhpTree(emptyPhpTree());
       setPhpTreeExpandedNodeIds(new Set());
       setPhpTreeLoading(false);
+      setGitStatus(emptyGitStatus(path));
+      setGitLoading(false);
+      setGitDiffLoading(false);
+      setSelectedGitChange(null);
+      setGitDiffPreview(null);
       setPhpFileOutlinesByPath({});
       setPhpInheritedFileOutlinesByPath({});
       setExpandedPhpFilePaths(new Set());
@@ -1075,6 +1097,8 @@ export function useWorkbenchController(
       }
 
       recordCurrentNavigationLocation();
+      setSelectedGitChange(null);
+      setGitDiffPreview(null);
       setActivePath(path);
     },
     [activePath, recordCurrentNavigationLocation],
@@ -1136,6 +1160,8 @@ export function useWorkbenchController(
           pinDocument(entry.path);
         }
 
+        setSelectedGitChange(null);
+        setGitDiffPreview(null);
         setActivePath(entry.path);
         return true;
       }
@@ -1197,6 +1223,8 @@ export function useWorkbenchController(
         });
         setPreviewPath(shouldPin ? null : entry.path);
 
+        setSelectedGitChange(null);
+        setGitDiffPreview(null);
         setActivePath(entry.path);
         setMessage(null);
         return true;
@@ -1234,6 +1262,89 @@ export function useWorkbenchController(
       return openFile(entry, { pin: true });
     },
     [openFile],
+  );
+
+  const refreshGitStatus = useCallback(async () => {
+    if (!workspaceRoot) {
+      setGitStatus(emptyGitStatus());
+      setGitLoading(false);
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    setGitLoading(true);
+
+    try {
+      const status = await gitGateway.getStatus(requestedRoot);
+
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      setGitStatus(status);
+      setMessage(null);
+    } catch (error) {
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      setGitStatus(emptyGitStatus(requestedRoot));
+      reportError("Git", error);
+    } finally {
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      setGitLoading(false);
+    }
+  }, [gitGateway, reportError, workspaceRoot]);
+
+  const previewGitChange = useCallback(
+    async (change: GitChangedFile) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const requestToken = gitDiffRequestTokenRef.current + 1;
+      gitDiffRequestTokenRef.current = requestToken;
+      setSelectedGitChange(change);
+      setGitDiffLoading(true);
+
+      try {
+        const diff = await gitGateway.getDiff(requestedRoot, change);
+
+        if (
+          currentWorkspaceRootRef.current !== requestedRoot ||
+          gitDiffRequestTokenRef.current !== requestToken
+        ) {
+          return;
+        }
+
+        setGitDiffPreview(diff);
+        setMessage(`Diff ${change.relativePath}`);
+      } catch (error) {
+        if (
+          currentWorkspaceRootRef.current !== requestedRoot ||
+          gitDiffRequestTokenRef.current !== requestToken
+        ) {
+          return;
+        }
+
+        setGitDiffPreview(null);
+        reportError("Git Diff", error);
+      } finally {
+        if (
+          currentWorkspaceRootRef.current !== requestedRoot ||
+          gitDiffRequestTokenRef.current !== requestToken
+        ) {
+          return;
+        }
+
+        setGitDiffLoading(false);
+      }
+    },
+    [gitGateway, reportError, workspaceRoot],
   );
 
   const refreshPhpTree = useCallback(async () => {
@@ -3017,6 +3128,22 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "git.show",
+      title: "Show Git Changes",
+      category: "Git",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => setSidebarView("git"),
+    });
+
+    registry.register({
+      id: "git.refresh",
+      title: "Refresh Git Changes",
+      category: "Git",
+      isEnabled: (context) => context.hasWorkspace,
+      run: refreshGitStatus,
+    });
+
+    registry.register({
       id: "smart.phpactorSetup",
       title: "Show PHPactor Setup",
       category: "Intelligence",
@@ -3059,6 +3186,7 @@ export function useWorkbenchController(
     navigationHistory,
     openWorkspace,
     refreshWorkspace,
+    refreshGitStatus,
     refreshPhpTree,
     renameActiveDocument,
     saveActiveDocument,
@@ -3147,6 +3275,14 @@ export function useWorkbenchController(
     sidebarView,
     workspaceRoot,
   ]);
+
+  useEffect(() => {
+    if (sidebarView !== "git") {
+      return;
+    }
+
+    void refreshGitStatus();
+  }, [refreshGitStatus, sidebarView, workspaceRoot]);
 
   useEffect(() => {
     if (!workspaceRoot) {
@@ -3744,6 +3880,10 @@ export function useWorkbenchController(
     bottomPanelVisible,
     bottomPanelView,
     editorRevealTarget,
+    gitDiffLoading,
+    gitDiffPreview,
+    gitLoading,
+    gitStatus,
     indexHealthLogs,
     indexProgress,
     intelligenceMode,
@@ -3781,7 +3921,9 @@ export function useWorkbenchController(
     navigateForwardInHistory,
     reportCommandError: (error: unknown) => reportError("Command", error),
     reportLanguageServerError,
+    previewGitChange,
     refreshPhpTree,
+    refreshGitStatus,
     saveActiveDocument,
     saveWorkbenchSettings,
     setActivePath: activateDocument,
@@ -3808,6 +3950,7 @@ export function useWorkbenchController(
     startPhpReindex,
     stopLanguageServer,
     settingsOpen,
+    selectedGitChange,
     textSearchLoading,
     textSearchOpen,
     textSearchQuery,

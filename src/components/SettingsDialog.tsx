@@ -1,6 +1,7 @@
 import { Save, Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  appThemeOptions,
   settingsIgnorePatternsFromText,
   settingsIgnorePatternsText,
   type AppSettings,
@@ -337,13 +338,13 @@ function PhpSettings({
           value={workspaceSettings.phpBackend}
         >
           <option value="auto">Auto</option>
-          <option value="phpactor">PHPactor</option>
+          <option value="phpactor">Managed PHP engine</option>
           <option value="intelephense">Intelephense</option>
         </select>
       </label>
 
       <label className="settings-field">
-        <span>PHPactor path</span>
+        <span>PHP engine path</span>
         <input
           disabled={!hasWorkspace || saving}
           onChange={(event) =>
@@ -367,7 +368,7 @@ function PhpSettings({
       </label>
 
       <div className="settings-readout">
-        <span>Detected PHPactor</span>
+        <span>Detected PHP engine</span>
         <code>{detectedToolPath(phpTools?.phpactor)}</code>
       </div>
       <div className="settings-readout">
@@ -436,9 +437,11 @@ function AppearanceSettings({
           }
           value={appSettings.theme}
         >
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-          <option value="system">System</option>
+          {appThemeOptions.map((theme) => (
+            <option key={theme.id} value={theme.id}>
+              {theme.label}
+            </option>
+          ))}
         </select>
       </label>
     </div>

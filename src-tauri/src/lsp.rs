@@ -119,7 +119,7 @@ where
 
         let Some(phpactor) = tools.phpactor.as_ref() else {
             return unavailable_plan(
-                "PHPactor was not found. Install it in vendor/bin or make it available on PATH.",
+                "Managed PHP IDE engine was not found. Install PHPactor into Mockor Editor tools or set MOCKOR_EDITOR_PHPACTOR_PATH.",
             );
         };
 

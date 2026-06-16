@@ -17,6 +17,8 @@ import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
+import { GitChangesPanel } from "./components/GitChangesPanel";
+import { GitDiffPreview } from "./components/GitDiffPreview";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { PhpTreePanel } from "./components/PhpTreePanel";
 import { QuickOpen } from "./components/QuickOpen";
@@ -48,6 +50,7 @@ import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguag
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
+import { TauriGitGateway } from "./infrastructure/tauriGitGateway";
 import { TauriPhpSyntaxDiagnosticsGateway } from "./infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
@@ -72,6 +75,7 @@ const indexProgressGateway = new TauriIndexProgressGateway();
 const phpFileOutlineGateway = new TauriPhpFileOutlineGateway();
 const phpSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 const phpTreeGateway = new TauriPhpTreeGateway();
+const gitGateway = new TauriGitGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
 const languageServerDocumentSyncGateway =
@@ -94,6 +98,7 @@ function App() {
     indexProgressGateway,
     phpFileOutlineGateway,
     phpTreeGateway,
+    gitGateway,
     languageServerGateway,
     languageServerRuntimeGateway,
     languageServerDocumentSyncGateway,
@@ -116,7 +121,9 @@ function App() {
     const packageName = php.packageName || "PHP Composer";
 
     if (workbench.phpTools?.phpactor) {
-      return `${packageName} · PHPactor`;
+      return `${packageName} · ${toolSourceLabel(
+        workbench.phpTools.phpactor.source,
+      )}`;
     }
 
     if (workbench.phpTools?.intelephense) {
@@ -276,6 +283,20 @@ function App() {
               Files
             </button>
             <button
+              aria-selected={workbench.sidebarView === "git"}
+              className={
+                workbench.sidebarView === "git"
+                  ? "sidebar-tab active"
+                  : "sidebar-tab"
+              }
+              disabled={!workbench.workspaceRoot}
+              onClick={() => workbench.setSidebarView("git")}
+              role="tab"
+              type="button"
+            >
+              Git
+            </button>
+            <button
               aria-selected={workbench.sidebarView === "php"}
               className={
                 workbench.sidebarView === "php"
@@ -290,7 +311,16 @@ function App() {
               PHP
             </button>
           </div>
-          {workbench.sidebarView === "php" ? (
+          {workbench.sidebarView === "git" ? (
+            <button
+              disabled={!workbench.workspaceRoot || workbench.gitLoading}
+              onClick={workbench.refreshGitStatus}
+              title="Refresh Git changes"
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={14} />
+            </button>
+          ) : workbench.sidebarView === "php" ? (
             <button
               disabled={!workbench.workspaceRoot || workbench.phpTreeLoading}
               onClick={workbench.refreshPhpTree}
@@ -305,7 +335,15 @@ function App() {
             </button>
           )}
         </header>
-        {workbench.sidebarView === "php" ? (
+        {workbench.sidebarView === "git" ? (
+          <GitChangesPanel
+            activeChange={workbench.selectedGitChange}
+            isLoading={workbench.gitLoading}
+            onOpenChange={workbench.previewGitChange}
+            rootPath={workbench.workspaceRoot}
+            status={workbench.gitStatus}
+          />
+        ) : workbench.sidebarView === "php" ? (
           <PhpTreePanel
             activePath={workbench.activePath}
             expandedNodeIds={workbench.phpTreeExpandedNodeIds}
@@ -416,45 +454,53 @@ function App() {
           onPin={workbench.pinDocument}
           previewPath={workbench.previewPath}
         />
-        <EditorSurface
-          activeDocument={workbench.activeDocument}
-          editorRevealTarget={workbench.editorRevealTarget}
-          flushPendingLanguageServerDocument={
-            workbench.flushPendingLanguageServerDocument
-          }
-          languageServerFeaturesGateway={languageServerFeaturesGateway}
-          languageServerDiagnosticsByPath={
-            workbench.languageServerDiagnosticsByPath
-          }
-          languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
-          monacoTheme={monacoTheme}
-          onCloseActiveTab={() => {
-            if (workbench.activeDocument) {
-              workbench.closeDocument(workbench.activeDocument.path);
+        {workbench.selectedGitChange || workbench.gitDiffLoading ? (
+          <GitDiffPreview
+            diff={workbench.gitDiffPreview}
+            isLoading={workbench.gitDiffLoading}
+            monacoTheme={monacoTheme}
+          />
+        ) : (
+          <EditorSurface
+            activeDocument={workbench.activeDocument}
+            editorRevealTarget={workbench.editorRevealTarget}
+            flushPendingLanguageServerDocument={
+              workbench.flushPendingLanguageServerDocument
             }
-          }}
-          onCursorPositionChange={workbench.updateActiveEditorPosition}
-          onGoBack={() => void workbench.navigateBackward()}
-          onGoForward={() => void workbench.navigateForwardInHistory()}
-          onGoToDefinition={() => void workbench.goToDefinition()}
-          onOpenClass={() => {
-            if (workbench.workspaceRoot) {
-              workbench.setQuickOpenOpen(false);
-              workbench.setClassOpenOpen(true);
+            languageServerFeaturesGateway={languageServerFeaturesGateway}
+            languageServerDiagnosticsByPath={
+              workbench.languageServerDiagnosticsByPath
             }
-          }}
-          onOpenFile={() => {
-            if (workbench.workspaceRoot) {
-              workbench.setClassOpenOpen(false);
-              workbench.setQuickOpenOpen(true);
-            }
-          }}
-          onOpenFileStructure={workbench.openFileStructure}
-          onChange={workbench.updateActiveDocument}
-          onLanguageServerError={workbench.reportLanguageServerError}
-          onRevealTargetHandled={workbench.clearEditorRevealTarget}
-          phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
-        />
+            languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+            monacoTheme={monacoTheme}
+            onCloseActiveTab={() => {
+              if (workbench.activeDocument) {
+                workbench.closeDocument(workbench.activeDocument.path);
+              }
+            }}
+            onCursorPositionChange={workbench.updateActiveEditorPosition}
+            onGoBack={() => void workbench.navigateBackward()}
+            onGoForward={() => void workbench.navigateForwardInHistory()}
+            onGoToDefinition={() => void workbench.goToDefinition()}
+            onOpenClass={() => {
+              if (workbench.workspaceRoot) {
+                workbench.setQuickOpenOpen(false);
+                workbench.setClassOpenOpen(true);
+              }
+            }}
+            onOpenFile={() => {
+              if (workbench.workspaceRoot) {
+                workbench.setClassOpenOpen(false);
+                workbench.setQuickOpenOpen(true);
+              }
+            }}
+            onOpenFileStructure={workbench.openFileStructure}
+            onChange={workbench.updateActiveDocument}
+            onLanguageServerError={workbench.reportLanguageServerError}
+            onRevealTargetHandled={workbench.clearEditorRevealTarget}
+            phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
+          />
+        )}
         {workbench.bottomPanelVisible ? (
           <BottomPanel
             activeView={workbench.bottomPanelView}
@@ -626,7 +672,7 @@ function indexToolbarLabel(progress: IndexProgressState): string {
 
 function languageServerPlanLabel(plan: LanguageServerPlan): string {
   if (plan.status === "ready") {
-    return "PHPactor LSP ready";
+      return "PHP IDE engine ready";
   }
 
   if (plan.status === "blocked") {
@@ -637,8 +683,11 @@ function languageServerPlanLabel(plan: LanguageServerPlan): string {
 }
 
 function languageServerPlanReason(message: string): string {
-  if (message.includes("PHPactor was not found")) {
-    return "PHPactor missing";
+  if (
+    message.includes("PHPactor was not found") ||
+    message.includes("Managed PHP IDE engine was not found")
+  ) {
+    return "IDE engine missing";
   }
 
   if (message.includes("not a PHP Composer project")) {
@@ -650,6 +699,18 @@ function languageServerPlanReason(message: string): string {
   }
 
   return message;
+}
+
+function toolSourceLabel(source: string): string {
+  if (source === "managed") {
+    return "Managed IDE engine";
+  }
+
+  if (source === "workspaceVendorBin") {
+    return "Project PHPactor";
+  }
+
+  return "PATH PHPactor";
 }
 
 function usePrefersLightTheme(): boolean {

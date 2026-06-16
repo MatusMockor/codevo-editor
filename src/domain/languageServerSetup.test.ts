@@ -6,17 +6,17 @@ describe("createPhpactorSetupGuide", () => {
   it("returns install commands when PHPactor is unavailable", () => {
     const guide = createPhpactorSetupGuide(plan("unavailable"));
 
-    expect(guide?.title).toBe("PHPactor Setup");
+    expect(guide?.title).toBe("PHP IDE Engine Setup");
     expect(guide?.commands.map((command) => command.id)).toEqual([
-      "composer-require",
-      "composer-exec",
+      "managed-install",
+      "managed-verify",
     ]);
   });
 
   it("returns blocked guidance without install commands", () => {
     const guide = createPhpactorSetupGuide(plan("blocked"));
 
-    expect(guide?.title).toBe("PHPactor Blocked");
+    expect(guide?.title).toBe("PHP IDE Engine Blocked");
     expect(guide?.commands).toEqual([]);
   });
 
