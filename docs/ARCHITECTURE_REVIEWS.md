@@ -1543,3 +1543,39 @@ Scope reviewed:
 - `npm audit --json`
 - Browser smoke test for Index tab, command palette entry, disabled no-workspace actions, responsive bottom-panel header, and console errors
 - Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings after fixing duplicate detail-row keys
+
+## 2026-06-16: Session Restore
+
+Scope reviewed:
+
+- workspace session settings schema for open tabs, active tab, sidebar view, and bottom-panel view
+- browser settings adapter normalization and persistence
+- workbench restore flow that reopens saved tabs from real workspace files
+- guarded session save effect after restore completes
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Session normalization lives in the settings domain, storage remains in `BrowserSettingsGateway`, and the controller owns restore orchestration.
+- Open/Closed: acceptable. Session state extends `WorkspaceSettings` without changing the settings gateway port or UI components.
+- Liskov Substitution: acceptable. Existing settings gateway implementations continue to load/save the expanded workspace settings contract.
+- Interface Segregation: acceptable. Session restore does not add methods to workspace file, terminal, index, or language-server gateways.
+- Dependency Inversion: acceptable. Restore uses the existing `WorkspaceFileGateway` abstraction to read real files instead of direct host APIs.
+
+### Pattern Review
+
+- Repository pattern: per-workspace session is persisted with workspace settings behind the settings repository boundary.
+- Adapter pattern: `BrowserSettingsGateway` adapts localStorage to the richer workspace settings shape.
+- Guarded restore workflow: session persistence is disabled until restore completes so opening a workspace cannot overwrite the previous session with reset state.
+
+### Residual Risk
+
+- Restore reopens saved files from disk and does not persist dirty unsaved buffers. Crash-safe dirty buffer restore remains a separate feature.
+
+### Verification
+
+- `npm run check`
+- `npm test -- settings browserSettingsGateway`
+- `npm test`: 81 frontend tests
+- `npm run build`
+- Browser smoke test for timestamped clean session-load startup
+- Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings

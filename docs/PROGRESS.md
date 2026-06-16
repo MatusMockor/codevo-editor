@@ -73,17 +73,18 @@ Completed:
 - Added terminal profile listing and selection for default/platform shells.
 - Added Settings UI with persisted mode, trust, PHP backend preference, tool paths, extra ignore patterns, and theme selection.
 - Added Index health panel with bounded skipped/error details, run logs, and reindex actions.
+- Added per-workspace session restore for open tabs, active tab, sidebar view, and bottom-panel view.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 80 frontend tests
+- `npm test`: passing, 81 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
 - `cargo test`: passing, 144 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
-- Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Index/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, Index health responsive behavior, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Index health panel slice.
+- Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Index/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, Index health responsive behavior, timestamped session-load smoke, and non-Tauri development fallback
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Session restore slice.
 
 Known issues:
 
@@ -92,4 +93,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add session restore.
+1. Add theme polish.

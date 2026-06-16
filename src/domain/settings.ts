@@ -2,6 +2,8 @@ import type { IntelligenceMode } from "./workspace";
 
 export type AppTheme = "dark" | "light" | "system";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
+export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
+export type WorkspaceSessionSidebarView = "files" | "php";
 
 export interface AppSettings {
   recentWorkspacePath: string | null;
@@ -14,6 +16,14 @@ export interface WorkspaceSettings {
   intelephensePath: string | null;
   phpBackend: PhpBackendPreference;
   phpactorPath: string | null;
+  session: WorkspaceSessionState;
+}
+
+export interface WorkspaceSessionState {
+  activePath: string | null;
+  bottomPanelView: WorkspaceSessionBottomPanelView;
+  openPaths: string[];
+  sidebarView: WorkspaceSessionSidebarView;
 }
 
 export interface SettingsGateway {
@@ -40,6 +50,16 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     intelephensePath: null,
     phpBackend: "auto",
     phpactorPath: null,
+    session: defaultWorkspaceSessionState(),
+  };
+}
+
+export function defaultWorkspaceSessionState(): WorkspaceSessionState {
+  return {
+    activePath: null,
+    bottomPanelView: "problems",
+    openPaths: [],
+    sidebarView: "files",
   };
 }
 
@@ -88,6 +108,29 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.phpactorPath,
       defaults.phpactorPath,
     ),
+    session: normalizeWorkspaceSession(value.session),
+  };
+}
+
+export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState {
+  const defaults = defaultWorkspaceSessionState();
+
+  if (!isRecord(value)) {
+    return defaults;
+  }
+
+  const openPaths = normalizePathList(value.openPaths);
+  const activePath = normalizeSessionActivePath(value.activePath, openPaths);
+
+  return {
+    activePath,
+    bottomPanelView: isWorkspaceSessionBottomPanelView(value.bottomPanelView)
+      ? value.bottomPanelView
+      : defaults.bottomPanelView,
+    openPaths,
+    sidebarView: isWorkspaceSessionSidebarView(value.sidebarView)
+      ? value.sidebarView
+      : defaults.sidebarView,
   };
 }
 
@@ -145,6 +188,18 @@ function isPhpBackendPreference(
   return value === "auto" || value === "phpactor" || value === "intelephense";
 }
 
+function isWorkspaceSessionBottomPanelView(
+  value: unknown,
+): value is WorkspaceSessionBottomPanelView {
+  return value === "index" || value === "problems" || value === "terminal";
+}
+
+function isWorkspaceSessionSidebarView(
+  value: unknown,
+): value is WorkspaceSessionSidebarView {
+  return value === "files" || value === "php";
+}
+
 function normalizeNullableString(
   value: unknown,
   fallback: string | null,
@@ -184,4 +239,34 @@ function normalizePatternList(
     .filter(Boolean);
 
   return Array.from(new Set(patterns));
+}
+
+function normalizePathList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const paths = value
+    .filter((path): path is string => typeof path === "string")
+    .map((path) => path.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(paths));
+}
+
+function normalizeSessionActivePath(
+  value: unknown,
+  openPaths: string[],
+): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const activePath = value.trim();
+
+  if (!openPaths.includes(activePath)) {
+    return null;
+  }
+
+  return activePath;
 }

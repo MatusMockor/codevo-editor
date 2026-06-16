@@ -15,6 +15,12 @@ describe("BrowserSettingsGateway", () => {
       intelephensePath: null,
       phpBackend: "auto",
       phpactorPath: null,
+      session: {
+        activePath: null,
+        bottomPanelView: "problems",
+        openPaths: [],
+        sidebarView: "files",
+      },
     });
   });
 
@@ -32,6 +38,12 @@ describe("BrowserSettingsGateway", () => {
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
       phpactorPath: "/tools/phpactor",
+      session: {
+        activePath: "/project/src/User.php",
+        bottomPanelView: "index",
+        openPaths: ["/project/src/User.php", "/project/README.md"],
+        sidebarView: "php",
+      },
     });
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
@@ -44,6 +56,12 @@ describe("BrowserSettingsGateway", () => {
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
       phpactorPath: "/tools/phpactor",
+      session: {
+        activePath: "/project/src/User.php",
+        bottomPanelView: "index",
+        openPaths: ["/project/src/User.php", "/project/README.md"],
+        sidebarView: "php",
+      },
     });
   });
 
@@ -63,6 +81,12 @@ describe("BrowserSettingsGateway", () => {
       intelephensePath: null,
       phpBackend: "auto",
       phpactorPath: null,
+      session: {
+        activePath: null,
+        bottomPanelView: "problems",
+        openPaths: [],
+        sidebarView: "files",
+      },
     });
   });
 });

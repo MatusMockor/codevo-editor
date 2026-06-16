@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultAppSettings,
+  defaultWorkspaceSessionState,
   defaultWorkspaceSettings,
   monacoThemeForAppTheme,
   normalizeAppSettings,
+  normalizeWorkspaceSession,
   normalizeWorkspaceSettings,
   resolveAppTheme,
   settingsIgnorePatternsFromText,
@@ -22,6 +24,18 @@ describe("settings defaults", () => {
       intelephensePath: null,
       phpBackend: "auto",
       phpactorPath: null,
+      session: {
+        activePath: null,
+        bottomPanelView: "problems",
+        openPaths: [],
+        sidebarView: "files",
+      },
+    });
+    expect(defaultWorkspaceSessionState()).toEqual({
+      activePath: null,
+      bottomPanelView: "problems",
+      openPaths: [],
+      sidebarView: "files",
     });
   });
 });
@@ -57,6 +71,16 @@ describe("normalizeWorkspaceSettings", () => {
         intelephensePath: "/tools/intelephense",
         phpBackend: "phpactor",
         phpactorPath: " /tools/phpactor ",
+        session: {
+          activePath: "/project/src/User.php",
+          bottomPanelView: "index",
+          openPaths: [
+            "/project/src/User.php",
+            "/project/src/User.php",
+            " /project/README.md ",
+          ],
+          sidebarView: "php",
+        },
       }),
     ).toEqual({
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
@@ -64,6 +88,12 @@ describe("normalizeWorkspaceSettings", () => {
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
       phpactorPath: "/tools/phpactor",
+      session: {
+        activePath: "/project/src/User.php",
+        bottomPanelView: "index",
+        openPaths: ["/project/src/User.php", "/project/README.md"],
+        sidebarView: "php",
+      },
     });
   });
 
@@ -89,6 +119,24 @@ describe("normalizeWorkspaceSettings", () => {
       extraIgnorePatterns: ["var/cache"],
     });
     expect(normalizeWorkspaceSettings(null)).toEqual(defaultWorkspaceSettings());
+  });
+});
+
+describe("normalizeWorkspaceSession", () => {
+  it("falls back for invalid layout values and inactive paths", () => {
+    expect(
+      normalizeWorkspaceSession({
+        activePath: "/project/missing.php",
+        bottomPanelView: "unknown",
+        openPaths: ["/project/User.php", 12],
+        sidebarView: "unknown",
+      }),
+    ).toEqual({
+      activePath: null,
+      bottomPanelView: "problems",
+      openPaths: ["/project/User.php"],
+      sidebarView: "files",
+    });
   });
 });
 

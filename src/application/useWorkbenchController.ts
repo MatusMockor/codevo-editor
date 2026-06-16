@@ -86,6 +86,7 @@ import {
   defaultWorkspaceSettings,
   type AppSettings,
   type SettingsGateway,
+  type WorkspaceSessionState,
   type WorkspaceSettings,
 } from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
@@ -222,6 +223,7 @@ export function useWorkbenchController(
   const workspaceSettingsRef = useRef<WorkspaceSettings>(
     defaultWorkspaceSettings(),
   );
+  const workspaceSessionRestoredRef = useRef(false);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
@@ -701,9 +703,68 @@ export function useWorkbenchController(
     [reportError, workspaceFiles],
   );
 
+  const restoreWorkspaceSession = useCallback(
+    async (rootPath: string, session: WorkspaceSessionState) => {
+      const paths = session.openPaths.filter((path) =>
+        isSessionPathInWorkspace(rootPath, path),
+      );
+
+      if (paths.length === 0) {
+        setSidebarView(session.sidebarView);
+        setBottomPanelView(session.bottomPanelView);
+        return;
+      }
+
+      const restoredDocuments: Record<string, EditorDocument> = {};
+      const restoredPaths: string[] = [];
+      let failedCount = 0;
+
+      for (const path of paths) {
+        try {
+          const content = await workspaceFiles.readTextFile(path);
+          restoredDocuments[path] = {
+            content,
+            language: detectLanguage(path),
+            name: getFileName(path),
+            path,
+            savedContent: content,
+          };
+          restoredPaths.push(path);
+        } catch {
+          failedCount += 1;
+        }
+      }
+
+      if (currentWorkspaceRootRef.current !== rootPath) {
+        return;
+      }
+
+      setDocuments(restoredDocuments);
+      setOpenPaths(restoredPaths);
+      setActivePath(restoredActivePath(session.activePath, restoredPaths));
+      setSidebarView(session.sidebarView);
+      setBottomPanelView(session.bottomPanelView);
+
+      if (failedCount === 0) {
+        return;
+      }
+
+      setNotices((current) => [
+        createWorkbenchNotice(
+          "warning",
+          "Session",
+          `Could not restore ${failedCount} tab${failedCount === 1 ? "" : "s"}.`,
+        ),
+        ...current,
+      ]);
+    },
+    [workspaceFiles],
+  );
+
   const openWorkspacePath = useCallback(
     async (path: string) => {
       await stopLanguageServerRuntime();
+      workspaceSessionRestoredRef.current = false;
       let workspaceSettings = defaultWorkspaceSettings();
 
       try {
@@ -720,6 +781,8 @@ export function useWorkbenchController(
       setOpenPaths([]);
       setActivePath(null);
       setNavigationHistory(createNavigationHistory());
+      setSidebarView("files");
+      setBottomPanelView("problems");
       applyWorkspaceSettings(workspaceSettings);
       setIntelligenceMode(workspaceSettings.intelligenceMode);
       setWorkspaceDescriptor(null);
@@ -758,6 +821,8 @@ export function useWorkbenchController(
       }
 
       await loadDirectory(path);
+      await restoreWorkspaceSession(path, workspaceSettings.session);
+      workspaceSessionRestoredRef.current = true;
 
       try {
         const trust = await workspaceTrustGateway.getTrust(path);
@@ -784,6 +849,7 @@ export function useWorkbenchController(
       phpToolGateway,
       refreshLanguageServerPlan,
       reportError,
+      restoreWorkspaceSession,
       settingsGateway,
       smartModeGateway,
       stopLanguageServerRuntime,
@@ -2073,6 +2139,41 @@ export function useWorkbenchController(
   ]);
 
   useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    if (!workspaceSessionRestoredRef.current) {
+      return;
+    }
+
+    const session = currentWorkspaceSession(
+      workspaceRoot,
+      openPaths,
+      activePath,
+      sidebarView,
+      bottomPanelView,
+    );
+
+    if (workspaceSessionsEqual(workspaceSettingsRef.current.session, session)) {
+      return;
+    }
+
+    void persistWorkspaceSettings(workspaceRoot, {
+      ...workspaceSettingsRef.current,
+      session,
+    }).catch((error) => reportError("Session", error));
+  }, [
+    activePath,
+    bottomPanelView,
+    openPaths,
+    persistWorkspaceSettings,
+    reportError,
+    sidebarView,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
     if (hasRestoredRef.current) {
       return;
     }
@@ -2454,4 +2555,63 @@ function reindexStartMessage(mode: WorkspaceReindexMode): string {
   }
 
   return "Index scan started.";
+}
+
+function restoredActivePath(
+  activePath: string | null,
+  restoredPaths: string[],
+): string | null {
+  if (activePath && restoredPaths.includes(activePath)) {
+    return activePath;
+  }
+
+  return restoredPaths[0] || null;
+}
+
+function currentWorkspaceSession(
+  rootPath: string,
+  openPaths: string[],
+  activePath: string | null,
+  sidebarView: SidebarView,
+  bottomPanelView: BottomPanelView,
+): WorkspaceSessionState {
+  const sessionPaths = openPaths.filter((path) =>
+    isSessionPathInWorkspace(rootPath, path),
+  );
+
+  return {
+    activePath:
+      activePath && sessionPaths.includes(activePath) ? activePath : null,
+    bottomPanelView,
+    openPaths: sessionPaths,
+    sidebarView,
+  };
+}
+
+function workspaceSessionsEqual(
+  left: WorkspaceSessionState,
+  right: WorkspaceSessionState,
+): boolean {
+  return (
+    left.activePath === right.activePath &&
+    left.bottomPanelView === right.bottomPanelView &&
+    left.sidebarView === right.sidebarView &&
+    left.openPaths.length === right.openPaths.length &&
+    left.openPaths.every((path, index) => path === right.openPaths[index])
+  );
+}
+
+function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
+  const root = normalizedSessionPath(rootPath);
+  const candidate = normalizedSessionPath(path);
+
+  if (candidate === root) {
+    return true;
+  }
+
+  return candidate.startsWith(`${root}/`);
+}
+
+function normalizedSessionPath(path: string): string {
+  return path.trim().split("\\").join("/").replace(/\/+$/, "");
 }
