@@ -1023,6 +1023,40 @@ Scope reviewed:
 - Browser smoke test
 - `coderabbit review --agent --fast --base main` passed with 0 findings
 
+## 2026-06-15: Tree-Sitter PHP Parser Foundation
+
+Scope reviewed:
+
+- `tree-sitter` and `tree-sitter-php` dependency integration
+- `PhpSyntaxParser` abstraction
+- `TreeSitterPhpParser` grammar adapter
+- `PhpSyntaxTree` summary for root kind/range, syntax errors, and missing nodes
+- valid and incomplete PHP fixture tests
+
+### SOLID Review
+
+- Single Responsibility: acceptable. `php_parser.rs` owns PHP syntax parsing only; it does not extract symbols, write SQLite rows, or schedule index jobs.
+- Open/Closed: acceptable. Symbol extraction can consume `PhpSyntaxParser`/`PhpSyntaxTree` without changing parser setup; alternate PHP grammars or parser configurations can replace the concrete adapter.
+- Liskov Substitution: acceptable. The parser trait returns the same syntax tree contract for valid and recoverable incomplete input.
+- Interface Segregation: acceptable. The parser API exposes only parse behavior and summary/root access, not future symbol or composer concerns.
+- Dependency Inversion: acceptable. Future symbol extraction can depend on `PhpSyntaxParser` instead of directly constructing tree-sitter parsers.
+
+### Pattern Review
+
+- Adapter pattern: `TreeSitterPhpParser` adapts tree-sitter PHP grammar loading to the editor parser contract.
+- Strategy pattern: `PhpSyntaxParser` lets future parser implementations or test parsers substitute behind the same boundary.
+- Tolerant parser pattern: parse success is separated from syntax health through `PhpSyntaxTreeSummary`, allowing incomplete files to remain indexable with errors recorded.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+- `coderabbit review --agent --fast --base main` passed with 0 findings
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:

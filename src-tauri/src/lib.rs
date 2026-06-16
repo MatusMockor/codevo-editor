@@ -10,6 +10,7 @@ mod lsp_document;
 mod lsp_features;
 mod lsp_session;
 mod lsp_transport;
+pub mod php_parser;
 mod project;
 mod search;
 mod smart_mode;
