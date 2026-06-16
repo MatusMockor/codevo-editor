@@ -40,12 +40,12 @@ export function StatusBar({
 
 function formatMode(mode: IntelligenceMode): string {
   if (mode === "lightSmart") {
-    return "Light Smart";
+    return "Smart Index";
   }
 
   if (mode === "fullSmart") {
-    return "Full Smart";
+    return "IDE Mode";
   }
 
-  return "Basic";
+  return "Editor Mode";
 }

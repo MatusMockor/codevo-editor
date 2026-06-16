@@ -50,17 +50,17 @@ impl SmartModeState {
             IntelligenceMode::Basic => Self {
                 mode,
                 status: SmartModeStatus::Off,
-                message: "Basic mode active. Smart services are stopped.".to_string(),
+                message: "Editor Mode active. Index and IDE services are stopped.".to_string(),
             },
             IntelligenceMode::LightSmart => Self {
                 mode,
                 status: SmartModeStatus::Ready,
-                message: "Light Smart mode active. LSP wiring comes next.".to_string(),
+                message: "Smart Index active. Workspace symbols are enabled.".to_string(),
             },
             IntelligenceMode::FullSmart => Self {
                 mode,
                 status: SmartModeStatus::Ready,
-                message: "Full Smart mode scaffolded. Index services come later.".to_string(),
+                message: "IDE Mode active. Index and language services are enabled.".to_string(),
             },
         }
     }
@@ -86,7 +86,7 @@ mod tests {
     }
 
     #[test]
-    fn setting_light_smart_mode_reports_ready_scaffold() {
+    fn setting_light_smart_mode_reports_ready_state() {
         let mut service = SmartModeService::new();
         let state = service.set_mode(IntelligenceMode::LightSmart);
 

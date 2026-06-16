@@ -27,8 +27,8 @@ mod workspace;
 
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
-    WorkspaceIndexStore, WorkspaceIndexSummary, WorkspacePhpFileOutlineStore,
-    WorkspacePhpTreeStore, WorkspaceSymbolSearchStore,
+    WorkspaceIndexMaintenanceStore, WorkspaceIndexStore, WorkspaceIndexSummary,
+    WorkspacePhpFileOutlineStore, WorkspacePhpTreeStore, WorkspaceSymbolSearchStore,
 };
 use index_reindex::{
     LocalWorkspaceReindexStarter, WorkspaceReindexRequest, WorkspaceReindexStarter,
@@ -62,6 +62,7 @@ use php_symbols::{PhpSymbolExtractor, PhpSymbolKind, TreeSitterPhpSymbolExtracto
 use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
+use serde::Serialize;
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
     ffi::OsString,
@@ -84,6 +85,14 @@ use workspace::{
 
 const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
 const CLOSE_ACTIVE_TAB_MENU_ID: &str = "close-active-tab";
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceIndexClearResult {
+    database_path: String,
+    root_path: String,
+    status: &'static str,
+}
 
 #[tauri::command]
 fn create_directory(path: String) -> Result<(), String> {
@@ -213,6 +222,25 @@ fn remove_workspace_index_file(
         .remove_file(&path)
         .map_err(|error| error.to_string())?;
     index.summary().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn clear_workspace_index(
+    root_path: String,
+    app: AppHandle,
+) -> Result<WorkspaceIndexClearResult, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    let database_path = workspace_index_database_path(&app, &root)?;
+    let index = SqliteWorkspaceIndex::open(&database_path).map_err(|error| error.to_string())?;
+    index
+        .clear_workspace_files()
+        .map_err(|error| error.to_string())?;
+
+    Ok(WorkspaceIndexClearResult {
+        database_path: database_path.to_string_lossy().to_string(),
+        root_path: root.to_string_lossy().to_string(),
+        status: "cleared",
+    })
 }
 
 #[tauri::command]
@@ -859,6 +887,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            clear_workspace_index,
             create_directory,
             create_text_file,
             delete_path,

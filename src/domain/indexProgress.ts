@@ -33,6 +33,12 @@ export interface InitialMetadataScanStart {
   status: "started";
 }
 
+export interface WorkspaceIndexClearResult {
+  databasePath: string;
+  rootPath: string;
+  status: "cleared";
+}
+
 export type MetadataScanCompletionStatus = "completed" | "failed";
 export type WorkspaceReindexMode = "hard" | "language" | "soft";
 
@@ -59,6 +65,7 @@ export interface IndexProgressState {
 }
 
 export interface IndexProgressGateway {
+  clearWorkspaceIndex(rootPath: string): Promise<WorkspaceIndexClearResult>;
   startInitialMetadataScan(
     rootPath: string,
   ): Promise<InitialMetadataScanStart>;

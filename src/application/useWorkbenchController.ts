@@ -9,7 +9,11 @@ import {
   type WorkbenchNotice,
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import type { SmartModeGateway } from "../domain/intelligence";
+import {
+  shouldIndexWorkspace,
+  shouldStartLanguageServer,
+  type SmartModeGateway,
+} from "../domain/intelligence";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import {
   applyMetadataScanCompletion,
@@ -280,6 +284,7 @@ export function useWorkbenchController(
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
   const autoStartedLanguageServerRootRef = useRef<string | null>(null);
+  const intelligenceModeRef = useRef<IntelligenceMode>("basic");
   const documentVersionsRef = useRef<Record<string, number>>({});
   const documentVersionsByUriRef = useRef<Record<string, number>>({});
   const syncedDocumentPathsRef = useRef<Set<string>>(new Set());
@@ -307,6 +312,10 @@ export function useWorkbenchController(
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
   }, [activeDocument]);
+
+  useEffect(() => {
+    intelligenceModeRef.current = intelligenceMode;
+  }, [intelligenceMode]);
 
   const reportError = useCallback((source: string, error: unknown) => {
     const nextMessage = String(error);
@@ -487,6 +496,19 @@ export function useWorkbenchController(
 
   const handleMetadataScanCompletion = useCallback(
     (event: MetadataScanCompletionEvent) => {
+      if (currentWorkspaceRootRef.current !== event.rootPath) {
+        return;
+      }
+
+      if (!shouldIndexWorkspace(intelligenceModeRef.current)) {
+        pendingIndexScanRef.current = false;
+        activeIndexRootRef.current = null;
+        indexProgressGateway
+          .clearWorkspaceIndex(event.rootPath)
+          .catch((error) => reportError("Index", error));
+        return;
+      }
+
       if (!pendingIndexScanRef.current && activeIndexRootRef.current !== event.rootPath) {
         return;
       }
@@ -514,11 +536,15 @@ export function useWorkbenchController(
         ),
       );
     },
-    [],
+    [indexProgressGateway, reportError],
   );
 
   const startInitialIndexScan = useCallback(
     async (rootPath: string) => {
+      if (!shouldIndexWorkspace(intelligenceModeRef.current)) {
+        return;
+      }
+
       pendingIndexScanRef.current = true;
 
       try {
@@ -545,6 +571,43 @@ export function useWorkbenchController(
       }
     },
     [indexProgressGateway, reportError],
+  );
+
+  const clearIndexWorkspaceState = useCallback(() => {
+    pendingIndexScanRef.current = false;
+    activeIndexRootRef.current = null;
+    lastPhpFileOutlineRefreshKeyRef.current = null;
+    setIndexProgress(initialIndexProgress());
+    setIndexHealthLogs([]);
+    setPhpTree(emptyPhpTree());
+    setPhpTreeExpandedNodeIds(new Set());
+    setPhpTreeLoading(false);
+    setPhpFileOutlinesByPath({});
+    setPhpInheritedFileOutlinesByPath({});
+    setExpandedPhpFilePaths(new Set());
+    setLoadingPhpFileOutlinePaths(new Set());
+    setLoadingInheritedPhpFileOutlinePaths(new Set());
+    setPhpFileOutlineExpandedNodeIds(new Set());
+    setClassOpenResults([]);
+    setNotices((current) =>
+      current.filter((notice) => !notice.groupKey?.startsWith("index-progress:")),
+    );
+  }, []);
+
+  const clearWorkspaceIndex = useCallback(
+    async (rootPath: string, message?: string) => {
+      clearIndexWorkspaceState();
+
+      try {
+        await indexProgressGateway.clearWorkspaceIndex(rootPath);
+        if (message) {
+          setMessage(message);
+        }
+      } catch (error) {
+        reportError("Index", error);
+      }
+    },
+    [clearIndexWorkspaceState, indexProgressGateway, reportError],
   );
 
   const nextDocumentVersion = useCallback((path: string): number => {
@@ -920,19 +983,26 @@ export function useWorkbenchController(
         reportError("Settings", error);
       }
 
+      let resolvedIntelligenceMode = workspaceSettings.intelligenceMode;
+
       try {
         const smartMode = await smartModeGateway.setMode(
           workspaceSettings.intelligenceMode,
         );
+        resolvedIntelligenceMode = smartMode.mode;
+        intelligenceModeRef.current = smartMode.mode;
         setIntelligenceMode(smartMode.mode);
       } catch (error) {
-        reportError("Smart Mode", error);
+        reportError("IDE Mode", error);
       }
 
       await loadDirectory(path);
       await restoreWorkspaceSession(path, workspaceSettings.session);
       workspaceSessionRestoredRef.current = true;
-      void startInitialIndexScan(path);
+
+      if (shouldIndexWorkspace(resolvedIntelligenceMode)) {
+        void startInitialIndexScan(path);
+      }
 
       try {
         const trust = await workspaceTrustGateway.getTrust(path);
@@ -1596,26 +1666,44 @@ export function useWorkbenchController(
       }
 
       try {
+        const previousMode = intelligenceMode;
         const state = await smartModeGateway.setMode(mode);
-        if (state.mode !== "basic") {
+        const nextMode = state.mode;
+
+        if (shouldStartLanguageServer(nextMode)) {
           autoStartedLanguageServerRootRef.current = null;
         }
 
-        setIntelligenceMode(state.mode);
-        setMessage(state.message);
+        if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
+          await stopLanguageServerRuntime();
+        }
+
+        intelligenceModeRef.current = nextMode;
+        setIntelligenceMode(nextMode);
         await persistWorkspaceSettings(workspaceRoot, {
           ...workspaceSettingsRef.current,
-          intelligenceMode: state.mode,
+          intelligenceMode: nextMode,
         });
+
+        if (shouldIndexWorkspace(nextMode)) {
+          setMessage(state.message);
+          await startInitialIndexScan(workspaceRoot);
+          return;
+        }
+
+        await clearWorkspaceIndex(workspaceRoot, state.message);
       } catch (error) {
-        reportError("Smart Mode", error);
+        reportError("IDE Mode", error);
       }
     },
     [
+      clearWorkspaceIndex,
       intelligenceMode,
       persistWorkspaceSettings,
       reportError,
       smartModeGateway,
+      startInitialIndexScan,
+      stopLanguageServerRuntime,
       workspaceRoot,
     ],
   );
@@ -1916,23 +2004,25 @@ export function useWorkbenchController(
         return false;
       }
 
-      const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
-        workspaceRoot,
-        className,
-        25,
-      );
-      const indexedTarget = bestIndexedSymbolMatch(
-        indexedSymbols,
-        className,
-        activeDocument?.path ?? "",
-      );
-
-      if (indexedTarget) {
-        return openNavigationTarget(
-          indexedTarget.path,
-          editorPositionFromProjectSymbol(indexedTarget),
-          label,
+      if (shouldIndexWorkspace(intelligenceMode)) {
+        const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
+          workspaceRoot,
+          className,
+          25,
         );
+        const indexedTarget = bestIndexedSymbolMatch(
+          indexedSymbols,
+          className,
+          activeDocument?.path ?? "",
+        );
+
+        if (indexedTarget) {
+          return openNavigationTarget(
+            indexedTarget.path,
+            editorPositionFromProjectSymbol(indexedTarget),
+            label,
+          );
+        }
       }
 
       for (const path of phpClassPathCandidates(
@@ -1956,6 +2046,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
+      intelligenceMode,
       openNavigationTarget,
       projectSymbolSearch,
       readNavigationFileContent,
@@ -2003,6 +2094,10 @@ export function useWorkbenchController(
         return false;
       }
 
+      if (!shouldIndexWorkspace(intelligenceMode)) {
+        return false;
+      }
+
       const symbols = await projectSymbolSearch.searchProjectSymbols(
         workspaceRoot,
         methodName,
@@ -2027,7 +2122,7 @@ export function useWorkbenchController(
         `${methodName}()`,
       );
     },
-    [openNavigationTarget, projectSymbolSearch, workspaceRoot],
+    [intelligenceMode, openNavigationTarget, projectSymbolSearch, workspaceRoot],
   );
 
   const goToPhpMethodCallDefinition = useCallback(
@@ -2146,20 +2241,10 @@ export function useWorkbenchController(
       }
 
       recordCurrentNavigationLocation();
+      const opened = await openPathForNavigation(targetPath);
 
-      if (documents[targetPath]) {
-        setActivePath(targetPath);
-      }
-
-      if (!documents[targetPath]) {
-        await openFile(
-          {
-            kind: "file",
-            name: getFileName(targetPath),
-            path: targetPath,
-          },
-          { recordNavigation: false },
-        );
+      if (!opened) {
+        return false;
       }
 
       const targetPosition = toEditorPosition(target.range.start);
@@ -2177,11 +2262,10 @@ export function useWorkbenchController(
     }
   }, [
     activeDocument,
-    documents,
     flushPendingDocumentChange,
     languageServerFeaturesGateway,
     languageServerRuntimeStatus,
-    openFile,
+    openPathForNavigation,
     recordCurrentNavigationLocation,
     reportLanguageServerError,
   ]);
@@ -2233,6 +2317,11 @@ export function useWorkbenchController(
           return true;
         }
 
+        if (!shouldIndexWorkspace(intelligenceMode)) {
+          setMessage("Enable Smart Index or IDE Mode to search indexed symbols.");
+          return false;
+        }
+
         const symbols = await projectSymbolSearch.searchProjectSymbols(
           workspaceRoot,
           context.name,
@@ -2254,6 +2343,11 @@ export function useWorkbenchController(
           editorPositionFromProjectSymbol(target),
           target.name,
         );
+      }
+
+      if (!shouldIndexWorkspace(intelligenceMode)) {
+        setMessage("Enable Smart Index or IDE Mode to search indexed symbols.");
+        return false;
       }
 
       const symbols = await projectSymbolSearch.searchProjectSymbols(
@@ -2285,6 +2379,7 @@ export function useWorkbenchController(
     activeDocument,
     goToPhpClassIdentifierDefinition,
     goToPhpMethodCallDefinition,
+    intelligenceMode,
     openNavigationTarget,
     projectSymbolSearch,
     reportError,
@@ -2444,7 +2539,9 @@ export function useWorkbenchController(
   ]);
 
   const toggleSmartMode = useCallback(async () => {
-    const nextMode = intelligenceMode === "basic" ? "fullSmart" : "basic";
+    const nextMode = shouldStartLanguageServer(intelligenceMode)
+      ? "basic"
+      : "fullSmart";
     await setSmartMode(nextMode);
   }, [intelligenceMode, setSmartMode]);
 
@@ -2499,16 +2596,23 @@ export function useWorkbenchController(
           return;
         }
 
+        const previousMode = intelligenceMode;
         const smartMode = await smartModeGateway.setMode(
           nextWorkspaceSettings.intelligenceMode,
         );
+        const nextMode = smartMode.mode;
         const resolvedWorkspaceSettings = {
           ...nextWorkspaceSettings,
-          intelligenceMode: smartMode.mode,
+          intelligenceMode: nextMode,
         };
 
+        if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
+          await stopLanguageServerRuntime();
+        }
+
+        intelligenceModeRef.current = nextMode;
         await persistWorkspaceSettings(workspaceRoot, resolvedWorkspaceSettings);
-        setIntelligenceMode(smartMode.mode);
+        setIntelligenceMode(nextMode);
 
         if (nextTrusted !== null && nextTrusted !== workspaceTrust?.trusted) {
           const trust = await workspaceTrustGateway.setTrust(
@@ -2526,6 +2630,14 @@ export function useWorkbenchController(
           }
         }
 
+        if (!shouldIndexWorkspace(previousMode) && shouldIndexWorkspace(nextMode)) {
+          await startInitialIndexScan(workspaceRoot);
+        }
+
+        if (shouldIndexWorkspace(previousMode) && !shouldIndexWorkspace(nextMode)) {
+          await clearWorkspaceIndex(workspaceRoot);
+        }
+
         setSettingsOpen(false);
         setMessage("Settings saved.");
       } catch (error) {
@@ -2533,11 +2645,14 @@ export function useWorkbenchController(
       }
     },
     [
+      clearWorkspaceIndex,
+      intelligenceMode,
       persistAppSettings,
       persistWorkspaceSettings,
       refreshLanguageServerPlan,
       reportError,
       smartModeGateway,
+      startInitialIndexScan,
       stopLanguageServerRuntime,
       workspaceDescriptor,
       workspaceRoot,
@@ -2551,6 +2666,11 @@ export function useWorkbenchController(
       return;
     }
 
+    if (!shouldStartLanguageServer(intelligenceMode)) {
+      setMessage("Enable IDE Mode to start the PHP language server.");
+      return;
+    }
+
     try {
       const status = await languageServerRuntimeGateway.start(workspaceRoot);
       handleLanguageServerRuntimeStatus(status);
@@ -2559,6 +2679,7 @@ export function useWorkbenchController(
     }
   }, [
     handleLanguageServerRuntimeStatus,
+    intelligenceMode,
     languageServerRuntimeGateway,
     reportLanguageServerError,
     workspaceRoot,
@@ -2573,6 +2694,11 @@ export function useWorkbenchController(
     language?: string,
   ) => {
     if (!workspaceRoot) {
+      return;
+    }
+
+    if (!shouldIndexWorkspace(intelligenceMode)) {
+      setMessage("Enable Smart Index or IDE Mode to index this workspace.");
       return;
     }
 
@@ -2603,7 +2729,7 @@ export function useWorkbenchController(
       pendingIndexScanRef.current = false;
       reportError("Index", error);
     }
-  }, [indexProgressGateway, reportError, workspaceRoot]);
+  }, [indexProgressGateway, intelligenceMode, reportError, workspaceRoot]);
 
   const startIndexScan = useCallback(async () => {
     await startReindex("soft");
@@ -2851,8 +2977,8 @@ export function useWorkbenchController(
 
     registry.register({
       id: "smart.toggle",
-      title: "Toggle Smart Mode",
-      category: "Smart Mode",
+      title: "Toggle IDE Mode",
+      category: "Intelligence",
       isEnabled: (context) => context.hasWorkspace,
       run: toggleSmartMode,
     });
@@ -2862,7 +2988,9 @@ export function useWorkbenchController(
       title: "Soft Reindex Workspace",
       category: "Index",
       isEnabled: (context) =>
-        context.hasWorkspace && indexProgress.status !== "scanning",
+        context.hasWorkspace &&
+        shouldIndexWorkspace(intelligenceMode) &&
+        indexProgress.status !== "scanning",
       run: startIndexScan,
     });
 
@@ -2871,7 +2999,9 @@ export function useWorkbenchController(
       title: "Reindex PHP Symbols",
       category: "Index",
       isEnabled: (context) =>
-        context.hasWorkspace && indexProgress.status !== "scanning",
+        context.hasWorkspace &&
+        shouldIndexWorkspace(intelligenceMode) &&
+        indexProgress.status !== "scanning",
       run: startPhpReindex,
     });
 
@@ -2880,7 +3010,9 @@ export function useWorkbenchController(
       title: "Hard Rebuild Index",
       category: "Index",
       isEnabled: (context) =>
-        context.hasWorkspace && indexProgress.status !== "scanning",
+        context.hasWorkspace &&
+        shouldIndexWorkspace(intelligenceMode) &&
+        indexProgress.status !== "scanning",
       run: startHardReindex,
     });
 
@@ -2888,7 +3020,8 @@ export function useWorkbenchController(
       id: "phpTree.show",
       title: "Show PHP Tree",
       category: "PHP",
-      isEnabled: (context) => context.hasWorkspace,
+      isEnabled: (context) =>
+        context.hasWorkspace && shouldIndexWorkspace(intelligenceMode),
       run: () => setSidebarView("php"),
     });
 
@@ -2896,14 +3029,15 @@ export function useWorkbenchController(
       id: "phpTree.refresh",
       title: "Refresh PHP Tree",
       category: "PHP",
-      isEnabled: (context) => context.hasWorkspace,
+      isEnabled: (context) =>
+        context.hasWorkspace && shouldIndexWorkspace(intelligenceMode),
       run: refreshPhpTree,
     });
 
     registry.register({
       id: "smart.phpactorSetup",
       title: "Show PHPactor Setup",
-      category: "Smart Mode",
+      category: "Intelligence",
       isEnabled: () => Boolean(createPhpactorSetupGuide(languageServerPlan)),
       run: () => setLanguageServerSetupOpen(true),
     });
@@ -2911,8 +3045,9 @@ export function useWorkbenchController(
     registry.register({
       id: "smart.startLanguageServer",
       title: "Start PHP Language Server",
-      category: "Smart Mode",
+      category: "Intelligence",
       isEnabled: () =>
+        shouldStartLanguageServer(intelligenceMode) &&
         languageServerPlan?.status === "ready" &&
         !isLanguageServerActive(languageServerRuntimeStatus),
       run: startLanguageServer,
@@ -2921,7 +3056,7 @@ export function useWorkbenchController(
     registry.register({
       id: "smart.stopLanguageServer",
       title: "Stop PHP Language Server",
-      category: "Smart Mode",
+      category: "Intelligence",
       isEnabled: () => isLanguageServerActive(languageServerRuntimeStatus),
       run: stopLanguageServer,
     });
@@ -2955,6 +3090,7 @@ export function useWorkbenchController(
     toggleSmartMode,
     toggleWorkspaceTrust,
     indexProgress,
+    intelligenceMode,
     languageServerPlan,
     languageServerRuntimeStatus,
     workspaceTrust,
@@ -2971,7 +3107,7 @@ export function useWorkbenchController(
       return;
     }
 
-    if (intelligenceMode === "basic") {
+    if (!shouldStartLanguageServer(intelligenceMode)) {
       return;
     }
 
@@ -3311,7 +3447,12 @@ export function useWorkbenchController(
   }, [fileSearch, quickOpenOpen, quickOpenQuery, reportError, workspaceRoot]);
 
   useEffect(() => {
-    if (!classOpenOpen || !workspaceRoot || !classOpenQuery.trim()) {
+    if (
+      !classOpenOpen ||
+      !workspaceRoot ||
+      !classOpenQuery.trim() ||
+      !shouldIndexWorkspace(intelligenceMode)
+    ) {
       setClassOpenResults([]);
       setClassOpenLoading(false);
       return;
@@ -3357,6 +3498,7 @@ export function useWorkbenchController(
   }, [
     classOpenOpen,
     classOpenQuery,
+    intelligenceMode,
     projectSymbolSearch,
     reportError,
     workspaceRoot,

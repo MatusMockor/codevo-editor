@@ -356,9 +356,9 @@ function App() {
       <section className="editor-workbench">
         <header className="workbench-toolbar">
           <button
-            aria-pressed={workbench.intelligenceMode !== "basic"}
+            aria-pressed={workbench.intelligenceMode === "fullSmart"}
             className={
-              workbench.intelligenceMode !== "basic"
+              workbench.intelligenceMode === "fullSmart"
                 ? "smart-mode-switch active"
                 : "smart-mode-switch"
             }
@@ -369,9 +369,9 @@ function App() {
             <span className="switch-track" aria-hidden="true">
               <span className="switch-thumb" />
             </span>
-            <span>Smart Mode</span>
+            <span>IDE Mode</span>
             <strong>
-              {workbench.intelligenceMode === "basic" ? "Off" : "On"}
+              {workbench.intelligenceMode === "fullSmart" ? "On" : "Off"}
             </strong>
           </button>
           <span className="toolbar-status">
@@ -596,6 +596,14 @@ function smartModeSummary(
     return "No workspace";
   }
 
+  if (mode === "basic") {
+    return "Lightweight";
+  }
+
+  if (mode === "lightSmart") {
+    return "Smart Index";
+  }
+
   if (!trusted) {
     return "Untrusted";
   }
@@ -606,15 +614,11 @@ function smartModeSummary(
     return runtimeLabel;
   }
 
-  if (mode !== "basic" && plan?.status === "ready") {
-    return "Smart ready";
+  if (plan?.status === "ready") {
+    return "IDE ready";
   }
 
-  if (mode !== "basic") {
-    return "Smart setup needed";
-  }
-
-  return "Lightweight";
+  return "IDE setup needed";
 }
 
 function indexToolbarLabel(progress: IndexProgressState): string {

@@ -2,11 +2,11 @@
 
 A lightweight Fleet-like desktop code editor built with Tauri, React, TypeScript, Rust, and Monaco.
 
-The project is designed around three modes:
+The project is designed around three intelligence layers:
 
-- Basic: local editing without project intelligence.
-- Light Smart: language-server features for opened files.
-- Full Smart: background indexing, PHP tree, workspace symbols, and richer project intelligence.
+- Editor Mode: local editing without project index or language-server services.
+- Smart Index: workspace indexing, PHP tree, and indexed symbol navigation.
+- IDE Mode: Smart Index plus language-server services for diagnostics and richer navigation.
 
 ## Development
 

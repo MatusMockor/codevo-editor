@@ -166,6 +166,67 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("keeps restored workspaces lightweight in editor mode", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+    expect(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
+  it("starts indexing when a restored workspace is already in IDE mode", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().intelligenceMode).toBe("fullSmart");
+    expect(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).toHaveBeenCalledWith("/workspace");
+  });
+
+  it("clears indexed intelligence and stops the language server when IDE mode is turned off", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().toggleSmartMode();
+    });
+    await act(async () => {
+      await getWorkbench().toggleSmartMode();
+    });
+
+    expect(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalled();
+    expect(
+      dependencies.indexProgressGateway.clearWorkspaceIndex,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+  });
+
   it("uses the project index for go to definition when the language server is unavailable", async () => {
     const controllerPath = "/workspace/src/CommentController.php";
     const agentPath = "/workspace/src/CommentsAgent.php";
@@ -196,6 +257,9 @@ describe("useWorkbenchController preview tabs", () => {
       }),
     });
     await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
 
     await act(async () => {
       await getWorkbench().openFile(
@@ -260,6 +324,9 @@ describe("useWorkbenchController preview tabs", () => {
       }),
     });
     await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
 
     await act(async () => {
       await getWorkbench().openFile(
@@ -343,6 +410,9 @@ class CommentController
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
 
     await act(async () => {
       await getWorkbench().openFile(
@@ -452,12 +522,14 @@ class StoreCommentRequest extends FormRequest
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
     workspaceDescriptor,
+    workspaceSettings = defaultWorkspaceSettings(),
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     projectSymbols?: ProjectSymbolSearchResult[];
     readTextFile?: (path: string) => Promise<string>;
     runtimeStatus?: LanguageServerRuntimeStatus;
     workspaceDescriptor?: WorkspaceDescriptor;
+    workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
   } = {}) {
     let workbench: WorkbenchController | null = null;
     const dependencies = createControllerDependencies({
@@ -466,6 +538,7 @@ class StoreCommentRequest extends FormRequest
       readTextFile,
       runtimeStatus,
       workspaceDescriptor,
+      workspaceSettings,
     });
     const getWorkbench = () => {
       if (!workbench) {
@@ -526,12 +599,14 @@ function createControllerDependencies({
   readTextFile,
   runtimeStatus,
   workspaceDescriptor,
+  workspaceSettings,
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   projectSymbols: ProjectSymbolSearchResult[];
   readTextFile(path: string): Promise<string>;
   runtimeStatus: LanguageServerRuntimeStatus;
   workspaceDescriptor?: WorkspaceDescriptor;
+  workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
 }): ControllerDependencies {
   const documentSyncGateway: LanguageServerDocumentSyncGateway = {
     didChange: vi.fn(async () => undefined),
@@ -575,6 +650,11 @@ function createControllerDependencies({
   return {
     documentSyncGateway,
     indexProgressGateway: {
+      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "cleared" as const,
+      })),
       startInitialMetadataScan: vi.fn(async (rootPath) => ({
         databasePath: "/tmp/index.sqlite",
         rootPath,
@@ -628,7 +708,7 @@ function createControllerDependencies({
     },
     settingsGateway: {
       loadAppSettings: vi.fn(async () => appSettings),
-      loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
+      loadWorkspaceSettings: vi.fn(async () => workspaceSettings),
       saveAppSettings: vi.fn(async () => undefined),
       saveWorkspaceSettings: vi.fn(async () => undefined),
     },

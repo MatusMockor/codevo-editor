@@ -3,6 +3,7 @@ import { TauriIndexProgressGateway } from "./tauriIndexProgressGateway";
 import type {
   InitialMetadataScanStart,
   MetadataScanCompletionEvent,
+  WorkspaceIndexClearResult,
 } from "../domain/indexProgress";
 
 type IndexGatewayConstructor = ConstructorParameters<
@@ -10,17 +11,23 @@ type IndexGatewayConstructor = ConstructorParameters<
 >;
 type InvokeCommand = NonNullable<IndexGatewayConstructor[0]>;
 type ListenToEvent = NonNullable<IndexGatewayConstructor[1]>;
+type InvokeClearCommand = NonNullable<IndexGatewayConstructor[3]>;
 
 describe("TauriIndexProgressGateway", () => {
   it("keeps browser development runtime quiet outside Tauri", async () => {
     const invokeCommand = vi.fn<InvokeCommand>();
     const listenToEvent = vi.fn<ListenToEvent>();
+    const invokeClearCommand = vi.fn<InvokeClearCommand>();
     const gateway = new TauriIndexProgressGateway(
       invokeCommand,
       listenToEvent,
       () => false,
+      invokeClearCommand,
     );
 
+    await expect(gateway.clearWorkspaceIndex("/workspace")).rejects.toThrow(
+      "Indexing requires the Tauri desktop runtime.",
+    );
     await expect(
       gateway.startInitialMetadataScan("/workspace"),
     ).rejects.toThrow("Indexing requires the Tauri desktop runtime.");
@@ -32,6 +39,7 @@ describe("TauriIndexProgressGateway", () => {
     unsubscribe();
 
     expect(invokeCommand).not.toHaveBeenCalled();
+    expect(invokeClearCommand).not.toHaveBeenCalled();
     expect(listenToEvent).not.toHaveBeenCalled();
   });
 
@@ -40,6 +48,11 @@ describe("TauriIndexProgressGateway", () => {
       databasePath: "/config/index.sqlite3",
       rootPath: "/workspace",
       status: "started",
+    };
+    const clear: WorkspaceIndexClearResult = {
+      databasePath: "/config/index.sqlite3",
+      rootPath: "/workspace",
+      status: "cleared",
     };
     const completion: MetadataScanCompletionEvent = {
       databasePath: "/config/index.sqlite3",
@@ -59,6 +72,7 @@ describe("TauriIndexProgressGateway", () => {
       status: "completed",
     };
     const invokeCommand = vi.fn<InvokeCommand>(async () => start);
+    const invokeClearCommand = vi.fn<InvokeClearCommand>(async () => clear);
     const listenToEvent = vi.fn<ListenToEvent>(async (_event, handler) => {
       handler({ payload: completion });
       return () => undefined;
@@ -68,8 +82,12 @@ describe("TauriIndexProgressGateway", () => {
       invokeCommand,
       listenToEvent,
       () => true,
+      invokeClearCommand,
     );
 
+    await expect(gateway.clearWorkspaceIndex("/workspace")).resolves.toEqual(
+      clear,
+    );
     await expect(gateway.startInitialMetadataScan("/workspace")).resolves.toEqual(
       start,
     );
@@ -78,6 +96,9 @@ describe("TauriIndexProgressGateway", () => {
     );
     await gateway.subscribeMetadataScanCompletion(listener);
 
+    expect(invokeClearCommand).toHaveBeenCalledWith("clear_workspace_index", {
+      rootPath: "/workspace",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("start_initial_metadata_scan", {
       rootPath: "/workspace",
     });

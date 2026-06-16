@@ -274,9 +274,9 @@ function GeneralSettings({
           }
           value={workspaceSettings.intelligenceMode}
         >
-          <option value="basic">Basic</option>
-          <option value="lightSmart">Light Smart</option>
-          <option value="fullSmart">Full Smart</option>
+          <option value="basic">Editor Mode</option>
+          <option value="lightSmart">Smart Index</option>
+          <option value="fullSmart">IDE Mode</option>
         </select>
       </label>
 
