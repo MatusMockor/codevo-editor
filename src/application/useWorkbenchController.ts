@@ -2025,7 +2025,7 @@ export function useWorkbenchController(
       id: "editor.goToDefinition",
       title: "Go to Definition",
       category: "Editor",
-      shortcut: "F12",
+      shortcut: "Cmd+B",
       isEnabled: () =>
         Boolean(activeDocument) &&
         languageServerRuntimeStatus?.kind === "running" &&
@@ -2303,6 +2303,12 @@ export function useWorkbenchController(
       if (event.key.toLowerCase() === "r") {
         event.preventDefault();
         openFileStructure();
+        return;
+      }
+
+      if (!event.altKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        void goToDefinition();
         return;
       }
 
