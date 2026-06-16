@@ -1,4 +1,4 @@
-import { FolderOpen, Save, Search, Zap } from "lucide-react";
+import { FolderOpen, RefreshCw, Save, Search, Zap } from "lucide-react";
 import { useMemo } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import { CommandPalette } from "./components/CommandPalette";
@@ -6,6 +6,7 @@ import { EditorSurface } from "./components/EditorSurface";
 import { EditorTabs } from "./components/EditorTabs";
 import { FileTree } from "./components/FileTree";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
+import { PhpTreePanel } from "./components/PhpTreePanel";
 import { ProblemsPanel } from "./components/ProblemsPanel";
 import { QuickOpen } from "./components/QuickOpen";
 import { StatusBar } from "./components/StatusBar";
@@ -24,6 +25,7 @@ import { TauriLanguageServerFeaturesGateway } from "./infrastructure/tauriLangua
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
 import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
+import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
@@ -40,6 +42,7 @@ const workspaceGateways = {
 const smartModeGateway = new TauriSmartModeGateway();
 const workspaceTrustGateway = new TauriWorkspaceTrustGateway();
 const indexProgressGateway = new TauriIndexProgressGateway();
+const phpTreeGateway = new TauriPhpTreeGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
 const languageServerDocumentSyncGateway =
@@ -56,6 +59,7 @@ function App() {
     smartModeGateway,
     workspaceTrustGateway,
     indexProgressGateway,
+    phpTreeGateway,
     languageServerGateway,
     languageServerRuntimeGateway,
     languageServerDocumentSyncGateway,
@@ -166,20 +170,71 @@ function App() {
 
       <section className="sidebar">
         <header className="sidebar-header">
-          <span>Files</span>
-          <button onClick={workbench.openWorkspace} type="button">
-            Open
-          </button>
+          <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">
+            <button
+              aria-selected={workbench.sidebarView === "files"}
+              className={
+                workbench.sidebarView === "files"
+                  ? "sidebar-tab active"
+                  : "sidebar-tab"
+              }
+              onClick={() => workbench.setSidebarView("files")}
+              role="tab"
+              type="button"
+            >
+              Files
+            </button>
+            <button
+              aria-selected={workbench.sidebarView === "php"}
+              className={
+                workbench.sidebarView === "php"
+                  ? "sidebar-tab active"
+                  : "sidebar-tab"
+              }
+              disabled={!workbench.workspaceRoot}
+              onClick={() => workbench.setSidebarView("php")}
+              role="tab"
+              type="button"
+            >
+              PHP
+            </button>
+          </div>
+          {workbench.sidebarView === "php" ? (
+            <button
+              disabled={!workbench.workspaceRoot || workbench.phpTreeLoading}
+              onClick={workbench.refreshPhpTree}
+              title="Refresh PHP tree"
+              type="button"
+            >
+              <RefreshCw aria-hidden="true" size={14} />
+            </button>
+          ) : (
+            <button onClick={workbench.openWorkspace} type="button">
+              Open
+            </button>
+          )}
         </header>
-        <FileTree
-          activePath={workbench.activePath}
-          entriesByDirectory={workbench.entriesByDirectory}
-          expandedDirectories={workbench.expandedDirectories}
-          loadingDirectories={workbench.loadingDirectories}
-          onOpenFile={workbench.openFile}
-          onToggleDirectory={workbench.toggleDirectory}
-          rootPath={workbench.workspaceRoot}
-        />
+        {workbench.sidebarView === "php" ? (
+          <PhpTreePanel
+            activePath={workbench.activePath}
+            expandedNodeIds={workbench.phpTreeExpandedNodeIds}
+            isLoading={workbench.phpTreeLoading}
+            onOpenNode={workbench.openPhpTreeNode}
+            onToggleNode={workbench.togglePhpTreeNode}
+            rootPath={workbench.workspaceRoot}
+            tree={workbench.phpTree}
+          />
+        ) : (
+          <FileTree
+            activePath={workbench.activePath}
+            entriesByDirectory={workbench.entriesByDirectory}
+            expandedDirectories={workbench.expandedDirectories}
+            loadingDirectories={workbench.loadingDirectories}
+            onOpenFile={workbench.openFile}
+            onToggleDirectory={workbench.toggleDirectory}
+            rootPath={workbench.workspaceRoot}
+          />
+        )}
       </section>
 
       <section className="editor-workbench">

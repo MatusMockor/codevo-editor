@@ -2,6 +2,7 @@ use crate::job_scheduler::{
     IndexCommitGate, IndexCommitPermission, IndexCommitScope, IndexDbWriteOperation,
     IndexFileMetadata, IndexFileSymbols, IndexSymbolKind, IndexSymbolRange, IndexSymbolRecord,
 };
+use crate::php_tree::{build_php_tree, PhpTree, PhpTreeNodeKind, PhpTreeSymbolRecord};
 use rusqlite::{params, types::Type, Connection};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -54,6 +55,10 @@ pub trait WorkspaceSymbolSearchStore {
         query: &str,
         limit: usize,
     ) -> rusqlite::Result<Vec<ProjectSymbolSearchResult>>;
+}
+
+pub trait WorkspacePhpTreeStore {
+    fn load_php_tree(&self) -> rusqlite::Result<PhpTree>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -393,6 +398,41 @@ impl WorkspaceSymbolSearchStore for SqliteWorkspaceIndex {
     }
 }
 
+impl WorkspacePhpTreeStore for SqliteWorkspaceIndex {
+    fn load_php_tree(&self) -> rusqlite::Result<PhpTree> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                workspace_symbols.kind,
+                workspace_symbols.name,
+                workspace_symbols.fully_qualified_name,
+                workspace_symbols.container_name,
+                workspace_symbols.file_path,
+                workspace_files.relative_path,
+                workspace_symbols.start_line,
+                workspace_symbols.start_column,
+                container_symbols.kind
+            FROM workspace_symbols
+            JOIN workspace_files ON workspace_files.path = workspace_symbols.file_path
+            LEFT JOIN workspace_symbols container_symbols
+                ON container_symbols.file_path = workspace_symbols.file_path
+                AND container_symbols.fully_qualified_name = workspace_symbols.container_name
+                AND container_symbols.kind IN ('class', 'interface', 'trait', 'enum')
+            WHERE workspace_symbols.kind IN ('class', 'interface', 'trait', 'enum', 'function', 'method', 'constant')
+            ORDER BY lower(workspace_symbols.fully_qualified_name), workspace_symbols.ordinal
+            ",
+        )?;
+        let rows = statement.query_map([], php_tree_symbol_record)?;
+        let mut symbols = Vec::new();
+
+        for row in rows {
+            symbols.push(row?);
+        }
+
+        Ok(build_php_tree(&symbols))
+    }
+}
+
 pub fn workspace_index_path(config_dir: &Path, root_path: &Path) -> PathBuf {
     let normalized = root_path.to_string_lossy().replace('\\', "/");
     let hash = stable_workspace_hash(&normalized);
@@ -613,6 +653,66 @@ fn project_symbol_search_result(
     })
 }
 
+fn php_tree_symbol_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhpTreeSymbolRecord> {
+    let kind_text: String = row.get(0)?;
+    let kind = required_php_tree_node_kind(kind_text, 0)?;
+    let container_kind = optional_php_tree_node_kind(row.get(8)?, 8)?;
+
+    Ok(PhpTreeSymbolRecord {
+        column: row.get(7)?,
+        container_kind,
+        container_name: row.get(3)?,
+        fully_qualified_name: row.get(2)?,
+        kind,
+        line_number: row.get(6)?,
+        name: row.get(1)?,
+        path: row.get(4)?,
+        relative_path: row.get(5)?,
+    })
+}
+
+fn required_php_tree_node_kind(
+    kind_text: String,
+    column: usize,
+) -> rusqlite::Result<PhpTreeNodeKind> {
+    let kind = match WorkspaceSymbolKind::from_storage_value(&kind_text) {
+        Some(kind) => kind,
+        None => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                column,
+                Type::Text,
+                Box::new(InvalidWorkspaceSymbolKind(kind_text)),
+            ))
+        }
+    };
+
+    Ok(php_tree_node_kind(kind))
+}
+
+fn optional_php_tree_node_kind(
+    kind_text: Option<String>,
+    column: usize,
+) -> rusqlite::Result<Option<PhpTreeNodeKind>> {
+    let kind_text = match kind_text {
+        Some(kind_text) => kind_text,
+        None => return Ok(None),
+    };
+
+    Ok(Some(required_php_tree_node_kind(kind_text, column)?))
+}
+
+fn php_tree_node_kind(kind: WorkspaceSymbolKind) -> PhpTreeNodeKind {
+    match kind {
+        WorkspaceSymbolKind::Class => PhpTreeNodeKind::Class,
+        WorkspaceSymbolKind::Constant => PhpTreeNodeKind::Constant,
+        WorkspaceSymbolKind::Enum => PhpTreeNodeKind::Enum,
+        WorkspaceSymbolKind::Function => PhpTreeNodeKind::Function,
+        WorkspaceSymbolKind::Interface => PhpTreeNodeKind::Interface,
+        WorkspaceSymbolKind::Method => PhpTreeNodeKind::Method,
+        WorkspaceSymbolKind::Trait => PhpTreeNodeKind::Trait,
+    }
+}
+
 fn escape_like_query(query: &str) -> String {
     let mut escaped = String::new();
 
@@ -642,9 +742,9 @@ impl Error for InvalidWorkspaceSymbolKind {}
 mod tests {
     use super::{
         commit_index_db_write, workspace_index_path, IndexCommitOutcome, SqliteWorkspaceIndex,
-        WorkspaceFileRecord, WorkspaceFileSymbols, WorkspaceIndexStore, WorkspaceSymbolKind,
-        WorkspaceSymbolRange, WorkspaceSymbolRecord, WorkspaceSymbolSearchStore,
-        WorkspaceSymbolStore,
+        WorkspaceFileRecord, WorkspaceFileSymbols, WorkspaceIndexStore, WorkspacePhpTreeStore,
+        WorkspaceSymbolKind, WorkspaceSymbolRange, WorkspaceSymbolRecord,
+        WorkspaceSymbolSearchStore, WorkspaceSymbolStore,
     };
     use crate::job_scheduler::{
         InMemoryIndexJobScheduler, IndexCommitGate, IndexCommitPermission, IndexCommitScope,
@@ -652,6 +752,7 @@ mod tests {
         IndexJobPayload, IndexJobScheduler, IndexSymbolKind, IndexSymbolRange, IndexSymbolRecord,
         ScheduleIndexJobRequest,
     };
+    use crate::php_tree::PhpTreeNodeKind;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1083,6 +1184,56 @@ mod tests {
     }
 
     #[test]
+    fn loads_php_tree_from_indexed_symbols() {
+        let database_path = temp_database_path("php-tree");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![
+                    symbol("User", "App\\Domain\\User", WorkspaceSymbolKind::Class, 10),
+                    symbol_in_container(
+                        "name",
+                        "App\\Domain\\User::name",
+                        WorkspaceSymbolKind::Method,
+                        "App\\Domain\\User",
+                        20,
+                    ),
+                    symbol(
+                        "helper",
+                        "App\\Domain\\helper",
+                        WorkspaceSymbolKind::Function,
+                        30,
+                    ),
+                ],
+            ))
+            .expect("seed symbols");
+
+        let tree = index.load_php_tree().expect("php tree");
+        let app = &tree.nodes[0];
+        let domain = &app.children[0];
+        let user = domain
+            .children
+            .iter()
+            .find(|node| node.label == "User")
+            .expect("user node");
+
+        assert_eq!(app.kind, PhpTreeNodeKind::Namespace);
+        assert_eq!(domain.label, "Domain");
+        assert_eq!(user.kind, PhpTreeNodeKind::Class);
+        assert_eq!(
+            user.fully_qualified_name.as_deref(),
+            Some("App\\Domain\\User")
+        );
+        assert_eq!(user.relative_path.as_deref(), Some("src/User.php"));
+        assert_eq!(user.children[0].label, "name");
+        assert_eq!(user.children[0].line_number, Some(20));
+    }
+
+    #[test]
     fn guarded_db_write_skips_cancelled_generation() {
         let database_path = temp_database_path("guard-cancelled");
         let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
@@ -1211,6 +1362,20 @@ mod tests {
                 start_line: 1,
             },
         }
+    }
+
+    fn symbol_in_container(
+        name: &str,
+        fully_qualified_name: &str,
+        kind: WorkspaceSymbolKind,
+        container_name: &str,
+        line_number: i64,
+    ) -> WorkspaceSymbolRecord {
+        let mut record = symbol(name, fully_qualified_name, kind, line_number);
+        record.container_name = Some(container_name.to_string());
+        record.range.start_line = line_number;
+        record.range.end_line = line_number;
+        record
     }
 
     fn index_symbol(

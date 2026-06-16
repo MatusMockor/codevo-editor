@@ -13,6 +13,7 @@ mod lsp_session;
 mod lsp_transport;
 pub mod php_parser;
 pub mod php_symbols;
+pub mod php_tree;
 mod project;
 mod search;
 mod smart_mode;
@@ -22,7 +23,7 @@ mod workspace;
 
 use index::{
     workspace_index_path, ProjectSymbolSearchResult, SqliteWorkspaceIndex, WorkspaceFileRecord,
-    WorkspaceIndexStore, WorkspaceIndexSummary, WorkspaceSymbolSearchStore,
+    WorkspaceIndexStore, WorkspaceIndexSummary, WorkspacePhpTreeStore, WorkspaceSymbolSearchStore,
 };
 use index_scan::{
     InitialMetadataScanStart, LocalWorkspaceMetadataScanStarter, MetadataScanCompletionEvent,
@@ -46,6 +47,7 @@ use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink, LanguageServerRuntimeStatus,
     LanguageServerSupervisor, StatusSink,
 };
+use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
@@ -375,6 +377,13 @@ fn search_project_symbols(
 }
 
 #[tauri::command]
+fn get_php_tree(app: AppHandle, root: String) -> Result<PhpTree, String> {
+    let root = canonicalize_workspace_root(&root)?;
+    let index = open_workspace_index(&app, &root)?;
+    index.load_php_tree().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn set_smart_mode(
     mode: IntelligenceMode,
     service: State<'_, Mutex<SmartModeService>>,
@@ -654,6 +663,7 @@ pub fn run() {
             detect_php_tools,
             detect_workspace,
             get_php_language_server_status,
+            get_php_tree,
             get_smart_mode_state,
             get_workspace_trust,
             initialize_workspace_index,

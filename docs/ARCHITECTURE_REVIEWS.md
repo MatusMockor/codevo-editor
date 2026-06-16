@@ -1245,3 +1245,43 @@ Additional final sanity review attempt:
 - `npm run build`
 - `cargo test`
 - `npm run tauri build -- --debug --bundles app`
+
+## 2026-06-16: PHP Tree Panel
+
+Scope reviewed:
+
+- `php_tree.rs` read-model builder for namespace/type/member trees
+- `WorkspacePhpTreeStore` SQLite read-side contract
+- Tauri `get_php_tree` command
+- TypeScript PHP tree domain and Tauri gateway adapter
+- workbench sidebar view state, PHP tree refresh command, and symbol navigation
+- `PhpTreePanel` recursive renderer and sidebar tab UI
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Tree building, SQLite reads, Tauri IPC, controller orchestration, and rendering each live in focused modules.
+- Open/Closed: acceptable. More symbol kinds or alternate tree grouping can extend the read-model builder without changing symbol writes or the file tree.
+- Liskov Substitution: acceptable. `WorkspacePhpTreeStore` and `PhpTreeGateway` expose narrow contracts that can be replaced by alternate stores or test adapters.
+- Interface Segregation: improved. PHP tree loading is separate from workspace file, text search, project symbol search, and index progress contracts.
+- Dependency Inversion: acceptable. The workbench depends on `PhpTreeGateway`; UI components receive data and callbacks rather than invoking Tauri directly.
+
+### Pattern Review
+
+- Repository pattern: `SqliteWorkspaceIndex` serves a PHP tree read-model from persisted symbol rows.
+- Builder pattern: `build_php_tree` assembles namespace/type/member nodes from flat symbol records.
+- Adapter pattern: Tauri command and frontend gateway adapt IPC to the domain-facing contract.
+- Command pattern: PHP tree show/refresh actions integrate through the existing command registry.
+- Composite pattern: `PhpTreeNode` recursively models namespaces, types, and members.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml php_tree`
+- `cargo test --manifest-path src-tauri/Cargo.toml loads_php_tree_from_indexed_symbols`
+- `npm test -- tauriPhpTreeGateway`
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test for sidebar tabs and non-Tauri fallback
+- `coderabbit review --agent --fast --base main` passed with 0 findings after fixing the placeholder container kind finding

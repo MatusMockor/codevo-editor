@@ -97,6 +97,12 @@ button {
   text-transform: uppercase;
 }
 
+.sidebar-tabs {
+  display: inline-flex;
+  min-width: 0;
+  gap: 2px;
+}
+
 .sidebar-header button {
   height: 26px;
   border: 1px solid #384150;
@@ -108,11 +114,23 @@ button {
   padding: 0 9px;
 }
 
-.sidebar-header button:hover {
+.sidebar-header button:hover:not(:disabled) {
   border-color: #4e9f8f;
 }
 
-.file-tree {
+.sidebar-header button:disabled {
+  color: #697383;
+  cursor: not-allowed;
+}
+
+.sidebar-tab.active {
+  border-color: #4e9f8f;
+  background: #21363a;
+  color: #f3f6f8;
+}
+
+.file-tree,
+.php-tree {
   min-height: 0;
   overflow: auto;
   padding: 6px 0 10px;
@@ -169,6 +187,11 @@ button {
 
 .tree-row small {
   color: #8f9aaa;
+}
+
+.php-tree-row small {
+  font-size: 10px;
+  text-transform: uppercase;
 }
 
 .tree-chevron {

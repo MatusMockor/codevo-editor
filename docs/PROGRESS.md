@@ -65,17 +65,18 @@ Completed:
 - Added Composer metadata detection for root PSR-4/classmap roots plus lock/installed package metadata as data.
 - Added SQLite symbol storage with transactional per-file symbol replacement, rollback coverage, and cascade cleanup when files are removed.
 - Added project symbol search over SQLite symbols with ranked class/type/function/method results and a Tauri/TypeScript gateway contract.
+- Added PHP tree panel backed by indexed namespaces, types, functions, methods, and constants.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 59 frontend tests
+- `npm test`: passing, 61 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 123 Rust tests
+- `cargo test`: passing, 127 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
-- Browser smoke test: passing for shell, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after project symbol search.
+- Browser smoke test: passing for shell, sidebar tabs, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after PHP tree panel fixes.
 
 Known issues:
 
@@ -84,4 +85,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add PHP tree panel backed by indexed namespaces/classes/members.
+1. Add PHP file member expansion in the file tree.

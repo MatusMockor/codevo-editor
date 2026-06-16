@@ -63,6 +63,12 @@ import {
   type NavigationHistory,
   type NavigationLocation,
 } from "../domain/navigation";
+import {
+  emptyPhpTree,
+  type PhpTree,
+  type PhpTreeGateway,
+  type PhpTreeNode,
+} from "../domain/phpTree";
 import { defaultWorkspaceSettings, type SettingsGateway } from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
@@ -93,11 +99,14 @@ export interface WorkbenchWorkspaceGateways {
   textSearch: TextSearchGateway;
 }
 
+export type SidebarView = "files" | "php";
+
 export function useWorkbenchController(
   workspaceGateways: WorkbenchWorkspaceGateways,
   smartModeGateway: SmartModeGateway,
   workspaceTrustGateway: WorkspaceTrustGateway,
   indexProgressGateway: IndexProgressGateway,
+  phpTreeGateway: PhpTreeGateway,
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
@@ -127,6 +136,12 @@ export function useWorkbenchController(
   const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
     initialIndexProgress,
   );
+  const [sidebarView, setSidebarView] = useState<SidebarView>("files");
+  const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
+  const [phpTreeLoading, setPhpTreeLoading] = useState(false);
+  const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState<
+    Set<string>
+  >(new Set());
   const [editorRevealTarget, setEditorRevealTarget] =
     useState<EditorRevealTarget | null>(null);
   const [navigationHistory, setNavigationHistory] =
@@ -176,6 +191,7 @@ export function useWorkbenchController(
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
+  const currentWorkspaceRootRef = useRef<string | null>(null);
 
   const activeDocument = activePath ? documents[activePath] || null : null;
   const openDocuments = openPaths
@@ -609,6 +625,7 @@ export function useWorkbenchController(
       }
 
       setWorkspaceRoot(path);
+      currentWorkspaceRootRef.current = path;
       setEntriesByDirectory({});
       setExpandedDirectories(new Set([path]));
       setDocuments({});
@@ -621,6 +638,9 @@ export function useWorkbenchController(
       setWorkspaceTrust(null);
       setLanguageServerPlan(null);
       setIndexProgress(initialIndexProgress());
+      setPhpTree(emptyPhpTree());
+      setPhpTreeExpandedNodeIds(new Set());
+      setPhpTreeLoading(false);
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
 
@@ -779,6 +799,83 @@ export function useWorkbenchController(
       }
     },
     [activePath, documents, recordCurrentNavigationLocation, reportError, workspaceFiles],
+  );
+
+  const refreshPhpTree = useCallback(async () => {
+    if (!workspaceRoot) {
+      setPhpTree(emptyPhpTree());
+      setPhpTreeExpandedNodeIds(new Set());
+      setPhpTreeLoading(false);
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    setPhpTreeLoading(true);
+
+    try {
+      const tree = await phpTreeGateway.getPhpTree(requestedRoot);
+
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      setPhpTree(tree);
+      setMessage(null);
+    } catch (error) {
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      setPhpTree(emptyPhpTree());
+      reportError("PHP Tree", error);
+    } finally {
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      setPhpTreeLoading(false);
+    }
+  }, [phpTreeGateway, reportError, workspaceRoot]);
+
+  const togglePhpTreeNode = useCallback((id: string) => {
+    setPhpTreeExpandedNodeIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(id)) {
+        next.delete(id);
+        return next;
+      }
+
+      next.add(id);
+      return next;
+    });
+  }, []);
+
+  const openPhpTreeNode = useCallback(
+    async (node: PhpTreeNode) => {
+      if (!node.path) {
+        return;
+      }
+
+      const opened = await openFile({
+        kind: "file",
+        name: getFileName(node.path),
+        path: node.path,
+      });
+
+      if (!opened || !node.lineNumber || !node.column) {
+        return;
+      }
+
+      setEditorRevealTarget({
+        path: node.path,
+        position: {
+          column: node.column,
+          lineNumber: node.lineNumber,
+        },
+      });
+    },
+    [openFile],
   );
 
   const saveActiveDocument = useCallback(async () => {
@@ -1398,6 +1495,22 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "phpTree.show",
+      title: "Show PHP Tree",
+      category: "PHP",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => setSidebarView("php"),
+    });
+
+    registry.register({
+      id: "phpTree.refresh",
+      title: "Refresh PHP Tree",
+      category: "PHP",
+      isEnabled: (context) => context.hasWorkspace,
+      run: refreshPhpTree,
+    });
+
+    registry.register({
       id: "smart.phpactorSetup",
       title: "Show PHPactor Setup",
       category: "Smart Mode",
@@ -1434,6 +1547,7 @@ export function useWorkbenchController(
     navigationHistory,
     openWorkspace,
     refreshWorkspace,
+    refreshPhpTree,
     renameActiveDocument,
     saveActiveDocument,
     startLanguageServer,
@@ -1452,6 +1566,25 @@ export function useWorkbenchController(
     hasActiveDocument: Boolean(activeDocument),
     activeDocumentDirty: Boolean(activeDocument && isDirty(activeDocument)),
   };
+
+  useEffect(() => {
+    if (sidebarView !== "php") {
+      return;
+    }
+
+    if (indexProgress.rootPath && indexProgress.rootPath !== workspaceRoot) {
+      return;
+    }
+
+    void refreshPhpTree();
+  }, [
+    indexProgress.indexedFiles,
+    indexProgress.rootPath,
+    indexProgress.status,
+    refreshPhpTree,
+    sidebarView,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -1828,6 +1961,9 @@ export function useWorkbenchController(
     openFile,
     openWorkspace,
     paletteOpen,
+    phpTree,
+    phpTreeExpandedNodeIds,
+    phpTreeLoading,
     phpTools,
     quickOpenLoading,
     quickOpenOpen,
@@ -1837,10 +1973,12 @@ export function useWorkbenchController(
     notices,
     reportCommandError: (error: unknown) => reportError("Command", error),
     reportLanguageServerError,
+    refreshPhpTree,
     saveActiveDocument,
     setActivePath: activateDocument,
     setPaletteOpen,
     setQuickOpenOpen,
+    setSidebarView,
     setQuickOpenQuery,
     setTextSearchOpen,
     setTextSearchQuery,
@@ -1853,11 +1991,14 @@ export function useWorkbenchController(
     textSearchQuery,
     textSearchResults,
     toggleDirectory,
+    togglePhpTreeNode,
     toggleSmartMode,
     updateActiveDocument,
     updateActiveEditorPosition,
+    openPhpTreeNode,
     openSearchResult,
     openTextSearchResult,
+    sidebarView,
     workspaceDescriptor,
     workspaceRoot,
     workspaceTrust,
