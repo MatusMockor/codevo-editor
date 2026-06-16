@@ -2,6 +2,7 @@ pub mod composer;
 pub mod file_watcher;
 pub mod ignore_matcher;
 pub mod index;
+pub mod index_reindex;
 pub mod index_scan;
 pub mod index_update;
 pub mod job_scheduler;
@@ -27,10 +28,12 @@ use index::{
     WorkspaceIndexStore, WorkspaceIndexSummary, WorkspacePhpFileOutlineStore,
     WorkspacePhpTreeStore, WorkspaceSymbolSearchStore,
 };
+use index_reindex::{
+    LocalWorkspaceReindexStarter, WorkspaceReindexRequest, WorkspaceReindexStarter,
+};
 use index_scan::{
-    InitialMetadataScanStart, LocalWorkspaceMetadataScanStarter, MetadataScanCompletionEvent,
-    MetadataScanEventSink, WorkspaceMetadataScanRequest, WorkspaceMetadataScanStarter,
-    METADATA_SCAN_COMPLETED_EVENT,
+    InitialMetadataScanStart, MetadataScanCompletionEvent, MetadataScanEventSink,
+    WorkspaceReindexMode, METADATA_SCAN_COMPLETED_EVENT,
 };
 use lsp::{
     JsonRpcRequest, LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus,
@@ -169,19 +172,27 @@ fn start_initial_metadata_scan(
     root_path: String,
     app: AppHandle,
 ) -> Result<InitialMetadataScanStart, String> {
+    start_workspace_reindex(root_path, WorkspaceReindexMode::Soft, None, app)
+}
+
+#[tauri::command]
+fn start_workspace_reindex(
+    root_path: String,
+    mode: WorkspaceReindexMode,
+    language: Option<String>,
+    app: AppHandle,
+) -> Result<InitialMetadataScanStart, String> {
     let root = canonicalize_workspace_root(&root_path)?;
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
-    let database_path = workspace_index_path(&config_dir, &root);
-    let starter = LocalWorkspaceMetadataScanStarter;
+    let database_path = workspace_index_database_path(&app, &root)?;
+    let starter = LocalWorkspaceReindexStarter;
     let event_sink = Arc::new(AppHandleMetadataScanEventSink::new(app));
 
     starter
         .start(
-            WorkspaceMetadataScanRequest {
+            WorkspaceReindexRequest {
                 database_path,
+                language,
+                mode,
                 root_path: root,
             },
             event_sink,
@@ -206,12 +217,17 @@ impl MetadataScanEventSink for AppHandleMetadataScanEventSink {
 }
 
 fn open_workspace_index(app: &AppHandle, root_path: &Path) -> Result<SqliteWorkspaceIndex, String> {
+    let database_path = workspace_index_database_path(app, root_path)?;
+    SqliteWorkspaceIndex::open(&database_path).map_err(|error| error.to_string())
+}
+
+fn workspace_index_database_path(app: &AppHandle, root_path: &Path) -> Result<PathBuf, String> {
     let config_dir = app
         .path()
         .app_config_dir()
         .map_err(|error| error.to_string())?;
-    let database_path = workspace_index_path(&config_dir, root_path);
-    SqliteWorkspaceIndex::open(&database_path).map_err(|error| error.to_string())
+
+    Ok(workspace_index_path(&config_dir, root_path))
 }
 
 fn canonicalize_workspace_root(root_path: &str) -> Result<PathBuf, String> {
@@ -703,6 +719,7 @@ pub fn run() {
             set_smart_mode,
             set_workspace_trust,
             start_initial_metadata_scan,
+            start_workspace_reindex,
             start_php_language_server,
             stop_php_language_server,
             text_document_completion,

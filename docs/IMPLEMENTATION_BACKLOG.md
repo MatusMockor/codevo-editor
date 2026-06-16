@@ -108,7 +108,7 @@ Scale:
 | P6-05 | Project symbol search | M | Done | Search classes/functions/methods from SQLite. |
 | P6-06 | PHP tree panel | L | Done | Namespaces/classes/members render from index. |
 | P6-07 | File tree members mode | L | Done | PHP files expand into indexed members. |
-| P6-08 | Reindex commands | M | Pending | Soft/language/hard reindex commands. |
+| P6-08 | Reindex commands | M | Done | Soft/language/hard reindex commands. |
 
 ## Phase 7: Terminal And Polish
 

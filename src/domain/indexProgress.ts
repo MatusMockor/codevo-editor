@@ -1,9 +1,13 @@
 export type UnsubscribeFn = () => void;
 
 export interface MetadataScanReport {
+  changedFiles: number;
   erroredEntries: number;
   indexedFiles: number;
+  parsedFiles: number;
+  removedFiles: number;
   skippedEntries: number;
+  symbolsIndexed: number;
 }
 
 export interface InitialMetadataScanStart {
@@ -13,6 +17,7 @@ export interface InitialMetadataScanStart {
 }
 
 export type MetadataScanCompletionStatus = "completed" | "failed";
+export type WorkspaceReindexMode = "hard" | "language" | "soft";
 
 export interface MetadataScanCompletionEvent {
   databasePath: string;
@@ -37,6 +42,11 @@ export interface IndexProgressState {
 export interface IndexProgressGateway {
   startInitialMetadataScan(
     rootPath: string,
+  ): Promise<InitialMetadataScanStart>;
+  startReindex(
+    rootPath: string,
+    mode: WorkspaceReindexMode,
+    language?: string,
   ): Promise<InitialMetadataScanStart>;
   subscribeMetadataScanCompletion(
     listener: (event: MetadataScanCompletionEvent) => void,
@@ -129,6 +139,14 @@ export function indexProgressCompletionMessage(
 
   if (!report) {
     return "Index scan completed.";
+  }
+
+  if (report.parsedFiles > 0 || report.symbolsIndexed > 0) {
+    return `Indexed ${report.indexedFiles} files, parsed ${report.parsedFiles} PHP files, ${report.symbolsIndexed} symbols (${report.skippedEntries} skipped, ${report.erroredEntries} errors).`;
+  }
+
+  if (report.removedFiles > 0) {
+    return `Indexed ${report.indexedFiles} files, removed ${report.removedFiles} missing files (${report.skippedEntries} skipped, ${report.erroredEntries} errors).`;
   }
 
   return `Indexed ${report.indexedFiles} files (${report.skippedEntries} skipped, ${report.erroredEntries} errors).`;

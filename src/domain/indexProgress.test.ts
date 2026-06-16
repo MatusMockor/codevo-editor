@@ -32,11 +32,11 @@ describe("indexProgress", () => {
   it("applies completed scan counts", () => {
     const progress = applyMetadataScanCompletion(
       initialIndexProgress(),
-      completedEvent({
+      completedEvent(scanReport({
         erroredEntries: 0,
         indexedFiles: 42,
         skippedEntries: 7,
-      }),
+      })),
     );
 
     expect(progress.status).toBe("completed");
@@ -47,15 +47,28 @@ describe("indexProgress", () => {
   });
 
   it("labels completed scans with entry errors", () => {
-    const event = completedEvent({
+    const event = completedEvent(scanReport({
       erroredEntries: 2,
       indexedFiles: 8,
       skippedEntries: 3,
-    });
+    }));
     const progress = applyMetadataScanCompletion(initialIndexProgress(), event);
 
     expect(indexProgressLabel(progress)).toBe("Index: 8 files · 2 errors");
     expect(indexProgressNoticeSeverity(event)).toBe("warning");
+  });
+
+  it("includes PHP symbol reindex counts in completion messages", () => {
+    const event = completedEvent(scanReport({
+      indexedFiles: 3,
+      parsedFiles: 2,
+      skippedEntries: 1,
+      symbolsIndexed: 8,
+    }));
+
+    expect(indexProgressCompletionMessage(event)).toBe(
+      "Indexed 3 files, parsed 2 PHP files, 8 symbols (1 skipped, 0 errors).",
+    );
   });
 
   it("tracks failed scans", () => {
@@ -79,6 +92,21 @@ function completedEvent(
     report,
     rootPath: "/workspace",
     status: "completed",
+  };
+}
+
+function scanReport(
+  overrides: Partial<NonNullable<MetadataScanCompletionEvent["report"]>>,
+): NonNullable<MetadataScanCompletionEvent["report"]> {
+  return {
+    changedFiles: 0,
+    erroredEntries: 0,
+    indexedFiles: 0,
+    parsedFiles: 0,
+    removedFiles: 0,
+    skippedEntries: 0,
+    symbolsIndexed: 0,
+    ...overrides,
   };
 }
 

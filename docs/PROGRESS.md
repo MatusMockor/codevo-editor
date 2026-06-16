@@ -67,17 +67,18 @@ Completed:
 - Added project symbol search over SQLite symbols with ranked class/type/function/method results and a Tauri/TypeScript gateway contract.
 - Added PHP tree panel backed by indexed namespaces, types, functions, methods, and constants.
 - Added PHP file outlines in the file tree backed by per-file indexed symbols.
+- Added soft, PHP-language, and hard workspace reindex commands with background PHP symbol parsing.
 
 Current verification:
 
 - `npm run check`: passing
-- `npm test`: passing, 65 frontend tests
+- `npm test`: passing, 66 frontend tests
 - `npm run build`: passing
 - `npm audit --json`: zero vulnerabilities
-- `cargo test`: passing, 130 Rust tests
+- `cargo test`: passing, 137 Rust tests
 - `npm run tauri build -- --debug --bundles app`: passing
-- Browser smoke test: passing for shell, sidebar tabs, file-outline UI wiring, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after PHP file outline.
+- Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, empty states, command palette, language-server runtime subscription wiring, and non-Tauri development fallback
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the reindex commands slice.
 
 Known issues:
 
@@ -86,4 +87,4 @@ Known issues:
 
 Next implementation slice:
 
-1. Add reindex commands.
+1. Start Phase 7 terminal and polish work.

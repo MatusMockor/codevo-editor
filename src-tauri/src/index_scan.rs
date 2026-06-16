@@ -1,6 +1,6 @@
 use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
 use crate::index::{SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt, fs, io,
@@ -217,9 +217,13 @@ impl WorkspaceMetadataScanner for LocalWorkspaceMetadataScanner {
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataScanReport {
+    pub changed_files: usize,
     pub errored_entries: usize,
     pub indexed_files: usize,
+    pub parsed_files: usize,
+    pub removed_files: usize,
     pub skipped_entries: usize,
+    pub symbols_indexed: usize,
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
@@ -248,6 +252,14 @@ pub enum InitialMetadataScanStartStatus {
     Started,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceReindexMode {
+    Hard,
+    Language,
+    Soft,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataScanCompletionEvent {
@@ -259,7 +271,11 @@ pub struct MetadataScanCompletionEvent {
 }
 
 impl MetadataScanCompletionEvent {
-    fn completed(root_path: &Path, database_path: &Path, report: MetadataScanReport) -> Self {
+    pub(crate) fn completed(
+        root_path: &Path,
+        database_path: &Path,
+        report: MetadataScanReport,
+    ) -> Self {
         Self {
             database_path: database_path.to_string_lossy().to_string(),
             message: None,
@@ -269,10 +285,20 @@ impl MetadataScanCompletionEvent {
         }
     }
 
-    fn failed(root_path: &Path, database_path: &Path, error: MetadataScanError) -> Self {
+    pub(crate) fn failed(root_path: &Path, database_path: &Path, error: MetadataScanError) -> Self {
         Self {
             database_path: database_path.to_string_lossy().to_string(),
             message: Some(error.to_string()),
+            report: None,
+            root_path: root_path.to_string_lossy().to_string(),
+            status: MetadataScanCompletionStatus::Failed,
+        }
+    }
+
+    pub(crate) fn failed_message(root_path: &Path, database_path: &Path, message: String) -> Self {
+        Self {
+            database_path: database_path.to_string_lossy().to_string(),
+            message: Some(message),
             report: None,
             root_path: root_path.to_string_lossy().to_string(),
             status: MetadataScanCompletionStatus::Failed,
@@ -461,9 +487,13 @@ mod tests {
         assert_eq!(
             report,
             MetadataScanReport {
+                changed_files: 0,
                 errored_entries: 0,
                 indexed_files: 2,
+                parsed_files: 0,
+                removed_files: 0,
                 skipped_entries: 0,
+                symbols_indexed: 0,
             }
         );
         assert_eq!(index.summary().expect("summary").file_count, 2);

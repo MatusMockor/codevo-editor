@@ -18,6 +18,7 @@ import {
   type IndexProgressState,
   type MetadataScanCompletionEvent,
   type UnsubscribeFn as IndexProgressUnsubscribeFn,
+  type WorkspaceReindexMode,
 } from "../domain/indexProgress";
 import {
   languageServerDiagnosticNoticeGroup,
@@ -1466,7 +1467,10 @@ export function useWorkbenchController(
     await stopLanguageServerRuntime();
   }, [stopLanguageServerRuntime]);
 
-  const startIndexScan = useCallback(async () => {
+  const startReindex = useCallback(async (
+    mode: WorkspaceReindexMode,
+    language?: string,
+  ) => {
     if (!workspaceRoot) {
       return;
     }
@@ -1474,8 +1478,11 @@ export function useWorkbenchController(
     pendingIndexScanRef.current = true;
 
     try {
-      const started =
-        await indexProgressGateway.startInitialMetadataScan(workspaceRoot);
+      const started = await indexProgressGateway.startReindex(
+        workspaceRoot,
+        mode,
+        language,
+      );
       activeIndexRootRef.current = started.rootPath;
 
       if (!pendingIndexScanRef.current) {
@@ -1483,12 +1490,16 @@ export function useWorkbenchController(
       }
 
       setIndexProgress(startIndexProgress(started));
-      setMessage("Index scan started.");
+      setMessage(reindexStartMessage(mode));
     } catch (error) {
       pendingIndexScanRef.current = false;
       reportError("Index", error);
     }
   }, [indexProgressGateway, reportError, workspaceRoot]);
+
+  const startIndexScan = useCallback(async () => {
+    await startReindex("soft");
+  }, [startReindex]);
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -1631,12 +1642,30 @@ export function useWorkbenchController(
     });
 
     registry.register({
-      id: "index.startMetadataScan",
-      title: "Start Index Scan",
+      id: "index.reindexSoft",
+      title: "Soft Reindex Workspace",
       category: "Index",
       isEnabled: (context) =>
         context.hasWorkspace && indexProgress.status !== "scanning",
       run: startIndexScan,
+    });
+
+    registry.register({
+      id: "index.reindexPhp",
+      title: "Reindex PHP Symbols",
+      category: "Index",
+      isEnabled: (context) =>
+        context.hasWorkspace && indexProgress.status !== "scanning",
+      run: () => startReindex("language", "php"),
+    });
+
+    registry.register({
+      id: "index.reindexHard",
+      title: "Hard Rebuild Index",
+      category: "Index",
+      isEnabled: (context) =>
+        context.hasWorkspace && indexProgress.status !== "scanning",
+      run: () => startReindex("hard"),
     });
 
     registry.register({
@@ -1697,6 +1726,7 @@ export function useWorkbenchController(
     saveActiveDocument,
     startLanguageServer,
     startIndexScan,
+    startReindex,
     stopLanguageServer,
     toggleSmartMode,
     toggleWorkspaceTrust,
@@ -2195,4 +2225,16 @@ export function useWorkbenchController(
 
 function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;
+}
+
+function reindexStartMessage(mode: WorkspaceReindexMode): string {
+  if (mode === "hard") {
+    return "Hard index rebuild started.";
+  }
+
+  if (mode === "language") {
+    return "PHP symbol reindex started.";
+  }
+
+  return "Index scan started.";
 }

@@ -1325,3 +1325,44 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test for file tree shell and non-Tauri fallback
 - `coderabbit review --agent --fast --base main` passed with 0 findings
+
+## 2026-06-16: Workspace Reindex Commands
+
+Scope reviewed:
+
+- `WorkspaceReindexMode` for soft, language, and hard runs
+- `index_reindex.rs` background reindex starter and pipeline
+- SQLite maintenance reads/clears for workspace files and language symbols
+- PHP parser/extractor integration into symbol replacement writes
+- Tauri `start_workspace_reindex` command
+- frontend `IndexProgressGateway.startReindex`
+- command-palette actions for soft reindex, PHP symbol reindex, and hard rebuild
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Reindex orchestration lives in `index_reindex.rs`; metadata scanning, PHP parsing, symbol extraction, SQLite storage, and UI commands remain separate modules.
+- Open/Closed: acceptable. New reindex strategies can extend `WorkspaceReindexMode` and the pipeline without changing file tree or PHP tree rendering.
+- Liskov Substitution: acceptable. The reindex starter follows the same async starter/event-sink shape as the metadata scan starter.
+- Interface Segregation: improved. Maintenance reads/clears are isolated from normal index reads, symbol search, and file outline stores.
+- Dependency Inversion: acceptable. The frontend depends on `IndexProgressGateway`; the Tauri command adapts IPC to the backend starter.
+
+### Pattern Review
+
+- Pipeline pattern: reindex runs scan, diff/clear, parse, symbol extraction, DB replacement, and event publication.
+- Strategy pattern: `WorkspaceReindexMode` selects soft, PHP-language, or hard rebuild behavior.
+- Repository pattern: `SqliteWorkspaceIndex` exposes focused maintenance and symbol write operations.
+- Adapter pattern: Tauri and TypeScript gateways adapt reindex commands to the UI-facing contract.
+- Command pattern: command palette entries trigger the three reindex modes.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml index_reindex`
+- `cargo test --manifest-path src-tauri/Cargo.toml clearing_`
+- `npm test -- indexProgress tauriIndexProgressGateway`
+- `npm run check`
+- `npm test`
+- `npm run build`
+- `cargo test`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test for shell and non-Tauri fallback
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the hard rebuild removed-file count fix

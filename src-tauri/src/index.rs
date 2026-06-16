@@ -43,6 +43,12 @@ pub trait WorkspaceIndexStore {
     fn upsert_file(&self, record: &WorkspaceFileRecord) -> rusqlite::Result<()>;
 }
 
+pub trait WorkspaceIndexMaintenanceStore {
+    fn clear_workspace_files(&self) -> rusqlite::Result<usize>;
+    fn clear_symbols_for_language(&self, language: &str) -> rusqlite::Result<usize>;
+    fn list_workspace_files(&self) -> rusqlite::Result<Vec<WorkspaceFileRecord>>;
+}
+
 pub trait WorkspaceSymbolStore {
     fn list_file_symbols(&self, file_path: &str) -> rusqlite::Result<Vec<WorkspaceSymbolRecord>>;
     fn replace_file_symbols(&self, file_symbols: &WorkspaceFileSymbols) -> rusqlite::Result<()>;
@@ -476,6 +482,49 @@ impl WorkspacePhpTreeStore for SqliteWorkspaceIndex {
     }
 }
 
+impl WorkspaceIndexMaintenanceStore for SqliteWorkspaceIndex {
+    fn clear_workspace_files(&self) -> rusqlite::Result<usize> {
+        self.connection.execute("DELETE FROM workspace_files", [])
+    }
+
+    fn clear_symbols_for_language(&self, language: &str) -> rusqlite::Result<usize> {
+        self.connection.execute(
+            "
+            DELETE FROM workspace_symbols
+            WHERE file_path IN (
+                SELECT path
+                FROM workspace_files
+                WHERE language = ?
+            )
+            ",
+            [language],
+        )
+    }
+
+    fn list_workspace_files(&self) -> rusqlite::Result<Vec<WorkspaceFileRecord>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT
+                path,
+                relative_path,
+                language,
+                size_bytes,
+                modified_at_unix
+            FROM workspace_files
+            ORDER BY path
+            ",
+        )?;
+        let rows = statement.query_map([], workspace_file_record_from_row)?;
+        let mut records = Vec::new();
+
+        for row in rows {
+            records.push(row?);
+        }
+
+        Ok(records)
+    }
+}
+
 pub fn workspace_index_path(config_dir: &Path, root_path: &Path) -> PathBuf {
     let normalized = root_path.to_string_lossy().replace('\\', "/");
     let hash = stable_workspace_hash(&normalized);
@@ -582,6 +631,18 @@ fn workspace_file_record(metadata: &IndexFileMetadata) -> WorkspaceFileRecord {
         relative_path: metadata.relative_path.clone(),
         size_bytes: metadata.size_bytes,
     }
+}
+
+fn workspace_file_record_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<WorkspaceFileRecord> {
+    Ok(WorkspaceFileRecord {
+        path: row.get(0)?,
+        relative_path: row.get(1)?,
+        language: row.get(2)?,
+        size_bytes: row.get(3)?,
+        modified_at_unix: row.get(4)?,
+    })
 }
 
 fn workspace_file_symbols(file_symbols: &IndexFileSymbols) -> WorkspaceFileSymbols {
@@ -849,10 +910,10 @@ impl Error for InvalidWorkspaceSymbolKind {}
 mod tests {
     use super::{
         commit_index_db_write, workspace_index_path, IndexCommitOutcome, SqliteWorkspaceIndex,
-        WorkspaceFileRecord, WorkspaceFileSymbols, WorkspaceIndexStore,
-        WorkspacePhpFileOutlineStore, WorkspacePhpTreeStore, WorkspaceSymbolKind,
-        WorkspaceSymbolRange, WorkspaceSymbolRecord, WorkspaceSymbolSearchStore,
-        WorkspaceSymbolStore,
+        WorkspaceFileRecord, WorkspaceFileSymbols, WorkspaceIndexMaintenanceStore,
+        WorkspaceIndexStore, WorkspacePhpFileOutlineStore, WorkspacePhpTreeStore,
+        WorkspaceSymbolKind, WorkspaceSymbolRange, WorkspaceSymbolRecord,
+        WorkspaceSymbolSearchStore, WorkspaceSymbolStore,
     };
     use crate::job_scheduler::{
         InMemoryIndexJobScheduler, IndexCommitGate, IndexCommitPermission, IndexCommitScope,
@@ -1039,6 +1100,75 @@ mod tests {
             .list_file_symbols("/project/src/User.php")
             .expect("symbols")
             .is_empty());
+    }
+
+    #[test]
+    fn clearing_workspace_files_cascades_symbol_rows() {
+        let database_path = temp_database_path("clear-workspace");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![symbol("User", "App\\User", WorkspaceSymbolKind::Class, 10)],
+            ))
+            .expect("seed symbols");
+
+        let cleared = index.clear_workspace_files().expect("clear files");
+        let symbols = index
+            .list_file_symbols("/project/src/User.php")
+            .expect("list symbols");
+
+        assert_eq!(cleared, 1);
+        assert_eq!(index.summary().expect("summary").file_count, 0);
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn clearing_symbols_for_language_keeps_other_languages() {
+        let database_path = temp_database_path("clear-language-symbols");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/User.php", 128))
+            .expect("seed php file");
+        index
+            .upsert_file(&WorkspaceFileRecord {
+                language: "typescript".to_string(),
+                modified_at_unix: 10,
+                path: "/project/src/app.ts".to_string(),
+                relative_path: "src/app.ts".to_string(),
+                size_bytes: 64,
+            })
+            .expect("seed ts file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/User.php",
+                vec![symbol("User", "App\\User", WorkspaceSymbolKind::Class, 10)],
+            ))
+            .expect("seed php symbols");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/app.ts",
+                vec![symbol("app", "app", WorkspaceSymbolKind::Function, 10)],
+            ))
+            .expect("seed ts symbols");
+
+        let cleared = index
+            .clear_symbols_for_language("php")
+            .expect("clear php symbols");
+        let php_symbols = index
+            .list_file_symbols("/project/src/User.php")
+            .expect("list php symbols");
+        let ts_symbols = index
+            .list_file_symbols("/project/src/app.ts")
+            .expect("list ts symbols");
+
+        assert_eq!(cleared, 1);
+        assert!(php_symbols.is_empty());
+        assert_eq!(ts_symbols.len(), 1);
+        assert_eq!(index.summary().expect("summary").file_count, 2);
     }
 
     #[test]

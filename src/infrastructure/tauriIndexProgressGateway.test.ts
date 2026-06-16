@@ -24,6 +24,9 @@ describe("TauriIndexProgressGateway", () => {
     await expect(
       gateway.startInitialMetadataScan("/workspace"),
     ).rejects.toThrow("Indexing requires the Tauri desktop runtime.");
+    await expect(gateway.startReindex("/workspace", "soft")).rejects.toThrow(
+      "Indexing requires the Tauri desktop runtime.",
+    );
 
     const unsubscribe = await gateway.subscribeMetadataScanCompletion(vi.fn());
     unsubscribe();
@@ -42,9 +45,13 @@ describe("TauriIndexProgressGateway", () => {
       databasePath: "/config/index.sqlite3",
       message: null,
       report: {
+        changedFiles: 3,
         erroredEntries: 0,
         indexedFiles: 12,
+        parsedFiles: 3,
+        removedFiles: 1,
         skippedEntries: 2,
+        symbolsIndexed: 18,
       },
       rootPath: "/workspace",
       status: "completed",
@@ -64,9 +71,17 @@ describe("TauriIndexProgressGateway", () => {
     await expect(gateway.startInitialMetadataScan("/workspace")).resolves.toEqual(
       start,
     );
+    await expect(gateway.startReindex("/workspace", "language", "php")).resolves.toEqual(
+      start,
+    );
     await gateway.subscribeMetadataScanCompletion(listener);
 
     expect(invokeCommand).toHaveBeenCalledWith("start_initial_metadata_scan", {
+      rootPath: "/workspace",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("start_workspace_reindex", {
+      language: "php",
+      mode: "language",
       rootPath: "/workspace",
     });
     expect(listenToEvent).toHaveBeenCalledWith(

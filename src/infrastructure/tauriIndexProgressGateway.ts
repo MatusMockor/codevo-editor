@@ -5,6 +5,7 @@ import type {
   InitialMetadataScanStart,
   MetadataScanCompletionEvent,
   UnsubscribeFn,
+  WorkspaceReindexMode,
 } from "../domain/indexProgress";
 
 const METADATA_SCAN_COMPLETED_EVENT = "index://metadata-scan-completed";
@@ -38,6 +39,22 @@ export class TauriIndexProgressGateway implements IndexProgressGateway {
     }
 
     return this.invokeCommand("start_initial_metadata_scan", {
+      rootPath,
+    });
+  }
+
+  startReindex(
+    rootPath: string,
+    mode: WorkspaceReindexMode,
+    language?: string,
+  ): Promise<InitialMetadataScanStart> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.reject(new Error(DESKTOP_RUNTIME_REQUIRED));
+    }
+
+    return this.invokeCommand("start_workspace_reindex", {
+      language,
+      mode,
       rootPath,
     });
   }
