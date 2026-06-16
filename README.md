@@ -1,4 +1,4 @@
-# Editor
+# Mockor Editor
 
 A lightweight Fleet-like desktop code editor built with Tauri, React, TypeScript, Rust, and Monaco.
 

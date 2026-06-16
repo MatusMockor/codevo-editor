@@ -876,24 +876,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
-name = "editor"
-version = "0.1.0"
-dependencies = [
- "ignore",
- "notify",
- "portable-pty",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tree-sitter",
- "tree-sitter-php",
-]
-
-[[package]]
 name = "embed-resource"
 version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2202,6 +2184,24 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mockor-editor"
+version = "0.1.0"
+dependencies = [
+ "ignore",
+ "notify",
+ "portable-pty",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tree-sitter",
+ "tree-sitter-php",
 ]
 
 [[package]]

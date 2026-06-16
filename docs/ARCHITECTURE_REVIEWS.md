@@ -1620,3 +1620,44 @@ Scope reviewed:
 - `npm run tauri build -- --debug --bundles app`
 - Browser smoke test for light/dark/system theme switching, active-state token values, terminal lazy-load rendering, dark reset, and console errors
 - `coderabbit review --agent --fast --base main`: passing with 0 findings
+
+## 2026-06-16: Product Icon And Metadata
+
+Scope reviewed:
+
+- `Mockor Editor` product, window, HTML title, package, and bundle metadata
+- custom source SVG and generated desktop icon assets for Tauri bundle targets
+- web favicon replacement for the scaffold Vite/Tauri assets
+- Rust package rename to align the internal executable with product packaging
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Product identity is confined to packaging metadata, static icon assets, and the HTML shell.
+- Open/Closed: acceptable. Future signing, notarization, update channel, and sidecar metadata can extend the bundle config without changing editor runtime code.
+- Liskov Substitution: not materially affected. Runtime ports and service abstractions are unchanged.
+- Interface Segregation: acceptable. No application service or gateway contracts changed.
+- Dependency Inversion: not materially affected. This slice stays at the packaging/static asset boundary.
+
+### Pattern Review
+
+- Configuration-as-policy: Tauri bundle metadata carries product identity separately from runtime behavior.
+- Generated asset pipeline: a single source SVG is used to generate the desktop icon set consumed by the bundle config.
+
+### Residual Risk
+
+- DMG packaging remains in P8-02B.
+- Mobile Android/iOS icon readiness remains out of scope for this desktop packaging slice.
+- License and homepage bundle fields remain unset until the project has explicit values.
+
+### Verification
+
+- `npm run check`
+- `npm test`: 86 frontend tests
+- `npm run build`
+- `npm audit --json`
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --check`
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 144 Rust tests
+- `npm run tauri build -- --debug --bundles app`
+- `Info.plist` check for `CFBundleName`, `CFBundleDisplayName`, `CFBundleExecutable`, `CFBundleIdentifier`, `CFBundleShortVersionString`, and `CFBundleIconFile`
+- Browser smoke test for `Mockor Editor` document title, `/app-icon.svg` favicon, shell render, and console errors
+- `coderabbit review --agent --fast --base main`: passing with 0 findings
