@@ -5,19 +5,29 @@ import {
   bottomPanelLabel,
   type BottomPanelView,
 } from "../domain/bottomPanel";
+import type {
+  IndexHealthLogEntry,
+  IndexProgressState,
+} from "../domain/indexProgress";
 import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
+import { IndexHealthPanel } from "./IndexHealthPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 
 interface BottomPanelProps {
   activeView: BottomPanelView;
+  indexHealthLogs: IndexHealthLogEntry[];
+  indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
   onClearProblems(): void;
+  onHardReindex(): void;
+  onPhpReindex(): void;
   onSelectView(view: BottomPanelView): void;
+  onSoftReindex(): void;
   terminalGateway: TerminalGateway;
-  terminalRootPath: string | null;
+  workspaceRoot: string | null;
 }
 
-const bottomPanelViews: BottomPanelView[] = ["problems", "terminal"];
+const bottomPanelViews: BottomPanelView[] = ["problems", "index", "terminal"];
 const LazyTerminalPanel = lazy(() =>
   import("./TerminalPanel").then((module) => ({
     default: module.TerminalPanel,
@@ -26,11 +36,16 @@ const LazyTerminalPanel = lazy(() =>
 
 export function BottomPanel({
   activeView,
+  indexHealthLogs,
+  indexProgress,
   notices,
   onClearProblems,
+  onHardReindex,
+  onPhpReindex,
   onSelectView,
+  onSoftReindex,
   terminalGateway,
-  terminalRootPath,
+  workspaceRoot,
 }: BottomPanelProps) {
   const [terminalMounted, setTerminalMounted] = useState(
     activeView === "terminal",
@@ -139,6 +154,15 @@ export function BottomPanel({
       </header>
       <div className="bottom-panel-body">
         <ProblemsPanel isActive={activeView === "problems"} notices={notices} />
+        <IndexHealthPanel
+          isActive={activeView === "index"}
+          logs={indexHealthLogs}
+          onHardReindex={onHardReindex}
+          onPhpReindex={onPhpReindex}
+          onSoftReindex={onSoftReindex}
+          progress={indexProgress}
+          rootPath={workspaceRoot}
+        />
         {terminalMounted ? (
           <Suspense
             fallback={
@@ -153,7 +177,7 @@ export function BottomPanel({
             <LazyTerminalPanel
               isActive={activeView === "terminal"}
               profileId={selectedTerminalProfileId}
-              rootPath={terminalRootPath}
+              rootPath={workspaceRoot}
               terminalGateway={terminalGateway}
             />
           </Suspense>

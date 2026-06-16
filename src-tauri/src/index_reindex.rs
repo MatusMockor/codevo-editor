@@ -288,14 +288,20 @@ fn parse_record(
     let source = match fs::read_to_string(&record.path) {
         Ok(source) => source,
         Err(_) => {
-            report.errored_entries += 1;
+            report.record_error(
+                record.relative_path.clone(),
+                "PHP source could not be read.",
+            );
             return;
         }
     };
     let tree = match parser.parse(&source) {
         Ok(tree) => tree,
         Err(_) => {
-            report.errored_entries += 1;
+            report.record_error(
+                record.relative_path.clone(),
+                "PHP source could not be parsed.",
+            );
             return;
         }
     };
@@ -308,7 +314,10 @@ fn parse_record(
     };
 
     if index.replace_file_symbols(&file_symbols).is_err() {
-        report.errored_entries += 1;
+        report.record_error(
+            record.relative_path.clone(),
+            "PHP symbols could not be written.",
+        );
         return;
     }
 

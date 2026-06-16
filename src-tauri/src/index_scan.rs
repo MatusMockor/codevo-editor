@@ -11,6 +11,7 @@ use std::{
 };
 
 pub const METADATA_SCAN_COMPLETED_EVENT: &str = "index://metadata-scan-completed";
+const MAX_SCAN_HEALTH_DETAILS: usize = 100;
 
 pub trait MetadataLanguageDetector: Send + Sync {
     fn language_for_path(&self, path: &Path) -> String;
@@ -80,7 +81,10 @@ impl LocalWorkspaceMetadataScanner {
         let entries = match fs::read_dir(directory) {
             Ok(entries) => entries,
             Err(_) => {
-                collection.report.errored_entries += 1;
+                collection.report.record_error(
+                    scan_detail_path(root_path, directory),
+                    "Directory could not be read.",
+                );
                 return Ok(());
             }
         };
@@ -89,7 +93,10 @@ impl LocalWorkspaceMetadataScanner {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(_) => {
-                    collection.report.errored_entries += 1;
+                    collection.report.record_error(
+                        scan_detail_path(root_path, directory),
+                        "Directory entry could not be read.",
+                    );
                     continue;
                 }
             };
@@ -109,19 +116,27 @@ impl LocalWorkspaceMetadataScanner {
         let file_type = match fs::symlink_metadata(path) {
             Ok(file_type) => file_type,
             Err(_) => {
-                collection.report.errored_entries += 1;
+                collection.report.record_error(
+                    scan_detail_path(root_path, path),
+                    "Metadata could not be read.",
+                );
                 return Ok(());
             }
         };
         let file_type = file_type.file_type();
 
         if file_type.is_symlink() {
-            collection.report.skipped_entries += 1;
+            collection
+                .report
+                .record_skip(scan_detail_path(root_path, path), "Symlink skipped.");
             return Ok(());
         }
 
         if matcher.is_ignored(&path, file_type.is_dir()) {
-            collection.report.skipped_entries += 1;
+            collection.report.record_skip(
+                scan_detail_path(root_path, path),
+                "Ignored by workspace rules.",
+            );
             return Ok(());
         }
 
@@ -131,7 +146,10 @@ impl LocalWorkspaceMetadataScanner {
         }
 
         if !file_type.is_file() {
-            collection.report.skipped_entries += 1;
+            collection.report.record_skip(
+                scan_detail_path(root_path, path),
+                "Unsupported file type skipped.",
+            );
             return Ok(());
         }
 
@@ -147,21 +165,30 @@ impl LocalWorkspaceMetadataScanner {
         let metadata = match fs::metadata(path) {
             Ok(metadata) => metadata,
             Err(_) => {
-                collection.report.errored_entries += 1;
+                collection.report.record_error(
+                    scan_detail_path(root_path, path),
+                    "File metadata could not be read.",
+                );
                 return Ok(());
             }
         };
         let canonical_path = match path.canonicalize() {
             Ok(path) => path,
             Err(_) => {
-                collection.report.errored_entries += 1;
+                collection.report.record_error(
+                    scan_detail_path(root_path, path),
+                    "Path could not be resolved.",
+                );
                 return Ok(());
             }
         };
         let relative_path = match relative_path(root_path, &canonical_path) {
             Some(path) => path,
             None => {
-                collection.report.skipped_entries += 1;
+                collection.report.record_skip(
+                    canonical_path.to_string_lossy().to_string(),
+                    "Path is outside the workspace.",
+                );
                 return Ok(());
             }
         };
@@ -218,12 +245,44 @@ impl WorkspaceMetadataScanner for LocalWorkspaceMetadataScanner {
 #[serde(rename_all = "camelCase")]
 pub struct MetadataScanReport {
     pub changed_files: usize,
+    pub error_details: Vec<MetadataScanHealthDetail>,
     pub errored_entries: usize,
     pub indexed_files: usize,
     pub parsed_files: usize,
     pub removed_files: usize,
+    pub skipped_details: Vec<MetadataScanHealthDetail>,
     pub skipped_entries: usize,
     pub symbols_indexed: usize,
+}
+
+impl MetadataScanReport {
+    pub fn record_error(&mut self, path: String, reason: &str) {
+        self.errored_entries += 1;
+        push_health_detail(&mut self.error_details, path, reason);
+    }
+
+    pub fn record_skip(&mut self, path: String, reason: &str) {
+        self.skipped_entries += 1;
+        push_health_detail(&mut self.skipped_details, path, reason);
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataScanHealthDetail {
+    pub path: String,
+    pub reason: String,
+}
+
+fn push_health_detail(details: &mut Vec<MetadataScanHealthDetail>, path: String, reason: &str) {
+    if details.len() >= MAX_SCAN_HEALTH_DETAILS {
+        return;
+    }
+
+    details.push(MetadataScanHealthDetail {
+        path,
+        reason: reason.to_string(),
+    });
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
@@ -424,6 +483,13 @@ fn relative_path(root_path: &Path, path: &Path) -> Option<String> {
         .map(|path| path.to_string_lossy().replace('\\', "/"))
 }
 
+fn scan_detail_path(root_path: &Path, path: &Path) -> String {
+    match relative_path(root_path, path) {
+        Some(path) => path,
+        None => path.to_string_lossy().to_string(),
+    }
+}
+
 fn absolute_candidate(root_path: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         return path.to_path_buf();
@@ -488,10 +554,12 @@ mod tests {
             report,
             MetadataScanReport {
                 changed_files: 0,
+                error_details: Vec::new(),
                 errored_entries: 0,
                 indexed_files: 2,
                 parsed_files: 0,
                 removed_files: 0,
+                skipped_details: Vec::new(),
                 skipped_entries: 0,
                 symbols_indexed: 0,
             }
@@ -530,6 +598,20 @@ mod tests {
         assert_eq!(report.errored_entries, 0);
         assert_eq!(report.indexed_files, 2);
         assert_eq!(report.skipped_entries, 3);
+        let mut skipped_details = report
+            .skipped_details
+            .iter()
+            .map(|detail| (detail.path.as_str(), detail.reason.as_str()))
+            .collect::<Vec<_>>();
+        skipped_details.sort();
+        assert_eq!(
+            skipped_details,
+            vec![
+                ("debug.log", "Ignored by workspace rules."),
+                ("generated", "Ignored by workspace rules."),
+                ("vendor", "Ignored by workspace rules."),
+            ]
+        );
         drop(index);
 
         let relative_paths: Vec<String> = indexed_records(&database_path)
@@ -564,6 +646,14 @@ mod tests {
         assert_eq!(report.errored_entries, 0);
         assert_eq!(report.indexed_files, 1);
         assert_eq!(report.skipped_entries, 2);
+        assert_eq!(
+            report
+                .skipped_details
+                .iter()
+                .map(|detail| detail.reason.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Symlink skipped.", "Symlink skipped."]
+        );
         drop(index);
 
         let relative_paths: Vec<String> = indexed_records(&database_path)
@@ -583,6 +673,23 @@ mod tests {
             "typescript"
         );
         assert_eq!(detector.language_for_path(Path::new("README")), "plaintext");
+    }
+
+    #[test]
+    fn health_details_are_capped_while_counts_keep_growing() {
+        let mut report = MetadataScanReport::default();
+
+        for index in 0..105 {
+            report.record_skip(format!("vendor/{index}.php"), "Ignored by workspace rules.");
+            report.record_error(format!("broken/{index}.php"), "Metadata could not be read.");
+        }
+
+        assert_eq!(report.skipped_entries, 105);
+        assert_eq!(report.errored_entries, 105);
+        assert_eq!(report.skipped_details.len(), 100);
+        assert_eq!(report.error_details.len(), 100);
+        assert_eq!(report.skipped_details[99].path, "vendor/99.php");
+        assert_eq!(report.error_details[99].path, "broken/99.php");
     }
 
     #[test]

@@ -46,10 +46,12 @@ describe("TauriIndexProgressGateway", () => {
       message: null,
       report: {
         changedFiles: 3,
+        errorDetails: [],
         erroredEntries: 0,
         indexedFiles: 12,
         parsedFiles: 3,
         removedFiles: 1,
+        skippedDetails: [{ path: "vendor", reason: "Ignored by workspace rules." }],
         skippedEntries: 2,
         symbolsIndexed: 18,
       },

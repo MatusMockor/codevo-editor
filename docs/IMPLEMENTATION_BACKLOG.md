@@ -118,7 +118,7 @@ Scale:
 | P7-02 | Rust PTY service | L | Done | Shell streams input/output. |
 | P7-03 | Terminal profiles | M | Done | User can select shell/profile. |
 | P7-04 | Settings UI | L | Done | Mode, PHP backend, paths, ignores, theme. |
-| P7-05 | Index health panel | M | Pending | Errors/skipped files/logs inspectable. |
+| P7-05 | Index health panel | M | Done | Errors/skipped files/logs inspectable. |
 | P7-06 | Session restore | M | Pending | Tabs/layout restore after restart. |
 | P7-07 | Theme polish | L | Pending | Light/dark themes and contrast checks. |
 

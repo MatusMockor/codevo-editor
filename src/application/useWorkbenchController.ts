@@ -11,10 +11,14 @@ import type { SmartModeGateway } from "../domain/intelligence";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import {
   applyMetadataScanCompletion,
+  createIndexHealthCompletionLog,
+  createIndexHealthLogEntry,
   indexProgressCompletionMessage,
   indexProgressNoticeSeverity,
   initialIndexProgress,
+  prependIndexHealthLog,
   startIndexProgress,
+  type IndexHealthLogEntry,
   type IndexProgressGateway,
   type IndexProgressState,
   type MetadataScanCompletionEvent,
@@ -151,6 +155,9 @@ export function useWorkbenchController(
   const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
     initialIndexProgress,
   );
+  const [indexHealthLogs, setIndexHealthLogs] = useState<
+    IndexHealthLogEntry[]
+  >([]);
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
   const [bottomPanelView, setBottomPanelView] =
     useState<BottomPanelView>("problems");
@@ -419,6 +426,9 @@ export function useWorkbenchController(
       activeIndexRootRef.current = event.rootPath;
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
+      );
+      setIndexHealthLogs((current) =>
+        prependIndexHealthLog(current, createIndexHealthCompletionLog(event)),
       );
       setMessage(message);
       setNotices((current) =>
@@ -717,6 +727,7 @@ export function useWorkbenchController(
       setWorkspaceTrust(null);
       setLanguageServerPlan(null);
       setIndexProgress(initialIndexProgress());
+      setIndexHealthLogs([]);
       setPhpTree(emptyPhpTree());
       setPhpTreeExpandedNodeIds(new Set());
       setPhpTreeLoading(false);
@@ -1617,7 +1628,14 @@ export function useWorkbenchController(
       }
 
       setIndexProgress(startIndexProgress(started));
-      setMessage(reindexStartMessage(mode));
+      const message = reindexStartMessage(mode);
+      setIndexHealthLogs((current) =>
+        prependIndexHealthLog(
+          current,
+          createIndexHealthLogEntry("info", workspaceRoot, message),
+        ),
+      );
+      setMessage(message);
     } catch (error) {
       pendingIndexScanRef.current = false;
       reportError("Index", error);
@@ -1626,6 +1644,14 @@ export function useWorkbenchController(
 
   const startIndexScan = useCallback(async () => {
     await startReindex("soft");
+  }, [startReindex]);
+
+  const startPhpReindex = useCallback(async () => {
+    await startReindex("language", "php");
+  }, [startReindex]);
+
+  const startHardReindex = useCallback(async () => {
+    await startReindex("hard");
   }, [startReindex]);
 
   const openSettingsPanel = useCallback(() => {
@@ -1786,6 +1812,14 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "panel.showIndex",
+      title: "Show Index",
+      category: "Index",
+      isEnabled: () => true,
+      run: () => setBottomPanelView("index"),
+    });
+
+    registry.register({
       id: "terminal.show",
       title: "Show Terminal",
       category: "Terminal",
@@ -1817,7 +1851,7 @@ export function useWorkbenchController(
       category: "Index",
       isEnabled: (context) =>
         context.hasWorkspace && indexProgress.status !== "scanning",
-      run: () => startReindex("language", "php"),
+      run: startPhpReindex,
     });
 
     registry.register({
@@ -1826,7 +1860,7 @@ export function useWorkbenchController(
       category: "Index",
       isEnabled: (context) =>
         context.hasWorkspace && indexProgress.status !== "scanning",
-      run: () => startReindex("hard"),
+      run: startHardReindex,
     });
 
     registry.register({
@@ -1886,9 +1920,10 @@ export function useWorkbenchController(
     refreshPhpTree,
     renameActiveDocument,
     saveActiveDocument,
+    startHardReindex,
     startLanguageServer,
     startIndexScan,
-    startReindex,
+    startPhpReindex,
     stopLanguageServer,
     toggleSmartMode,
     toggleWorkspaceTrust,
@@ -2335,6 +2370,7 @@ export function useWorkbenchController(
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
     bottomPanelView,
     editorRevealTarget,
+    indexHealthLogs,
     indexProgress,
     intelligenceMode,
     loadingDirectories,
@@ -2377,7 +2413,9 @@ export function useWorkbenchController(
     setTextSearchQuery,
     setLanguageServerSetupOpen,
     startIndexScan,
+    startHardReindex,
     startLanguageServer,
+    startPhpReindex,
     stopLanguageServer,
     settingsOpen,
     textSearchLoading,

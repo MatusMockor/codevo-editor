@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMetadataScanCompletion,
+  createIndexHealthCompletionLog,
+  createIndexHealthLogEntry,
   indexProgressCompletionMessage,
   indexProgressLabel,
   indexProgressNoticeSeverity,
   initialIndexProgress,
+  prependIndexHealthLog,
   startIndexProgress,
   type MetadataScanCompletionEvent,
 } from "./indexProgress";
@@ -19,10 +22,12 @@ describe("indexProgress", () => {
 
     expect(progress).toEqual({
       databasePath: "/config/index.sqlite3",
+      errorDetails: [],
       erroredEntries: 0,
       indexedFiles: 0,
       message: null,
       rootPath: "/workspace",
+      skippedDetails: [],
       skippedEntries: 0,
       status: "scanning",
     });
@@ -34,7 +39,9 @@ describe("indexProgress", () => {
       initialIndexProgress(),
       completedEvent(scanReport({
         erroredEntries: 0,
+        errorDetails: [],
         indexedFiles: 42,
+        skippedDetails: [{ path: "vendor", reason: "Ignored by workspace rules." }],
         skippedEntries: 7,
       })),
     );
@@ -44,6 +51,9 @@ describe("indexProgress", () => {
     expect(progress.skippedEntries).toBe(7);
     expect(indexProgressLabel(progress)).toBe("Index: 42 files");
     expect(progress.message).toBe("Indexed 42 files (7 skipped, 0 errors).");
+    expect(progress.skippedDetails).toEqual([
+      { path: "vendor", reason: "Ignored by workspace rules." },
+    ]);
   });
 
   it("labels completed scans with entry errors", () => {
@@ -76,10 +86,31 @@ describe("indexProgress", () => {
     const progress = applyMetadataScanCompletion(initialIndexProgress(), event);
 
     expect(progress.status).toBe("failed");
+    expect(progress.errorDetails).toEqual([
+      { path: "/workspace", reason: "database locked" },
+    ]);
     expect(progress.message).toBe("database locked");
     expect(indexProgressLabel(progress)).toBe("Index: failed");
     expect(indexProgressCompletionMessage(event)).toBe("database locked");
     expect(indexProgressNoticeSeverity(event)).toBe("error");
+  });
+
+  it("creates bounded health log entries", () => {
+    const failed = createIndexHealthCompletionLog(failedEvent("database locked"), 2);
+    const started = createIndexHealthLogEntry(
+      "info",
+      "/workspace",
+      "Index scan started.",
+      1,
+    );
+
+    expect(failed).toMatchObject({
+      message: "database locked",
+      rootPath: "/workspace",
+      severity: "error",
+      timestamp: 2,
+    });
+    expect(prependIndexHealthLog([started], failed, 1)).toEqual([failed]);
   });
 });
 
@@ -100,10 +131,12 @@ function scanReport(
 ): NonNullable<MetadataScanCompletionEvent["report"]> {
   return {
     changedFiles: 0,
+    errorDetails: [],
     erroredEntries: 0,
     indexedFiles: 0,
     parsedFiles: 0,
     removedFiles: 0,
+    skippedDetails: [],
     skippedEntries: 0,
     symbolsIndexed: 0,
     ...overrides,

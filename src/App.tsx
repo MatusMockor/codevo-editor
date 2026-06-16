@@ -300,11 +300,16 @@ function App() {
         />
         <BottomPanel
           activeView={workbench.bottomPanelView}
+          indexHealthLogs={workbench.indexHealthLogs}
+          indexProgress={workbench.indexProgress}
           notices={workbench.notices}
           onClearProblems={workbench.clearNotices}
+          onHardReindex={workbench.startHardReindex}
+          onPhpReindex={workbench.startPhpReindex}
           onSelectView={workbench.setBottomPanelView}
+          onSoftReindex={workbench.startIndexScan}
           terminalGateway={terminalGateway}
-          terminalRootPath={workbench.workspaceRoot}
+          workspaceRoot={workbench.workspaceRoot}
         />
       </section>
 

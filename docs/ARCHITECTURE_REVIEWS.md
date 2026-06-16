@@ -1501,3 +1501,45 @@ Scope reviewed:
 - `npm run build`
 - Browser smoke test for Settings gear, command-palette entry, `Cmd+,`, theme save, responsive layout, and console errors
 - Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings
+
+## 2026-06-16: Index Health Panel
+
+Scope reviewed:
+
+- bounded metadata scan skipped/error detail records
+- PHP reindex error detail records for read, parse, and symbol-write failures
+- frontend index progress state with detail lists and run logs
+- bottom-panel Index tab with summary, details, logs, and reindex actions
+- command-palette `Show Index` entry
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Scanner/reindex code records health details in `MetadataScanReport`; frontend domain helpers shape logs; `IndexHealthPanel` only renders current state and invokes callbacks.
+- Open/Closed: acceptable. More health detail sources can extend `MetadataScanReport` and progress state without changing the panel structure.
+- Liskov Substitution: acceptable. The existing index progress gateway still consumes the same completion event flow with a richer report payload.
+- Interface Segregation: acceptable. Index health uses progress/report contracts and does not add terminal, settings, or workspace-file responsibilities.
+- Dependency Inversion: acceptable. The panel depends on state and callbacks; controller remains the gateway orchestrator.
+
+### Pattern Review
+
+- Observer pattern: backend completion events update index health state and logs in the controller.
+- Command pattern: Index panel display and reindex operations are exposed through command registry actions.
+- Bounded log/read-model pattern: scan details capture inspectable health records while capping retained entries.
+- Adapter pattern: existing Tauri index progress gateway adapts enriched backend event payloads to the frontend port.
+
+### Residual Risk
+
+- The panel shows current and recent run health, not a persistent historical index log. Watcher/incremental runtime health remains a later service-supervisor concern.
+
+### Verification
+
+- `cargo test --manifest-path src-tauri/Cargo.toml index_scan`
+- `cargo test --manifest-path src-tauri/Cargo.toml index_reindex`
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 144 Rust tests
+- `npm run check`
+- `npm test -- indexProgress bottomPanel tauriIndexProgressGateway`
+- `npm test`: 80 frontend tests
+- `npm run build`
+- `npm audit --json`
+- Browser smoke test for Index tab, command palette entry, disabled no-workspace actions, responsive bottom-panel header, and console errors
+- Full gate passing; `coderabbit review --agent --fast --base main` passing with 0 findings after fixing duplicate detail-row keys

@@ -1,11 +1,28 @@
 export type UnsubscribeFn = () => void;
 
+export type IndexHealthLogSeverity = "error" | "info" | "warning";
+
+export interface IndexHealthDetail {
+  path: string;
+  reason: string;
+}
+
+export interface IndexHealthLogEntry {
+  id: string;
+  message: string;
+  rootPath: string;
+  severity: IndexHealthLogSeverity;
+  timestamp: number;
+}
+
 export interface MetadataScanReport {
   changedFiles: number;
+  errorDetails: IndexHealthDetail[];
   erroredEntries: number;
   indexedFiles: number;
   parsedFiles: number;
   removedFiles: number;
+  skippedDetails: IndexHealthDetail[];
   skippedEntries: number;
   symbolsIndexed: number;
 }
@@ -31,10 +48,12 @@ export type IndexProgressStatus = "idle" | "scanning" | "completed" | "failed";
 
 export interface IndexProgressState {
   databasePath: string | null;
+  errorDetails: IndexHealthDetail[];
   erroredEntries: number;
   indexedFiles: number;
   message: string | null;
   rootPath: string | null;
+  skippedDetails: IndexHealthDetail[];
   skippedEntries: number;
   status: IndexProgressStatus;
 }
@@ -56,10 +75,12 @@ export interface IndexProgressGateway {
 export function initialIndexProgress(): IndexProgressState {
   return {
     databasePath: null,
+    errorDetails: [],
     erroredEntries: 0,
     indexedFiles: 0,
     message: null,
     rootPath: null,
+    skippedDetails: [],
     skippedEntries: 0,
     status: "idle",
   };
@@ -70,10 +91,12 @@ export function startIndexProgress(
 ): IndexProgressState {
   return {
     databasePath: start.databasePath,
+    errorDetails: [],
     erroredEntries: 0,
     indexedFiles: 0,
     message: null,
     rootPath: start.rootPath,
+    skippedDetails: [],
     skippedEntries: 0,
     status: "scanning",
   };
@@ -89,18 +112,26 @@ export function applyMetadataScanCompletion(
     return {
       ...current,
       databasePath: event.databasePath,
+      errorDetails: event.message
+        ? [{ path: event.rootPath, reason: event.message }]
+        : [],
+      erroredEntries: event.message ? 1 : 0,
       message: event.message || "Index scan failed.",
       rootPath: event.rootPath,
+      skippedDetails: [],
+      skippedEntries: 0,
       status: "failed",
     };
   }
 
   return {
     databasePath: event.databasePath,
+    errorDetails: report?.errorDetails ?? [],
     erroredEntries: report?.erroredEntries ?? 0,
     indexedFiles: report?.indexedFiles ?? 0,
     message: indexProgressCompletionMessage(event),
     rootPath: event.rootPath,
+    skippedDetails: report?.skippedDetails ?? [],
     skippedEntries: report?.skippedEntries ?? 0,
     status: "completed",
   };
@@ -164,4 +195,40 @@ export function indexProgressNoticeSeverity(
   }
 
   return null;
+}
+
+export function createIndexHealthLogEntry(
+  severity: IndexHealthLogSeverity,
+  rootPath: string,
+  message: string,
+  timestamp = Date.now(),
+): IndexHealthLogEntry {
+  return {
+    id: `${timestamp}:${severity}:${rootPath}:${message}`,
+    message,
+    rootPath,
+    severity,
+    timestamp,
+  };
+}
+
+export function createIndexHealthCompletionLog(
+  event: MetadataScanCompletionEvent,
+  timestamp = Date.now(),
+): IndexHealthLogEntry {
+  const severity = indexProgressNoticeSeverity(event) || "info";
+  return createIndexHealthLogEntry(
+    severity,
+    event.rootPath,
+    indexProgressCompletionMessage(event),
+    timestamp,
+  );
+}
+
+export function prependIndexHealthLog(
+  current: IndexHealthLogEntry[],
+  entry: IndexHealthLogEntry,
+  limit = 20,
+): IndexHealthLogEntry[] {
+  return [entry, ...current].slice(0, limit);
 }

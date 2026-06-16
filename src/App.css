@@ -134,6 +134,12 @@ button {
   background: var(--color-app);
 }
 
+@media (max-width: 520px) {
+  .app-shell {
+    grid-template-columns: 42px minmax(138px, 38vw) minmax(0, 1fr);
+  }
+}
+
 .activity-bar {
   display: flex;
   flex-direction: column;
@@ -329,10 +335,12 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-width: 0;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text);
   font-size: 12px;
   font-weight: 700;
+  overflow: hidden;
   padding: 0 10px;
   text-transform: uppercase;
 }
@@ -340,10 +348,14 @@ button {
 .bottom-panel-tabs {
   display: flex;
   align-self: stretch;
+  flex: 1 1 auto;
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .bottom-panel-tab {
+  flex: 0 0 auto;
   min-width: 92px;
   border: 0;
   border-right: 1px solid var(--color-border);
@@ -411,6 +423,146 @@ button {
   padding: 6px 8px;
 }
 
+.index-health-panel {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(250px, 0.9fr) 118px minmax(260px, 1.2fr);
+  gap: 8px;
+  overflow: hidden;
+  padding: 7px 8px;
+}
+
+.index-health-summary {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.index-health-metric {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border-radius: 6px;
+  background: var(--color-surface);
+  padding: 5px 7px;
+}
+
+.index-health-metric span,
+.index-health-list h3 {
+  color: var(--color-text-subtle);
+  font-size: 10px;
+  letter-spacing: 0;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.index-health-metric strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-strong);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index-health-actions {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.index-health-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.index-health-actions button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
+.index-health-actions button:disabled {
+  color: var(--color-disabled);
+  cursor: not-allowed;
+}
+
+.index-health-details {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.index-health-list {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  gap: 4px;
+  overflow: auto;
+}
+
+.index-health-list p {
+  margin: 0;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
+.index-health-row {
+  display: grid;
+  min-width: 0;
+  min-height: 34px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-warning);
+  padding: 4px 6px;
+}
+
+.index-health-row.error {
+  color: var(--color-error);
+}
+
+.index-health-row.info {
+  color: var(--color-success);
+}
+
+.index-health-row span {
+  display: grid;
+  min-width: 0;
+}
+
+.index-health-row strong,
+.index-health-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index-health-row strong {
+  color: var(--color-text);
+}
+
+.index-health-row small {
+  color: var(--color-text-muted);
+}
+
 .terminal-panel {
   width: 100%;
   height: 100%;
@@ -434,6 +586,23 @@ button {
   margin: 18px 0 0;
   color: var(--color-text-subtle);
   text-align: center;
+}
+
+@media (max-width: 820px) {
+  .bottom-panel-tab {
+    min-width: 76px;
+    padding: 0 9px;
+  }
+
+  .index-health-panel {
+    grid-template-columns: minmax(220px, 1fr) 112px;
+    overflow: auto;
+  }
+
+  .index-health-details {
+    grid-column: 1 / -1;
+    min-height: 110px;
+  }
 }
 
 .problem-row {
