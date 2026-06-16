@@ -9,6 +9,17 @@ import {
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { SmartModeGateway } from "../domain/intelligence";
 import {
+  applyMetadataScanCompletion,
+  indexProgressCompletionMessage,
+  indexProgressNoticeSeverity,
+  initialIndexProgress,
+  startIndexProgress,
+  type IndexProgressGateway,
+  type IndexProgressState,
+  type MetadataScanCompletionEvent,
+  type UnsubscribeFn as IndexProgressUnsubscribeFn,
+} from "../domain/indexProgress";
+import {
   languageServerDiagnosticNoticeGroup,
   languageServerDiagnosticNoticeMessage,
   languageServerDiagnosticNoticeSeverity,
@@ -86,6 +97,7 @@ export function useWorkbenchController(
   workspaceGateways: WorkbenchWorkspaceGateways,
   smartModeGateway: SmartModeGateway,
   workspaceTrustGateway: WorkspaceTrustGateway,
+  indexProgressGateway: IndexProgressGateway,
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
   languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
@@ -112,6 +124,9 @@ export function useWorkbenchController(
   const [languageServerSetupOpen, setLanguageServerSetupOpen] = useState(false);
   const [languageServerRuntimeStatus, setLanguageServerRuntimeStatus] =
     useState<LanguageServerRuntimeStatus | null>(null);
+  const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
+    initialIndexProgress,
+  );
   const [editorRevealTarget, setEditorRevealTarget] =
     useState<EditorRevealTarget | null>(null);
   const [navigationHistory, setNavigationHistory] =
@@ -149,6 +164,8 @@ export function useWorkbenchController(
     useState<IntelligenceMode>("basic");
   const hasRestoredRef = useRef(false);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
+  const activeIndexRootRef = useRef<string | null>(null);
+  const pendingIndexScanRef = useRef(false);
   const documentVersionsRef = useRef<Record<string, number>>({});
   const documentVersionsByUriRef = useRef<Record<string, number>>({});
   const syncedDocumentPathsRef = useRef<Set<string>>(new Set());
@@ -292,6 +309,35 @@ export function useWorkbenchController(
       reportLanguageServerError(crash);
     },
     [clearLanguageServerDiagnostics, reportLanguageServerError],
+  );
+
+  const handleMetadataScanCompletion = useCallback(
+    (event: MetadataScanCompletionEvent) => {
+      if (!pendingIndexScanRef.current && activeIndexRootRef.current !== event.rootPath) {
+        return;
+      }
+
+      const message = indexProgressCompletionMessage(event);
+      const severity = indexProgressNoticeSeverity(event);
+      const groupKey = indexProgressNoticeGroup(event.rootPath);
+
+      pendingIndexScanRef.current = false;
+      activeIndexRootRef.current = event.rootPath;
+      setIndexProgress((current) =>
+        applyMetadataScanCompletion(current, event),
+      );
+      setMessage(message);
+      setNotices((current) =>
+        replaceWorkbenchNoticeGroup(
+          current,
+          groupKey,
+          severity
+            ? [createWorkbenchNotice(severity, "Index", message, groupKey)]
+            : [],
+        ),
+      );
+    },
+    [],
   );
 
   const nextDocumentVersion = useCallback((path: string): number => {
@@ -574,6 +620,9 @@ export function useWorkbenchController(
       setPhpTools(null);
       setWorkspaceTrust(null);
       setLanguageServerPlan(null);
+      setIndexProgress(initialIndexProgress());
+      activeIndexRootRef.current = null;
+      pendingIndexScanRef.current = false;
 
       try {
         await settingsGateway.saveAppSettings({ recentWorkspacePath: path });
@@ -1175,6 +1224,30 @@ export function useWorkbenchController(
     await stopLanguageServerRuntime();
   }, [stopLanguageServerRuntime]);
 
+  const startIndexScan = useCallback(async () => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    pendingIndexScanRef.current = true;
+
+    try {
+      const started =
+        await indexProgressGateway.startInitialMetadataScan(workspaceRoot);
+      activeIndexRootRef.current = started.rootPath;
+
+      if (!pendingIndexScanRef.current) {
+        return;
+      }
+
+      setIndexProgress(startIndexProgress(started));
+      setMessage("Index scan started.");
+    } catch (error) {
+      pendingIndexScanRef.current = false;
+      reportError("Index", error);
+    }
+  }, [indexProgressGateway, reportError, workspaceRoot]);
+
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
 
@@ -1316,6 +1389,15 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "index.startMetadataScan",
+      title: "Start Index Scan",
+      category: "Index",
+      isEnabled: (context) =>
+        context.hasWorkspace && indexProgress.status !== "scanning",
+      run: startIndexScan,
+    });
+
+    registry.register({
       id: "smart.phpactorSetup",
       title: "Show PHPactor Setup",
       category: "Smart Mode",
@@ -1355,9 +1437,11 @@ export function useWorkbenchController(
     renameActiveDocument,
     saveActiveDocument,
     startLanguageServer,
+    startIndexScan,
     stopLanguageServer,
     toggleSmartMode,
     toggleWorkspaceTrust,
+    indexProgress,
     languageServerPlan,
     languageServerRuntimeStatus,
     workspaceTrust,
@@ -1612,6 +1696,34 @@ export function useWorkbenchController(
 
   useEffect(() => {
     let active = true;
+    let unsubscribe: IndexProgressUnsubscribeFn | null = null;
+
+    indexProgressGateway
+      .subscribeMetadataScanCompletion((event) => {
+        if (!active) {
+          return;
+        }
+
+        handleMetadataScanCompletion(event);
+      })
+      .then((dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+
+        unsubscribe = dispose;
+      })
+      .catch((error) => reportError("Index", error));
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [handleMetadataScanCompletion, indexProgressGateway, reportError]);
+
+  useEffect(() => {
+    let active = true;
     let unsubscribe: UnsubscribeFn | null = null;
 
     languageServerDiagnosticsGateway
@@ -1705,6 +1817,7 @@ export function useWorkbenchController(
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
     editorRevealTarget,
+    indexProgress,
     intelligenceMode,
     loadingDirectories,
     languageServerPlan,
@@ -1732,6 +1845,7 @@ export function useWorkbenchController(
     setTextSearchOpen,
     setTextSearchQuery,
     setLanguageServerSetupOpen,
+    startIndexScan,
     startLanguageServer,
     stopLanguageServer,
     textSearchLoading,
@@ -1748,4 +1862,8 @@ export function useWorkbenchController(
     workspaceRoot,
     workspaceTrust,
   };
+}
+
+function indexProgressNoticeGroup(rootPath: string): string {
+  return `index-progress:${rootPath}`;
 }

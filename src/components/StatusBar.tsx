@@ -3,6 +3,7 @@ import type { IntelligenceMode } from "../domain/workspace";
 interface StatusBarProps {
   workspaceRoot: string | null;
   workspaceLabel: string | null;
+  indexLabel: string | null;
   languageServerLabel: string | null;
   workspaceTrustLabel: string | null;
   activeLanguage: string | null;
@@ -14,6 +15,7 @@ interface StatusBarProps {
 export function StatusBar({
   workspaceRoot,
   workspaceLabel,
+  indexLabel,
   languageServerLabel,
   workspaceTrustLabel,
   activeLanguage,
@@ -25,6 +27,7 @@ export function StatusBar({
     <footer className="status-bar">
       <span>{workspaceRoot || "No workspace"}</span>
       {workspaceLabel ? <span>{workspaceLabel}</span> : null}
+      {indexLabel ? <span>{indexLabel}</span> : null}
       {languageServerLabel ? <span>{languageServerLabel}</span> : null}
       {workspaceTrustLabel ? <span>{workspaceTrustLabel}</span> : null}
       <span>{formatMode(intelligenceMode)}</span>

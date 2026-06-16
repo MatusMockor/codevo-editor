@@ -14,6 +14,7 @@ import {
   languageServerCapabilityLabels,
   languageServerStatusLabel,
 } from "./domain/languageServerRuntime";
+import { indexProgressLabel } from "./domain/indexProgress";
 import { isDirty } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
@@ -22,6 +23,7 @@ import { TauriLanguageServerDocumentSyncGateway } from "./infrastructure/tauriLa
 import { TauriLanguageServerFeaturesGateway } from "./infrastructure/tauriLanguageServerFeaturesGateway";
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
 import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
+import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
@@ -37,6 +39,7 @@ const workspaceGateways = {
 };
 const smartModeGateway = new TauriSmartModeGateway();
 const workspaceTrustGateway = new TauriWorkspaceTrustGateway();
+const indexProgressGateway = new TauriIndexProgressGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
 const languageServerDocumentSyncGateway =
@@ -52,6 +55,7 @@ function App() {
     workspaceGateways,
     smartModeGateway,
     workspaceTrustGateway,
+    indexProgressGateway,
     languageServerGateway,
     languageServerRuntimeGateway,
     languageServerDocumentSyncGateway,
@@ -120,6 +124,10 @@ function App() {
 
     return "LSP unavailable";
   }, [workbench.languageServerPlan, workbench.languageServerRuntimeStatus]);
+  const indexLabel = useMemo(
+    () => indexProgressLabel(workbench.indexProgress),
+    [workbench.indexProgress],
+  );
 
   return (
     <main className="app-shell">
@@ -208,6 +216,7 @@ function App() {
         workspaceRoot={workbench.workspaceRoot}
         workspaceLabel={workspaceLabel}
         languageServerLabel={languageServerLabel}
+        indexLabel={indexLabel}
         workspaceTrustLabel={
           workbench.workspaceRoot
             ? workbench.workspaceTrust?.trusted

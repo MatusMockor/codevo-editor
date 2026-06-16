@@ -987,6 +987,42 @@ Scope reviewed:
 - Browser smoke test
 - `coderabbit review --agent --fast --base main` passed with 0 findings
 
+## 2026-06-15: Index Progress UI
+
+Scope reviewed:
+
+- `indexProgress` domain state, labels, completion messages, and notice severity helpers
+- `TauriIndexProgressGateway` start command and completion event adapter
+- command-palette `Start Index Scan` action
+- workbench controller scan state, race guard for fast completion events, and grouped Problems notices
+- status bar index phase/count/error label
+- frontend domain and infrastructure tests
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Domain helpers own progress derivation; the Tauri gateway owns IPC/event adaptation; the controller coordinates workflow state; `StatusBar` only renders labels.
+- Open/Closed: acceptable. Future progress phases can extend `IndexProgressState` and event handling without changing the SQLite scanner or scheduler.
+- Liskov Substitution: acceptable. `IndexProgressGateway` can be replaced by tests, a future service supervisor, or a non-Tauri host implementation.
+- Interface Segregation: acceptable. Index progress is separate from workspace file, PHP tool, LSP runtime, diagnostics, and settings gateways.
+- Dependency Inversion: acceptable. Workbench orchestration depends on `IndexProgressGateway` rather than direct `invoke`/`listen` calls.
+
+### Pattern Review
+
+- Adapter pattern: `TauriIndexProgressGateway` adapts Tauri commands and events to frontend domain contracts.
+- Observer pattern: metadata scan completion events update status and Problems notices without coupling the backend scanner to UI components.
+- Command pattern: index scanning is exposed as a command-palette action, not a hidden automatic side effect.
+- State reducer direction: pure helpers handle start/completion transitions and labels, leaving room for richer progress phases in later service work.
+
+### Verification
+
+- `npm run check`
+- `npm test`
+- `cargo test`
+- `npm run build`
+- `npm run tauri build -- --debug --bundles app`
+- Browser smoke test
+- `coderabbit review --agent --fast --base main` passed with 0 findings
+
 ## 2026-06-15: Smart Mode State Service
 
 Scope reviewed:
