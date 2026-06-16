@@ -1858,3 +1858,48 @@ Scope reviewed:
 - `npm run tauri signer -- --help`
 - `npm run tauri build -- --help`
 - Tauri config schema check for `bundle.createUpdaterArtifacts`
+
+## 2026-06-16: Windows And Linux Packaging Feasibility
+
+Scope reviewed:
+
+- local host target and installed Rust targets
+- Tauri bundle target availability on macOS
+- Windows and Linux local build attempts
+- required platform runners, toolchains, signing, and smoke checks
+- cross-platform runtime risks for terminal, host tools, path handling, and index storage
+
+### SOLID Review
+
+- Single Responsibility: acceptable. This slice documents platform feasibility and does not mix platform build policy into runtime services.
+- Open/Closed: acceptable. Windows and Linux CI jobs can extend packaging without changing macOS bundle flow.
+- Liskov Substitution: not materially affected. No platform-specific runtime implementation was changed.
+- Interface Segregation: acceptable. Platform packaging concerns stay separate from LSP, terminal, index, sidecar, and updater contracts.
+- Dependency Inversion: acceptable. The plan keeps platform-specific toolchains in CI/runner configuration instead of coupling app code to a local host.
+
+### Pattern Review
+
+- Platform adapter pattern: each OS needs its own build runner, signing adapter, installer target, and smoke checklist.
+- Verification gate: Windows/Linux readiness requires real artifacts from real platform runners, not only macOS cross-target attempts.
+- Host-runtime boundary: the existing no-sidecar policy keeps cross-platform runtime claims narrow until each host environment is smoked.
+
+### Residual Risk
+
+- Windows and Linux artifacts were not produced locally.
+- Only `aarch64-apple-darwin` is installed as a Rust target today.
+- Windows signing and Linux artifact signing policies are not designed yet.
+- Linux glibc/WebKitGTK baseline and Windows WebView2 installer mode still need runner validation.
+- Windows `file:///C:/...` LSP URI decoding may need frontend normalization before Windows release.
+
+### Verification
+
+- Official Tauri prerequisites, Windows installer, distribution, config, and Debian docs checked on 2026-06-16.
+- `rustc --print host-tuple`: `aarch64-apple-darwin`
+- `rustup target list --installed`: `aarch64-apple-darwin`
+- `npm run tauri build -- --help`: macOS host exposes `ios`, `app`, and `dmg` bundle values
+- `which cargo rustc cc clang zig x86_64-w64-mingw32-gcc makensis dpkg rpm appimagetool linuxdeploy`
+- `npm run tauri build -- --debug --target x86_64-pc-windows-msvc --bundles nsis`: failed because Windows Rust target is not installed
+- `npm run tauri build -- --debug --target x86_64-unknown-linux-gnu --bundles deb`: failed because `deb` is not a valid bundle value on this macOS host
+- `cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc`: failed because the Windows Rust target is not installed
+- `cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-unknown-linux-gnu`: failed because the Linux Rust target is not installed
+- `src/domain/languageServerFeatures.ts`: `pathFromLanguageServerUri` currently returns decoded `URL.pathname`

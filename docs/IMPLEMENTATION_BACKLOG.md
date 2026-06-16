@@ -133,7 +133,7 @@ Scale:
 | P8-02C | Signing and notarization plan | M | Done | Certificate, entitlement, signing, and notarization requirements are documented. |
 | P8-03 | Sidecar/runtime packaging plan | L | Done | PHP, PHPactor, Intelephense, Watchman, and index runtime packaging/discovery/update policy documented. |
 | P8-04 | Update channel research | M | Done | Signing/update mechanism decided. |
-| P8-05 | Windows/Linux feasibility | L | Pending | Builds attempted and blockers documented. |
+| P8-05 | Windows/Linux feasibility | L | Done | Builds attempted and blockers documented. |
 
 ## Quality Gates
 

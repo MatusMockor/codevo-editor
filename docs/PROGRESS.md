@@ -81,6 +81,7 @@ Completed:
 - Documented macOS Developer ID signing, notarization, stapling, credential, entitlement, and release verification plan.
 - Documented first-release sidecar/runtime packaging policy for PHP, PHPactor, Intelephense, Watchman, ripgrep, terminal shells, and SQLite index storage.
 - Documented first-release manual update policy and future Tauri updater/static JSON signing path.
+- Documented Windows/Linux packaging feasibility, local cross-target blockers, required CI runners, and platform smoke checklists.
 
 Current verification:
 
@@ -92,16 +93,17 @@ Current verification:
 - `npm run tauri build -- --debug --bundles app`: passing
 - `npm run tauri build -- --debug`: passing, producing `.app` and `.dmg` bundles
 - Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Index/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, Index health responsive behavior, timestamped session-load smoke, light/dark/system theme switching, terminal lazy-load rendering after theme changes, product title/favicon metadata, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after the update channel plan slice.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the Windows/Linux feasibility slice.
 
 Known issues:
 
 - Debug DMG packaging is unsigned and not notarized. The release plan is documented, but no Developer ID certificate, Apple notarization credentials, or CI signing path is configured yet.
 - First release remains a host-runtime build: PHP, PHPactor, Intelephense, Watchman, ripgrep, and shells are not bundled sidecars.
 - First release uses manual DMG downloads; in-app auto-update is deferred until Tauri updater keys, endpoints, CI, and UI exist.
+- Windows and Linux artifacts are not ready; local macOS cross-target attempts only documented missing targets/toolchains and unsupported bundle targets.
 - Native file dialog cannot be fully tested in the regular browser smoke test.
 
 Next implementation slice:
 
-1. Check Windows/Linux packaging feasibility.
-2. Draft release CI plan.
+1. Draft release CI plan.
+2. Add packaged smoke scripts.
