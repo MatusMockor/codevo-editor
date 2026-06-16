@@ -18,7 +18,7 @@ This document records what the packaged desktop app can rely on today, what it d
 | Text search | Works when host `rg` is discoverable | Do not claim bundled ripgrep. |
 | Trust/settings data | Ready for desktop debug bundles | Trust file and index DB are app-config scoped; settings are browser localStorage. |
 | DMG packaging | Ready for debug desktop bundles | Default debug build produces `.app` and `.dmg`. |
-| Signing/notarization | Not ready | Covered by P8-02C. |
+| Signing/notarization | Planned, credentials missing | See `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`; no Developer ID identity is installed locally today. |
 
 ## Product And Bundle
 
@@ -44,8 +44,8 @@ Release metadata still missing:
 
 - license identifier or license file
 - homepage
-- signing identity
-- notarization profile
+- configured release signing identity
+- notarization credentials or profile
 - update channel
 
 Verified DMG image info:
@@ -53,6 +53,13 @@ Verified DMG image info:
 - Format: `UDZO`
 - Format description: `UDIF read-only compressed (zlib)`
 - Partition scheme: `GUID`
+
+Signing and notarization plan:
+
+- `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`
+- Current local keychain check reports `0 valid identities found`.
+- `notarytool` and `stapler` are available through `xcrun`.
+- Xcode Command Line Tools are installed; Xcode.app is not installed.
 
 ## External Tool Discovery
 
@@ -293,11 +300,11 @@ Release follow-up:
 12. Verify packaged behavior without Watchman installed.
 13. Verify app restart preserves trust, session, and index state.
 14. Verify deleting the workspace index DB allows recovery through hard reindex.
-15. Confirm release notes list no bundled PHP, PHPactor, Intelephense, Watchman, ripgrep, or shell.
+15. For release artifacts, verify code signing, notarization, stapling, and Gatekeeper checks from `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`.
+16. Confirm release notes list no bundled PHP, PHPactor, Intelephense, Watchman, ripgrep, or shell.
 
 ## Phase 8 Follow-Ups
 
-- P8-02C: signing and notarization plan.
 - P8-03: decide bundled vs user-installed PHP/PHPactor/Intelephense/Watchman policy.
 - P8-04: update channel research.
 - P8-05: Windows/Linux feasibility and runtime smoke.

@@ -78,6 +78,7 @@ Completed:
 - Added Mockor Editor product identity with app/window/web title metadata, bundle publisher/category/descriptions, custom desktop icon set, and web favicon.
 - Added packaged runtime readiness audit for LSP, terminal, watcher, index, trust/settings, security permissions, and release smoke expectations.
 - Verified default debug macOS DMG packaging for `Mockor Editor_0.1.0_aarch64.dmg`.
+- Documented macOS Developer ID signing, notarization, stapling, credential, entitlement, and release verification plan.
 
 Current verification:
 
@@ -89,14 +90,14 @@ Current verification:
 - `npm run tauri build -- --debug --bundles app`: passing
 - `npm run tauri build -- --debug`: passing, producing `.app` and `.dmg` bundles
 - Browser smoke test: passing for shell, sidebar tabs, file-outline and reindex UI wiring, bottom-panel Problems/Index/Terminal switching, xterm rendering, terminal non-Tauri fallback, empty states, command palette, language-server runtime subscription wiring, Settings dialog open/save/theme/responsive behavior, Index health responsive behavior, timestamped session-load smoke, light/dark/system theme switching, terminal lazy-load rendering after theme changes, product title/favicon metadata, and non-Tauri development fallback
-- `coderabbit review --agent --fast --base main`: passing with 0 findings after the macOS DMG packaging slice.
+- `coderabbit review --agent --fast --base main`: passing with 0 findings after the signing and notarization plan slice.
 
 Known issues:
 
-- Debug DMG packaging is unsigned and not notarized. Release signing/notarization is deferred to P8-02C.
+- Debug DMG packaging is unsigned and not notarized. The release plan is documented, but no Developer ID certificate, Apple notarization credentials, or CI signing path is configured yet.
 - Native file dialog cannot be fully tested in the regular browser smoke test.
 
 Next implementation slice:
 
-1. Draft signing and notarization plan.
+1. Draft sidecar/runtime packaging policy.
 2. Research update channel.

@@ -1727,3 +1727,47 @@ Scope reviewed:
 - `hdiutil imageinfo src-tauri/target/debug/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg`
 - `Info.plist` check for `CFBundleName`, `CFBundleExecutable`, `CFBundleIdentifier`, and `CFBundleShortVersionString`
 - `coderabbit review --agent --fast --base main`: passing with 0 findings
+
+## 2026-06-16: macOS Signing And Notarization Plan
+
+Scope reviewed:
+
+- Developer ID direct-download release path for macOS `.dmg`
+- Tauri v2 macOS signing configuration surface
+- Apple notarization, stapling, and Gatekeeper verification flow
+- current local certificate, Xcode, `notarytool`, and `stapler` availability
+- entitlement and sidecar signing risk boundaries
+
+### SOLID Review
+
+- Single Responsibility: acceptable. The slice documents release-signing policy and verification gates only; runtime code remains untouched.
+- Open/Closed: acceptable. Signing identity, provider short name, entitlements, CI import, and architecture matrix can be added through release configuration and secrets without changing editor services.
+- Liskov Substitution: not materially affected. No runtime implementation was replaced.
+- Interface Segregation: acceptable. Release-only concerns stay out of frontend, LSP, terminal, index, and file contracts.
+- Dependency Inversion: acceptable. The plan depends on Tauri and Apple command-line contracts, while app code remains independent of a specific local certificate.
+
+### Pattern Review
+
+- Configuration-as-policy: signing and notarization are treated as release configuration, not application logic.
+- Verification gate: `codesign`, `spctl`, `notarytool`, `stapler`, and packaged smoke checks define an explicit release gate.
+- Secret-boundary pattern: certificate material and Apple credentials are kept in local keychain or CI secrets, not committed config.
+
+### Residual Risk
+
+- No valid local Developer ID signing identity is installed today.
+- Xcode.app is not installed today, though Command Line Tools, `notarytool`, and `stapler` are available.
+- CI signing and notarization automation still needs implementation.
+- Future bundled sidecars must be signed as nested code and rechecked during P8-03.
+
+### Verification
+
+- Official Tauri macOS signing and distribution docs checked on 2026-06-16.
+- Apple Developer ID and notarization docs checked on 2026-06-16.
+- `security find-identity -v -p codesigning`: `0 valid identities found`
+- `xcode-select -p`: `/Library/Developer/CommandLineTools`
+- `xcodebuild -version`: reports Xcode.app is not installed
+- `xcrun notarytool --help`
+- `xcrun stapler help`
+- `codesign -dv --verbose=4` on the debug `.app`: ad-hoc signature and `TeamIdentifier=not set`
+- `xcrun stapler validate` on the debug `.dmg`: no stapled ticket
+- `spctl -a -vvv -t open --context context:primary-signature` on the debug `.dmg`: rejected with no usable signature

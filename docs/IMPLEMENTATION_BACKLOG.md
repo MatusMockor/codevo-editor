@@ -130,7 +130,7 @@ Scale:
 | P8-01 | Product icon/metadata | S | Done | Product-specific icon/name/version. |
 | P8-02A | macOS `.app` debug bundle | S | Done | `.app` debug bundle passes. |
 | P8-02B | macOS DMG packaging | M | Done | Default DMG build is reproduced, fixed, or documented with a release workaround. |
-| P8-02C | Signing and notarization plan | M | Pending | Certificate, entitlement, signing, and notarization requirements are documented. |
+| P8-02C | Signing and notarization plan | M | Done | Certificate, entitlement, signing, and notarization requirements are documented. |
 | P8-03 | Sidecar/runtime packaging plan | L | Pending | PHP, PHPactor, Intelephense, Watchman, and index runtime packaging/discovery/update policy documented. |
 | P8-04 | Update channel research | M | Pending | Signing/update mechanism decided. |
 | P8-05 | Windows/Linux feasibility | L | Pending | Builds attempted and blockers documented. |
