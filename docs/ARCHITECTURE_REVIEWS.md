@@ -1815,3 +1815,46 @@ Scope reviewed:
 - `rg --version`
 - `rustc --print host-tuple`: `aarch64-apple-darwin`
 - `src-tauri/Cargo.toml`: `rusqlite` uses `bundled`
+
+## 2026-06-16: Update Channel Plan
+
+Scope reviewed:
+
+- current updater dependency, config, capability, and artifact state
+- Tauri updater signing model and required artifacts
+- manual first-release distribution policy
+- future static JSON updater path
+
+### SOLID Review
+
+- Single Responsibility: acceptable. Distribution update policy is documented separately from runtime services and package signing.
+- Open/Closed: acceptable. The app can add updater plugin, endpoints, UI, and CI keys later without changing editor workflows.
+- Liskov Substitution: not materially affected. No runtime implementation was replaced.
+- Interface Segregation: acceptable. Update concerns remain separate from LSP, terminal, index, and sidecar launch contracts.
+- Dependency Inversion: acceptable. Future updater UI should depend on an update service port, not raw plugin calls scattered through components.
+
+### Pattern Review
+
+- Configuration-as-policy: updater public key, endpoints, and artifact generation belong in release configuration.
+- Secret-boundary pattern: updater private key stays in secret storage; only the public key is committed.
+- Command pattern: future update UX should start as an explicit `Check For Updates` command.
+- Verification gate: manual release checks and future updater smoke checks are separate gates.
+
+### Residual Risk
+
+- No Tauri updater key pair exists today.
+- No updater endpoint, release host, or CI release job exists today.
+- Auto-update UI and permissions are not implemented.
+- Universal macOS target, Windows updater artifacts, and Linux updater artifacts remain pending platform decisions.
+
+### Verification
+
+- Official Tauri updater docs checked on 2026-06-16.
+- Tauri updater v2 changelog checked at `2.10.1` on 2026-06-16.
+- Tauri GitHub Action docs checked on 2026-06-16.
+- `npm ls @tauri-apps/plugin-updater tauri-plugin-updater`: no updater packages installed
+- `jq '{bundle: .bundle, plugins: (.plugins // null)}' src-tauri/tauri.conf.json`: `plugins` is `null`
+- `src-tauri/src/lib.rs`: runtime initializes dialog and opener plugins, not updater
+- `npm run tauri signer -- --help`
+- `npm run tauri build -- --help`
+- Tauri config schema check for `bundle.createUpdaterArtifacts`

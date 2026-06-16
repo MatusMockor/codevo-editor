@@ -20,6 +20,7 @@ This document records what the packaged desktop app can rely on today, what it d
 | Trust/settings data | Ready for desktop debug bundles | Trust file and index DB are app-config scoped; settings are browser localStorage. |
 | DMG packaging | Ready for debug desktop bundles | Default debug build produces `.app` and `.dmg`. |
 | Signing/notarization | Planned, credentials missing | See `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`; no Developer ID identity is installed locally today. |
+| Update channel | Manual first release | See `docs/UPDATE_CHANNEL_PLAN.md`; updater plugin and keys are not configured. |
 
 ## Product And Bundle
 
@@ -47,7 +48,7 @@ Release metadata still missing:
 - homepage
 - configured release signing identity
 - notarization credentials or profile
-- update channel
+- configured update channel
 - sidecar bundle metadata
 
 Verified DMG image info:
@@ -69,6 +70,15 @@ Sidecar/runtime packaging plan:
 - `bundle.externalBin` is not configured.
 - `tauri-plugin-shell` is not installed.
 - Current release policy keeps PHP, PHPactor, Intelephense, Watchman, ripgrep, and terminal shells as host/runtime dependencies instead of bundled sidecars.
+
+Update channel plan:
+
+- `docs/UPDATE_CHANNEL_PLAN.md`
+- `tauri-plugin-updater` is not installed.
+- `@tauri-apps/plugin-updater` is not installed.
+- `plugins.updater` is not configured.
+- `bundle.createUpdaterArtifacts` uses the default disabled state.
+- First release policy is manual DMG download; Tauri updater is deferred until signing keys, endpoints, CI, and UI are in place.
 
 ## External Tool Discovery
 
@@ -314,8 +324,8 @@ Release follow-up:
 14. Verify deleting the workspace index DB allows recovery through hard reindex.
 15. For release artifacts, verify code signing, notarization, stapling, and Gatekeeper checks from `docs/MACOS_SIGNING_NOTARIZATION_PLAN.md`.
 16. Confirm release notes list no bundled PHP, PHPactor, Intelephense, Watchman, ripgrep, or shell, matching `docs/SIDECAR_RUNTIME_PACKAGING_PLAN.md`.
+17. Confirm release notes state the manual update policy from `docs/UPDATE_CHANNEL_PLAN.md`.
 
 ## Phase 8 Follow-Ups
 
-- P8-04: update channel research.
 - P8-05: Windows/Linux feasibility and runtime smoke.
