@@ -1808,23 +1808,10 @@ export function useWorkbenchController(
     setBottomPanelVisible((visible) => !visible);
   }, []);
 
-  const openNavigationTarget = useCallback(
-    async (
-      path: string,
-      position: EditorPosition,
-      label: string,
-    ): Promise<boolean> => {
-      recordCurrentNavigationLocation();
-
+  const openPathForNavigation = useCallback(
+    async (path: string): Promise<boolean> => {
       if (documents[path]) {
         setActivePath(path);
-        setEditorRevealTarget({
-          path,
-          position,
-        });
-        setMessage(
-          `Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`,
-        );
         return true;
       }
 
@@ -1852,13 +1839,6 @@ export function useWorkbenchController(
           );
           setPreviewPath((current) => (current === replacedPath ? path : current));
           setActivePath(path);
-          setEditorRevealTarget({
-            path,
-            position,
-          });
-          setMessage(
-            `Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`,
-          );
           return true;
         } catch (error) {
           reportError("Open Navigation Target", error);
@@ -1879,6 +1859,32 @@ export function useWorkbenchController(
         return false;
       }
 
+      return true;
+    },
+    [
+      activeDocument,
+      documents,
+      openFile,
+      reportError,
+      syncClosedDocument,
+      workspaceFiles,
+    ],
+  );
+
+  const openNavigationTarget = useCallback(
+    async (
+      path: string,
+      position: EditorPosition,
+      label: string,
+    ): Promise<boolean> => {
+      recordCurrentNavigationLocation();
+
+      const opened = await openPathForNavigation(path);
+
+      if (!opened) {
+        return false;
+      }
+
       setEditorRevealTarget({
         path,
         position,
@@ -1888,15 +1894,7 @@ export function useWorkbenchController(
       );
       return true;
     },
-    [
-      activeDocument,
-      documents,
-      openFile,
-      recordCurrentNavigationLocation,
-      reportError,
-      syncClosedDocument,
-      workspaceFiles,
-    ],
+    [openPathForNavigation, recordCurrentNavigationLocation],
   );
 
   const readNavigationFileContent = useCallback(
@@ -2312,25 +2310,15 @@ export function useWorkbenchController(
 
   const applyNavigationLocation = useCallback(
     async (location: NavigationLocation) => {
-      if (!documents[location.path]) {
-        const opened = await openFile(
-          {
-            kind: "file",
-            name: getFileName(location.path),
-            path: location.path,
-          },
-          { recordNavigation: false },
-        );
+      const opened = await openPathForNavigation(location.path);
 
-        if (!opened) {
-          return;
-        }
+      if (!opened) {
+        return;
       }
 
-      setActivePath(location.path);
       setEditorRevealTarget(location);
     },
-    [documents, openFile],
+    [openPathForNavigation],
   );
 
   const navigateBackward = useCallback(async () => {

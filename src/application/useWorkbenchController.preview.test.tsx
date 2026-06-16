@@ -230,6 +230,69 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("navigates back into the same editor tab after definition replaces it", async () => {
+    const controllerPath = "/workspace/src/CommentController.php";
+    const agentPath = "/workspace/src/CommentsAgent.php";
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 13,
+        containerName: null,
+        fullyQualifiedName: "App\\CommentsAgent",
+        kind: "class",
+        lineNumber: 4,
+        name: "CommentsAgent",
+        path: agentPath,
+        relativePath: "src/CommentsAgent.php",
+      },
+    ];
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return "<?php\n$agent = new CommentsAgent();\n";
+        }
+
+        return "<?php\nfinal class CommentsAgent {}\n";
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 23,
+        lineNumber: 2,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(agentPath);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      agentPath,
+    ]);
+
+    await act(async () => {
+      await getWorkbench().navigateBackward();
+    });
+
+    expect(getWorkbench().activePath).toBe(controllerPath);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      controllerPath,
+    ]);
+  });
+
   it("resolves Laravel request input through typed parameters instead of a random input method", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const postRequestPath =
