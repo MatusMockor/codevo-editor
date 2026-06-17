@@ -73,6 +73,7 @@ import {
   type EditorPosition,
   type EditorRevealTarget,
   type LanguageServerFeature,
+  type LanguageServerDocumentSymbol,
   type LanguageServerFeaturesGateway,
   type LanguageServerLocation,
 } from "../domain/languageServerFeatures";
@@ -251,6 +252,7 @@ export function useWorkbenchController(
   javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway,
   javaScriptTypeScriptLanguageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway,
+  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway,
   terminalGateway: TerminalGateway,
   settingsGateway: SettingsGateway,
   prompter: WorkbenchPrompter,
@@ -330,6 +332,14 @@ export function useWorkbenchController(
   const [
     loadingInheritedPhpFileOutlinePaths,
     setLoadingInheritedPhpFileOutlinePaths,
+  ] = useState<Set<string>>(new Set());
+  const [
+    javaScriptTypeScriptFileOutlinesByPath,
+    setJavaScriptTypeScriptFileOutlinesByPath,
+  ] = useState<Record<string, PhpFileOutline>>({});
+  const [
+    loadingJavaScriptTypeScriptFileOutlinePaths,
+    setLoadingJavaScriptTypeScriptFileOutlinePaths,
   ] = useState<Set<string>>(new Set());
   const [phpFileOutlineExpandedNodeIds, setPhpFileOutlineExpandedNodeIds] =
     useState<Set<string>>(new Set());
@@ -2584,6 +2594,66 @@ export function useWorkbenchController(
     ],
   );
 
+  const loadJavaScriptTypeScriptFileOutline = useCallback(
+    async (path: string) => {
+      if (!workspaceRoot) {
+        setJavaScriptTypeScriptFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: emptyPhpFileOutline(),
+        }));
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setLoadingJavaScriptTypeScriptFileOutlinePaths((current) =>
+        new Set(current).add(path),
+      );
+
+      try {
+        const symbols =
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols(
+            requestedRoot,
+            path,
+          );
+
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setJavaScriptTypeScriptFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: fileOutlineFromLanguageServerDocumentSymbols(
+            requestedRoot,
+            path,
+            symbols,
+          ),
+        }));
+        setMessage(null);
+      } catch (error) {
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setJavaScriptTypeScriptFileOutlinesByPath((current) => ({
+          ...current,
+          [path]: emptyPhpFileOutline(),
+        }));
+        reportError("JavaScript/TypeScript File Structure", error);
+      } finally {
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        setLoadingJavaScriptTypeScriptFileOutlinePaths((current) => {
+          const next = new Set(current);
+          next.delete(path);
+          return next;
+        });
+      }
+    },
+    [javaScriptTypeScriptLanguageServerFeaturesGateway, reportError, workspaceRoot],
+  );
+
   const loadInheritedPhpFileOutline = useCallback(
     async (path: string) => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
@@ -2744,12 +2814,7 @@ export function useWorkbenchController(
 
   const openFileStructure = useCallback(() => {
     if (!activeDocument) {
-      setMessage("Open a PHP file to show file structure.");
-      return;
-    }
-
-    if (!isLanguageServerDocument(activeDocument)) {
-      setMessage("File structure is available for PHP files.");
+      setMessage("Open a PHP, JavaScript, or TypeScript file to show structure.");
       return;
     }
 
@@ -2758,6 +2823,41 @@ export function useWorkbenchController(
     setClassOpenOpen(false);
     setTextSearchOpen(false);
     setSettingsOpen(false);
+
+    if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+      if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+        setMessage("JavaScript/TypeScript service is starting. Try structure again in a moment.");
+        return;
+      }
+
+      if (
+        !canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "documentSymbol",
+        )
+      ) {
+        setMessage("JavaScript/TypeScript service does not provide file structure.");
+        return;
+      }
+
+      setFileStructureScopeMode("current");
+      setFileStructureOpen(true);
+
+      if (
+        !javaScriptTypeScriptFileOutlinesByPath[activeDocument.path] &&
+        !loadingJavaScriptTypeScriptFileOutlinePaths.has(activeDocument.path)
+      ) {
+        void loadJavaScriptTypeScriptFileOutline(activeDocument.path);
+      }
+
+      return;
+    }
+
+    if (!isLanguageServerDocument(activeDocument)) {
+      setMessage("File structure is available for PHP, JavaScript, and TypeScript files.");
+      return;
+    }
+
     const nextScope =
       fileStructureOpen && fileStructureScope === "current"
         ? "inherited"
@@ -2776,7 +2876,11 @@ export function useWorkbenchController(
     activeDocument,
     fileStructureOpen,
     fileStructureScope,
+    javaScriptTypeScriptFileOutlinesByPath,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    loadJavaScriptTypeScriptFileOutline,
     loadPhpFileOutline,
+    loadingJavaScriptTypeScriptFileOutlinePaths,
     loadingPhpFileOutlinePaths,
     phpFileOutlinesByPath,
     setFileStructureScopeMode,
@@ -6525,6 +6629,10 @@ export function useWorkbenchController(
       return null;
     }
 
+    if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+      return javaScriptTypeScriptFileOutlinesByPath[activeDocument.path] ?? null;
+    }
+
     const currentOutline = phpFileOutlinesByPath[activeDocument.path] ?? null;
 
     if (fileStructureScope === "current") {
@@ -6538,14 +6646,19 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     fileStructureScope,
+    javaScriptTypeScriptFileOutlinesByPath,
     phpFileOutlinesByPath,
     phpInheritedFileOutlinesByPath,
   ]);
   const fileStructureLoading = Boolean(
     activeDocument &&
-      (loadingPhpFileOutlinePaths.has(activeDocument.path) ||
+      (loadingJavaScriptTypeScriptFileOutlinePaths.has(activeDocument.path) ||
+        loadingPhpFileOutlinePaths.has(activeDocument.path) ||
         (fileStructureScope === "inherited" &&
           loadingInheritedPhpFileOutlinePaths.has(activeDocument.path))),
+  );
+  const fileStructureCanIncludeInheritedMembers = Boolean(
+    activeDocument && isLanguageServerDocument(activeDocument),
   );
   const mergedLanguageServerDiagnosticsByPath = useMemo(
     () =>
@@ -6578,6 +6691,7 @@ export function useWorkbenchController(
     entriesByDirectory,
     expandedDirectories,
     expandedPhpFilePaths,
+    fileStructureCanIncludeInheritedMembers,
     fileStructureLoading,
     fileStructureOutline,
     fileStructureOpen,
@@ -6707,6 +6821,106 @@ function mergeDiagnosticsByPath(
   });
 
   return merged;
+}
+
+function fileOutlineFromLanguageServerDocumentSymbols(
+  workspaceRoot: string,
+  path: string,
+  symbols: LanguageServerDocumentSymbol[],
+): PhpFileOutline {
+  return {
+    nodes: symbols.map((symbol) =>
+      fileOutlineNodeFromLanguageServerDocumentSymbol(
+        workspaceRoot,
+        path,
+        symbol,
+        null,
+      ),
+    ),
+  };
+}
+
+function fileOutlineNodeFromLanguageServerDocumentSymbol(
+  workspaceRoot: string,
+  path: string,
+  symbol: LanguageServerDocumentSymbol,
+  parentName: string | null,
+): PhpFileOutlineNode {
+  const fullyQualifiedName = parentName
+    ? `${parentName}.${symbol.name}`
+    : symbol.name;
+
+  return {
+    children: symbol.children.map((child) =>
+      fileOutlineNodeFromLanguageServerDocumentSymbol(
+        workspaceRoot,
+        path,
+        child,
+        fullyQualifiedName,
+      ),
+    ),
+    column: symbol.selectionRange.start.character + 1,
+    fullyQualifiedName,
+    id: `${path}:${symbol.selectionRange.start.line}:${symbol.selectionRange.start.character}:${fullyQualifiedName}`,
+    kind: fileOutlineKindFromLanguageServerSymbolKind(symbol.kind),
+    label: symbol.name,
+    lineNumber: symbol.selectionRange.start.line + 1,
+    path,
+    relativePath: relativeWorkspacePath(workspaceRoot, path),
+  };
+}
+
+function fileOutlineKindFromLanguageServerSymbolKind(
+  kind: number,
+): PhpFileOutlineNode["kind"] {
+  if (kind === 5) {
+    return "class";
+  }
+
+  if (kind === 6 || kind === 9) {
+    return "method";
+  }
+
+  if (kind === 7 || kind === 8) {
+    return "property";
+  }
+
+  if (kind === 10) {
+    return "enum";
+  }
+
+  if (kind === 11) {
+    return "interface";
+  }
+
+  if (kind === 12) {
+    return "function";
+  }
+
+  if (kind === 13) {
+    return "variable";
+  }
+
+  if (kind === 14 || kind === 22) {
+    return "constant";
+  }
+
+  return "container";
+}
+
+function relativeWorkspacePath(workspaceRoot: string, path: string): string {
+  const normalizedRoot = workspaceRoot.replace(/\/+$/, "");
+  const normalizedPath = path.split("\\").join("/");
+
+  if (normalizedPath === normalizedRoot) {
+    return getFileName(path);
+  }
+
+  if (normalizedPath.startsWith(`${normalizedRoot}/`)) {
+    return normalizedPath.slice(normalizedRoot.length + 1);
+  }
+
+  return path;
 }
 
 function javaScriptTypeScriptDiagnosticNoticeGroup(uri: string): string {

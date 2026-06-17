@@ -42,6 +42,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         codeAction: true,
         completion: true,
         definition: true,
+        documentSymbol: true,
         formatting: true,
         hover: true,
         implementation: true,

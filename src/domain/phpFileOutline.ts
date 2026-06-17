@@ -9,7 +9,8 @@ export type PhpFileOutlineNodeKind =
   | "interface"
   | "method"
   | "property"
-  | "trait";
+  | "trait"
+  | "variable";
 
 export interface PhpFileOutlineNode {
   children: PhpFileOutlineNode[];

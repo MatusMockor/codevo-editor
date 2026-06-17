@@ -12,6 +12,7 @@ import {
 } from "../domain/phpFileOutline";
 
 interface FileStructureProps {
+  canIncludeInheritedMembers: boolean;
   fileName: string | null;
   isLoading: boolean;
   isOpen: boolean;
@@ -23,6 +24,7 @@ interface FileStructureProps {
 }
 
 export function FileStructure({
+  canIncludeInheritedMembers,
   fileName,
   isLoading,
   isOpen,
@@ -120,27 +122,29 @@ export function FileStructure({
           />
         </div>
 
-        <label className="file-structure-option">
-          <input
-            checked={scope === "inherited"}
-            onChange={(event) => {
-              const nextScope = event.currentTarget.checked
-                ? "inherited"
-                : "current";
-              onChangeScope(nextScope);
-            }}
-            type="checkbox"
-          />
-          <span>Include inherited members</span>
-        </label>
+        {canIncludeInheritedMembers ? (
+          <label className="file-structure-option">
+            <input
+              checked={scope === "inherited"}
+              onChange={(event) => {
+                const nextScope = event.currentTarget.checked
+                  ? "inherited"
+                  : "current";
+                onChangeScope(nextScope);
+              }}
+              type="checkbox"
+            />
+            <span>Include inherited members</span>
+          </label>
+        ) : null}
 
         <div className="quick-open-results" role="listbox">
           {isLoading ? <div className="quick-open-state">Loading symbols...</div> : null}
           {!isLoading && !outline ? (
-            <div className="quick-open-state">Open a PHP file first</div>
+            <div className="quick-open-state">Open a supported file first</div>
           ) : null}
           {!isLoading && outline && rows.length === 0 ? (
-            <div className="quick-open-state">No methods or properties found</div>
+            <div className="quick-open-state">No symbols found</div>
           ) : null}
           {rows.map((row, index) => (
             <button
@@ -267,7 +271,9 @@ function isTypeNode(node: PhpFileOutlineNode): boolean {
 }
 
 function isStructureMemberNode(node: PhpFileOutlineNode): boolean {
-  return ["constant", "function", "method", "property"].includes(node.kind);
+  return ["constant", "function", "method", "property", "variable"].includes(
+    node.kind,
+  );
 }
 
 function structureKindOrder(node: PhpFileOutlineNode): number {
@@ -276,6 +282,7 @@ function structureKindOrder(node: PhpFileOutlineNode): number {
     method: 1,
     constant: 2,
     function: 3,
+    variable: 4,
   };
 
   return order[node.kind] ?? 4;

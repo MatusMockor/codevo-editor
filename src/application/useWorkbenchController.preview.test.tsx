@@ -27,6 +27,7 @@ import {
 import type {
   EditorPosition,
   LanguageServerFeaturesGateway,
+  LanguageServerRange,
 } from "../domain/languageServerFeatures";
 import {
   emptyLanguageServerCapabilities,
@@ -64,6 +65,7 @@ interface ControllerDependencies {
   languageServerRuntimeGateway: LanguageServerRuntimeGateway;
   javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
   javaScriptTypeScriptLanguageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
+  javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway;
   phpFileOutlineGateway: PhpFileOutlineGateway;
   phpTreeGateway: PhpTreeGateway;
@@ -832,6 +834,97 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.phpFileOutlineGateway.parsePhpFileOutline,
     ).toHaveBeenCalledWith(parentPath, expect.stringContaining("inherited"));
+  });
+
+  it("loads JavaScript and TypeScript file structure from the language server", async () => {
+    const path = "/workspace/src/userService.ts";
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      sessionId: 12,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+    ).mockResolvedValue([
+      {
+        children: [
+          {
+            children: [],
+            containerName: null,
+            detail: "(id: string)",
+            kind: 6,
+            name: "loadUser",
+            range: range(2, 2, 4, 3),
+            selectionRange: range(2, 8, 2, 16),
+          },
+        ],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "UserService",
+        range: range(1, 0, 6, 1),
+        selectionRange: range(1, 13, 1, 24),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => "export class UserService {}"),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    await flushAsyncTurns(12);
+    await act(async () => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+    ).toHaveBeenCalledWith("/workspace", path);
+    expect(getWorkbench().fileStructureOpen).toBe(true);
+    expect(getWorkbench().fileStructureCanIncludeInheritedMembers).toBe(false);
+    expect(getWorkbench().fileStructureOutline?.nodes[0]).toMatchObject({
+      kind: "class",
+      label: "UserService",
+    });
+    expect(
+      getWorkbench().fileStructureOutline?.nodes[0]?.children[0],
+    ).toMatchObject({
+      kind: "method",
+      label: "loadUser",
+      lineNumber: 3,
+    });
   });
 
   it("shows interfaces in Cmd+O class search results", async () => {
@@ -2870,6 +2963,8 @@ final class FacebookAdapterService extends BaseAdapter
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
+    javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerPlan,
     javaScriptTypeScriptRuntimeStatus = { kind: "stopped" as const },
     languageServerPlan,
@@ -2885,6 +2980,8 @@ final class FacebookAdapterService extends BaseAdapter
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
+    javaScriptTypeScriptInitialRuntimeStatus?: LanguageServerRuntimeStatus;
+    javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
     javaScriptTypeScriptRuntimeStatus?: LanguageServerRuntimeStatus;
     languageServerPlan?: LanguageServerPlan;
@@ -2910,6 +3007,8 @@ final class FacebookAdapterService extends BaseAdapter
     const dependencies = createControllerDependencies({
       appSettings,
       gitGateway,
+      javaScriptTypeScriptInitialRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerPlan,
       javaScriptTypeScriptRuntimeStatus,
       languageServerPlan,
@@ -2969,6 +3068,7 @@ function WorkbenchHarness({
     dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
     dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway,
     dependencies.javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+    dependencies.javaScriptTypeScriptLanguageServerFeaturesGateway,
     dependencies.terminalGateway,
     dependencies.settingsGateway,
     dependencies.prompter,
@@ -2984,6 +3084,8 @@ function WorkbenchHarness({
 function createControllerDependencies({
   appSettings,
   gitGateway,
+  javaScriptTypeScriptInitialRuntimeStatus,
+  javaScriptTypeScriptLanguageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerPlan,
   javaScriptTypeScriptRuntimeStatus,
   languageServerPlan,
@@ -2999,6 +3101,8 @@ function createControllerDependencies({
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   gitGateway?: GitGateway;
+  javaScriptTypeScriptInitialRuntimeStatus: LanguageServerRuntimeStatus;
+  javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
   javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus;
   languageServerPlan?: LanguageServerPlan;
@@ -3129,8 +3233,10 @@ function createControllerDependencies({
       subscribeDiagnostics: vi.fn(async () => () => undefined),
     },
     javaScriptTypeScriptLanguageServerDocumentSyncGateway: documentSyncGateway,
+    javaScriptTypeScriptLanguageServerFeaturesGateway:
+      javaScriptTypeScriptLanguageServerFeaturesGateway ?? featuresGateway(),
     javaScriptTypeScriptLanguageServerRuntimeGateway: {
-      getStatus: vi.fn(async () => ({ kind: "stopped" as const })),
+      getStatus: vi.fn(async () => javaScriptTypeScriptInitialRuntimeStatus),
       start: vi.fn(async () => javaScriptTypeScriptRuntimeStatus),
       stop: vi.fn(async () => ({ kind: "stopped" as const })),
       subscribeStatus: vi.fn(async () => () => undefined),
@@ -3199,6 +3305,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
       items: [],
     })),
     definition: vi.fn(async () => []),
+    documentSymbols: vi.fn(async () => []),
     executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => []),
     hover: vi.fn(async () => null),
@@ -3307,6 +3414,24 @@ function fileEntry(path: string, name: string): FileEntry {
     kind: "file",
     name,
     path,
+  };
+}
+
+function range(
+  startLine: number,
+  startCharacter: number,
+  endLine: number,
+  endCharacter: number,
+): LanguageServerRange {
+  return {
+    end: {
+      character: endCharacter,
+      line: endLine,
+    },
+    start: {
+      character: startCharacter,
+      line: startLine,
+    },
   };
 }
 

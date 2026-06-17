@@ -6,6 +6,7 @@ import {
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionItem,
   type LanguageServerCompletionList,
+  type LanguageServerDocumentSymbol,
   type LanguageServerFormattingOptions,
   type LanguageServerFeaturesGateway,
   type LanguageServerHover,
@@ -31,6 +32,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   completion: "text_document_completion",
   completionResolve: "text_document_completion_resolve",
   definition: "text_document_definition",
+  documentSymbols: "text_document_document_symbols",
   executeCommand: "language_server_execute_command",
   formatting: "text_document_formatting",
   hover: "text_document_hover",
@@ -47,6 +49,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   completion: "javascript_typescript_text_document_completion",
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   definition: "javascript_typescript_text_document_definition",
+  documentSymbols: "javascript_typescript_text_document_document_symbols",
   executeCommand: "javascript_typescript_language_server_execute_command",
   formatting: "javascript_typescript_text_document_formatting",
   hover: "javascript_typescript_text_document_hover",
@@ -63,6 +66,7 @@ export interface TauriLanguageServerFeatureCommands {
   completion: string;
   completionResolve: string;
   definition: string;
+  documentSymbols: string;
   executeCommand: string;
   formatting: string;
   hover: string;
@@ -138,6 +142,17 @@ export class TauriLanguageServerFeaturesGateway
     return this.invokeWhenAvailable(
       this.commands.inlayHints,
       { path, range, rootPath },
+      [],
+    );
+  }
+
+  documentSymbols(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerDocumentSymbol[]> {
+    return this.invokeWhenAvailable(
+      this.commands.documentSymbols,
+      { path, rootPath },
       [],
     );
   }

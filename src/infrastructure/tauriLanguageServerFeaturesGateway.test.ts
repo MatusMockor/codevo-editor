@@ -24,6 +24,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.resolveCompletionItem("/project", completionItem()),
     ).resolves.toEqual(completionItem());
     await expect(gateway.definition("/project", position())).resolves.toEqual([]);
+    await expect(
+      gateway.documentSymbols("/project", "/project/src/User.php"),
+    ).resolves.toEqual([]);
     await expect(gateway.implementation("/project", position())).resolves.toEqual([]);
     await expect(
       gateway.inlayHints("/project", "/project/src/User.php", range()),
@@ -141,6 +144,17 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         },
       ],
     };
+    const documentSymbols = [
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "User",
+        range: range(),
+        selectionRange: range(),
+      },
+    ];
     const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
       if (command === "text_document_hover") {
         return hover;
@@ -181,6 +195,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return inlayHints;
       }
 
+      if (command === "text_document_document_symbols") {
+        return documentSymbols;
+      }
+
       if (command === "text_document_signature_help") {
         return signatureHelp;
       }
@@ -202,6 +220,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       documentation: "Resolved docs",
     });
     await expect(gateway.definition("/project", requestPosition)).resolves.toEqual(definition);
+    await expect(
+      gateway.documentSymbols("/project", "/project/src/User.php"),
+    ).resolves.toEqual(documentSymbols);
     await expect(gateway.implementation("/project", requestPosition)).resolves.toEqual(
       definition,
     );
@@ -249,6 +270,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_definition", {
       position: requestPosition,
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_document_symbols", {
+      path: "/project/src/User.php",
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_implementation", {

@@ -171,6 +171,18 @@ pub struct LanguageServerInlayHint {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LanguageServerDocumentSymbol {
+    pub children: Vec<LanguageServerDocumentSymbol>,
+    pub container_name: Option<String>,
+    pub detail: Option<String>,
+    pub kind: u32,
+    pub name: String,
+    pub range: LanguageServerRange,
+    pub selection_range: LanguageServerRange,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LanguageServerSignatureHelp {
     pub active_parameter: u32,
     pub active_signature: u32,
@@ -200,6 +212,7 @@ pub trait TextDocumentFeatureRequestFactory {
         item: &LanguageServerCompletionItem,
     ) -> LanguageServerFeatureRequest;
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
@@ -244,6 +257,17 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
 
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
         request("textDocument/definition", position)
+    }
+
+    fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/documentSymbol".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(path)),
+                },
+            }),
+        }
     }
 
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
@@ -405,6 +429,23 @@ pub fn parse_inlay_hints_result(value: &Value) -> Result<Vec<LanguageServerInlay
     };
 
     items.iter().map(parse_inlay_hint_item).collect()
+}
+
+pub fn parse_document_symbols_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerDocumentSymbol>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed document symbols.".to_string());
+    };
+
+    Ok(items
+        .iter()
+        .filter_map(parse_document_symbol_item)
+        .collect())
 }
 
 pub fn parse_signature_help_result(
@@ -670,6 +711,64 @@ fn inlay_hint_label_to_string(value: &Value) -> Option<String> {
     Some(labels.join(""))
 }
 
+fn parse_document_symbol_item(value: &Value) -> Option<LanguageServerDocumentSymbol> {
+    if value.get("selectionRange").is_some() {
+        return parse_hierarchical_document_symbol(value);
+    }
+
+    parse_symbol_information(value)
+}
+
+fn parse_hierarchical_document_symbol(value: &Value) -> Option<LanguageServerDocumentSymbol> {
+    let name = value.get("name").and_then(Value::as_str)?.to_string();
+    let kind = value.get("kind").and_then(Value::as_u64)? as u32;
+    let range = serde_json::from_value(value.get("range")?.clone()).ok()?;
+    let selection_range = serde_json::from_value(value.get("selectionRange")?.clone()).ok()?;
+    let children = value
+        .get("children")
+        .and_then(Value::as_array)
+        .map(|children| {
+            children
+                .iter()
+                .filter_map(parse_document_symbol_item)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(LanguageServerDocumentSymbol {
+        children,
+        container_name: None,
+        detail: value
+            .get("detail")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        kind,
+        name,
+        range,
+        selection_range,
+    })
+}
+
+fn parse_symbol_information(value: &Value) -> Option<LanguageServerDocumentSymbol> {
+    let name = value.get("name").and_then(Value::as_str)?.to_string();
+    let kind = value.get("kind").and_then(Value::as_u64)? as u32;
+    let range: LanguageServerRange =
+        serde_json::from_value(value.get("location")?.get("range")?.clone()).ok()?;
+
+    Some(LanguageServerDocumentSymbol {
+        children: Vec::new(),
+        container_name: value
+            .get("containerName")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        detail: None,
+        kind,
+        name,
+        range: range.clone(),
+        selection_range: range,
+    })
+}
+
 fn parse_signature_information(value: &Value) -> Option<LanguageServerSignature> {
     let label = value.get("label").and_then(Value::as_str)?.to_string();
     let parameters = value
@@ -845,15 +944,16 @@ struct LanguageServerLocationLink {
 mod tests {
     use super::{
         parse_code_action_result, parse_completion_result, parse_definition_result,
-        parse_formatting_result, parse_hover_result, parse_inlay_hints_result,
-        parse_optional_workspace_edit_result, parse_signature_help_result,
-        parse_workspace_edit_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-        LanguageServerCodeActionContext, LanguageServerCompletionItem,
-        LanguageServerCompletionList, LanguageServerFormattingOptions, LanguageServerHover,
-        LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
-        LanguageServerTextEdit, LspTextDocumentFeatureRequestFactory,
-        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-        TextDocumentPosition, TextDocumentRange, TextDocumentRename,
+        parse_document_symbols_result, parse_formatting_result, parse_hover_result,
+        parse_inlay_hints_result, parse_optional_workspace_edit_result,
+        parse_signature_help_result, parse_workspace_edit_result, LanguageServerCodeAction,
+        LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
+        LanguageServerCompletionItem, LanguageServerCompletionList,
+        LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
+        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
+        TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition,
+        TextDocumentRange, TextDocumentRename,
     };
     use serde_json::json;
 
@@ -908,6 +1008,18 @@ mod tests {
             .starts_with("file://"));
         assert_eq!(request.params["position"]["line"], 10);
         assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn document_symbols_request_contains_document_uri() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.document_symbols("/tmp/User.ts");
+
+        assert_eq!(request.method, "textDocument/documentSymbol");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
     }
 
     #[test]
@@ -1488,6 +1600,65 @@ mod tests {
         assert!(parse_signature_help_result(&json!(null))
             .expect("null")
             .is_none());
+    }
+
+    #[test]
+    fn parses_hierarchical_and_flat_document_symbols() {
+        let symbols = parse_document_symbols_result(&json!([
+            {
+                "name": "UserService",
+                "kind": 5,
+                "range": {
+                    "start": { "line": 1, "character": 0 },
+                    "end": { "line": 6, "character": 1 }
+                },
+                "selectionRange": {
+                    "start": { "line": 1, "character": 13 },
+                    "end": { "line": 1, "character": 24 }
+                },
+                "children": [
+                    {
+                        "name": "loadUser",
+                        "detail": "(id: string)",
+                        "kind": 6,
+                        "range": {
+                            "start": { "line": 2, "character": 2 },
+                            "end": { "line": 4, "character": 3 }
+                        },
+                        "selectionRange": {
+                            "start": { "line": 2, "character": 8 },
+                            "end": { "line": 2, "character": 16 }
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "createUser",
+                "kind": 12,
+                "containerName": "UserFactory",
+                "location": {
+                    "uri": "file:///tmp/User.ts",
+                    "range": {
+                        "start": { "line": 8, "character": 0 },
+                        "end": { "line": 10, "character": 1 }
+                    }
+                }
+            }
+        ]))
+        .expect("symbols");
+
+        assert_eq!(symbols[0].name, "UserService");
+        assert_eq!(symbols[0].children[0].name, "loadUser");
+        assert_eq!(
+            symbols[0].children[0].detail.as_deref(),
+            Some("(id: string)")
+        );
+        assert_eq!(symbols[1].container_name.as_deref(), Some("UserFactory"));
+        assert_eq!(symbols[1].selection_range.start.line, 8);
+        assert_eq!(
+            parse_document_symbols_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
     }
 
     fn position() -> TextDocumentPosition {

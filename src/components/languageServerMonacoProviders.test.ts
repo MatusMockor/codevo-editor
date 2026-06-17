@@ -759,6 +759,9 @@ function featuresGateway(
     >;
     completion: LanguageServerCompletionList;
     definition: LanguageServerLocation[];
+    documentSymbols: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
+    >;
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     hover: LanguageServerHover | null;
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
@@ -778,6 +781,7 @@ function featuresGateway(
       },
     ),
     definition: vi.fn(async () => responses.definition ?? []),
+    documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => responses.hover ?? null),
@@ -799,6 +803,7 @@ function runningStatus(
       codeAction: true,
       completion: true,
       definition: true,
+      documentSymbol: true,
       formatting: true,
       hover: true,
       implementation: true,

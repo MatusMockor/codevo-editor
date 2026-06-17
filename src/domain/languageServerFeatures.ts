@@ -71,6 +71,16 @@ export interface LanguageServerInlayHint {
   tooltip: string | null;
 }
 
+export interface LanguageServerDocumentSymbol {
+  children: LanguageServerDocumentSymbol[];
+  containerName: string | null;
+  detail: string | null;
+  kind: number;
+  name: string;
+  range: LanguageServerRange;
+  selectionRange: LanguageServerRange;
+}
+
 export interface LanguageServerSignatureParameter {
   documentation: string | null;
   label: string;
@@ -166,6 +176,10 @@ export interface LanguageServerFeaturesGateway {
     path: string,
     range: LanguageServerRange,
   ): Promise<LanguageServerInlayHint[]>;
+  documentSymbols(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerDocumentSymbol[]>;
   references(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

@@ -161,6 +161,7 @@ function App() {
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptLanguageServerDocumentSyncGateway,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
     terminalGateway,
     settingsGateway,
     workbenchPrompter,
@@ -728,6 +729,7 @@ function App() {
       />
 
       <FileStructure
+        canIncludeInheritedMembers={workbench.fileStructureCanIncludeInheritedMembers}
         fileName={workbench.activeDocument?.name ?? null}
         isLoading={workbench.fileStructureLoading}
         isOpen={workbench.fileStructureOpen}

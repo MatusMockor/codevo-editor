@@ -3,6 +3,7 @@ export interface LanguageServerCapabilities {
   hover: boolean;
   completion: boolean;
   definition: boolean;
+  documentSymbol: boolean;
   formatting: boolean;
   implementation: boolean;
   inlayHint: boolean;
@@ -104,6 +105,10 @@ export function languageServerCapabilityLabels(
     labels.push("definition");
   }
 
+  if (capabilities.documentSymbol) {
+    labels.push("document symbols");
+  }
+
   if (capabilities.implementation) {
     labels.push("implementation");
   }
@@ -140,6 +145,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     codeAction: false,
     completion: false,
     definition: false,
+    documentSymbol: false,
     formatting: false,
     hover: false,
     implementation: false,

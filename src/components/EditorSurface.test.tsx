@@ -934,6 +934,7 @@ function languageServerFeaturesGateway() {
     codeActions: vi.fn(async () => []),
     completion: vi.fn(),
     definition: vi.fn(),
+    documentSymbols: vi.fn(async () => []),
     executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => []),
     hover: vi.fn(),

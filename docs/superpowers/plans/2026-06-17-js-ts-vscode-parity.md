@@ -29,6 +29,7 @@ Sources checked:
 - JS/TS now has a managed `typescript-language-server` LSP runtime that is independent from PHP IDE Mode.
 - JS/TS documents are synchronized with the managed language server and diagnostics are routed back to Monaco.
 - JS/TS Monaco providers now cover hover, completions, signature help, go to definition, go to implementation, references, rename, code actions and document formatting.
+- JS/TS file structure now uses managed language-server document symbols in Basic mode instead of relying on the PHP/index outline path.
 
 ## Implemented First Slice
 
@@ -72,6 +73,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - `completionItem/resolve` is wired through the JS/TS language-server gateway and Monaco provider, matching the VS Code pattern of lazily resolving documentation and import edits for focused suggestions.
 - `textDocument/inlayHint` is wired through the managed JS/TS language server and Monaco provider, giving light mode VS Code-style inline type/parameter hints when the server advertises support.
 - `textDocument/signatureHelp` is wired through the managed JS/TS language server and Monaco provider, so function calls can show VS Code-style active signatures and parameter documentation.
+- `textDocument/documentSymbol` is wired through the shared LSP gateway and JS/TS Basic-mode file structure, giving `Cmd+R` a VS Code-like outline for JavaScript and TypeScript files without PHP IDE Mode.
 
 ## Full VS Code-Like Target
 
@@ -123,6 +125,7 @@ Basic mode must support:
 - formatting
 - inlay hints. Implemented through LSP-backed Monaco provider.
 - signature help. Implemented through LSP-backed Monaco provider.
+- document symbols / file structure. Implemented for JS/TS through managed LSP-backed `Cmd+R`.
 - JS/TS version status
 
 ### Isolation

@@ -54,11 +54,12 @@ use lsp_document::{
 };
 use lsp_features::{
     parse_code_action_result, parse_completion_result, parse_definition_result,
-    parse_formatting_result, parse_hover_result, parse_inlay_hints_result,
-    parse_optional_workspace_edit_result, parse_signature_help_result, parse_workspace_edit_result,
-    LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerFormattingOptions,
-    LanguageServerHover, LanguageServerInlayHint, LanguageServerLocation, LanguageServerRange,
+    parse_document_symbols_result, parse_formatting_result, parse_hover_result,
+    parse_inlay_hints_result, parse_optional_workspace_edit_result, parse_signature_help_result,
+    parse_workspace_edit_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+    LanguageServerCodeActionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
+    LanguageServerDocumentSymbol, LanguageServerFormattingOptions, LanguageServerHover,
+    LanguageServerInlayHint, LanguageServerLocation, LanguageServerRange,
     LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
     TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
@@ -1317,6 +1318,36 @@ fn javascript_typescript_text_document_inlay_hints(
 }
 
 #[tauri::command]
+fn text_document_document_symbols(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerDocumentSymbol>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.document_symbols(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_document_symbols_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_document_symbols(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerDocumentSymbol>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.document_symbols(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_document_symbols_result(&result)
+}
+
+#[tauri::command]
 fn text_document_signature_help(
     root_path: String,
     position: TextDocumentPosition,
@@ -1548,6 +1579,7 @@ pub fn run() {
             javascript_typescript_text_document_completion,
             javascript_typescript_text_document_completion_resolve,
             javascript_typescript_text_document_definition,
+            javascript_typescript_text_document_document_symbols,
             javascript_typescript_text_document_formatting,
             javascript_typescript_text_document_hover,
             javascript_typescript_text_document_implementation,
@@ -1561,6 +1593,7 @@ pub fn run() {
             text_document_completion,
             text_document_completion_resolve,
             text_document_definition,
+            text_document_document_symbols,
             text_document_did_change,
             text_document_did_close,
             text_document_did_open,

@@ -598,6 +598,9 @@ function featuresGateway(
   responses: Partial<{
     codeActions: Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>;
     completion: Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>;
+    documentSymbols: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
+    >;
     executeCommandEdit: Awaited<
       ReturnType<LanguageServerFeaturesGateway["executeCommand"]>
     >;
@@ -626,6 +629,7 @@ function featuresGateway(
         },
     ),
     definition: vi.fn(async () => []),
+    documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => responses.executeCommandEdit ?? null),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => null),
@@ -651,6 +655,7 @@ function runningStatus(
       codeAction: true,
       completion: true,
       definition: true,
+      documentSymbol: true,
       formatting: true,
       hover: true,
       implementation: true,

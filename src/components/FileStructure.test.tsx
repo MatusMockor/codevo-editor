@@ -74,6 +74,7 @@ describe("FileStructure", () => {
     await act(async () => {
       root.render(
         <FileStructure
+          canIncludeInheritedMembers={true}
           fileName="LocalUser.php"
           isLoading={false}
           isOpen={true}
