@@ -143,8 +143,6 @@ fn shutdown_runtime_processes(app: &AppHandle) {
     }
 }
 
-#[cfg(unix)]
-
 #[tauri::command]
 fn create_text_file(path: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;

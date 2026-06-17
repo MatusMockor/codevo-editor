@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -87,10 +86,7 @@ fn is_managed_phpactor_command(command: &LanguageServerCommand) -> bool {
     let executable_path = command.executable.to_lowercase();
     (executable_path.contains("mockor editor/tools/phpactor")
         || executable_path.contains(".mockor-editor"))
-        && command
-            .args
-            .iter()
-            .any(|arg| arg == "language-server")
+        && command.args.iter().any(|arg| arg == "language-server")
 }
 
 #[cfg(unix)]
@@ -204,7 +200,10 @@ fn managed_phpactor_root_from_override() -> Option<PathBuf> {
 }
 
 fn is_managed_phpactor_binary_name(name: &str) -> bool {
-    matches!(name, "phpactor" | "phpactor.exe" | "phpactor.bat" | "phpactor.cmd")
+    matches!(
+        name,
+        "phpactor" | "phpactor.exe" | "phpactor.bat" | "phpactor.cmd"
+    )
 }
 
 fn managed_phpactor_binary_exists(root: &Path) -> bool {
@@ -216,11 +215,13 @@ fn managed_phpactor_binary_exists(root: &Path) -> bool {
         .join("bin")
         .join("phpactor.exe")
         .is_file()
-        || root.join("vendor")
+        || root
+            .join("vendor")
             .join("bin")
             .join("phpactor.bat")
             .is_file()
-        || root.join("vendor")
+        || root
+            .join("vendor")
             .join("bin")
             .join("phpactor.cmd")
             .is_file()
@@ -237,12 +238,8 @@ fn run_composer_command(root: &Path, args: &[&str], context: &str) -> Result<(),
         return Ok(());
     }
 
-    let output = String::from_utf8_lossy(&command.stderr)
-        .trim()
-        .to_string();
-    let fallback_output = String::from_utf8_lossy(&command.stdout)
-        .trim()
-        .to_string();
+    let output = String::from_utf8_lossy(&command.stderr).trim().to_string();
+    let fallback_output = String::from_utf8_lossy(&command.stdout).trim().to_string();
     let details = if output.is_empty() {
         fallback_output
     } else {
