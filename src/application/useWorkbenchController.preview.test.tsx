@@ -917,6 +917,142 @@ class CommentFactory
     ]);
   });
 
+  it("opens Laravel database connection methods inferred from return expressions", async () => {
+    const localUserPath = "/workspace/app/Models/LocalUser.php";
+    const userAccountPath = "/workspace/app/Models/UserAccount.php";
+    const userAccountModelPath =
+      "/workspace/app/Kontentino/src/Eloquent/UserAccountModel.php";
+    const eloquentModelPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Model.php";
+    const connectionPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Connection.php";
+    const localUserSource = `<?php
+namespace App\\Models;
+
+class LocalUser
+{
+    /** @var UserAccount */
+    private $userAccount = null;
+
+    public function loadByLogin($login)
+    {
+        $connection = $this->userAccount->getDatabaseConnection();
+        $userData = $connection->table('users')->get();
+    }
+}
+`;
+    const workspaceDescriptor = phpWorkspaceDescriptor();
+    workspaceDescriptor.php?.psr4Roots.push({
+      dev: false,
+      namespace: "Kontentino\\",
+      paths: ["app/Kontentino/src/"],
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === localUserPath) {
+        return localUserSource;
+      }
+
+      if (path === userAccountPath) {
+        return `<?php
+namespace App\\Models;
+
+use Kontentino\\Eloquent\\UserAccountModel;
+
+class UserAccount
+{
+    public function getDatabaseConnection()
+    {
+        return new UserAccountModel()->getConnection();
+    }
+}
+`;
+      }
+
+      if (path === userAccountModelPath) {
+        return `<?php
+namespace Kontentino\\Eloquent;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class UserAccountModel extends Model
+{
+}
+`;
+      }
+
+      if (path === eloquentModelPath) {
+        return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Model
+{
+    /**
+     * @return \\Illuminate\\Database\\Connection
+     */
+    public function getConnection()
+    {
+    }
+}
+`;
+      }
+
+      if (path === connectionPath) {
+        return `<?php
+namespace Illuminate\\Database;
+
+class Connection
+{
+    public function table($table, $as = null)
+    {
+    }
+}
+`;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(localUserPath, "LocalUser.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(localUserSource, "$connection->table"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect({
+      activePath: getWorkbench().activePath,
+      editorRevealTarget: getWorkbench().editorRevealTarget,
+      message: getWorkbench().message,
+    }).toEqual({
+      activePath: connectionPath,
+      editorRevealTarget: {
+        path: connectionPath,
+        position: {
+          column: 21,
+          lineNumber: 6,
+        },
+      },
+      message: "Opened table() Connection.php:6:21",
+    });
+  });
+
   it("resolves Laravel route action strings to the paired controller method before LSP fallback", async () => {
     const routesPath = "/workspace/routes/comments.php";
     const commentControllerPath =

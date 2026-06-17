@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   phpClassPathCandidates,
+  phpExtendsClassName,
   phpIdentifierContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
@@ -35,6 +36,7 @@ class CommentController
     ).toEqual({
       kind: "methodCall",
       methodName: "input",
+      receiverExpression: "$request",
       variableName: "request",
     });
   });
@@ -126,6 +128,25 @@ Route::post('/reactions', [ReactionController::class, 'store']);
       column: 21,
       lineNumber: 3,
     });
+  });
+
+  it("detects imported parent class names", () => {
+    const source = `<?php
+namespace Kontentino\\Eloquent;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class UserAccountModel extends Model
+{
+}
+`;
+
+    expect(
+      resolvePhpClassName(
+        source,
+        phpExtendsClassName(source) ?? "",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Model");
   });
 });
 

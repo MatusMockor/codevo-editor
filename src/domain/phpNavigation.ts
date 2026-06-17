@@ -19,6 +19,7 @@ export type PhpIdentifierContext =
   | {
       kind: "methodCall";
       methodName: string;
+      receiverExpression: string;
       variableName: string;
     };
 
@@ -227,7 +228,7 @@ function methodCallContextAt(
   const lineEnd = source.indexOf("\n", identifier.end);
   const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
   const methodPattern = new RegExp(
-    `\\$([A-Za-z_][A-Za-z0-9_]*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
+    `((?:\\$[A-Za-z_][A-Za-z0-9_]*|\\$this)(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
     "g",
   );
 
@@ -240,12 +241,24 @@ function methodCallContextAt(
       return {
         kind: "methodCall",
         methodName: identifier.name,
-        variableName: match[1] || "",
+        receiverExpression: normalizeReceiverExpression(match[1] || ""),
+        variableName: simpleVariableName(match[1] || "") || "",
       };
     }
   }
 
   return null;
+}
+
+function simpleVariableName(receiverExpression: string): string | null {
+  const match = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
+    normalizeReceiverExpression(receiverExpression),
+  );
+  return match?.[1] ?? null;
+}
+
+function normalizeReceiverExpression(receiverExpression: string): string {
+  return receiverExpression.replace(/\s*->\s*/g, "->").trim();
 }
 
 function laravelRouteActionContextAt(

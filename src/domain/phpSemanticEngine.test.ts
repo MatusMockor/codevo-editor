@@ -4,6 +4,7 @@ import {
   phpCurrentClassName,
   phpLaravelContainerExpressionClassName,
   phpMethodCallExpression,
+  phpMethodReturnExpressions,
   phpNewExpressionClassName,
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
@@ -79,6 +80,9 @@ class CommentController
     expect(phpNewExpressionClassName("new CommentService()")).toBe(
       "CommentService",
     );
+    expect(
+      phpNewExpressionClassName("new UserAccountModel()->getConnection()"),
+    ).toBeNull();
     expect(phpLaravelContainerExpressionClassName("app(CommentRepository::class)")).toBe(
       "CommentRepository",
     );
@@ -89,9 +93,42 @@ class CommentController
       methodName: "create",
       receiverExpression: "$this->commentService",
     });
+    expect(
+      phpMethodCallExpression("$this->userAccount->getDatabaseConnection()"),
+    ).toEqual({
+      methodName: "getDatabaseConnection",
+      receiverExpression: "$this->userAccount",
+    });
+    expect(phpMethodCallExpression("new UserAccountModel()->getConnection()")).toEqual(
+      {
+        methodName: "getConnection",
+        receiverExpression: "new UserAccountModel()",
+      },
+    );
     expect(phpStaticCallExpression("CommentFactory::make()")).toEqual({
       className: "CommentFactory",
       methodName: "make",
     });
+  });
+
+  it("extracts method return expressions from concrete method bodies", () => {
+    expect(
+      phpMethodReturnExpressions(
+        `<?php
+class UserAccount
+{
+    public function getDatabaseConnection()
+    {
+        if (! $this->isValid()) {
+            return null;
+        }
+
+        return new UserAccountModel()->getConnection();
+    }
+}
+`,
+        "getDatabaseConnection",
+      ),
+    ).toEqual(["new UserAccountModel()->getConnection()"]);
   });
 });

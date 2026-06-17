@@ -114,6 +114,7 @@ import {
   phpDeclaredTypeCandidate,
   phpLaravelContainerExpressionClassName,
   phpMethodCallExpression,
+  phpMethodReturnExpressions,
   phpNewExpressionClassName,
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
@@ -2284,6 +2285,73 @@ export function useWorkbenchController(
 
       visitedClassNames.add(visitedKey);
 
+      const facadeTargetClassName = laravelFacadeTargetClassName(normalizedClassName);
+
+      if (facadeTargetClassName) {
+        return resolvePhpMethodReturnType(
+          facadeTargetClassName,
+          methodName,
+          visitedClassNames,
+        );
+      }
+
+      const resolveReturnExpressionType = async (
+        ownerSource: string,
+        expression: string,
+      ): Promise<string | null> => {
+        const constructedClassName =
+          phpNewExpressionClassName(expression) ??
+          phpLaravelContainerExpressionClassName(expression);
+
+        if (constructedClassName) {
+          return resolvePhpClassReference(ownerSource, constructedClassName);
+        }
+
+        const methodCall = phpMethodCallExpression(expression);
+
+        if (methodCall) {
+          const directReceiverType = phpReceiverExpressionTypeInSource(
+            ownerSource,
+            { column: 1, lineNumber: 1 },
+            methodCall.receiverExpression,
+          );
+          const constructedReceiverType =
+            directReceiverType ??
+            phpNewExpressionClassName(methodCall.receiverExpression) ??
+            phpLaravelContainerExpressionClassName(methodCall.receiverExpression);
+          const resolvedReceiverType = constructedReceiverType
+            ? resolvePhpClassReference(ownerSource, constructedReceiverType)
+            : null;
+
+          return resolvedReceiverType
+            ? resolvePhpMethodReturnType(
+                resolvedReceiverType,
+                methodCall.methodName,
+                visitedClassNames,
+              )
+            : null;
+        }
+
+        const staticCall = phpStaticCallExpression(expression);
+
+        if (staticCall) {
+          const className = resolvePhpClassReference(
+            ownerSource,
+            staticCall.className,
+          );
+
+          return className
+            ? resolvePhpMethodReturnType(
+                className,
+                staticCall.methodName,
+                visitedClassNames,
+              )
+            : null;
+        }
+
+        return null;
+      };
+
       for (const path of phpClassPathCandidates(
         workspaceRoot,
         workspaceDescriptor.php,
@@ -2302,6 +2370,22 @@ export function useWorkbenchController(
 
           if (returnType) {
             return returnType;
+          }
+
+          if (method) {
+            for (const expression of phpMethodReturnExpressions(
+              content,
+              method.name,
+            )) {
+              const expressionReturnType = await resolveReturnExpressionType(
+                content,
+                expression,
+              );
+
+              if (expressionReturnType) {
+                return expressionReturnType;
+              }
+            }
           }
 
           for (const traitName of phpTraitClassNames(content)) {
@@ -2729,14 +2813,25 @@ export function useWorkbenchController(
         return false;
       }
 
-      const variableType = phpParameterTypeForVariable(
+      const position =
+        activeEditorPositionRef.current ?? { column: 1, lineNumber: 1 };
+      const receiverType = await resolvePhpExpressionType(
         activeDocument.content,
-        activeEditorPositionRef.current ?? { column: 1, lineNumber: 1 },
-        context.variableName,
+        position,
+        context.receiverExpression || `$${context.variableName}`,
       );
-      const resolvedVariableType = variableType
-        ? resolvePhpClassName(activeDocument.content, variableType)
+      const variableType = context.variableName
+        ? phpParameterTypeForVariable(
+            activeDocument.content,
+            position,
+            context.variableName,
+          )
         : null;
+      const resolvedVariableType =
+        receiverType ??
+        (variableType
+          ? resolvePhpClassName(activeDocument.content, variableType)
+          : null);
       const frameworkHint = phpLaravelRequestMethodDefinition(
         resolvedVariableType,
         context.methodName,
@@ -2758,7 +2853,7 @@ export function useWorkbenchController(
       }
 
       setMessage(
-        `No typed target found for $${context.variableName}->${context.methodName}().`,
+        `No typed target found for ${context.receiverExpression}->${context.methodName}().`,
       );
       return false;
     },
@@ -2766,6 +2861,7 @@ export function useWorkbenchController(
       activeDocument,
       openDirectPhpMethodTarget,
       openPhpMethodHintTarget,
+      resolvePhpExpressionType,
     ],
   );
 
