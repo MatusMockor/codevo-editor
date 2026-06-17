@@ -739,11 +739,7 @@ function App() {
         isOpen={workbench.languageServerSetupOpen}
         onClose={() => workbench.setLanguageServerSetupOpen(false)}
         isInstallingManagedPhpactor={workbench.installingManagedPhpactor}
-        onInstallManagedPhpactor={
-          workbench.installingManagedPhpactor
-            ? undefined
-            : workbench.installManagedPhpactor
-        }
+        onInstallManagedPhpactor={workbench.installManagedPhpactor}
         plan={workbench.languageServerPlan}
       />
 

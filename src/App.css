@@ -2051,7 +2051,7 @@ button {
   height: 26px;
 }
 
-.setup-command button {
+.setup-command .setup-copy-command {
   width: 28px;
   height: 28px;
 }
@@ -2213,7 +2213,7 @@ button {
   color: var(--color-success);
   max-width: 100%;
   font-family:
-    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
 }
 

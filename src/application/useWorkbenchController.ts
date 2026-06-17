@@ -5180,7 +5180,6 @@ export function useWorkbenchController(
       setInstallingManagedPhpactor(false);
     }
   }, [
-    currentWorkspaceRootRef,
     installingManagedPhpactor,
     phpToolGateway,
     refreshLanguageServerPlan,

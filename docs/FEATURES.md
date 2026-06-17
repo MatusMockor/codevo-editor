@@ -16,6 +16,14 @@ The editor uses a shared notice/toast pipeline.
   - Maps notice payloads to toast UI renderers.
 - `src/components/NoticeToastHost.tsx`  
   - Displays toasts and tracks dismissals.
+- `src/components/ToastNotification.tsx`
+  - Reusable toast UI component with template types and action handlers.
+- `src/components/ManagedPhpactorSetupNotice.tsx`
+  - Concrete notice implementation for missing PHPactor setup.
+- `src/App.tsx`
+  - Shell wiring; mounts `NoticeToastHost` and connects workbench state.
+- `src/App.css`
+  - Toast styling, variants, and animations.
 
 ### How to add/update a toast in code
 
