@@ -135,6 +135,43 @@ $comment->return();
       unresolved,
     ]);
   });
+
+  it("suppresses stale PHPactor return parse diagnostics after completed calls", () => {
+    const source = `<?php
+
+$comment->forceDelete();
+return (new CommentResource($comment))->response()->setStatusCode(200);
+`;
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [
+        diagnostic({
+          character: 0,
+          line: 3,
+          message:
+            'Parse error: syntax error, unexpected token "return" in Standard input code on line 4 Errors parsing Standard input code',
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("keeps return parse diagnostics when the previous statement is incomplete", () => {
+    const source = `<?php
+
+$comment->forceDelete(
+return (new CommentResource($comment))->response()->setStatusCode(200);
+`;
+    const parseError = diagnostic({
+      character: 0,
+      line: 3,
+      message:
+        'Parse error: syntax error, unexpected token "return" in Standard input code on line 4 Errors parsing Standard input code',
+    });
+
+    expect(filterPhpLanguageServerDiagnostics(source, [parseError])).toEqual([
+      parseError,
+    ]);
+  });
 });
 
 function diagnostic(

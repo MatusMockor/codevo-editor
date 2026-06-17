@@ -80,6 +80,7 @@ export function filterPhpLanguageServerDiagnostics(
     (diagnostic) =>
       !isIgnoredPhpactorDocblockDiagnostic(diagnostic) &&
       !isPhpactorKeywordMethodDiagnostic(source, diagnostic) &&
+      !isPhpactorStaleReturnParseDiagnostic(source, diagnostic) &&
       !isLaravelEloquentStaticBuilderDiagnostic(source, diagnostic),
   );
 }
@@ -150,6 +151,29 @@ function isPhpactorKeywordMethodDiagnostic(
   return Boolean(line && /^\s*return\b/.test(line));
 }
 
+function isPhpactorStaleReturnParseDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): boolean {
+  if (
+    !/\bParse error:\s*syntax error,\s*unexpected token ["']return["'].*\bStandard input code\b/i.test(
+      diagnostic.message,
+    )
+  ) {
+    return false;
+  }
+
+  const line = lineAt(source, diagnostic.line);
+  const previousLine = previousMeaningfulLine(source, diagnostic.line);
+
+  return Boolean(
+    line &&
+      /^\s*return\b/.test(line) &&
+      previousLine &&
+      /[;{}]\s*$/.test(previousLine),
+  );
+}
+
 function diagnosticTouchesMethod(
   diagnostic: LanguageServerDiagnostic,
   method: string,
@@ -172,4 +196,21 @@ function lineAt(source: string, zeroBasedLine: number): string | null {
   }
 
   return source.split(/\r?\n/)[zeroBasedLine] ?? null;
+}
+
+function previousMeaningfulLine(
+  source: string,
+  zeroBasedLine: number,
+): string | null {
+  const lines = source.split(/\r?\n/);
+
+  for (let index = zeroBasedLine - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trim();
+
+    if (line) {
+      return line;
+    }
+  }
+
+  return null;
 }

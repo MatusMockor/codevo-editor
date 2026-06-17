@@ -3250,32 +3250,70 @@ export function useWorkbenchController(
         return false;
       }
 
-      for (const path of phpClassPathCandidates(
-        workspaceRoot,
-        workspaceDescriptor.php,
-        className,
-      )) {
-        try {
-          const content = await readNavigationFileContent(path);
-          const position = phpMethodPositionOrNull(content, methodName);
+      const visitedClassNames = new Set<string>();
+      const openMethodInClassHierarchy = async (
+        candidateClassName: string,
+      ): Promise<boolean> => {
+        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
+        const visitedKey = normalizedCandidate.toLowerCase();
 
-          if (!position) {
+        if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
+          return false;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+          try {
+            const content = await readNavigationFileContent(path);
+            const position = phpMethodPositionOrNull(content, methodName);
+
+            if (position) {
+              return openNavigationTarget(path, position, `${methodName}()`);
+            }
+
+            for (const traitName of phpTraitClassNames(content)) {
+              const resolvedTraitName = resolvePhpClassReference(
+                content,
+                traitName,
+              );
+
+              if (
+                resolvedTraitName &&
+                (await openMethodInClassHierarchy(resolvedTraitName))
+              ) {
+                return true;
+              }
+            }
+
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassReference(content, parentClassName)
+              : null;
+
+            if (
+              resolvedParentClassName &&
+              (await openMethodInClassHierarchy(resolvedParentClassName))
+            ) {
+              return true;
+            }
+          } catch {
             continue;
           }
-
-          return openNavigationTarget(path, position, `${methodName}()`);
-        } catch {
-          continue;
         }
-      }
 
-      return false;
+        return false;
+      };
+
+      return openMethodInClassHierarchy(className);
     },
     [
       intelligenceMode,
       openNavigationTarget,
       projectSymbolSearch,
       readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
     ],

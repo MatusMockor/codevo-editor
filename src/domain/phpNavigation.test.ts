@@ -81,6 +81,23 @@ Route::post('/reactions', [ReactionController::class, 'store']);
     ).toBe("StoreCommentRequest");
   });
 
+  it("does not let class body trait uses shadow namespace imports", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\SoftDeletes;
+
+class Comment
+{
+    use SoftDeletes;
+}
+`;
+
+    expect(resolvePhpClassName(source, "SoftDeletes")).toBe(
+      "Illuminate\\Database\\Eloquent\\SoftDeletes",
+    );
+  });
+
   it("maps Composer PSR-4 roots to project and vendor class files", () => {
     expect(
       phpClassPathCandidates(

@@ -424,8 +424,9 @@ function identifierAtOffset(
 
 function phpUseImports(source: string): Map<string, string> {
   const imports = new Map<string, string>();
+  const importSource = source.slice(0, firstPhpTypeDeclarationOffset(source));
 
-  for (const match of source.matchAll(/^\s*use\s+(?!function\b|const\b)([^;]+);/gm)) {
+  for (const match of importSource.matchAll(/^\s*use\s+(?!function\b|const\b)([^;]+);/gm)) {
     const importName = (match[1] || "").trim();
 
     if (!importName) {
@@ -448,6 +449,14 @@ function phpUseImports(source: string): Map<string, string> {
   }
 
   return imports;
+}
+
+function firstPhpTypeDeclarationOffset(source: string): number {
+  const match = /^\s*(?:abstract\s+|final\s+)?(?:class|interface|trait|enum)\s+/m.exec(
+    source,
+  );
+
+  return match?.index ?? source.length;
 }
 
 function phpNamespace(source: string): string | null {
