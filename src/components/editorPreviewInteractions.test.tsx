@@ -10,12 +10,18 @@ import { FileTree } from "./FileTree";
 describe("editor preview interactions", () => {
   let host: HTMLDivElement;
   let root: Root;
+  let scrollIntoView: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
+    scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
   });
 
   afterEach(() => {
@@ -107,21 +113,49 @@ describe("editor preview interactions", () => {
     expect(onToggleDirectory).toHaveBeenCalledWith(directory.path);
   });
 
+  it("scrolls the active file into view when reveal is enabled", () => {
+    const file = fileEntry("/workspace/src/User.php", "User.php", "file");
+
+    renderFileTree({
+      activePath: file.path,
+      file,
+      revealActivePath: true,
+    });
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+  });
+
+  it("does not scroll the active file when reveal is disabled", () => {
+    const file = fileEntry("/workspace/src/User.php", "User.php", "file");
+
+    renderFileTree({
+      activePath: file.path,
+      file,
+      revealActivePath: false,
+    });
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
   function renderFileTree({
+    activePath = null,
     file,
     onOpenFile = vi.fn(),
     onPreviewFile = vi.fn(),
     onToggleDirectory = vi.fn(),
+    revealActivePath = false,
   }: {
+    activePath?: string | null;
     file: FileEntry;
     onOpenFile?: (entry: FileEntry) => void;
     onPreviewFile?: (entry: FileEntry) => void;
     onToggleDirectory?: (path: string) => void;
+    revealActivePath?: boolean;
   }) {
     act(() => {
       root.render(
         <FileTree
-          activePath={null}
+          activePath={activePath}
           entriesByDirectory={{ "/workspace": [file] }}
           expandedDirectories={new Set()}
           expandedPhpFilePaths={new Set()}
@@ -135,6 +169,7 @@ describe("editor preview interactions", () => {
           onTogglePhpFileOutlineNode={vi.fn()}
           phpFileOutlineExpandedNodeIds={new Set()}
           phpFileOutlinesByPath={{}}
+          revealActivePath={revealActivePath}
           rootPath="/workspace"
         />,
       );

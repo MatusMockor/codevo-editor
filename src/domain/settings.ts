@@ -27,6 +27,7 @@ export interface WorkspaceSettings {
   intelephensePath: string | null;
   phpBackend: PhpBackendPreference;
   phpactorPath: string | null;
+  revealActiveFileInTree: boolean;
   session: WorkspaceSessionState;
 }
 
@@ -63,6 +64,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     intelephensePath: null,
     phpBackend: "auto",
     phpactorPath: null,
+    revealActiveFileInTree: true,
     session: defaultWorkspaceSessionState(),
   };
 }
@@ -126,6 +128,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.phpactorPath,
       defaults.phpactorPath,
     ),
+    revealActiveFileInTree:
+      typeof value.revealActiveFileInTree === "boolean"
+        ? value.revealActiveFileInTree
+        : defaults.revealActiveFileInTree,
     session: normalizeWorkspaceSession(value.session),
   };
 }

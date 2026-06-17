@@ -27,6 +27,7 @@ describe("settings defaults", () => {
       intelephensePath: null,
       phpBackend: "auto",
       phpactorPath: null,
+      revealActiveFileInTree: true,
       session: {
         activePath: null,
         bottomPanelView: "problems",
@@ -85,6 +86,7 @@ describe("normalizeWorkspaceSettings", () => {
         intelephensePath: "/tools/intelephense",
         phpBackend: "phpactor",
         phpactorPath: " /tools/phpactor ",
+        revealActiveFileInTree: false,
         session: {
           activePath: "/project/src/User.php",
           bottomPanelView: "index",
@@ -104,6 +106,7 @@ describe("normalizeWorkspaceSettings", () => {
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
       phpactorPath: "/tools/phpactor",
+      revealActiveFileInTree: false,
       session: {
         activePath: "/project/src/User.php",
         bottomPanelView: "index",

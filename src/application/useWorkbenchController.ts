@@ -884,7 +884,12 @@ export function useWorkbenchController(
   );
 
   const loadDirectory = useCallback(
-    async (path: string) => {
+    async (
+      path: string,
+      options: {
+        clearMessage?: boolean;
+      } = {},
+    ) => {
       setLoadingDirectories((current) => new Set(current).add(path));
 
       try {
@@ -893,7 +898,9 @@ export function useWorkbenchController(
           ...current,
           [path]: entries,
         }));
-        setMessage(null);
+        if (options.clearMessage !== false) {
+          setMessage(null);
+        }
       } catch (error) {
         reportError("Workspace", error);
       } finally {
@@ -1162,6 +1169,53 @@ export function useWorkbenchController(
     },
     [entriesByDirectory, expandedDirectories, loadDirectory],
   );
+
+  useEffect(() => {
+    if (
+      !workspaceRoot ||
+      !activePath ||
+      !workspaceSettings.revealActiveFileInTree
+    ) {
+      return;
+    }
+
+    const directories = parentDirectoriesInWorkspace(workspaceRoot, activePath);
+
+    if (directories.length === 0) {
+      return;
+    }
+
+    setExpandedDirectories((current) => {
+      const next = new Set(current);
+      let changed = false;
+
+      for (const directory of directories) {
+        if (next.has(directory)) {
+          continue;
+        }
+
+        next.add(directory);
+        changed = true;
+      }
+
+      return changed ? next : current;
+    });
+
+    for (const directory of directories) {
+      if (entriesByDirectory[directory] || loadingDirectories.has(directory)) {
+        continue;
+      }
+
+      void loadDirectory(directory, { clearMessage: false });
+    }
+  }, [
+    activePath,
+    entriesByDirectory,
+    loadDirectory,
+    loadingDirectories,
+    workspaceRoot,
+    workspaceSettings.revealActiveFileInTree,
+  ]);
 
   const openFile = useCallback(
     async (entry: FileEntry, options: OpenFileOptions = {}) => {
@@ -3367,16 +3421,20 @@ export function useWorkbenchController(
         await persistAppSettings(nextAppSettings);
 
         if (!workspaceRoot) {
-          setSettingsOpen(false);
           setMessage("Settings saved.");
           return;
         }
 
-        const previousMode = intelligenceMode;
-        const smartMode = await smartModeGateway.setMode(
-          nextWorkspaceSettings.intelligenceMode,
-        );
-        const nextMode = smartMode.mode;
+        const previousMode = intelligenceModeRef.current;
+        let nextMode = nextWorkspaceSettings.intelligenceMode;
+
+        if (nextWorkspaceSettings.intelligenceMode !== previousMode) {
+          const smartMode = await smartModeGateway.setMode(
+            nextWorkspaceSettings.intelligenceMode,
+          );
+          nextMode = smartMode.mode;
+        }
+
         const resolvedWorkspaceSettings = {
           ...nextWorkspaceSettings,
           intelligenceMode: nextMode,
@@ -3414,7 +3472,6 @@ export function useWorkbenchController(
           await clearWorkspaceIndex(workspaceRoot);
         }
 
-        setSettingsOpen(false);
         setMessage("Settings saved.");
       } catch (error) {
         reportError("Settings", error);
@@ -3422,7 +3479,6 @@ export function useWorkbenchController(
     },
     [
       clearWorkspaceIndex,
-      intelligenceMode,
       persistAppSettings,
       persistWorkspaceSettings,
       refreshLanguageServerPlan,
@@ -4702,6 +4758,34 @@ function mergePhpFileOutlines(
 
 function isPhpPath(path: string): boolean {
   return path.toLowerCase().endsWith(".php");
+}
+
+function parentDirectoriesInWorkspace(rootPath: string, path: string): string[] {
+  if (!isSessionPathInWorkspace(rootPath, path)) {
+    return [];
+  }
+
+  const root = normalizedSessionPath(rootPath);
+  const directories: string[] = [];
+  let current = normalizedSessionPath(getParentPath(path));
+
+  while (isSessionPathInWorkspace(root, current)) {
+    directories.unshift(current);
+
+    if (current === root) {
+      break;
+    }
+
+    const parent = normalizedSessionPath(getParentPath(current));
+
+    if (parent === current) {
+      break;
+    }
+
+    current = parent;
+  }
+
+  return directories;
 }
 
 function bestIndexedSymbolMatch(

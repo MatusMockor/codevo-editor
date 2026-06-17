@@ -1,5 +1,5 @@
-import { Save, Settings2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Settings2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   appThemeOptions,
   settingsIgnorePatternsFromText,
@@ -61,17 +61,31 @@ export function SettingsDialog({
   const [draftTrusted, setDraftTrusted] = useState(false);
   const [ignorePatternsText, setIgnorePatternsText] = useState("");
   const [saving, setSaving] = useState(false);
+  const draftAppSettingsRef = useRef(appSettings);
+  const draftWorkspaceSettingsRef = useRef(workspaceSettings);
+  const draftTrustedRef = useRef(false);
+  const saveGenerationRef = useRef(0);
+  const wasOpenRef = useRef(false);
   const hasWorkspace = Boolean(workspaceRoot);
 
   useEffect(() => {
     if (!isOpen) {
+      wasOpenRef.current = false;
       return;
     }
 
+    if (wasOpenRef.current) {
+      return;
+    }
+
+    wasOpenRef.current = true;
     setActiveSection("general");
     setDraftAppSettings(appSettings);
     setDraftWorkspaceSettings(workspaceSettings);
     setDraftTrusted(Boolean(workspaceTrust?.trusted));
+    draftAppSettingsRef.current = appSettings;
+    draftWorkspaceSettingsRef.current = workspaceSettings;
+    draftTrustedRef.current = Boolean(workspaceTrust?.trusted);
     setIgnorePatternsText(
       settingsIgnorePatternsText(workspaceSettings.extraIgnorePatterns),
     );
@@ -86,6 +100,45 @@ export function SettingsDialog({
     return null;
   }
 
+  const saveDraft = (input: Partial<SettingsSaveInput>) => {
+    const generation = saveGenerationRef.current + 1;
+    saveGenerationRef.current = generation;
+    setSaving(true);
+
+    void onSave({
+      appSettings: input.appSettings ?? draftAppSettingsRef.current,
+      trusted: hasWorkspace
+        ? input.trusted ?? draftTrustedRef.current
+        : null,
+      workspaceSettings:
+        input.workspaceSettings ?? draftWorkspaceSettingsRef.current,
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        if (saveGenerationRef.current === generation) {
+          setSaving(false);
+        }
+      });
+  };
+
+  const updateAppSettings = (nextSettings: AppSettings) => {
+    draftAppSettingsRef.current = nextSettings;
+    setDraftAppSettings(nextSettings);
+    saveDraft({ appSettings: nextSettings });
+  };
+
+  const updateWorkspaceSettings = (nextSettings: WorkspaceSettings) => {
+    draftWorkspaceSettingsRef.current = nextSettings;
+    setDraftWorkspaceSettings(nextSettings);
+    saveDraft({ workspaceSettings: nextSettings });
+  };
+
+  const updateTrusted = (trusted: boolean) => {
+    draftTrustedRef.current = trusted;
+    setDraftTrusted(trusted);
+    saveDraft({ trusted });
+  };
+
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -98,27 +151,7 @@ export function SettingsDialog({
         }}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <form
-          className="settings-form"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setSaving(true);
-
-            try {
-              await onSave({
-                appSettings: draftAppSettings,
-                trusted: hasWorkspace ? draftTrusted : null,
-                workspaceSettings: {
-                  ...draftWorkspaceSettings,
-                  extraIgnorePatterns:
-                    settingsIgnorePatternsFromText(ignorePatternsText),
-                },
-              });
-            } finally {
-              setSaving(false);
-            }
-          }}
-        >
+        <div className="settings-form">
           <header className="settings-header">
             <span>
               <Settings2 aria-hidden="true" size={16} />
@@ -158,19 +191,25 @@ export function SettingsDialog({
                   draftTrusted={draftTrusted}
                   hasWorkspace={hasWorkspace}
                   onChangeIntelligenceMode={(intelligenceMode) =>
-                    setDraftWorkspaceSettings((current) => ({
-                      ...current,
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
                       intelligenceMode,
-                    }))
+                    })
                   }
                   onChangeAutoSave={(autoSave) =>
-                    setDraftWorkspaceSettings((current) => ({
-                      ...current,
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
                       autoSave,
-                    }))
+                      autoSaveConfigured: true,
+                    })
                   }
-                  onChangeTrusted={setDraftTrusted}
-                  saving={saving}
+                  onChangeRevealActiveFileInTree={(revealActiveFileInTree) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      revealActiveFileInTree,
+                    })
+                  }
+                  onChangeTrusted={updateTrusted}
                   workspaceRoot={workspaceRoot}
                   workspaceSettings={draftWorkspaceSettings}
                 />
@@ -180,19 +219,18 @@ export function SettingsDialog({
                 <PhpSettings
                   hasWorkspace={hasWorkspace}
                   onChangePhpBackend={(phpBackend) =>
-                    setDraftWorkspaceSettings((current) => ({
-                      ...current,
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
                       phpBackend,
-                    }))
+                    })
                   }
                   onChangeToolPath={(key, value) =>
-                    setDraftWorkspaceSettings((current) => ({
-                      ...current,
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
                       [key]: nullableInputValue(value),
-                    }))
+                    })
                   }
                   phpTools={phpTools}
-                  saving={saving}
                   workspaceSettings={draftWorkspaceSettings}
                 />
               ) : null}
@@ -201,8 +239,13 @@ export function SettingsDialog({
                 <IndexSettings
                   hasWorkspace={hasWorkspace}
                   ignorePatternsText={ignorePatternsText}
-                  onChangeIgnorePatternsText={setIgnorePatternsText}
-                  saving={saving}
+                  onChangeIgnorePatternsText={(value) => {
+                    setIgnorePatternsText(value);
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      extraIgnorePatterns: settingsIgnorePatternsFromText(value),
+                    });
+                  }}
                 />
               ) : null}
 
@@ -210,27 +253,25 @@ export function SettingsDialog({
                 <AppearanceSettings
                   appSettings={draftAppSettings}
                   onChangeTheme={(theme) =>
-                    setDraftAppSettings((current) => ({
-                      ...current,
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
                       theme,
-                    }))
+                    })
                   }
-                  saving={saving}
                 />
               ) : null}
             </div>
           </div>
 
           <footer className="settings-footer">
+            <span aria-live="polite" className="settings-save-status">
+              {saving ? "Saving..." : "Saved automatically"}
+            </span>
             <button onClick={onClose} type="button">
-              Cancel
-            </button>
-            <button className="settings-save" disabled={saving} type="submit">
-              <Save aria-hidden="true" size={15} />
-              Save
+              Done
             </button>
           </footer>
-        </form>
+        </div>
       </section>
     </div>
   );
@@ -239,11 +280,11 @@ export function SettingsDialog({
 interface GeneralSettingsProps {
   draftTrusted: boolean;
   hasWorkspace: boolean;
-  saving: boolean;
   workspaceRoot: string | null;
   workspaceSettings: WorkspaceSettings;
   onChangeAutoSave(autoSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
+  onChangeRevealActiveFileInTree(enabled: boolean): void;
   onChangeTrusted(trusted: boolean): void;
 }
 
@@ -252,8 +293,8 @@ function GeneralSettings({
   hasWorkspace,
   onChangeAutoSave,
   onChangeIntelligenceMode,
+  onChangeRevealActiveFileInTree,
   onChangeTrusted,
-  saving,
   workspaceRoot,
   workspaceSettings,
 }: GeneralSettingsProps) {
@@ -267,7 +308,7 @@ function GeneralSettings({
       <label className="settings-field">
         <span>Mode</span>
         <select
-          disabled={!hasWorkspace || saving}
+          disabled={!hasWorkspace}
           onChange={(event) =>
             onChangeIntelligenceMode(
               event.currentTarget.value as IntelligenceMode,
@@ -284,7 +325,7 @@ function GeneralSettings({
       <label className="settings-toggle">
         <input
           checked={workspaceSettings.autoSave}
-          disabled={!hasWorkspace || saving}
+          disabled={!hasWorkspace}
           onChange={(event) => onChangeAutoSave(event.currentTarget.checked)}
           type="checkbox"
         />
@@ -293,8 +334,20 @@ function GeneralSettings({
 
       <label className="settings-toggle">
         <input
+          checked={workspaceSettings.revealActiveFileInTree}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeRevealActiveFileInTree(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Reveal active file in tree</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
           checked={draftTrusted}
-          disabled={!hasWorkspace || saving}
+          disabled={!hasWorkspace}
           onChange={(event) => onChangeTrusted(event.currentTarget.checked)}
           type="checkbox"
         />
@@ -307,7 +360,6 @@ function GeneralSettings({
 interface PhpSettingsProps {
   hasWorkspace: boolean;
   phpTools: PhpToolAvailability | null;
-  saving: boolean;
   workspaceSettings: WorkspaceSettings;
   onChangePhpBackend(backend: PhpBackendPreference): void;
   onChangeToolPath(
@@ -321,7 +373,6 @@ function PhpSettings({
   onChangePhpBackend,
   onChangeToolPath,
   phpTools,
-  saving,
   workspaceSettings,
 }: PhpSettingsProps) {
   return (
@@ -329,7 +380,7 @@ function PhpSettings({
       <label className="settings-field">
         <span>Backend</span>
         <select
-          disabled={!hasWorkspace || saving}
+          disabled={!hasWorkspace}
           onChange={(event) =>
             onChangePhpBackend(
               event.currentTarget.value as PhpBackendPreference,
@@ -346,7 +397,7 @@ function PhpSettings({
       <label className="settings-field">
         <span>PHP engine path</span>
         <input
-          disabled={!hasWorkspace || saving}
+          disabled={!hasWorkspace}
           onChange={(event) =>
             onChangeToolPath("phpactorPath", event.currentTarget.value)
           }
@@ -358,7 +409,7 @@ function PhpSettings({
       <label className="settings-field">
         <span>Intelephense path</span>
         <input
-          disabled={!hasWorkspace || saving}
+          disabled={!hasWorkspace}
           onChange={(event) =>
             onChangeToolPath("intelephensePath", event.currentTarget.value)
           }
@@ -382,7 +433,6 @@ function PhpSettings({
 interface IndexSettingsProps {
   hasWorkspace: boolean;
   ignorePatternsText: string;
-  saving: boolean;
   onChangeIgnorePatternsText(value: string): void;
 }
 
@@ -390,14 +440,13 @@ function IndexSettings({
   hasWorkspace,
   ignorePatternsText,
   onChangeIgnorePatternsText,
-  saving,
 }: IndexSettingsProps) {
   return (
     <div className="settings-group">
       <label className="settings-field">
         <span>Extra ignores</span>
         <textarea
-          disabled={!hasWorkspace || saving}
+          disabled={!hasWorkspace}
           onChange={(event) =>
             onChangeIgnorePatternsText(event.currentTarget.value)
           }
@@ -417,21 +466,18 @@ function IndexSettings({
 
 interface AppearanceSettingsProps {
   appSettings: AppSettings;
-  saving: boolean;
   onChangeTheme(theme: AppTheme): void;
 }
 
 function AppearanceSettings({
   appSettings,
   onChangeTheme,
-  saving,
 }: AppearanceSettingsProps) {
   return (
     <div className="settings-group">
       <label className="settings-field">
         <span>Theme</span>
         <select
-          disabled={saving}
           onChange={(event) =>
             onChangeTheme(event.currentTarget.value as AppTheme)
           }

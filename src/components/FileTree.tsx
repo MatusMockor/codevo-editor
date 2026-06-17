@@ -1,6 +1,6 @@
 import { ChevronRight, FileCode2, Folder, FolderOpen } from "lucide-react";
-import type { CSSProperties } from "react";
-import type { MouseEvent } from "react";
+import { useEffect, useRef } from "react";
+import type { CSSProperties, MouseEvent, RefObject } from "react";
 import {
   canExpandPhpFileEntry,
   type PhpFileOutline,
@@ -19,6 +19,7 @@ interface FileTreeProps {
   phpFileOutlineExpandedNodeIds: Set<string>;
   phpFileOutlinesByPath: Record<string, PhpFileOutline>;
   activePath: string | null;
+  revealActivePath: boolean;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
   onOpenPhpFileOutlineNode(node: PhpFileOutlineNode): void;
@@ -37,6 +38,7 @@ export function FileTree({
   phpFileOutlineExpandedNodeIds,
   phpFileOutlinesByPath,
   activePath,
+  revealActivePath,
   onOpenFile,
   onPreviewFile,
   onOpenPhpFileOutlineNode,
@@ -44,6 +46,18 @@ export function FileTree({
   onTogglePhpFileOutline,
   onTogglePhpFileOutlineNode,
 }: FileTreeProps) {
+  const activeRowRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!revealActivePath) {
+      return;
+    }
+
+    activeRowRef.current?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [activePath, expandedDirectories, revealActivePath]);
+
   if (!rootPath) {
     return (
       <div className="empty-tree">
@@ -59,6 +73,7 @@ export function FileTree({
       {rootEntries.map((entry) => (
         <TreeEntry
           activePath={activePath}
+          activeRowRef={activeRowRef}
           entriesByDirectory={entriesByDirectory}
           entry={entry}
           expandedPhpFilePaths={expandedPhpFilePaths}
@@ -92,6 +107,7 @@ interface TreeEntryProps {
   phpFileOutlineExpandedNodeIds: Set<string>;
   phpFileOutlinesByPath: Record<string, PhpFileOutline>;
   activePath: string | null;
+  activeRowRef: RefObject<HTMLButtonElement | null>;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
   onOpenPhpFileOutlineNode(node: PhpFileOutlineNode): void;
@@ -111,6 +127,7 @@ function TreeEntry({
   phpFileOutlineExpandedNodeIds,
   phpFileOutlinesByPath,
   activePath,
+  activeRowRef,
   onOpenFile,
   onPreviewFile,
   onOpenPhpFileOutlineNode,
@@ -159,6 +176,7 @@ function TreeEntry({
           onPreviewFile(entry);
         }}
         onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
+        ref={entry.path === activePath ? activeRowRef : undefined}
         style={{ "--tree-level": level } as CSSProperties}
         title={entry.path}
         type="button"
@@ -186,6 +204,7 @@ function TreeEntry({
         ? children.map((child) => (
             <TreeEntry
               activePath={activePath}
+              activeRowRef={activeRowRef}
               entriesByDirectory={entriesByDirectory}
               entry={child}
               expandedPhpFilePaths={expandedPhpFilePaths}

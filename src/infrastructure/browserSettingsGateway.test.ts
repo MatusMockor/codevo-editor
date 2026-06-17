@@ -17,6 +17,7 @@ describe("BrowserSettingsGateway", () => {
       intelephensePath: null,
       phpBackend: "auto",
       phpactorPath: null,
+      revealActiveFileInTree: true,
       session: {
         activePath: null,
         bottomPanelView: "problems",
@@ -42,6 +43,7 @@ describe("BrowserSettingsGateway", () => {
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
       phpactorPath: "/tools/phpactor",
+      revealActiveFileInTree: false,
       session: {
         activePath: "/project/src/User.php",
         bottomPanelView: "index",
@@ -62,6 +64,7 @@ describe("BrowserSettingsGateway", () => {
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
       phpactorPath: "/tools/phpactor",
+      revealActiveFileInTree: false,
       session: {
         activePath: "/project/src/User.php",
         bottomPanelView: "index",
@@ -89,6 +92,7 @@ describe("BrowserSettingsGateway", () => {
       intelephensePath: null,
       phpBackend: "auto",
       phpactorPath: null,
+      revealActiveFileInTree: true,
       session: {
         activePath: null,
         bottomPanelView: "problems",

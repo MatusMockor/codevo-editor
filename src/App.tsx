@@ -371,6 +371,9 @@ function App() {
               workbench.phpFileOutlineExpandedNodeIds
             }
             phpFileOutlinesByPath={workbench.phpFileOutlinesByPath}
+            revealActivePath={
+              workbench.workspaceSettings.revealActiveFileInTree
+            }
             rootPath={workbench.workspaceRoot}
           />
         )}
