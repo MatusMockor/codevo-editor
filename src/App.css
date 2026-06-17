@@ -27,6 +27,15 @@
   --color-text-subtle: #5e6573;
   --color-warning: #d8b878;
   --color-white: #ffffff;
+  --change-added: #7ddc9f;
+  --change-added-soft: rgba(125, 220, 159, 0.13);
+  --change-added-strong: #a7f0bf;
+  --change-deleted: #ef7373;
+  --change-deleted-soft: rgba(239, 115, 115, 0.13);
+  --change-deleted-strong: #ff9b9b;
+  --change-modified: #e7c66c;
+  --change-modified-soft: rgba(231, 198, 108, 0.14);
+  --change-modified-strong: #f6dc86;
   --radius-sm: 6px;
   --radius-md: 9px;
   --radius-lg: 12px;
@@ -80,6 +89,15 @@
   --color-text-subtle: #74808f;
   --color-warning: #9a7016;
   --color-white: #ffffff;
+  --change-added: #23845f;
+  --change-added-soft: rgba(35, 132, 95, 0.13);
+  --change-added-strong: #14684b;
+  --change-deleted: #bd4d4d;
+  --change-deleted-soft: rgba(189, 77, 77, 0.12);
+  --change-deleted-strong: #9c3232;
+  --change-modified: #bd8525;
+  --change-modified-soft: rgba(189, 133, 37, 0.14);
+  --change-modified-strong: #81570d;
   color-scheme: light;
 }
 
@@ -112,6 +130,15 @@
   --color-text-subtle: #8b94a5;
   --color-warning: #ffd580;
   --color-white: #ffffff;
+  --change-added: #95e6cb;
+  --change-added-soft: rgba(149, 230, 203, 0.14);
+  --change-added-strong: #b8f5da;
+  --change-deleted: #f28779;
+  --change-deleted-soft: rgba(242, 135, 121, 0.14);
+  --change-deleted-strong: #ffad9f;
+  --change-modified: #ffcc66;
+  --change-modified-soft: rgba(255, 204, 102, 0.15);
+  --change-modified-strong: #ffd580;
   color-scheme: dark;
 }
 
@@ -144,6 +171,15 @@
   --color-text-subtle: #8089a3;
   --color-warning: #ffcb6b;
   --color-white: #ffffff;
+  --change-added: #c3e88d;
+  --change-added-soft: rgba(195, 232, 141, 0.13);
+  --change-added-strong: #d7ff9d;
+  --change-deleted: #f07178;
+  --change-deleted-soft: rgba(240, 113, 120, 0.14);
+  --change-deleted-strong: #ff8f95;
+  --change-modified: #ffcb6b;
+  --change-modified-soft: rgba(255, 203, 107, 0.14);
+  --change-modified-strong: #ffe082;
   color-scheme: dark;
 }
 
@@ -177,6 +213,15 @@
     --color-text-subtle: #74808f;
     --color-warning: #9a7016;
     --color-white: #ffffff;
+    --change-added: #23845f;
+    --change-added-soft: rgba(35, 132, 95, 0.13);
+    --change-added-strong: #14684b;
+    --change-deleted: #bd4d4d;
+    --change-deleted-soft: rgba(189, 77, 77, 0.12);
+    --change-deleted-strong: #9c3232;
+    --change-modified: #bd8525;
+    --change-modified-soft: rgba(189, 133, 37, 0.14);
+    --change-modified-strong: #81570d;
     color-scheme: light;
   }
 }
@@ -795,18 +840,21 @@ button {
 }
 
 .monaco-editor .editor-change-glyph-added::before {
-  background: #7ddc9f;
-  box-shadow: 0 0 0 1px rgba(125, 220, 159, 0.2);
+  background: var(--change-added);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--change-added) 28%, transparent);
 }
 
 .monaco-editor .editor-change-glyph-modified::before {
-  background: #e7c66c;
-  box-shadow: 0 0 0 1px rgba(231, 198, 108, 0.22);
+  background: var(--change-modified);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--change-modified) 30%, transparent);
 }
 
 .monaco-editor .editor-change-glyph-deleted::before {
-  background: #ef7373;
-  box-shadow: 0 0 0 1px rgba(239, 115, 115, 0.22);
+  background: var(--change-deleted);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--change-deleted) 30%, transparent);
 }
 
 .monaco-editor .editor-change-line-added,
@@ -816,15 +864,15 @@ button {
 }
 
 .monaco-editor .editor-change-line-added {
-  border-left-color: #7ddc9f;
+  border-left-color: var(--change-added);
 }
 
 .monaco-editor .editor-change-line-modified {
-  border-left-color: #e7c66c;
+  border-left-color: var(--change-modified);
 }
 
 .monaco-editor .editor-change-line-deleted {
-  border-left-color: #ef7373;
+  border-left-color: var(--change-deleted);
 }
 
 .monaco-editor .implementation-gutter-glyph {
@@ -865,6 +913,9 @@ button {
 }
 
 .editor-change-popover {
+  --change-popover-accent: var(--change-modified);
+  --change-popover-accent-strong: var(--change-modified-strong);
+  --change-popover-soft: var(--change-modified-soft);
   position: absolute;
   z-index: 45;
   display: grid;
@@ -872,14 +923,44 @@ button {
   width: min(620px, calc(100% - 92px));
   max-height: min(360px, calc(100% - 42px));
   overflow: hidden;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--change-popover-accent) 44%,
+      var(--color-border-strong)
+    );
   border-radius: 8px;
-  background: var(--color-panel-deep);
+  background:
+    linear-gradient(90deg, var(--change-popover-accent) 0 3px, transparent 3px),
+    var(--color-panel-deep);
   box-shadow:
     var(--shadow-pop),
-    0 0 0 1px rgba(0, 0, 0, 0.5);
+    0 0 0 1px
+      color-mix(
+        in srgb,
+        var(--change-popover-accent) 22%,
+        rgba(0, 0, 0, 0.5)
+      );
   color: var(--color-text);
   isolation: isolate;
+}
+
+.editor-change-popover-added {
+  --change-popover-accent: var(--change-added);
+  --change-popover-accent-strong: var(--change-added-strong);
+  --change-popover-soft: var(--change-added-soft);
+}
+
+.editor-change-popover-deleted {
+  --change-popover-accent: var(--change-deleted);
+  --change-popover-accent-strong: var(--change-deleted-strong);
+  --change-popover-soft: var(--change-deleted-soft);
+}
+
+.editor-change-popover-modified {
+  --change-popover-accent: var(--change-modified);
+  --change-popover-accent-strong: var(--change-modified-strong);
+  --change-popover-soft: var(--change-modified-soft);
 }
 
 .editor-change-popover-header {
@@ -889,9 +970,19 @@ button {
   gap: 12px;
   min-height: 34px;
   min-width: 0;
-  border-bottom: 1px solid var(--color-border);
-  background: #171b22;
-  padding: 5px 8px 5px 10px;
+  border-bottom: 1px solid
+    color-mix(
+      in srgb,
+      var(--change-popover-accent) 24%,
+      var(--color-border)
+    );
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--change-popover-accent) 14%, var(--color-control)),
+      var(--color-control) 78%
+    );
+  padding: 5px 8px 5px 12px;
 }
 
 .editor-change-popover-kind {
@@ -908,19 +999,22 @@ button {
   width: 8px;
   height: 8px;
   border-radius: 999px;
+  box-shadow:
+    0 0 0 3px
+      color-mix(in srgb, var(--change-popover-accent) 18%, transparent);
   content: "";
 }
 
 .editor-change-popover-kind.added::before {
-  background: #7ddc9f;
+  background: var(--change-added);
 }
 
 .editor-change-popover-kind.modified::before {
-  background: #e7c66c;
+  background: var(--change-modified);
 }
 
 .editor-change-popover-kind.deleted::before {
-  background: #ef7373;
+  background: var(--change-deleted);
 }
 
 .editor-change-popover-icon-button,
@@ -943,12 +1037,27 @@ button {
 }
 
 .editor-change-popover-section-label {
-  background: #11151b;
-  border-bottom: 1px solid var(--color-border);
-  color: var(--color-text-muted);
+  background:
+    color-mix(
+      in srgb,
+      var(--change-popover-soft) 55%,
+      var(--color-panel-deep)
+    );
+  border-bottom: 1px solid
+    color-mix(
+      in srgb,
+      var(--change-popover-accent) 18%,
+      var(--color-border)
+    );
+  color:
+    color-mix(
+      in srgb,
+      var(--change-popover-accent-strong) 65%,
+      var(--color-text-strong)
+    );
   font-size: 11px;
   font-weight: 800;
-  padding: 7px 10px;
+  padding: 7px 12px;
   text-transform: uppercase;
 }
 
@@ -957,13 +1066,19 @@ button {
   max-height: 210px;
   margin: 0;
   overflow: auto;
-  background: #0f1319;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--change-popover-accent) 10%, transparent),
+      transparent 34px
+    ),
+    color-mix(in srgb, var(--change-popover-soft) 28%, var(--color-panel-deep));
   color: var(--color-text);
   font-family: "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas,
     monospace;
   font-size: 12px;
   line-height: 1.55;
-  padding: 10px;
+  padding: 10px 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -971,9 +1086,19 @@ button {
 .editor-change-popover-actions {
   display: flex;
   justify-content: flex-end;
-  background: #171b22;
-  border-top: 1px solid var(--color-border);
-  padding: 8px 10px;
+  background:
+    color-mix(
+      in srgb,
+      var(--change-popover-soft) 42%,
+      var(--color-control)
+    );
+  border-top: 1px solid
+    color-mix(
+      in srgb,
+      var(--change-popover-accent) 18%,
+      var(--color-border)
+    );
+  padding: 8px 10px 8px 12px;
 }
 
 .editor-change-popover-action {
@@ -989,7 +1114,7 @@ button {
 
 .editor-change-popover-icon-button:hover,
 .editor-change-popover-action:hover {
-  border-color: var(--color-accent);
+  border-color: var(--change-popover-accent);
   color: var(--color-text-strong);
 }
 

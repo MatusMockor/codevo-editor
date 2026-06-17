@@ -715,7 +715,7 @@ export function EditorSurface({
       {changePreview ? (
         <div
           aria-label="Local change preview"
-          className="editor-change-popover"
+          className={`editor-change-popover editor-change-popover-${changePreview.hunk.kind}`}
           role="dialog"
           style={changePreviewStyle}
         >

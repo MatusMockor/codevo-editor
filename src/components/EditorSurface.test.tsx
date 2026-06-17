@@ -527,6 +527,9 @@ interface ParserFactory
     expect(host.textContent).toContain("Modified lines");
     expect(host.textContent).toContain("$comment = 'old';");
     const popover = queryRequired<HTMLElement>(host, ".editor-change-popover");
+    expect(popover.classList.contains("editor-change-popover-modified")).toBe(
+      true,
+    );
     expect(popover.style.left).toBe("92px");
     expect(popover.style.top).toBe("56px");
 
