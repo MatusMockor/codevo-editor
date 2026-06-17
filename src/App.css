@@ -1150,7 +1150,7 @@ button {
   display: grid;
   min-width: 120px;
   max-width: 220px;
-  grid-template-columns: minmax(0, 1fr) 22px;
+  grid-template-columns: minmax(0, 1fr) 30px;
   align-items: center;
   height: 34px;
   border-radius: var(--radius-md) var(--radius-md) 0 0;
@@ -1213,6 +1213,7 @@ button {
   align-self: center;
   width: 18px;
   height: 18px;
+  padding: 0;
   border-radius: var(--radius-sm);
   color: var(--color-text-subtle);
   opacity: 0;
