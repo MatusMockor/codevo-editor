@@ -59,6 +59,16 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - Routed JS/TS quick-fix shortcut through Monaco so Option+Enter can surface tsserver actions.
 - Added unit and Rust coverage for the new feature gateway, request factory and Monaco mappings.
 
+## Implemented Executable Code Actions Slice
+
+- Added `codeAction/resolve` support for JS/TS and the shared language-server feature contract.
+- Added `workspace/executeCommand` support for JS/TS and PHP LSP feature gateways.
+- Monaco now keeps command-only and data-only LSP code actions instead of dropping them.
+- Resolved code actions can turn into real Monaco workspace edits.
+- Executed language-server commands can apply returned workspace edits to open Monaco models.
+- TypeScript `source.organizeImports` and direct-edit quick fixes now flow through the same executable path as VS Code-style actions.
+- The next remaining parity gap is client-side handling of server-initiated `workspace/applyEdit` requests. Some TypeScript command paths use that request instead of returning an edit directly.
+
 ## Full VS Code-Like Target
 
 ### Runtime
@@ -160,5 +170,5 @@ Add settings:
 2. JS/TS project detector and settings.
 3. Managed tsserver/LSP runtime. Done for `typescript-language-server`.
 4. Document sync and diagnostics routing. Done for managed JS/TS LSP.
-5. Navigation, references, rename, quick fixes, organize imports. Mostly done; command-only LSP actions and deeper organize-import UX still need hardening.
+5. Navigation, references, rename, quick fixes, organize imports. Mostly done; command-only LSP actions now resolve and execute. Server-initiated `workspace/applyEdit` still needs a frontend event bridge for full VS Code parity.
 6. Framework-specific plugins and inlay hints.

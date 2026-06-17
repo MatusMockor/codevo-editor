@@ -3053,11 +3053,13 @@ function featuresGateway(): LanguageServerFeaturesGateway {
       items: [],
     })),
     definition: vi.fn(async () => []),
+    executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => []),
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
+    resolveCodeAction: vi.fn(async (_rootPath, action) => action),
   };
 }
 

@@ -1160,6 +1160,10 @@ fn server_request_result(method: &str, params: Option<&Value>) -> Value {
             Value::Array((0..item_count).map(|_| json!({})).collect())
         }
         "workspace/workspaceFolders" => Value::Null,
+        "workspace/applyEdit" => json!({
+            "applied": false,
+            "failureReason": "Workspace edit requests are not applied by this client yet."
+        }),
         "client/registerCapability" | "client/unregisterCapability" => Value::Null,
         _ => Value::Null,
     }

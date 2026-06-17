@@ -59,6 +59,12 @@ export interface LanguageServerWorkspaceEdit {
   changes: Record<string, LanguageServerTextEdit[]>;
 }
 
+export interface LanguageServerCodeActionCommand {
+  arguments: unknown[] | null;
+  command: string;
+  title: string;
+}
+
 export interface LanguageServerCodeActionDiagnostic {
   code?: string | number | null;
   message: string;
@@ -73,6 +79,8 @@ export interface LanguageServerCodeActionContext {
 }
 
 export interface LanguageServerCodeAction {
+  command: LanguageServerCodeActionCommand | null;
+  data: unknown | null;
   edit: LanguageServerWorkspaceEdit | null;
   isPreferred: boolean;
   kind: string | null;
@@ -116,6 +124,14 @@ export interface LanguageServerFeaturesGateway {
     range: LanguageServerRange,
     context: LanguageServerCodeActionContext,
   ): Promise<LanguageServerCodeAction[]>;
+  resolveCodeAction(
+    rootPath: string,
+    action: LanguageServerCodeAction,
+  ): Promise<LanguageServerCodeAction>;
+  executeCommand(
+    rootPath: string,
+    command: LanguageServerCodeActionCommand,
+  ): Promise<LanguageServerWorkspaceEdit | null>;
   formatting(
     rootPath: string,
     path: string,

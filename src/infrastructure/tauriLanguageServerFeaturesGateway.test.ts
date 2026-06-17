@@ -31,6 +31,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       }),
     ).resolves.toEqual([]);
     await expect(
+      gateway.resolveCodeAction("/project", codeAction()),
+    ).resolves.toEqual(codeAction());
+    await expect(
+      gateway.executeCommand("/project", command()),
+    ).resolves.toBeNull();
+    await expect(
       gateway.formatting("/project", "/project/src/User.php", {
         insertSpaces: true,
         tabSize: 2,
@@ -77,6 +83,8 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     };
     const codeActions = [
       {
+        command: null,
+        data: null,
         edit: rename,
         isPreferred: true,
         kind: "quickfix",
@@ -109,6 +117,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return codeActions;
       }
 
+      if (command === "text_document_code_action_resolve") {
+        return codeActions[0];
+      }
+
+      if (command === "language_server_execute_command") {
+        return rename;
+      }
+
       if (command === "text_document_formatting") {
         return formatting;
       }
@@ -139,6 +155,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         only: ["quickfix"],
       }),
     ).resolves.toEqual(codeActions);
+    await expect(
+      gateway.resolveCodeAction("/project", codeAction()),
+    ).resolves.toEqual(codeActions[0]);
+    await expect(
+      gateway.executeCommand("/project", command()),
+    ).resolves.toEqual(rename);
     await expect(
       gateway.formatting("/project", "/project/src/User.php", {
         insertSpaces: true,
@@ -179,6 +201,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       range: range(),
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_code_action_resolve", {
+      action: codeAction(),
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("language_server_execute_command", {
+      command: command(),
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_formatting", {
       options: {
         insertSpaces: true,
@@ -202,5 +232,24 @@ function range() {
   return {
     end: { character: 8, line: 10 },
     start: { character: 4, line: 10 },
+  };
+}
+
+function codeAction() {
+  return {
+    command: null,
+    data: null,
+    edit: null,
+    isPreferred: false,
+    kind: "quickfix",
+    title: "Fix import",
+  };
+}
+
+function command() {
+  return {
+    arguments: [{ tsActionId: "unusedIdentifier" }],
+    command: "_typescript.applyFixAllCodeAction",
+    title: "Fix all",
   };
 }

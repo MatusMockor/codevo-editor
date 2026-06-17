@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   emptyLanguageServerCompletionList,
   type LanguageServerCodeAction,
+  type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionList,
   type LanguageServerFormattingOptions,
@@ -22,9 +23,11 @@ type RuntimeDetector = () => boolean;
 
 const invokeCommand: InvokeCommand = (command, args) => invoke(command, args);
 const DEFAULT_FEATURE_COMMANDS = {
+  codeActionResolve: "text_document_code_action_resolve",
   codeActions: "text_document_code_actions",
   completion: "text_document_completion",
   definition: "text_document_definition",
+  executeCommand: "language_server_execute_command",
   formatting: "text_document_formatting",
   hover: "text_document_hover",
   implementation: "text_document_implementation",
@@ -33,9 +36,11 @@ const DEFAULT_FEATURE_COMMANDS = {
 };
 
 export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
+  codeActionResolve: "javascript_typescript_text_document_code_action_resolve",
   codeActions: "javascript_typescript_text_document_code_actions",
   completion: "javascript_typescript_text_document_completion",
   definition: "javascript_typescript_text_document_definition",
+  executeCommand: "javascript_typescript_language_server_execute_command",
   formatting: "javascript_typescript_text_document_formatting",
   hover: "javascript_typescript_text_document_hover",
   implementation: "javascript_typescript_text_document_implementation",
@@ -44,9 +49,11 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
 };
 
 export interface TauriLanguageServerFeatureCommands {
+  codeActionResolve: string;
   codeActions: string;
   completion: string;
   definition: string;
+  executeCommand: string;
   formatting: string;
   hover: string;
   implementation: string;
@@ -133,6 +140,28 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.codeActions,
       { context, path, range, rootPath },
       [],
+    );
+  }
+
+  resolveCodeAction(
+    rootPath: string,
+    action: LanguageServerCodeAction,
+  ): Promise<LanguageServerCodeAction> {
+    return this.invokeWhenAvailable(
+      this.commands.codeActionResolve,
+      { action, rootPath },
+      action,
+    );
+  }
+
+  executeCommand(
+    rootPath: string,
+    command: LanguageServerCodeActionCommand,
+  ): Promise<LanguageServerWorkspaceEdit | null> {
+    return this.invokeWhenAvailable(
+      this.commands.executeCommand,
+      { command, rootPath },
+      null,
     );
   }
 

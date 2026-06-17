@@ -774,11 +774,13 @@ function featuresGateway(
       },
     ),
     definition: vi.fn(async () => responses.definition ?? []),
+    executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => responses.hover ?? null),
     implementation: vi.fn(async () => []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
+    resolveCodeAction: vi.fn(async (_rootPath, action) => action),
   };
 }
 

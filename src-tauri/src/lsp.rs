@@ -266,7 +266,10 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                                 }
                             },
                             "dynamicRegistration": false,
-                            "isPreferredSupport": true
+                            "isPreferredSupport": true,
+                            "resolveSupport": {
+                                "properties": ["edit", "command"]
+                            }
                         },
                         "definition": { "dynamicRegistration": false },
                         "documentSymbol": { "dynamicRegistration": false },
@@ -295,6 +298,9 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                     "workspace": {
                         "configuration": true,
                         "didChangeConfiguration": { "dynamicRegistration": false },
+                        "workspaceEdit": {
+                            "documentChanges": true
+                        },
                         "workspaceFolders": true
                     }
                 },

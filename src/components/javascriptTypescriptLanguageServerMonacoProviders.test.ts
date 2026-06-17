@@ -34,20 +34,36 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(16);
+    expect(monaco.dispose).toHaveBeenCalledTimes(17);
   });
 
-  it("maps references, rename edits, code actions and formatting through the gateway", async () => {
+  it("maps references, rename edits, code actions, commands and formatting through the gateway", async () => {
     const monaco = createMonaco();
+    const commandOnlyAction = {
+      command: {
+        arguments: [{ tsActionId: "unusedIdentifier" }],
+        command: "_typescript.applyFixAllCodeAction",
+        title: "Fix all unused identifiers",
+      },
+      data: { globalId: 1, providerId: 2 },
+      edit: null,
+      isPreferred: false,
+      kind: "quickfix",
+      title: "Fix all unused identifiers",
+    };
     const gateway = featuresGateway({
       codeActions: [
         {
           edit: workspaceEdit("file:///project/src/user.ts", "Account"),
+          command: null,
+          data: null,
           isPreferred: true,
           kind: "quickfix",
           title: "Rename symbol",
         },
+        commandOnlyAction,
       ],
+      executeCommandEdit: workspaceEdit("file:///project/src/user.ts", "CommandEdit"),
       formatting: [
         {
           newText: "  ",
@@ -61,10 +77,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       ],
       rename: workspaceEdit("file:///project/src/user.ts", "Account"),
+      resolvedCodeAction: {
+        ...commandOnlyAction,
+        edit: workspaceEdit("file:///project/src/user.ts", "Resolved"),
+      },
     });
     const context = providerContext({ featuresGateway: gateway });
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
     const model = textModel();
+    monaco.editor.getModels.mockReturnValue([model]);
     const position = { column: 4, lineNumber: 1 };
 
     const referencesProvider = (
@@ -168,7 +189,54 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         kind: "quickfix",
         title: "Rename symbol",
       }),
+      expect.objectContaining({
+        command: expect.objectContaining({
+          arguments: [
+            {
+              command: commandOnlyAction.command,
+              rootPath: "/project",
+            },
+          ],
+          id: "mockor.javascriptTypeScript.executeLanguageServerCommand",
+        }),
+        kind: "quickfix",
+        title: "Fix all unused identifiers",
+      }),
     ]);
+
+    const unresolvedAction = actionList.actions[1];
+    const resolvedAction = await codeActionProvider.resolveCodeAction(
+      unresolvedAction,
+    );
+
+    expect(gateway.resolveCodeAction).toHaveBeenCalledWith(
+      "/project",
+      commandOnlyAction,
+    );
+    expect(resolvedAction.edit.edits[0].textEdit.text).toBe("Resolved");
+
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+    await commandDescriptor.run(null, unresolvedAction.command.arguments[0]);
+
+    expect(gateway.executeCommand).toHaveBeenCalledWith(
+      "/project",
+      commandOnlyAction.command,
+    );
+    expect(model.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 6,
+            endLineNumber: 1,
+            startColumn: 2,
+            startLineNumber: 1,
+          }),
+          text: "CommandEdit",
+        },
+      ],
+      expect.any(Function),
+    );
 
     const formattingProvider = (
       monaco.languages.registerDocumentFormattingEditProvider as any
@@ -223,9 +291,15 @@ function providerContext(
 function featuresGateway(
   responses: Partial<{
     codeActions: Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>;
+    executeCommandEdit: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["executeCommand"]>
+    >;
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     references: Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
+    resolvedCodeAction: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
+    >;
   }> = {},
 ): LanguageServerFeaturesGateway {
   return {
@@ -235,11 +309,15 @@ function featuresGateway(
       items: [],
     })),
     definition: vi.fn(async () => []),
+    executeCommand: vi.fn(async () => responses.executeCommandEdit ?? null),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
+    resolveCodeAction: vi.fn(
+      async (_rootPath, action) => responses.resolvedCodeAction ?? action,
+    ),
   };
 }
 
@@ -280,6 +358,7 @@ function textModel() {
       endColumn: 5,
       startColumn: 1,
     })),
+    pushEditOperations: vi.fn(),
     uri: {
       fsPath: "/project/src/user.ts",
       path: "/project/src/user.ts",
@@ -343,7 +422,12 @@ function createMonaco() {
 
   return {
     dispose,
+    editor: {
+      addCommand: vi.fn(() => disposable()),
+      getModels: vi.fn((): any[] => []),
+    },
     languages: {
+      CodeActionTriggerType: { Invoke: 1 },
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: {
         Class: 7,

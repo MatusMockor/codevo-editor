@@ -871,6 +871,7 @@ function queryRequired<T extends Element>(
 function createMonaco(model: FakeModel) {
   return {
     editor: {
+      addCommand: vi.fn(() => ({ dispose: vi.fn() })),
       defineTheme: vi.fn(),
       getModelMarkers: vi.fn((): any[] => []),
       getModels: vi.fn(() => [model]),
@@ -933,11 +934,13 @@ function languageServerFeaturesGateway() {
     codeActions: vi.fn(async () => []),
     completion: vi.fn(),
     definition: vi.fn(),
+    executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => []),
     hover: vi.fn(),
     implementation: vi.fn(),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
+    resolveCodeAction: vi.fn(async (_rootPath, action) => action),
     signatureHelp: vi.fn(),
   };
 }

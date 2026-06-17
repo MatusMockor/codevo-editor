@@ -52,6 +52,14 @@ pub struct LanguageServerWorkspaceEdit {
     pub changes: BTreeMap<String, Vec<LanguageServerTextEdit>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerCodeActionCommand {
+    pub title: String,
+    pub command: String,
+    pub arguments: Option<Vec<Value>>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerCodeActionDiagnostic {
@@ -69,13 +77,16 @@ pub struct LanguageServerCodeActionContext {
     pub only: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerCodeAction {
     pub title: String,
     pub kind: Option<String>,
+    #[serde(default)]
     pub is_preferred: bool,
     pub edit: Option<LanguageServerWorkspaceEdit>,
+    pub command: Option<LanguageServerCodeActionCommand>,
+    pub data: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -144,6 +155,14 @@ pub trait TextDocumentFeatureRequestFactory {
         context: &LanguageServerCodeActionContext,
     ) -> LanguageServerFeatureRequest;
     fn formatting(&self, formatting: &TextDocumentFormatting) -> LanguageServerFeatureRequest;
+    fn resolve_code_action(
+        &self,
+        action: &LanguageServerCodeAction,
+    ) -> LanguageServerFeatureRequest;
+    fn execute_command(
+        &self,
+        command: &LanguageServerCodeActionCommand,
+    ) -> LanguageServerFeatureRequest;
 }
 
 pub struct LspTextDocumentFeatureRequestFactory;
@@ -216,6 +235,29 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
             }),
         }
     }
+
+    fn resolve_code_action(
+        &self,
+        action: &LanguageServerCodeAction,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "codeAction/resolve".to_string(),
+            params: json!(action),
+        }
+    }
+
+    fn execute_command(
+        &self,
+        command: &LanguageServerCodeActionCommand,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/executeCommand".to_string(),
+            params: json!({
+                "command": command.command,
+                "arguments": command.arguments.clone().unwrap_or_default(),
+            }),
+        }
+    }
 }
 
 pub fn parse_hover_result(value: &Value) -> Result<Option<LanguageServerHover>, String> {
@@ -275,6 +317,16 @@ pub fn parse_workspace_edit_result(
     value: &Value,
 ) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
     if value.is_null() {
+        return Ok(None);
+    }
+
+    parse_workspace_edit(value).map(Some)
+}
+
+pub fn parse_optional_workspace_edit_result(
+    value: &Value,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    if value.is_null() || value.get("changes").is_none() && value.get("documentChanges").is_none() {
         return Ok(None);
     }
 
@@ -449,6 +501,7 @@ fn parse_code_action_item(value: &Value) -> Option<LanguageServerCodeAction> {
     let edit = value
         .get("edit")
         .and_then(|edit| parse_workspace_edit(edit).ok());
+    let command = parse_code_action_command(value);
 
     Some(LanguageServerCodeAction {
         title,
@@ -458,7 +511,33 @@ fn parse_code_action_item(value: &Value) -> Option<LanguageServerCodeAction> {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         edit,
+        command,
+        data: value.get("data").cloned(),
     })
+}
+
+fn parse_code_action_command(value: &Value) -> Option<LanguageServerCodeActionCommand> {
+    let command_value = value.get("command")?;
+
+    if let Some(command) = command_value.as_str() {
+        let title = value
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or(command)
+            .to_string();
+        let arguments = value
+            .get("arguments")
+            .and_then(Value::as_array)
+            .map(|items| items.to_vec());
+
+        return Some(LanguageServerCodeActionCommand {
+            title,
+            command: command.to_string(),
+            arguments,
+        });
+    }
+
+    serde_json::from_value::<LanguageServerCodeActionCommand>(command_value.clone()).ok()
 }
 
 fn empty_completion_list() -> LanguageServerCompletionList {
@@ -479,7 +558,8 @@ struct LanguageServerLocationLink {
 mod tests {
     use super::{
         parse_code_action_result, parse_completion_result, parse_definition_result,
-        parse_formatting_result, parse_hover_result, parse_workspace_edit_result,
+        parse_formatting_result, parse_hover_result, parse_optional_workspace_edit_result,
+        parse_workspace_edit_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
         LanguageServerCodeActionContext, LanguageServerCompletionItem,
         LanguageServerCompletionList, LanguageServerFormattingOptions, LanguageServerHover,
         LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
@@ -582,6 +662,37 @@ mod tests {
         assert_eq!(request.method, "textDocument/formatting");
         assert_eq!(request.params["options"]["tabSize"], 2);
         assert_eq!(request.params["options"]["insertSpaces"], true);
+    }
+
+    #[test]
+    fn code_action_resolve_and_execute_command_requests_are_serialized() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let action = code_action();
+        let resolve = factory.resolve_code_action(&action);
+
+        assert_eq!(resolve.method, "codeAction/resolve");
+        assert_eq!(resolve.params["title"], "Fix all unused identifiers");
+        assert_eq!(resolve.params["data"]["globalId"], 1);
+
+        let execute = factory.execute_command(action.command.as_ref().expect("command"));
+
+        assert_eq!(execute.method, "workspace/executeCommand");
+        assert_eq!(
+            execute.params["command"],
+            "_typescript.applyFixAllCodeAction"
+        );
+        assert_eq!(
+            execute.params["arguments"][0]["tsActionId"],
+            "unusedIdentifier"
+        );
+
+        let execute_without_arguments = factory.execute_command(&LanguageServerCodeActionCommand {
+            arguments: None,
+            command: "_typescript.organizeImports".to_string(),
+            title: "Organize imports".to_string(),
+        });
+
+        assert_eq!(execute_without_arguments.params["arguments"], json!([]));
     }
 
     #[test]
@@ -751,6 +862,37 @@ mod tests {
     }
 
     #[test]
+    fn optional_workspace_edit_ignores_non_edit_command_results() {
+        assert_eq!(
+            parse_optional_workspace_edit_result(&json!({
+                "applied": true,
+            }))
+            .expect("command result"),
+            None
+        );
+        assert_eq!(
+            parse_optional_workspace_edit_result(&json!({
+                "changes": {
+                    "file:///tmp/User.ts": [
+                        {
+                            "range": {
+                                "start": { "line": 1, "character": 2 },
+                                "end": { "line": 1, "character": 6 }
+                            },
+                            "newText": "Account"
+                        }
+                    ]
+                }
+            }))
+            .expect("workspace edit")
+            .expect("workspace edit")
+            .changes["file:///tmp/User.ts"][0]
+                .new_text,
+            "Account"
+        );
+    }
+
+    #[test]
     fn parses_code_actions_with_workspace_edits() {
         let actions = parse_code_action_result(&json!([
             {
@@ -779,10 +921,78 @@ mod tests {
         assert_eq!(actions[0].title, "Add missing import");
         assert_eq!(actions[0].kind.as_deref(), Some("quickfix"));
         assert!(actions[0].is_preferred);
+        assert_eq!(actions[0].command, None);
+        assert_eq!(actions[0].data, None);
         assert_eq!(
             actions[0].edit.as_ref().expect("edit").changes["file:///tmp/User.ts"][0].new_text,
             "import { User } from './user';\n"
         );
+    }
+
+    #[test]
+    fn parses_code_action_commands_and_resolve_data() {
+        let actions = parse_code_action_result(&json!([
+            {
+                "title": "Fix all unused identifiers",
+                "kind": "quickfix",
+                "data": { "globalId": 1, "providerId": 2 },
+                "command": {
+                    "title": "Fix all unused identifiers",
+                    "command": "_typescript.applyFixAllCodeAction",
+                    "arguments": [{ "tsActionId": "unusedIdentifier" }]
+                }
+            },
+            {
+                "title": "Organize imports",
+                "kind": "source.organizeImports",
+                "command": "_typescript.organizeImports",
+                "arguments": ["file:///tmp/User.ts"]
+            }
+        ]))
+        .expect("code actions");
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].data.as_ref().expect("data")["globalId"], 1);
+        assert_eq!(
+            actions[0].command.as_ref().expect("command").command,
+            "_typescript.applyFixAllCodeAction"
+        );
+        assert_eq!(
+            actions[0]
+                .command
+                .as_ref()
+                .expect("command")
+                .arguments
+                .as_ref()
+                .expect("arguments")[0]["tsActionId"],
+            "unusedIdentifier"
+        );
+        assert_eq!(
+            actions[1].command.as_ref().expect("command"),
+            &LanguageServerCodeActionCommand {
+                arguments: Some(vec![json!("file:///tmp/User.ts")]),
+                command: "_typescript.organizeImports".to_string(),
+                title: "Organize imports".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn resolved_code_actions_default_missing_optional_flags() {
+        let action = serde_json::from_value::<LanguageServerCodeAction>(json!({
+            "title": "Organize imports",
+            "kind": "source.organizeImports",
+            "edit": {
+                "changes": {
+                    "file:///tmp/User.ts": []
+                }
+            }
+        }))
+        .expect("resolved action");
+
+        assert!(!action.is_preferred);
+        assert_eq!(action.command, None);
+        assert_eq!(action.data, None);
     }
 
     #[test]
@@ -829,6 +1039,26 @@ mod tests {
                 line: end_line,
                 character: end_character,
             },
+        }
+    }
+
+    fn code_action() -> LanguageServerCodeAction {
+        LanguageServerCodeAction {
+            title: "Fix all unused identifiers".to_string(),
+            kind: Some("quickfix".to_string()),
+            is_preferred: false,
+            edit: None,
+            command: Some(LanguageServerCodeActionCommand {
+                title: "Fix all unused identifiers".to_string(),
+                command: "_typescript.applyFixAllCodeAction".to_string(),
+                arguments: Some(vec![json!({
+                    "tsActionId": "unusedIdentifier",
+                })]),
+            }),
+            data: Some(json!({
+                "globalId": 1,
+                "providerId": 2,
+            })),
         }
     }
 }

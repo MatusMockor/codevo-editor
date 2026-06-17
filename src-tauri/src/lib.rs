@@ -53,12 +53,13 @@ use lsp_document::{
 };
 use lsp_features::{
     parse_code_action_result, parse_completion_result, parse_definition_result,
-    parse_formatting_result, parse_hover_result, parse_workspace_edit_result,
-    LanguageServerCodeAction, LanguageServerCodeActionContext, LanguageServerCompletionList,
-    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
-    LanguageServerRange, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
-    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-    TextDocumentFormatting, TextDocumentPosition, TextDocumentRange, TextDocumentRename,
+    parse_formatting_result, parse_hover_result, parse_optional_workspace_edit_result,
+    parse_workspace_edit_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+    LanguageServerCodeActionContext, LanguageServerCompletionList, LanguageServerFormattingOptions,
+    LanguageServerHover, LanguageServerLocation, LanguageServerRange, LanguageServerTextEdit,
+    LanguageServerWorkspaceEdit, LspTextDocumentFeatureRequestFactory,
+    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentPosition,
+    TextDocumentRange, TextDocumentRename,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1191,6 +1192,68 @@ fn javascript_typescript_text_document_code_actions(
 }
 
 #[tauri::command]
+fn text_document_code_action_resolve(
+    root_path: String,
+    action: LanguageServerCodeAction,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<LanguageServerCodeAction, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.resolve_code_action(&action);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(action);
+    };
+
+    serde_json::from_value::<LanguageServerCodeAction>(result)
+        .map_err(|error| format!("Language server returned a malformed code action: {error}"))
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_code_action_resolve(
+    root_path: String,
+    action: LanguageServerCodeAction,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<LanguageServerCodeAction, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.resolve_code_action(&action);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(action);
+    };
+
+    serde_json::from_value::<LanguageServerCodeAction>(result)
+        .map_err(|error| format!("Language server returned a malformed code action: {error}"))
+}
+
+#[tauri::command]
+fn language_server_execute_command(
+    root_path: String,
+    command: LanguageServerCodeActionCommand,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.execute_command(&command);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_optional_workspace_edit_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_language_server_execute_command(
+    root_path: String,
+    command: LanguageServerCodeActionCommand,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.execute_command(&command);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_optional_workspace_edit_result(&result)
+}
+
+#[tauri::command]
 fn text_document_formatting(
     root_path: String,
     path: String,
@@ -1417,6 +1480,8 @@ pub fn run() {
             javascript_typescript_document_did_close,
             javascript_typescript_document_did_open,
             javascript_typescript_document_did_save,
+            javascript_typescript_language_server_execute_command,
+            javascript_typescript_text_document_code_action_resolve,
             javascript_typescript_text_document_code_actions,
             javascript_typescript_text_document_completion,
             javascript_typescript_text_document_definition,
@@ -1425,6 +1490,8 @@ pub fn run() {
             javascript_typescript_text_document_implementation,
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
+            language_server_execute_command,
+            text_document_code_action_resolve,
             text_document_code_actions,
             text_document_completion,
             text_document_definition,
