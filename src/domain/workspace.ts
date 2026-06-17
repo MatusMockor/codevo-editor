@@ -98,6 +98,7 @@ export interface WorkspaceDetectionGateway {
 
 export interface PhpToolGateway {
   detectPhpTools(workspaceRoot: string | null): Promise<PhpToolAvailability>;
+  installManagedPhpactor(): Promise<void>;
 }
 
 export interface FileSearchGateway {

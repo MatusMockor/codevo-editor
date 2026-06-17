@@ -164,16 +164,19 @@ fn managed_tool_env_var(name: &str) -> String {
 fn managed_tool_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
-    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
-        roots.push(
-            home.join("Library")
-                .join("Application Support")
-                .join("Mockor Editor")
-                .join("tools")
-                .join("phpactor")
-                .join("vendor")
-                .join("bin"),
-        );
+    for home in managed_home_dirs() {
+        if cfg!(unix) {
+            roots.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Mockor Editor")
+                    .join("tools")
+                    .join("phpactor")
+                    .join("vendor")
+                    .join("bin"),
+            );
+        }
+
         roots.push(
             home.join(".mockor-editor")
                 .join("tools")
@@ -184,6 +187,22 @@ fn managed_tool_roots() -> Vec<PathBuf> {
     }
 
     roots
+}
+
+fn managed_home_dirs() -> Vec<PathBuf> {
+    let mut homes = Vec::new();
+
+    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        homes.push(home);
+    }
+
+    if let Some(home) = env::var_os("USERPROFILE").map(PathBuf::from) {
+        if !homes.contains(&home) {
+            homes.push(home);
+        }
+    }
+
+    homes
 }
 
 fn javascript_typescript_managed_tool_roots() -> Vec<PathBuf> {

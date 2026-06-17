@@ -10,7 +10,7 @@ This document records what the packaged desktop app can rely on today, what it d
 | Area | Current readiness | Release decision |
 | --- | --- | --- |
 | App bundle identity | Ready for desktop debug `.app` bundles | Product name, icon, version, identifier, publisher, and executable name are set. |
-| PHPactor LSP runtime | Works when user-installed PHPactor is discoverable | Do not claim bundled PHPactor. Keep setup guidance visible. |
+| PHPactor LSP runtime | Works when managed, workspace, or PATH PHPactor is discoverable | PHPactor is not bundled; users can bootstrap-install via one-click setup from the app when missing. |
 | Intelephense runtime | Detection exists, provider launch is pending | Treat as future backend selection work. |
 | Terminal runtime | Works through host shell/PTY for trusted workspaces | Keep trust gate; document host shell dependency. |
 | Workspace watcher | Not active as a packaged background service yet | Use explicit scan/reindex flows; Watchman is optional/future. |
@@ -94,10 +94,11 @@ Windows/Linux feasibility:
 
 ### PHPactor
 
-PHPactor is currently user-installed, not bundled. The backend detects it in this order:
+PHPactor is not bundled in first-release packaging. The backend detects it in this order:
 
-1. Workspace `vendor/bin/phpactor`
-2. `PATH`
+1. managed bootstrap location (`~/.mockor-editor/tools/phpactor/vendor/bin/phpactor` or platform equivalent, overridable via `MOCKOR_EDITOR_PHPACTOR_PATH`)
+2. workspace `vendor/bin/phpactor`
+3. `PATH`
 
 The LSP command uses the detected executable with:
 
@@ -110,7 +111,7 @@ Packaged-build behavior:
 - Trusted PHP Composer workspaces can start PHPactor when detection succeeds.
 - Untrusted workspaces are blocked before launch.
 - Non-PHP Composer workspaces report LSP unavailable.
-- Missing PHPactor reports setup guidance instead of launching.
+- Missing PHPactor keeps setup guidance visible and now offers a user-triggered one-click managed bootstrap install (still unbundled).
 - If PHPactor starts but fails the JSON-RPC handshake within the timeout, the runtime emits `Crashed`.
 - A GUI-launched macOS `.app` may have a narrower `PATH` than an interactive shell.
 - PHP itself is not detected separately; PHPactor/Composer scripts still require PHP to be available to the launched process.
@@ -118,8 +119,9 @@ Packaged-build behavior:
 
 Release policy:
 
-- Keep PHPactor user-installed for the first release.
-- Keep PHP user-installed for the first release.
+- Keep PHPactor unbundled for the first release.
+- Keep PHP unbundled for the first release.
+- Managed PHPactor install is user-initiated and can be used as a bootstrap fallback; it is not bundled and not per-project by default.
 - Wire persisted `phpactorPath` settings into backend detection or remove the field until it is actionable.
 
 ### Intelephense

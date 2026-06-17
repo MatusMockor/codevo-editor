@@ -2906,6 +2906,7 @@ function createControllerDependencies({
         intelephense: null,
         phpactor: null,
       })),
+      installManagedPhpactor: vi.fn(async () => undefined),
     },
     projectSymbols: {
       searchProjectSymbols: vi.fn(async () => projectSymbols),
