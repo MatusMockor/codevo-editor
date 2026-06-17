@@ -1087,6 +1087,94 @@ class StoreCommentRequest extends FormRequest
     });
   });
 
+  it("opens implementation targets from an explicit editor position", async () => {
+    const interfacePath = "/workspace/app/Contracts/SearchRepository.php";
+    const implementationPath = "/workspace/app/Repositories/AlbumRepository.php";
+    const implementation = vi.fn(async () => [
+      {
+        range: {
+          end: {
+            character: 27,
+            line: 14,
+          },
+          start: {
+            character: 20,
+            line: 14,
+          },
+        },
+        uri: "file:///workspace/app/Repositories/AlbumRepository.php",
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway: {
+        ...featuresGateway(),
+        implementation,
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === interfacePath) {
+          return `<?php
+
+interface SearchRepository
+{
+    public function search(array $searchParams): LengthAwarePaginator;
+}
+`;
+        }
+
+        return "<?php\nfinal class AlbumRepository {}\n";
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          implementation: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().startLanguageServer();
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(interfacePath, "SearchRepository.php"),
+      );
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerRuntimeStatus?.kind).toBe("running");
+
+    await act(async () => {
+      await getWorkbench().goToImplementationAt({
+        column: 21,
+        lineNumber: 5,
+      });
+    });
+
+    expect(implementation).toHaveBeenCalledWith({
+      character: 20,
+      line: 4,
+      path: interfacePath,
+    });
+    expect(getWorkbench().activePath).toBe(implementationPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: implementationPath,
+      position: {
+        column: 21,
+        lineNumber: 15,
+      },
+    });
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     languageServerFeaturesGateway,

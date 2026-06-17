@@ -2840,6 +2840,7 @@ export function useWorkbenchController(
   const goToLanguageServerLocation = useCallback(async (
     feature: Extract<LanguageServerFeature, "definition" | "implementation">,
     label: string,
+    requestedPosition?: EditorPosition,
   ): Promise<boolean> => {
     if (!activeDocument) {
       return false;
@@ -2862,7 +2863,7 @@ export function useWorkbenchController(
       return false;
     }
 
-    const editorPosition = activeEditorPositionRef.current;
+    const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
 
     if (!editorPosition) {
       return false;
@@ -3071,6 +3072,14 @@ export function useWorkbenchController(
 
   const goToImplementation = useCallback(async () => {
     await goToLanguageServerLocation("implementation", "implementation");
+  }, [goToLanguageServerLocation]);
+
+  const goToImplementationAt = useCallback(async (position: EditorPosition) => {
+    await goToLanguageServerLocation(
+      "implementation",
+      "implementation",
+      position,
+    );
   }, [goToLanguageServerLocation]);
 
   const applyNavigationLocation = useCallback(
@@ -4458,6 +4467,7 @@ export function useWorkbenchController(
     fileStructureScope,
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
     goToDefinition,
+    goToImplementationAt,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
     bottomPanelVisible,
     bottomPanelView,

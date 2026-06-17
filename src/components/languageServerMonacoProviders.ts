@@ -6,6 +6,7 @@ import {
 } from "../domain/languageServerFeatures";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { phpImplementationCodeLensTargets } from "../domain/phpImplementationCodeLenses";
 import {
   phpMethodParameters,
   type PhpMethodCompletion,
@@ -19,6 +20,9 @@ type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
+
+export const GO_TO_IMPLEMENTATION_AT_COMMAND_ID =
+  "mockor.goToImplementationAt";
 
 export interface LanguageServerMonacoProviderContext {
   featuresGateway: LanguageServerFeaturesGateway;
@@ -54,12 +58,16 @@ export function registerLanguageServerMonacoProviders(
     provideSignatureHelp: (model, position) =>
       provideSignatureHelp(monaco, context, model, position),
   });
+  const codeLens = monaco.languages.registerCodeLensProvider("php", {
+    provideCodeLenses: (model) => provideCodeLenses(context, model),
+  });
 
   return {
     dispose: () => {
       hover.dispose();
       completion.dispose();
       signature.dispose();
+      codeLens.dispose();
     },
   };
 }
@@ -239,6 +247,39 @@ async function provideSignatureHelp(
     context.reportError(error);
     return null;
   }
+}
+
+function provideCodeLenses(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+): Monaco.languages.CodeLensList {
+  const documentContext = activePhpDocumentContext(context, model);
+
+  if (!documentContext) {
+    return {
+      dispose: () => undefined,
+      lenses: [],
+    };
+  }
+
+  return {
+    dispose: () => undefined,
+    lenses: phpImplementationCodeLensTargets(
+      documentContext.activeDocument.content,
+    ).map((target) => ({
+      command: {
+        arguments: [target.position],
+        id: GO_TO_IMPLEMENTATION_AT_COMMAND_ID,
+        title: "Go to implementation",
+      },
+      range: {
+        endColumn: target.position.column + target.methodName.length,
+        endLineNumber: target.position.lineNumber,
+        startColumn: target.position.column,
+        startLineNumber: target.position.lineNumber,
+      },
+    })),
+  };
 }
 
 function phpMethodDetail(item: PhpMethodCompletion): string {

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
+import {
+  GO_TO_IMPLEMENTATION_AT_COMMAND_ID,
+  registerLanguageServerMonacoProviders,
+} from "./languageServerMonacoProviders";
 import type {
   LanguageServerCompletionList,
   LanguageServerFeaturesGateway,
@@ -13,7 +16,7 @@ import type {
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion and signature providers and disposes them", () => {
+  it("registers php hover, completion, signature and code lens providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -24,12 +27,14 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.hoverLanguage).toBe("php");
     expect(registered.completionLanguage).toBe("php");
     expect(registered.signatureLanguage).toBe("php");
+    expect(registered.codeLensLanguage).toBe("php");
 
     disposable.dispose();
 
     expect(registered.hoverDispose).toHaveBeenCalled();
     expect(registered.completionDispose).toHaveBeenCalled();
     expect(registered.signatureDispose).toHaveBeenCalled();
+    expect(registered.codeLensDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -256,13 +261,58 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     expect(providePhpMethodSignature).toHaveBeenCalled();
   });
+
+  it("adds implementation code lenses for interface methods", () => {
+    const registered = createRegisteredProviders();
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: `<?php
+
+interface SearchRepository
+{
+    public function search(array $searchParams): LengthAwarePaginator;
+}
+`,
+      },
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    expect(registered.codeLensProvider.provideCodeLenses(model())).toEqual({
+      dispose: expect.any(Function),
+      lenses: [
+        {
+          command: {
+            arguments: [
+              {
+                column: 21,
+                lineNumber: 5,
+              },
+            ],
+            id: GO_TO_IMPLEMENTATION_AT_COMMAND_ID,
+            title: "Go to implementation",
+          },
+          range: {
+            endColumn: 27,
+            endLineNumber: 5,
+            startColumn: 21,
+            startLineNumber: 5,
+          },
+        },
+      ],
+    });
+  });
 });
 
 function createRegisteredProviders() {
+  const codeLensDispose = vi.fn();
   const hoverDispose = vi.fn();
   const completionDispose = vi.fn();
   const signatureDispose = vi.fn();
   const registered: {
+    codeLensDispose: ReturnType<typeof vi.fn>;
+    codeLensLanguage: string | null;
+    codeLensProvider: any;
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
     completionProvider: any;
@@ -274,6 +324,9 @@ function createRegisteredProviders() {
     signatureLanguage: string | null;
     signatureProvider: any;
   } = {
+    codeLensDispose,
+    codeLensLanguage: null,
+    codeLensProvider: null,
     completionDispose,
     completionLanguage: null,
     completionProvider: null,
@@ -289,6 +342,11 @@ function createRegisteredProviders() {
     languages: {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },
+      registerCodeLensProvider: vi.fn((language, provider) => {
+        registered.codeLensLanguage = language;
+        registered.codeLensProvider = provider;
+        return { dispose: codeLensDispose };
+      }),
       registerCompletionItemProvider: vi.fn((language, provider) => {
         registered.completionLanguage = language;
         registered.completionProvider = provider;

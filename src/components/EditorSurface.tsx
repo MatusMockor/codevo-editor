@@ -8,6 +8,7 @@ import type {
   LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
+import { filterPhpLanguageServerDiagnostics } from "../domain/phpLanguageServerDiagnosticFilters";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type {
   PhpSyntaxDiagnostic,
@@ -20,7 +21,10 @@ import type {
 } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
-import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
+import {
+  GO_TO_IMPLEMENTATION_AT_COMMAND_ID,
+  registerLanguageServerMonacoProviders,
+} from "./languageServerMonacoProviders";
 import { registerMonacoAppThemes } from "./monacoThemes";
 import { getTabId, getTabPanelId } from "./tabIds";
 
@@ -37,6 +41,7 @@ interface EditorSurfaceProps {
   onGoBack(): void;
   onGoForward(): void;
   onGoToDefinition(): void;
+  onGoToImplementationAt(position: EditorPosition): void;
   onOpenClass(): void;
   onOpenFile(): void;
   onOpenFileStructure(): void;
@@ -67,6 +72,7 @@ export function EditorSurface({
   onGoBack,
   onGoForward,
   onGoToDefinition,
+  onGoToImplementationAt,
   onOpenClass,
   onOpenFile,
   onOpenFileStructure,
@@ -160,6 +166,16 @@ export function EditorSurface({
 
     const keyMod = monacoApi.KeyMod.CtrlCmd;
     const disposables = [
+      monacoApi.editor.registerCommand(
+        GO_TO_IMPLEMENTATION_AT_COMMAND_ID,
+        (_accessor, position?: EditorPosition) => {
+          const targetPosition = position ?? editorApi.getPosition();
+
+          if (targetPosition) {
+            onGoToImplementationAt(targetPosition);
+          }
+        },
+      ),
       editorApi.addAction({
         id: "mockor.goToDefinition",
         label: "Go to Definition",
@@ -214,6 +230,7 @@ export function EditorSurface({
     onGoBack,
     onGoForward,
     onGoToDefinition,
+    onGoToImplementationAt,
     onOpenClass,
     onOpenFile,
     onOpenFileStructure,
@@ -264,10 +281,19 @@ export function EditorSurface({
     monacoApi.editor.getModels().forEach((model) => {
       const path = modelPath(model);
       const diagnostics = path ? languageServerDiagnosticsByPath[path] ?? [] : [];
+      const filteredDiagnostics =
+        path &&
+        activeDocument?.path === path &&
+        activeDocument.language === "php"
+          ? filterPhpLanguageServerDiagnostics(
+              activeDocument.content,
+              diagnostics,
+            )
+          : diagnostics;
       monacoApi.editor.setModelMarkers(
         model,
         "php-language-server",
-        diagnostics.map((diagnostic) =>
+        filteredDiagnostics.map((diagnostic) =>
           toMonacoDiagnosticMarker(monacoApi, diagnostic),
         ),
       );

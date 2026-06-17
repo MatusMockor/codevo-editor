@@ -483,6 +483,9 @@ function App() {
             onGoBack={() => void workbench.navigateBackward()}
             onGoForward={() => void workbench.navigateForwardInHistory()}
             onGoToDefinition={() => void workbench.goToDefinition()}
+            onGoToImplementationAt={(position) =>
+              void workbench.goToImplementationAt(position)
+            }
             onOpenClass={() => {
               if (workbench.workspaceRoot) {
                 workbench.setQuickOpenOpen(false);
