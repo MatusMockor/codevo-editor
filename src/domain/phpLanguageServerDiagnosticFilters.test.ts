@@ -51,6 +51,55 @@ $queryBuilder = Album::whereNull('parent_id')
       syntax,
     ]);
   });
+
+  it("suppresses PHPactor docblock hygiene diagnostics for valid legacy interfaces", () => {
+    const source = `<?php
+
+interface LocalUserInterface
+{
+    public function loadByCredentials($login, $password);
+}
+`;
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [
+        diagnostic({
+          character: 20,
+          code: "worse.docblock_missing_return_type",
+          line: 4,
+          message:
+            'Method "loadByCredentials" is missing docblock return type: void',
+        }),
+        diagnostic({
+          character: 38,
+          code: "worse.docblock_missing_param",
+          line: 4,
+          message: 'Method "loadByCredentials" is missing @param $login',
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("keeps real PHPactor syntax diagnostics next to filtered docblock warnings", () => {
+    const syntax = diagnostic({
+      character: 55,
+      code: null,
+      line: 4,
+      message: "unexpected token",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics("<?php\ninterface Broken\n{\n", [
+        diagnostic({
+          character: 20,
+          code: "worse.docblock_missing_return_type",
+          line: 2,
+          message: 'Method "broken" is missing docblock return type: void',
+        }),
+        syntax,
+      ]),
+    ).toEqual([syntax]);
+  });
 });
 
 function diagnostic(

@@ -62,6 +62,10 @@ const laravelEloquentBuilderMethods = new Set([
   "without",
   "withoutTrashed",
 ]);
+const ignoredPhpactorDocblockDiagnosticCodes = new Set([
+  "worse.docblock_missing_param",
+  "worse.docblock_missing_return_type",
+]);
 
 const unresolvedMethodDiagnosticPattern =
   /\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b.*\bmethod\b|\bmethod\b.*\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b/i;
@@ -74,7 +78,24 @@ export function filterPhpLanguageServerDiagnostics(
 ): LanguageServerDiagnostic[] {
   return diagnostics.filter(
     (diagnostic) =>
+      !isIgnoredPhpactorDocblockDiagnostic(diagnostic) &&
       !isLaravelEloquentStaticBuilderDiagnostic(source, diagnostic),
+  );
+}
+
+function isIgnoredPhpactorDocblockDiagnostic(
+  diagnostic: LanguageServerDiagnostic,
+): boolean {
+  if (typeof diagnostic.code === "string") {
+    return ignoredPhpactorDocblockDiagnosticCodes.has(diagnostic.code);
+  }
+
+  if (diagnostic.source?.toLowerCase() !== "phpactor") {
+    return false;
+  }
+
+  return /\bmissing (?:docblock return type|@param)\b/i.test(
+    diagnostic.message,
   );
 }
 

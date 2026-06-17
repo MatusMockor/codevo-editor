@@ -9,6 +9,7 @@ export type LanguageServerDiagnosticNoticeSeverity =
   | "error";
 
 export interface LanguageServerDiagnostic {
+  code?: string | number | null;
   message: string;
   severity: LanguageServerDiagnosticSeverity;
   source: string | null;

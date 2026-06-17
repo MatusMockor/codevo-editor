@@ -13,11 +13,19 @@ pub struct LanguageServerDiagnosticEvent {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerDiagnostic {
+    pub code: Option<LanguageServerDiagnosticCode>,
     pub message: String,
     pub severity: LanguageServerDiagnosticSeverity,
     pub source: Option<String>,
     pub line: u64,
     pub character: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum LanguageServerDiagnosticCode {
+    Number(i64),
+    String(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -61,6 +69,7 @@ fn parse_diagnostic(value: &Value) -> LanguageServerDiagnostic {
         .unwrap_or(&Value::Null);
 
     LanguageServerDiagnostic {
+        code: parse_code(value.get("code")),
         message: value
             .get("message")
             .and_then(Value::as_str)
@@ -74,6 +83,19 @@ fn parse_diagnostic(value: &Value) -> LanguageServerDiagnostic {
         line: start.get("line").and_then(Value::as_u64).unwrap_or(0),
         character: start.get("character").and_then(Value::as_u64).unwrap_or(0),
     }
+}
+
+fn parse_code(value: Option<&Value>) -> Option<LanguageServerDiagnosticCode> {
+    let value = value?;
+
+    if let Some(code) = value.as_i64() {
+        return Some(LanguageServerDiagnosticCode::Number(code));
+    }
+
+    value
+        .as_str()
+        .map(str::to_string)
+        .map(LanguageServerDiagnosticCode::String)
 }
 
 fn parse_severity(value: Option<u64>) -> LanguageServerDiagnosticSeverity {
@@ -94,7 +116,9 @@ fn parse_severity(value: Option<u64>) -> LanguageServerDiagnosticSeverity {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_publish_diagnostics, LanguageServerDiagnosticSeverity};
+    use super::{
+        parse_publish_diagnostics, LanguageServerDiagnosticCode, LanguageServerDiagnosticSeverity,
+    };
     use serde_json::json;
 
     #[test]
@@ -113,6 +137,7 @@ mod tests {
                                 "end": { "line": 2, "character": 8 }
                             },
                             "severity": 1,
+                            "code": "worse.docblock_missing_param",
                             "source": "phpactor",
                             "message": "Unexpected token",
                         }
@@ -129,6 +154,12 @@ mod tests {
         assert_eq!(
             event.diagnostics[0].severity,
             LanguageServerDiagnosticSeverity::Error
+        );
+        assert_eq!(
+            event.diagnostics[0].code,
+            Some(LanguageServerDiagnosticCode::String(
+                "worse.docblock_missing_param".to_string()
+            ))
         );
         assert_eq!(event.diagnostics[0].line, 2);
         assert_eq!(event.diagnostics[0].character, 4);
