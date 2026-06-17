@@ -169,6 +169,29 @@ pub struct LanguageServerInlayHint {
     pub tooltip: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerSignatureHelp {
+    pub active_parameter: u32,
+    pub active_signature: u32,
+    pub signatures: Vec<LanguageServerSignature>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerSignature {
+    pub documentation: Option<String>,
+    pub label: String,
+    pub parameters: Vec<LanguageServerSignatureParameter>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerSignatureParameter {
+    pub documentation: Option<String>,
+    pub label: String,
+}
+
 pub trait TextDocumentFeatureRequestFactory {
     fn hover(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn completion(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
@@ -179,6 +202,7 @@ pub trait TextDocumentFeatureRequestFactory {
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn rename(&self, rename: &TextDocumentRename) -> LanguageServerFeatureRequest;
     fn code_actions(
         &self,
@@ -230,6 +254,10 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         let mut request = request("textDocument/references", position);
         request.params["context"] = json!({ "includeDeclaration": true });
         request
+    }
+
+    fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
+        request("textDocument/signatureHelp", position)
     }
 
     fn rename(&self, rename: &TextDocumentRename) -> LanguageServerFeatureRequest {
@@ -377,6 +405,38 @@ pub fn parse_inlay_hints_result(value: &Value) -> Result<Vec<LanguageServerInlay
     };
 
     items.iter().map(parse_inlay_hint_item).collect()
+}
+
+pub fn parse_signature_help_result(
+    value: &Value,
+) -> Result<Option<LanguageServerSignatureHelp>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    let Some(signatures) = value.get("signatures").and_then(Value::as_array) else {
+        return Err("Language server returned a malformed signature help response.".to_string());
+    };
+    let parsed_signatures: Vec<LanguageServerSignature> = signatures
+        .iter()
+        .filter_map(parse_signature_information)
+        .collect();
+
+    if parsed_signatures.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(LanguageServerSignatureHelp {
+        active_parameter: value
+            .get("activeParameter")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+        active_signature: value
+            .get("activeSignature")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+        signatures: parsed_signatures,
+    }))
 }
 
 pub fn parse_workspace_edit_result(
@@ -610,6 +670,77 @@ fn inlay_hint_label_to_string(value: &Value) -> Option<String> {
     Some(labels.join(""))
 }
 
+fn parse_signature_information(value: &Value) -> Option<LanguageServerSignature> {
+    let label = value.get("label").and_then(Value::as_str)?.to_string();
+    let parameters = value
+        .get("parameters")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|parameter| parse_signature_parameter(parameter, &label))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(LanguageServerSignature {
+        documentation: value.get("documentation").and_then(markup_to_string),
+        label,
+        parameters,
+    })
+}
+
+fn parse_signature_parameter(
+    value: &Value,
+    signature_label: &str,
+) -> Option<LanguageServerSignatureParameter> {
+    let label = value
+        .get("label")
+        .and_then(|label| signature_parameter_label_to_string(label, signature_label))?;
+
+    Some(LanguageServerSignatureParameter {
+        documentation: value.get("documentation").and_then(markup_to_string),
+        label,
+    })
+}
+
+fn signature_parameter_label_to_string(value: &Value, signature_label: &str) -> Option<String> {
+    if let Some(label) = value.as_str() {
+        return Some(label.to_string());
+    }
+
+    let range = value.as_array()?;
+    let start = range.first().and_then(Value::as_u64)? as usize;
+    let end = range.get(1).and_then(Value::as_u64)? as usize;
+
+    slice_by_char_offsets(signature_label, start, end)
+}
+
+fn slice_by_char_offsets(value: &str, start: usize, end: usize) -> Option<String> {
+    if start >= end {
+        return None;
+    }
+
+    let mut start_byte = None;
+    let mut end_byte = None;
+
+    for (char_index, (byte_index, _)) in value.char_indices().enumerate() {
+        if char_index == start {
+            start_byte = Some(byte_index);
+        }
+
+        if char_index == end {
+            end_byte = Some(byte_index);
+            break;
+        }
+    }
+
+    let start_byte = start_byte?;
+    let end_byte = end_byte.unwrap_or(value.len());
+
+    value.get(start_byte..end_byte).map(ToString::to_string)
+}
+
 fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, String> {
     let mut changes = BTreeMap::new();
 
@@ -715,14 +846,14 @@ mod tests {
     use super::{
         parse_code_action_result, parse_completion_result, parse_definition_result,
         parse_formatting_result, parse_hover_result, parse_inlay_hints_result,
-        parse_optional_workspace_edit_result, parse_workspace_edit_result,
-        LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-        LanguageServerCompletionItem, LanguageServerCompletionList,
-        LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
-        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
-        LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-        TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition,
-        TextDocumentRange, TextDocumentRename,
+        parse_optional_workspace_edit_result, parse_signature_help_result,
+        parse_workspace_edit_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+        LanguageServerCodeActionContext, LanguageServerCompletionItem,
+        LanguageServerCompletionList, LanguageServerFormattingOptions, LanguageServerHover,
+        LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
+        LanguageServerTextEdit, LspTextDocumentFeatureRequestFactory,
+        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+        TextDocumentPosition, TextDocumentRange, TextDocumentRename,
     };
     use serde_json::json;
 
@@ -761,6 +892,20 @@ mod tests {
 
         assert_eq!(request.method, "textDocument/references");
         assert_eq!(request.params["context"]["includeDeclaration"], true);
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn signature_help_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.signature_help(&position());
+
+        assert_eq!(request.method, "textDocument/signatureHelp");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
         assert_eq!(request.params["position"]["line"], 10);
         assert_eq!(request.params["position"]["character"], 4);
     }
@@ -1297,6 +1442,52 @@ mod tests {
         assert_eq!(hints[1].kind, Some(2));
         assert!(hints[1].padding_right);
         assert_eq!(parse_inlay_hints_result(&json!(null)).expect("null"), []);
+    }
+
+    #[test]
+    fn parses_signature_help_with_string_and_range_parameter_labels() {
+        let signature = parse_signature_help_result(&json!({
+            "activeSignature": 0,
+            "activeParameter": 1,
+            "signatures": [
+                {
+                    "label": "loadUser(id: string, options?: Options): Promise<User>",
+                    "documentation": { "kind": "markdown", "value": "Loads a user." },
+                    "parameters": [
+                        {
+                            "label": "id: string",
+                            "documentation": "User id"
+                        },
+                        {
+                            "label": [21, 38]
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect("signature help")
+        .expect("signature");
+
+        assert_eq!(signature.active_signature, 0);
+        assert_eq!(signature.active_parameter, 1);
+        assert_eq!(
+            signature.signatures[0].documentation.as_deref(),
+            Some("Loads a user.")
+        );
+        assert_eq!(signature.signatures[0].parameters[0].label, "id: string");
+        assert_eq!(
+            signature.signatures[0].parameters[0]
+                .documentation
+                .as_deref(),
+            Some("User id")
+        );
+        assert_eq!(
+            signature.signatures[0].parameters[1].label,
+            "options?: Options"
+        );
+        assert!(parse_signature_help_result(&json!(null))
+            .expect("null")
+            .is_none());
     }
 
     fn position() -> TextDocumentPosition {

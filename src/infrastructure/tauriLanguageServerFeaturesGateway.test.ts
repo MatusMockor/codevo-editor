@@ -28,6 +28,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.inlayHints("/project", "/project/src/User.php", range()),
     ).resolves.toEqual([]);
+    await expect(
+      gateway.signatureHelp("/project", position()),
+    ).resolves.toBeNull();
     await expect(gateway.references("/project", position())).resolves.toEqual([]);
     await expect(gateway.rename("/project", position(), "Account")).resolves.toBeNull();
     await expect(
@@ -122,6 +125,22 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         tooltip: "Inferred type",
       },
     ];
+    const signatureHelp = {
+      activeParameter: 0,
+      activeSignature: 0,
+      signatures: [
+        {
+          documentation: "Creates a user.",
+          label: "createUser(name: string): User",
+          parameters: [
+            {
+              documentation: null,
+              label: "name: string",
+            },
+          ],
+        },
+      ],
+    };
     const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
       if (command === "text_document_hover") {
         return hover;
@@ -160,6 +179,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
 
       if (command === "text_document_inlay_hints") {
         return inlayHints;
+      }
+
+      if (command === "text_document_signature_help") {
+        return signatureHelp;
       }
 
       return definition;
@@ -209,6 +232,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.inlayHints("/project", "/project/src/User.php", range()),
     ).resolves.toEqual(inlayHints);
+    await expect(
+      gateway.signatureHelp("/project", requestPosition),
+    ).resolves.toEqual(signatureHelp);
     expect(invokeCommand).toHaveBeenCalledWith("text_document_hover", {
       position: requestPosition,
       rootPath: "/project",
@@ -266,6 +292,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith("text_document_inlay_hints", {
       path: "/project/src/User.php",
       range: range(),
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_signature_help", {
+      position: requestPosition,
       rootPath: "/project",
     });
   });

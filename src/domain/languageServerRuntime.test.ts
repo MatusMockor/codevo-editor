@@ -54,6 +54,7 @@ describe("languageServerCapabilities", () => {
       inlayHint: true,
       references: true,
       rename: true,
+      signatureHelp: true,
     });
     expect(languageServerCapabilities(status("starting"))).toEqual(
       emptyLanguageServerCapabilities(),
@@ -72,6 +73,7 @@ describe("languageServerCapabilities", () => {
       "inlay hints",
       "references",
       "rename",
+      "signature help",
       "code actions",
       "formatting",
     ]);
@@ -97,6 +99,7 @@ function status(
           inlayHint: true,
           references: true,
           rename: true,
+          signatureHelp: true,
         },
       };
     }

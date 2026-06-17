@@ -55,13 +55,14 @@ use lsp_document::{
 use lsp_features::{
     parse_code_action_result, parse_completion_result, parse_definition_result,
     parse_formatting_result, parse_hover_result, parse_inlay_hints_result,
-    parse_optional_workspace_edit_result, parse_workspace_edit_result, LanguageServerCodeAction,
-    LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCompletionItem,
-    LanguageServerCompletionList, LanguageServerFormattingOptions, LanguageServerHover,
-    LanguageServerInlayHint, LanguageServerLocation, LanguageServerRange, LanguageServerTextEdit,
-    LanguageServerWorkspaceEdit, LspTextDocumentFeatureRequestFactory,
-    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-    TextDocumentPosition, TextDocumentRange, TextDocumentRename,
+    parse_optional_workspace_edit_result, parse_signature_help_result, parse_workspace_edit_result,
+    LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
+    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerFormattingOptions,
+    LanguageServerHover, LanguageServerInlayHint, LanguageServerLocation, LanguageServerRange,
+    LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
+    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
+    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
+    TextDocumentRename,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1316,6 +1317,36 @@ fn javascript_typescript_text_document_inlay_hints(
 }
 
 #[tauri::command]
+fn text_document_signature_help(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerSignatureHelp>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.signature_help(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_signature_help_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_signature_help(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerSignatureHelp>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.signature_help(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_signature_help_result(&result)
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;
     repository
@@ -1523,6 +1554,7 @@ pub fn run() {
             javascript_typescript_text_document_inlay_hints,
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
+            javascript_typescript_text_document_signature_help,
             language_server_execute_command,
             text_document_code_action_resolve,
             text_document_code_actions,
@@ -1539,6 +1571,7 @@ pub fn run() {
             text_document_inlay_hints,
             text_document_references,
             text_document_rename,
+            text_document_signature_help,
             upsert_workspace_index_file,
             write_terminal_input,
             write_text_file

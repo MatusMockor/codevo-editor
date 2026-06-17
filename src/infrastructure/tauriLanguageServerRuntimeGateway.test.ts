@@ -48,6 +48,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         inlayHint: true,
         references: true,
         rename: true,
+        signatureHelp: true,
       },
     };
     const invokeCommand = vi.fn<InvokeCommand>(async () => running);

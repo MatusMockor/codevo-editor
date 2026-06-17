@@ -12,6 +12,9 @@ import {
   type LanguageServerInlayHint,
   type LanguageServerLocation,
   type LanguageServerRange,
+  type LanguageServerSignature,
+  type LanguageServerSignatureHelp,
+  type LanguageServerSignatureParameter,
   type LanguageServerTextEdit,
   type LanguageServerWorkspaceEdit,
   type LanguageServerWorkspaceEditEvent,
@@ -135,6 +138,17 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
             provideCompletionItems(monaco, context, model, position),
           resolveCompletionItem: (item) =>
             resolveCompletionItem(monaco, context, item),
+        }),
+      );
+    }
+
+    if (registry.registerSignatureHelpProvider) {
+      disposables.push(
+        registry.registerSignatureHelpProvider(language, {
+          signatureHelpRetriggerCharacters: [","],
+          signatureHelpTriggerCharacters: ["(", ","],
+          provideSignatureHelp: (model, position) =>
+            provideSignatureHelp(monaco, context, model, position),
         }),
       );
     }
@@ -383,6 +397,32 @@ async function provideImplementation(
   }
 }
 
+async function provideSignatureHelp(
+  _monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.SignatureHelpResult | null> {
+  const request = featureRequestContext(context, model, position, "signatureHelp");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const signatureHelp = await context.featuresGateway.signatureHelp(
+      request.rootPath,
+      request.position,
+    );
+
+    return signatureHelp ? toMonacoSignatureHelp(signatureHelp) : null;
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
 async function provideReferences(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -584,7 +624,8 @@ function featureRequestContext(
     | "hover"
     | "implementation"
     | "references"
-    | "rename",
+    | "rename"
+    | "signatureHelp",
 ) {
   const status = context.getRuntimeStatus();
 
@@ -846,6 +887,38 @@ function emptyInlayHintList(): Monaco.languages.InlayHintList {
   return {
     hints: [],
     dispose: () => undefined,
+  };
+}
+
+function toMonacoSignatureHelp(
+  signatureHelp: LanguageServerSignatureHelp,
+): Monaco.languages.SignatureHelpResult {
+  return {
+    dispose: () => undefined,
+    value: {
+      activeParameter: signatureHelp.activeParameter,
+      activeSignature: signatureHelp.activeSignature,
+      signatures: signatureHelp.signatures.map(toMonacoSignatureInformation),
+    },
+  };
+}
+
+function toMonacoSignatureInformation(
+  signature: LanguageServerSignature,
+): Monaco.languages.SignatureInformation {
+  return {
+    documentation: signature.documentation || undefined,
+    label: signature.label,
+    parameters: signature.parameters.map(toMonacoParameterInformation),
+  };
+}
+
+function toMonacoParameterInformation(
+  parameter: LanguageServerSignatureParameter,
+): Monaco.languages.ParameterInformation {
+  return {
+    documentation: parameter.documentation || undefined,
+    label: parameter.label,
   };
 }
 

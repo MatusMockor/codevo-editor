@@ -20,6 +20,7 @@ describe("canUseLanguageServerFeature", () => {
       inlayHint: false,
       references: false,
       rename: false,
+      signatureHelp: false,
     };
 
     expect(canUseLanguageServerFeature(capabilities, "hover")).toBe(true);

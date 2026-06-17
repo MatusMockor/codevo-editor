@@ -8,6 +8,7 @@ export interface LanguageServerCapabilities {
   inlayHint: boolean;
   references: boolean;
   rename: boolean;
+  signatureHelp: boolean;
 }
 
 export type LanguageServerRuntimeStatus =
@@ -119,6 +120,10 @@ export function languageServerCapabilityLabels(
     labels.push("rename");
   }
 
+  if (capabilities.signatureHelp) {
+    labels.push("signature help");
+  }
+
   if (capabilities.codeAction) {
     labels.push("code actions");
   }
@@ -141,5 +146,6 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     inlayHint: false,
     references: false,
     rename: false,
+    signatureHelp: false,
   };
 }

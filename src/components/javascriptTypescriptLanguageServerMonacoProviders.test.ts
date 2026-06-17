@@ -25,6 +25,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerSignatureHelpProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerReferenceProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerRenameProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledTimes(2);
@@ -35,7 +36,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(19);
+    expect(monaco.dispose).toHaveBeenCalledTimes(21);
   });
 
   it("maps references, rename edits, code actions, commands and formatting through the gateway", async () => {
@@ -84,6 +85,26 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           tooltip: "Inferred type",
         },
       ],
+      signatureHelp: {
+        activeParameter: 1,
+        activeSignature: 0,
+        signatures: [
+          {
+            documentation: "Loads a user.",
+            label: "loadUser(id: string, options?: Options): Promise<User>",
+            parameters: [
+              {
+                documentation: "User id",
+                label: "id: string",
+              },
+              {
+                documentation: null,
+                label: "options?: Options",
+              },
+            ],
+          },
+        ],
+      },
       references: [
         {
           range: range(0, 1, 0, 5),
@@ -310,6 +331,42 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           tooltip: "Inferred type",
         },
       ],
+    });
+
+    const signatureProvider = (monaco.languages.registerSignatureHelpProvider as any)
+      .mock.calls[0][1];
+    const signatureHelp = await signatureProvider.provideSignatureHelp(
+      model,
+      position,
+    );
+
+    expect(gateway.signatureHelp).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 0,
+      path: "/project/src/user.ts",
+    });
+    expect(signatureHelp).toEqual({
+      dispose: expect.any(Function),
+      value: {
+        activeParameter: 1,
+        activeSignature: 0,
+        signatures: [
+          {
+            documentation: "Loads a user.",
+            label: "loadUser(id: string, options?: Options): Promise<User>",
+            parameters: [
+              {
+                documentation: "User id",
+                label: "id: string",
+              },
+              {
+                documentation: undefined,
+                label: "options?: Options",
+              },
+            ],
+          },
+        ],
+      },
     });
     expect(context.flushPendingDocumentChange).toHaveBeenCalledWith(
       "/project/src/user.ts",
@@ -548,6 +605,9 @@ function featuresGateway(
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     references: Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
+    signatureHelp: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
+    >;
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
     >;
@@ -573,6 +633,7 @@ function featuresGateway(
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
+    signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
     resolveCompletionItem: vi.fn(
       async (_rootPath, item) => responses.resolvedCompletionItem ?? item,
     ),
@@ -596,6 +657,7 @@ function runningStatus(
       inlayHint: true,
       references: true,
       rename: true,
+      signatureHelp: true,
       ...capabilities,
     },
     kind: "running",
@@ -722,6 +784,7 @@ function createMonaco() {
       registerInlayHintsProvider: vi.fn(() => disposable()),
       registerReferenceProvider: vi.fn(() => disposable()),
       registerRenameProvider: vi.fn(() => disposable()),
+      registerSignatureHelpProvider: vi.fn(() => disposable()),
     },
     MarkerSeverity: {
       Error: 8,

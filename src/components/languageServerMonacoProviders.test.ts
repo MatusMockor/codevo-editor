@@ -764,6 +764,9 @@ function featuresGateway(
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     references: LanguageServerLocation[];
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
+    signatureHelp: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
+    >;
   }> = {},
 ): LanguageServerFeaturesGateway {
   return {
@@ -782,6 +785,7 @@ function featuresGateway(
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
+    signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
   };
@@ -801,6 +805,7 @@ function runningStatus(
       inlayHint: true,
       references: true,
       rename: true,
+      signatureHelp: true,
       ...capabilities,
     },
     kind: "running",

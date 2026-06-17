@@ -28,7 +28,7 @@ Sources checked:
 - PHPactor remains PHP-only, which is correct because PHPactor must not receive JS/TS documents.
 - JS/TS now has a managed `typescript-language-server` LSP runtime that is independent from PHP IDE Mode.
 - JS/TS documents are synchronized with the managed language server and diagnostics are routed back to Monaco.
-- JS/TS Monaco providers now cover hover, completions, go to definition, go to implementation, references, rename, code actions and document formatting.
+- JS/TS Monaco providers now cover hover, completions, signature help, go to definition, go to implementation, references, rename, code actions and document formatting.
 
 ## Implemented First Slice
 
@@ -71,6 +71,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - Completion items now preserve richer LSP metadata (`textEdit`, `additionalTextEdits`, `sortText`, `filterText`, `commitCharacters`, snippet format) so auto imports and exact replacement ranges are not dropped.
 - `completionItem/resolve` is wired through the JS/TS language-server gateway and Monaco provider, matching the VS Code pattern of lazily resolving documentation and import edits for focused suggestions.
 - `textDocument/inlayHint` is wired through the managed JS/TS language server and Monaco provider, giving light mode VS Code-style inline type/parameter hints when the server advertises support.
+- `textDocument/signatureHelp` is wired through the managed JS/TS language server and Monaco provider, so function calls can show VS Code-style active signatures and parameter documentation.
 
 ## Full VS Code-Like Target
 
@@ -121,6 +122,7 @@ Basic mode must support:
 - organize imports
 - formatting
 - inlay hints. Implemented through LSP-backed Monaco provider.
+- signature help. Implemented through LSP-backed Monaco provider.
 - JS/TS version status
 
 ### Isolation

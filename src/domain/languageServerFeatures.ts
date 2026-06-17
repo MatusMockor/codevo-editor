@@ -71,6 +71,23 @@ export interface LanguageServerInlayHint {
   tooltip: string | null;
 }
 
+export interface LanguageServerSignatureParameter {
+  documentation: string | null;
+  label: string;
+}
+
+export interface LanguageServerSignature {
+  documentation: string | null;
+  label: string;
+  parameters: LanguageServerSignatureParameter[];
+}
+
+export interface LanguageServerSignatureHelp {
+  activeParameter: number;
+  activeSignature: number;
+  signatures: LanguageServerSignature[];
+}
+
 export interface LanguageServerWorkspaceEdit {
   changes: Record<string, LanguageServerTextEdit[]>;
 }
@@ -153,6 +170,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
+  signatureHelp(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerSignatureHelp | null>;
   rename(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

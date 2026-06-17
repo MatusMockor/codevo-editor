@@ -62,6 +62,7 @@ pub struct LanguageServerCapabilities {
     pub inlay_hint: bool,
     pub references: bool,
     pub rename: bool,
+    pub signature_help: bool,
 }
 
 pub trait StatusSink: Send + Sync {
@@ -1350,6 +1351,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         inlay_hint: is_capability_enabled(capabilities.get("inlayHintProvider")),
         references: is_capability_enabled(capabilities.get("referencesProvider")),
         rename: is_capability_enabled(capabilities.get("renameProvider")),
+        signature_help: is_capability_enabled(capabilities.get("signatureHelpProvider")),
     })
 }
 
@@ -1532,6 +1534,7 @@ mod tests {
                     inlay_hint: false,
                     references: false,
                     rename: false,
+                    signature_help: false,
                 },
             }
         );
@@ -1553,6 +1556,7 @@ mod tests {
                 inlay_hint: true,
                 references: true,
                 rename: true,
+                signature_help: true,
             },
         };
 
@@ -1570,6 +1574,7 @@ mod tests {
                     "inlayHint": true,
                     "references": true,
                     "rename": true,
+                    "signatureHelp": true,
                     "codeAction": true,
                 },
             })
@@ -1596,6 +1601,7 @@ mod tests {
                     "inlayHintProvider": true,
                     "referencesProvider": true,
                     "renameProvider": { "prepareProvider": true },
+                    "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
                     "codeActionProvider": { "codeActionKinds": ["quickfix"] },
                     "documentFormattingProvider": true,
                 }
@@ -1615,6 +1621,7 @@ mod tests {
                 inlay_hint: true,
                 references: true,
                 rename: true,
+                signature_help: true,
             }
         );
     }

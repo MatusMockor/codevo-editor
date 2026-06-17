@@ -12,6 +12,7 @@ import {
   type LanguageServerInlayHint,
   type LanguageServerLocation,
   type LanguageServerRange,
+  type LanguageServerSignatureHelp,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
   type LanguageServerWorkspaceEdit,
@@ -37,6 +38,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   inlayHints: "text_document_inlay_hints",
   references: "text_document_references",
   rename: "text_document_rename",
+  signatureHelp: "text_document_signature_help",
 };
 
 export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
@@ -52,6 +54,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   inlayHints: "javascript_typescript_text_document_inlay_hints",
   references: "javascript_typescript_text_document_references",
   rename: "javascript_typescript_text_document_rename",
+  signatureHelp: "javascript_typescript_text_document_signature_help",
 };
 
 export interface TauriLanguageServerFeatureCommands {
@@ -67,6 +70,7 @@ export interface TauriLanguageServerFeatureCommands {
   inlayHints: string;
   references: string;
   rename: string;
+  signatureHelp: string;
 }
 
 export class TauriLanguageServerFeaturesGateway
@@ -146,6 +150,17 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.references,
       { position, rootPath },
       [],
+    );
+  }
+
+  signatureHelp(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerSignatureHelp | null> {
+    return this.invokeWhenAvailable(
+      this.commands.signatureHelp,
+      { position, rootPath },
+      null,
     );
   }
 
