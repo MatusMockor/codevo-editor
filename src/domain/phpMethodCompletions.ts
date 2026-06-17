@@ -2,11 +2,13 @@ import type { EditorPosition } from "./languageServerFeatures";
 
 export interface PhpMemberAccessCompletionContext {
   prefix: string;
-  variableName: string;
+  receiverExpression: string;
+  variableName: string | null;
 }
 
 export interface PhpMethodCompletion {
   declaringClassName: string;
+  isStatic?: boolean;
   name: string;
   parameters: string;
   returnType: string | null;
@@ -22,8 +24,15 @@ export interface PhpMethodParameter {
 
 export interface PhpMethodSignatureContext {
   argumentIndex: number;
+  className: string | null;
   methodName: string;
-  variableName: string;
+  receiverExpression: string | null;
+  variableName: string | null;
+}
+
+export interface PhpStaticAccessCompletionContext {
+  className: string;
+  prefix: string;
 }
 
 export interface PhpMethodSignature {
@@ -39,17 +48,43 @@ export function phpMemberAccessCompletionContextAt(
   const offset = offsetAtPosition(source, position);
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
-  const match = /\$([A-Za-z_][A-Za-z0-9_]*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
-    lineUntilCursor,
-  );
+  const match =
+    /((?:\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
+      lineUntilCursor,
+    );
+
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const receiverExpression = normalizeReceiverExpression(match[1]);
+
+  return {
+    prefix: match[2] ?? "",
+    receiverExpression,
+    variableName: simpleVariableName(receiverExpression),
+  };
+}
+
+export function phpStaticAccessCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpStaticAccessCompletionContext | null {
+  const offset = offsetAtPosition(source, position);
+  const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
+  const lineUntilCursor = source.slice(lineStart, offset);
+  const match =
+    /((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\s*::\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
+      lineUntilCursor,
+    );
 
   if (!match?.[1]) {
     return null;
   }
 
   return {
+    className: match[1].replace(/^\\+/, ""),
     prefix: match[2] ?? "",
-    variableName: match[1],
   };
 }
 
@@ -60,19 +95,38 @@ export function phpMethodSignatureContextAt(
   const offset = offsetAtPosition(source, position);
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
-  const match =
-    /\$([A-Za-z_][A-Za-z0-9_]*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)$/.exec(
+  const memberMatch =
+    /((?:\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)$/.exec(
       lineUntilCursor,
     );
 
-  if (!match?.[1] || !match[2]) {
+  if (memberMatch?.[1] && memberMatch[2]) {
+    const receiverExpression = normalizeReceiverExpression(memberMatch[1]);
+
+    return {
+      argumentIndex: phpArgumentIndex(memberMatch[3] ?? ""),
+      className: null,
+      methodName: memberMatch[2],
+      receiverExpression,
+      variableName: simpleVariableName(receiverExpression),
+    };
+  }
+
+  const staticMatch =
+    /((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)$/.exec(
+      lineUntilCursor,
+    );
+
+  if (!staticMatch?.[1] || !staticMatch[2]) {
     return null;
   }
 
   return {
-    argumentIndex: phpArgumentIndex(match[3] ?? ""),
-    methodName: match[2],
-    variableName: match[1],
+    argumentIndex: phpArgumentIndex(staticMatch[3] ?? ""),
+    className: staticMatch[1].replace(/^\\+/, ""),
+    methodName: staticMatch[2],
+    receiverExpression: null,
+    variableName: null,
   };
 }
 
@@ -102,7 +156,13 @@ export function phpMethodCompletionsFromSource(
       declaringClassName,
       name,
       parameters: normalizeWhitespace(match[3] ?? ""),
-      returnType: normalizeReturnType(match[4] ?? null),
+      returnType:
+        normalizeReturnType(match[4] ?? null) ??
+        phpDocReturnTypeBefore(
+          source,
+          (match.index ?? 0) + match[0].lastIndexOf("function"),
+        ),
+      ...(modifiers.includes("static") ? { isStatic: true } : {}),
     });
   }
 
@@ -166,6 +226,40 @@ export function phpTraitClassNames(source: string): string[] {
   }
 
   return Array.from(new Set(traits));
+}
+
+function simpleVariableName(receiverExpression: string): string | null {
+  const match = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(receiverExpression);
+  return match?.[1] ?? null;
+}
+
+function normalizeReceiverExpression(receiverExpression: string): string {
+  return receiverExpression.replace(/\s*->\s*/g, "->").trim();
+}
+
+function phpDocReturnTypeBefore(source: string, functionOffset: number): string | null {
+  const beforeFunction = source.slice(0, functionOffset);
+  const docStart = beforeFunction.lastIndexOf("/**");
+  const docEnd = beforeFunction.lastIndexOf("*/");
+
+  if (docStart < 0 || docEnd < docStart) {
+    return null;
+  }
+
+  const betweenDocAndFunction = beforeFunction
+    .slice(docEnd + 2)
+    .replace(/\b(?:abstract|final|private|protected|public|static)\b/g, " ")
+    .trim();
+
+  if (betweenDocAndFunction) {
+    return null;
+  }
+
+  const returnMatch = /@return\s+([^\s*]+)/.exec(
+    beforeFunction.slice(docStart, docEnd + 2),
+  );
+
+  return normalizeReturnType(returnMatch?.[1] ?? null);
 }
 
 function phpArgumentIndex(argumentsSource: string): number {

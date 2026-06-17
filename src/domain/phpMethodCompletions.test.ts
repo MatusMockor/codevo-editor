@@ -4,6 +4,7 @@ import {
   phpMethodCompletionsFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
+  phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
 } from "./phpMethodCompletions";
 
@@ -26,7 +27,43 @@ class Controller
       }),
     ).toEqual({
       prefix: "get",
+      receiverExpression: "$request",
       variableName: "request",
+    });
+  });
+
+  it("detects nested member access completion context", () => {
+    const source = `<?php
+class Controller
+{
+    public function store(): void
+    {
+        $this->commentService->cre
+    }
+}
+`;
+
+    expect(
+      phpMemberAccessCompletionContextAt(source, {
+        column: 35,
+        lineNumber: 6,
+      }),
+    ).toEqual({
+      prefix: "cre",
+      receiverExpression: "$this->commentService",
+      variableName: null,
+    });
+  });
+
+  it("detects static access completion context", () => {
+    expect(
+      phpStaticAccessCompletionContextAt("<?php\nCommentFactory::ma", {
+        column: 19,
+        lineNumber: 2,
+      }),
+    ).toEqual({
+      className: "CommentFactory",
+      prefix: "ma",
     });
   });
 
@@ -48,8 +85,25 @@ class Controller
       }),
     ).toEqual({
       argumentIndex: 1,
+      className: null,
       methodName: "get",
+      receiverExpression: "$request",
       variableName: "request",
+    });
+  });
+
+  it("detects static method signature context", () => {
+    expect(
+      phpMethodSignatureContextAt("<?php\nCommentFactory::make(", {
+        column: 23,
+        lineNumber: 2,
+      }),
+    ).toEqual({
+      argumentIndex: 0,
+      className: "CommentFactory",
+      methodName: "make",
+      receiverExpression: null,
+      variableName: null,
     });
   });
 
@@ -69,6 +123,23 @@ class Request
         name: "get",
         parameters: "string $key, mixed $default = null",
         returnType: "mixed",
+      },
+    ]);
+  });
+
+  it("uses PHPDoc return types when methods do not declare one", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        "<?php\nclass Factory\n{\n    /** @return Comment */\n    public static function make() {}\n}\n",
+        "Factory",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Factory",
+        isStatic: true,
+        name: "make",
+        parameters: "",
+        returnType: "Comment",
       },
     ]);
   });

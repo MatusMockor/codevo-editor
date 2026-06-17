@@ -786,6 +786,137 @@ class Request
     });
   });
 
+  it("uses semantic types from properties, assignments and static calls", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const servicePath = "/workspace/app/Services/CommentsService.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const factoryPath = "/workspace/app/Factories/CommentFactory.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Factories\\CommentFactory;
+use App\\Services\\CommentsService;
+
+class CommentController
+{
+    public function __construct(
+        private readonly CommentsService $commentsService,
+    ) {}
+
+    public function store(): void
+    {
+        $comment = $this->commentsService->create();
+        $this->commentsService->cre
+        $comment->get
+        CommentFactory::ma
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === servicePath) {
+          return `<?php
+namespace App\\Services;
+
+use App\\Models\\Comment;
+
+class CommentsService
+{
+    public function create(): Comment {}
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function getBody(): string {}
+}
+`;
+        }
+
+        if (path === factoryPath) {
+          return `<?php
+namespace App\\Factories;
+
+use App\\Models\\Comment;
+
+class CommentFactory
+{
+    public static function make(): Comment {}
+    public function makeInstance(): Comment {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$this->commentsService->cre"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Services\\CommentsService",
+        name: "create",
+        parameters: "",
+        returnType: "Comment",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "getBody",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "CommentFactory::ma"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Factories\\CommentFactory",
+        isStatic: true,
+        name: "make",
+        parameters: "",
+        returnType: "Comment",
+      },
+    ]);
+  });
+
   it("resolves Laravel route action strings to the paired controller method before LSP fallback", async () => {
     const routesPath = "/workspace/routes/comments.php";
     const commentControllerPath =

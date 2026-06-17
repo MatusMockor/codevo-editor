@@ -103,10 +103,21 @@ import {
   phpMethodCompletionsFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
+  phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
   type PhpMethodCompletion,
   type PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
+import {
+  phpAssignmentExpressionForVariableBefore,
+  phpCurrentClassName,
+  phpDeclaredTypeCandidate,
+  phpLaravelContainerExpressionClassName,
+  phpMethodCallExpression,
+  phpNewExpressionClassName,
+  phpReceiverExpressionTypeInSource,
+  phpStaticCallExpression,
+} from "../domain/phpSemanticEngine";
 import {
   phpClassPathCandidates,
   phpExtendsClassName,
@@ -2145,26 +2156,42 @@ export function useWorkbenchController(
     [documents, workspaceFiles],
   );
 
-  const resolvePhpReceiverMethodCompletions = useCallback(
-    async (
-      source: string,
-      position: EditorPosition,
-      variableName: string,
-    ): Promise<PhpMethodCompletion[]> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
-        return [];
+  const resolvePhpClassReference = useCallback(
+    (source: string, className: string): string | null => {
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+      if (!normalizedClassName) {
+        return null;
       }
 
-      const variableType = phpParameterTypeForVariable(
-        source,
-        position,
-        variableName,
-      );
-      const resolvedVariableType = variableType
-        ? resolvePhpClassName(source, variableType)
-        : null;
+      if (
+        normalizedClassName.toLowerCase() === "self" ||
+        normalizedClassName.toLowerCase() === "static"
+      ) {
+        return phpCurrentClassName(source);
+      }
 
-      if (!resolvedVariableType) {
+      if (normalizedClassName.toLowerCase() === "parent") {
+        const parentClassName = phpExtendsClassName(source);
+        return parentClassName ? resolvePhpClassName(source, parentClassName) : null;
+      }
+
+      return resolvePhpClassName(source, normalizedClassName);
+    },
+    [],
+  );
+
+  const resolvePhpDeclaredType = useCallback(
+    (source: string, typeName: string | null): string | null => {
+      const candidate = typeName ? phpDeclaredTypeCandidate(typeName) : null;
+      return candidate ? resolvePhpClassReference(source, candidate) : null;
+    },
+    [resolvePhpClassReference],
+  );
+
+  const collectPhpMethodsForClass = useCallback(
+    async (className: string): Promise<PhpMethodCompletion[]> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
         return [];
       }
 
@@ -2227,7 +2254,7 @@ export function useWorkbenchController(
         }
       };
 
-      await collectMethods(resolvedVariableType);
+      await collectMethods(className);
 
       return Array.from(completions.values());
     },
@@ -2238,23 +2265,246 @@ export function useWorkbenchController(
     ],
   );
 
+  const resolvePhpMethodReturnType = useCallback(
+    async (
+      className: string,
+      methodName: string,
+      visitedClassNames = new Set<string>(),
+    ): Promise<string | null> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return null;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+      const visitedKey = normalizedClassName.toLowerCase();
+
+      if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+        return null;
+      }
+
+      visitedClassNames.add(visitedKey);
+
+      for (const path of phpClassPathCandidates(
+        workspaceRoot,
+        workspaceDescriptor.php,
+        normalizedClassName,
+      )) {
+        try {
+          const content = await readNavigationFileContent(path);
+          const method = phpMethodCompletionsFromSource(
+            content,
+            normalizedClassName,
+          ).find(
+            (candidate) =>
+              candidate.name.toLowerCase() === methodName.toLowerCase(),
+          );
+          const returnType = resolvePhpDeclaredType(content, method?.returnType ?? null);
+
+          if (returnType) {
+            return returnType;
+          }
+
+          for (const traitName of phpTraitClassNames(content)) {
+            const resolvedTraitName = resolvePhpClassReference(content, traitName);
+            const traitReturnType = resolvedTraitName
+              ? await resolvePhpMethodReturnType(
+                  resolvedTraitName,
+                  methodName,
+                  visitedClassNames,
+                )
+              : null;
+
+            if (traitReturnType) {
+              return traitReturnType;
+            }
+          }
+
+          const parentClassName = phpExtendsClassName(content);
+          const resolvedParentClassName = parentClassName
+            ? resolvePhpClassReference(content, parentClassName)
+            : null;
+
+          if (resolvedParentClassName) {
+            return resolvePhpMethodReturnType(
+              resolvedParentClassName,
+              methodName,
+              visitedClassNames,
+            );
+          }
+
+          return null;
+        } catch {
+          continue;
+        }
+      }
+
+      return null;
+    },
+    [
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpDeclaredType,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  const resolvePhpExpressionType = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+      expression: string,
+      depth = 0,
+    ): Promise<string | null> => {
+      if (depth > 4) {
+        return null;
+      }
+
+      const directType = phpReceiverExpressionTypeInSource(
+        source,
+        position,
+        expression,
+      );
+
+      if (directType) {
+        return resolvePhpClassReference(source, directType);
+      }
+
+      const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
+        expression.trim(),
+      );
+      const assignmentExpression = variableMatch?.[1]
+        ? phpAssignmentExpressionForVariableBefore(
+            source,
+            position,
+            variableMatch[1],
+          )
+        : null;
+
+      if (assignmentExpression) {
+        const assignmentType = await resolvePhpExpressionType(
+          source,
+          position,
+          assignmentExpression,
+          depth + 1,
+        );
+
+        if (assignmentType) {
+          return assignmentType;
+        }
+      }
+
+      const constructedClassName =
+        phpNewExpressionClassName(expression) ??
+        phpLaravelContainerExpressionClassName(expression);
+
+      if (constructedClassName) {
+        return resolvePhpClassReference(source, constructedClassName);
+      }
+
+      const methodCall = phpMethodCallExpression(expression);
+
+      if (methodCall) {
+        const receiverType = await resolvePhpExpressionType(
+          source,
+          position,
+          methodCall.receiverExpression,
+          depth + 1,
+        );
+
+        return receiverType
+          ? resolvePhpMethodReturnType(receiverType, methodCall.methodName)
+          : null;
+      }
+
+      const staticCall = phpStaticCallExpression(expression);
+
+      if (staticCall) {
+        const className = resolvePhpClassReference(source, staticCall.className);
+
+        return className
+          ? resolvePhpMethodReturnType(className, staticCall.methodName)
+          : null;
+      }
+
+      return null;
+    },
+    [
+      resolvePhpClassReference,
+      resolvePhpMethodReturnType,
+    ],
+  );
+
+  const resolvePhpReceiverMethodCompletions = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+      receiverExpression: string,
+    ): Promise<PhpMethodCompletion[]> => {
+      const resolvedReceiverType = await resolvePhpExpressionType(
+        source,
+        position,
+        receiverExpression,
+      );
+
+      return resolvedReceiverType
+        ? collectPhpMethodsForClass(resolvedReceiverType)
+        : [];
+    },
+    [collectPhpMethodsForClass, resolvePhpExpressionType],
+  );
+
+  const resolvePhpStaticMethodCompletions = useCallback(
+    async (
+      source: string,
+      className: string,
+    ): Promise<PhpMethodCompletion[]> => {
+      const resolvedClassName = resolvePhpClassReference(source, className);
+
+      if (!resolvedClassName) {
+        return [];
+      }
+
+      const facadeTargetClassName = laravelFacadeTargetClassName(resolvedClassName);
+      const methods = await collectPhpMethodsForClass(
+        facadeTargetClassName ?? resolvedClassName,
+      );
+
+      return facadeTargetClassName
+        ? methods
+        : methods.filter((method) => method.isStatic);
+    },
+    [collectPhpMethodsForClass, resolvePhpClassReference],
+  );
+
   const providePhpMethodCompletions = useCallback(
     async (
       source: string,
       position: EditorPosition,
     ): Promise<PhpMethodCompletion[]> => {
       const accessContext = phpMemberAccessCompletionContextAt(source, position);
-
-      if (!accessContext) {
-        return [];
-      }
-
-      const methods = await resolvePhpReceiverMethodCompletions(
+      const staticAccessContext = phpStaticAccessCompletionContextAt(
         source,
         position,
-        accessContext.variableName,
       );
-      const normalizedPrefix = accessContext.prefix.toLowerCase();
+
+      const methods = staticAccessContext
+        ? await resolvePhpStaticMethodCompletions(
+            source,
+            staticAccessContext.className,
+          )
+        : accessContext
+          ? await resolvePhpReceiverMethodCompletions(
+              source,
+              position,
+              accessContext.receiverExpression,
+            )
+          : [];
+      const normalizedPrefix = (
+        staticAccessContext?.prefix ??
+        accessContext?.prefix ??
+        ""
+      ).toLowerCase();
 
       return methods
         .filter((method) => method.name.toLowerCase().startsWith(normalizedPrefix))
@@ -2272,6 +2522,7 @@ export function useWorkbenchController(
     },
     [
       resolvePhpReceiverMethodCompletions,
+      resolvePhpStaticMethodCompletions,
     ],
   );
 
@@ -2286,11 +2537,15 @@ export function useWorkbenchController(
         return null;
       }
 
-      const methods = await resolvePhpReceiverMethodCompletions(
-        source,
-        position,
-        signatureContext.variableName,
-      );
+      const methods = signatureContext.className
+        ? await resolvePhpStaticMethodCompletions(source, signatureContext.className)
+        : signatureContext.receiverExpression
+          ? await resolvePhpReceiverMethodCompletions(
+              source,
+              position,
+              signatureContext.receiverExpression,
+            )
+          : [];
       const method = methods.find(
         (candidate) =>
           candidate.name.toLowerCase() ===
@@ -4392,6 +4647,28 @@ function editorPositionFromProjectSymbol(
 function shortPhpName(className: string): string {
   const parts = className.split("\\");
   return parts[parts.length - 1] || className;
+}
+
+function laravelFacadeTargetClassName(className: string): string | null {
+  const normalizedClassName = className.replace(/^\\+/, "").toLowerCase();
+  const targets: Record<string, string> = {
+    "illuminate\\support\\facades\\app": "Illuminate\\Contracts\\Foundation\\Application",
+    "illuminate\\support\\facades\\cache": "Illuminate\\Cache\\CacheManager",
+    "illuminate\\support\\facades\\config": "Illuminate\\Config\\Repository",
+    "illuminate\\support\\facades\\db": "Illuminate\\Database\\DatabaseManager",
+    "illuminate\\support\\facades\\event": "Illuminate\\Events\\Dispatcher",
+    "illuminate\\support\\facades\\file": "Illuminate\\Filesystem\\Filesystem",
+    "illuminate\\support\\facades\\gate": "Illuminate\\Contracts\\Auth\\Access\\Gate",
+    "illuminate\\support\\facades\\log": "Psr\\Log\\LoggerInterface",
+    "illuminate\\support\\facades\\queue": "Illuminate\\Queue\\QueueManager",
+    "illuminate\\support\\facades\\route": "Illuminate\\Routing\\Router",
+    "illuminate\\support\\facades\\schema": "Illuminate\\Database\\Schema\\Builder",
+    "illuminate\\support\\facades\\storage": "Illuminate\\Filesystem\\FilesystemManager",
+    "illuminate\\support\\facades\\validator": "Illuminate\\Validation\\Factory",
+    "illuminate\\support\\facades\\view": "Illuminate\\View\\Factory",
+  };
+
+  return targets[normalizedClassName] ?? null;
 }
 
 function indexProgressNoticeGroup(rootPath: string): string {
