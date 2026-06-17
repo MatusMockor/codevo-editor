@@ -471,20 +471,11 @@ function App() {
           <FileTree
             activePath={workbench.activePath}
             entriesByDirectory={workbench.entriesByDirectory}
-            expandedPhpFilePaths={workbench.expandedPhpFilePaths}
             expandedDirectories={workbench.expandedDirectories}
-            loadingPhpFileOutlinePaths={workbench.loadingPhpFileOutlinePaths}
             loadingDirectories={workbench.loadingDirectories}
             onOpenFile={workbench.openPinnedFile}
             onPreviewFile={workbench.previewFile}
-            onOpenPhpFileOutlineNode={workbench.openPhpFileOutlineNode}
             onToggleDirectory={workbench.toggleDirectory}
-            onTogglePhpFileOutline={workbench.togglePhpFileOutline}
-            onTogglePhpFileOutlineNode={workbench.togglePhpFileOutlineNode}
-            phpFileOutlineExpandedNodeIds={
-              workbench.phpFileOutlineExpandedNodeIds
-            }
-            phpFileOutlinesByPath={workbench.phpFileOutlinesByPath}
             revealActivePath={
               workbench.workspaceSettings.revealActiveFileInTree
             }

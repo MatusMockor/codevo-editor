@@ -141,6 +141,26 @@ describe("editor preview interactions", () => {
     expect(onOpenFile).toHaveBeenCalledWith(file);
   });
 
+  it("keeps PHP files as files instead of expanding class symbols in the file tree", () => {
+    const file = fileEntry("/workspace/src/User.php", "User.php", "file");
+    const onPreviewFile = vi.fn();
+
+    renderFileTree({
+      file,
+      onPreviewFile,
+    });
+
+    const row = queryRequired<HTMLButtonElement>(host, ".tree-row");
+
+    act(() => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    });
+
+    expect(row.getAttribute("aria-expanded")).toBeNull();
+    expect(onPreviewFile).toHaveBeenCalledWith(file);
+    expect(host.querySelector(".php-file-outline-row")).toBeNull();
+  });
+
   it("does not immediately collapse directories on double click", () => {
     const directory = fileEntry("/workspace/src", "src", "directory");
     const onToggleDirectory = vi.fn();
@@ -254,17 +274,10 @@ describe("editor preview interactions", () => {
           activePath={activePath}
           entriesByDirectory={{ "/workspace": [file] }}
           expandedDirectories={expandedDirectories}
-          expandedPhpFilePaths={new Set()}
           loadingDirectories={new Set()}
-          loadingPhpFileOutlinePaths={new Set()}
           onOpenFile={onOpenFile}
-          onOpenPhpFileOutlineNode={vi.fn()}
           onPreviewFile={onPreviewFile}
           onToggleDirectory={onToggleDirectory}
-          onTogglePhpFileOutline={vi.fn()}
-          onTogglePhpFileOutlineNode={vi.fn()}
-          phpFileOutlineExpandedNodeIds={new Set()}
-          phpFileOutlinesByPath={{}}
           revealActivePath={revealActivePath}
           revealActivePathSignal={revealActivePathSignal}
           rootPath="/workspace"
