@@ -77,7 +77,7 @@ use std::{
 };
 use tauri::{
     menu::{Menu, MenuItemBuilder, SubmenuBuilder},
-    AppHandle, Emitter, Manager, State,
+    AppHandle, Emitter, Manager, RunEvent, State, WindowEvent,
 };
 use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize};
 use terminal_session::{
@@ -975,6 +975,14 @@ pub fn run() {
     tauri::Builder::default()
         .enable_macos_default_menu(false)
         .menu(application_menu)
+        .on_window_event(|window, event| {
+            if matches!(
+                event,
+                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+            ) {
+                shutdown_runtime_processes(window.app_handle());
+            }
+        })
         .on_menu_event(|app, event| match event.id().as_ref() {
             CLOSE_ACTIVE_TAB_MENU_ID => {
                 let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
@@ -1044,6 +1052,11 @@ pub fn run() {
             write_terminal_input,
             write_text_file
         ])
-        .run(tauri::generate_context!())
-        .unwrap_or_else(|error| panic!("Error running tauri application: {error}"));
+        .build(tauri::generate_context!())
+        .unwrap_or_else(|error| panic!("Error building tauri application: {error}"))
+        .run(|app, event| {
+            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+                shutdown_runtime_processes(app);
+            }
+        });
 }
