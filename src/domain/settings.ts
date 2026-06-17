@@ -29,6 +29,7 @@ export interface AppSettings {
   keymap: KeymapSettings;
   recentWorkspacePath: string | null;
   theme: AppTheme;
+  workspaceTabs: string[];
 }
 
 export interface WorkspaceSettings {
@@ -79,6 +80,7 @@ export function defaultAppSettings(): AppSettings {
     keymap: defaultKeymapSettings(),
     recentWorkspacePath: null,
     theme: "dark",
+    workspaceTabs: [],
   };
 }
 
@@ -134,11 +136,16 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   );
   const keymap = normalizeKeymapSettings(value.keymap);
   const theme = isAppTheme(value.theme) ? value.theme : defaults.theme;
+  const workspaceTabs = normalizeWorkspaceTabs(
+    value.workspaceTabs,
+    recentWorkspacePath,
+  );
 
   return {
     keymap,
     recentWorkspacePath,
     theme,
+    workspaceTabs,
   };
 }
 
@@ -495,6 +502,23 @@ function normalizePathList(value: unknown): string[] {
     .filter(Boolean);
 
   return Array.from(new Set(paths));
+}
+
+function normalizeWorkspaceTabs(
+  value: unknown,
+  recentWorkspacePath: string | null,
+): string[] {
+  const tabs = normalizePathList(value);
+
+  if (!recentWorkspacePath) {
+    return tabs;
+  }
+
+  if (tabs.includes(recentWorkspacePath)) {
+    return tabs;
+  }
+
+  return [...tabs, recentWorkspacePath];
 }
 
 function normalizeSessionActivePath(

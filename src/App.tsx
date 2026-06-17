@@ -22,6 +22,7 @@ import { GitDiffPreview } from "./components/GitDiffPreview";
 import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { PhpTreePanel } from "./components/PhpTreePanel";
+import { ProjectTabs } from "./components/ProjectTabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar } from "./components/StatusBar";
@@ -422,6 +423,12 @@ function App() {
       </section>
 
       <section className="editor-workbench">
+        <ProjectTabs
+          activeRoot={workbench.workspaceRoot}
+          onActivate={workbench.activateWorkspaceTab}
+          onClose={workbench.closeWorkspaceTab}
+          workspaceTabs={workbench.workspaceTabs}
+        />
         <header className="workbench-toolbar">
           <button
             aria-pressed={workbench.intelligenceMode === "fullSmart"}

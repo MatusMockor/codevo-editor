@@ -831,6 +831,42 @@ export function useWorkbenchController(
     ],
   );
 
+  const clearActiveWorkspace = useCallback(async () => {
+    await stopLanguageServerRuntime();
+    workspaceSessionRestoredRef.current = false;
+    currentWorkspaceRootRef.current = null;
+    setWorkspaceRoot(null);
+    setWorkspaceDescriptor(null);
+    setWorkspaceTrust(null);
+    setPhpTools(null);
+    setLanguageServerPlan(null);
+    setEntriesByDirectory({});
+    setExpandedDirectories(new Set());
+    setDocuments({});
+    setOpenPaths([]);
+    setActivePath(null);
+    setPreviewPath(null);
+    setNavigationHistory(createNavigationHistory());
+    setSidebarView("files");
+    setBottomPanelView("problems");
+    setGitStatus(emptyGitStatus());
+    setGitLoading(false);
+    setGitDiffLoading(false);
+    setSelectedGitChange(null);
+    setGitDiffPreview(null);
+    setEditorGitBaselinesByPath({});
+    setClassOpenOpen(false);
+    setQuickOpenOpen(false);
+    setTextSearchOpen(false);
+    setPaletteOpen(false);
+    setFileStructureOpen(false);
+    setLanguageServerSetupOpen(false);
+    setSettingsOpen(false);
+    setIntelligenceMode("basic");
+    intelligenceModeRef.current = "basic";
+    clearIndexWorkspaceState();
+  }, [clearIndexWorkspaceState, stopLanguageServerRuntime]);
+
   const scheduleDocumentChange = useCallback(
     (document: EditorDocument) => {
       if (languageServerRuntimeStatus?.kind !== "running") {
@@ -1106,9 +1142,14 @@ export function useWorkbenchController(
       autoStartedLanguageServerRootRef.current = null;
 
       try {
+        const nextWorkspaceTabs = workspaceTabsWithPath(
+          appSettingsRef.current.workspaceTabs,
+          path,
+        );
         await persistAppSettings({
           ...appSettingsRef.current,
           recentWorkspacePath: path,
+          workspaceTabs: nextWorkspaceTabs,
         });
       } catch (error) {
         reportError("Settings", error);
@@ -1213,6 +1254,87 @@ export function useWorkbenchController(
 
     await openWorkspacePath(selected);
   }, [openWorkspacePath]);
+
+  const activateWorkspaceTab = useCallback(
+    async (path: string) => {
+      if (path === workspaceRoot) {
+        return;
+      }
+
+      await openWorkspacePath(path);
+    },
+    [openWorkspacePath, workspaceRoot],
+  );
+
+  const closeWorkspaceTab = useCallback(
+    async (path: string) => {
+      const currentSettings = appSettingsRef.current;
+      const currentTabs = currentSettings.workspaceTabs;
+      const nextTabs = workspaceTabsWithoutPath(currentTabs, path);
+
+      if (nextTabs.length === currentTabs.length) {
+        return;
+      }
+
+      if (path !== workspaceRoot) {
+        const nextRecentPath =
+          currentSettings.recentWorkspacePath === path
+            ? workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null
+            : currentSettings.recentWorkspacePath;
+
+        try {
+          await persistAppSettings({
+            ...currentSettings,
+            recentWorkspacePath: nextRecentPath,
+            workspaceTabs: nextTabs,
+          });
+        } catch (error) {
+          reportError("Settings", error);
+        }
+        return;
+      }
+
+      if (
+        dirtyCount > 0 &&
+        !prompter.confirm("Close workspace and discard unsaved changes?")
+      ) {
+        return;
+      }
+
+      const currentIndex = currentTabs.indexOf(path);
+      const nextPath =
+        nextTabs[Math.min(currentIndex, nextTabs.length - 1)] ??
+        nextTabs[nextTabs.length - 1] ??
+        null;
+
+      try {
+        await persistAppSettings({
+          ...currentSettings,
+          recentWorkspacePath: nextPath,
+          workspaceTabs: nextTabs,
+        });
+      } catch (error) {
+        reportError("Settings", error);
+        return;
+      }
+
+      if (nextPath) {
+        await openWorkspacePath(nextPath);
+        return;
+      }
+
+      await clearActiveWorkspace();
+    },
+    [
+      clearActiveWorkspace,
+      dirtyCount,
+      openWorkspacePath,
+      persistAppSettings,
+      prompter,
+      reportError,
+      workspaceRoot,
+    ],
+  );
 
   const refreshDirectory = useCallback(
     async (path: string) => {
@@ -5088,7 +5210,10 @@ export function useWorkbenchController(
 
         applyAppSettings(settings);
 
-        if (!settings.recentWorkspacePath) {
+        const workspacePath =
+          settings.recentWorkspacePath ?? settings.workspaceTabs[0] ?? null;
+
+        if (!workspacePath) {
           return;
         }
 
@@ -5096,7 +5221,7 @@ export function useWorkbenchController(
           return;
         }
 
-        void openWorkspacePath(settings.recentWorkspacePath);
+        void openWorkspacePath(workspacePath);
       })
       .catch((error) => reportError("Settings", error));
 
@@ -5447,6 +5572,7 @@ export function useWorkbenchController(
       : null,
     activePath,
     appSettings,
+    activateWorkspaceTab,
     classOpenLoading,
     classOpenOpen,
     classOpenQuery,
@@ -5454,6 +5580,7 @@ export function useWorkbenchController(
     closeImplementationChooser: () => setImplementationChooser(null),
     closeDocument,
     closeGitDiffPreview,
+    closeWorkspaceTab,
     commandContext,
     commands: commandRegistry.list(),
     dirtyCount,
@@ -5565,6 +5692,7 @@ export function useWorkbenchController(
     sidebarView,
     workspaceDescriptor,
     workspaceRoot,
+    workspaceTabs: appSettings.workspaceTabs,
     workspaceSettings,
     workspaceTrust,
   };
@@ -5913,4 +6041,16 @@ function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
 
 function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
+}
+
+function workspaceTabsWithPath(tabs: string[], path: string): string[] {
+  if (tabs.includes(path)) {
+    return tabs;
+  }
+
+  return [...tabs, path];
+}
+
+function workspaceTabsWithoutPath(tabs: string[], path: string): string[] {
+  return tabs.filter((tabPath) => tabPath !== path);
 }

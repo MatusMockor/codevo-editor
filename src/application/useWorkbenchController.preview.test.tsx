@@ -187,6 +187,91 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activePath).toBe(file.path);
   });
 
+  it("switches between persisted project tabs and stops the active language server", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().workspaceTabs).toEqual([
+      "/workspace-a",
+      "/workspace-b",
+    ]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalled();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTabs).toEqual([
+      "/workspace-a",
+      "/workspace-b",
+    ]);
+    expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      }),
+    );
+  });
+
+  it("removes an inactive project tab without changing the active workspace", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-b");
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-a"]);
+    expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a"],
+      }),
+    );
+  });
+
+  it("clears the workbench and stops runtime when the last project tab closes", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns();
+
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalled();
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        recentWorkspacePath: null,
+        workspaceTabs: [],
+      }),
+    );
+  });
+
   it("loads the Git original content for active editor change markers", async () => {
     const file = fileEntry("/workspace/src/User.php", "User.php");
     const change = {

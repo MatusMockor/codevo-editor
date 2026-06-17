@@ -20,6 +20,7 @@ describe("settings defaults", () => {
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       theme: "dark",
+      workspaceTabs: [],
     });
     expect(defaultWorkspaceSettings()).toEqual({
       autoSave: true,
@@ -64,12 +65,14 @@ describe("normalizeAppSettings", () => {
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: "/project",
       theme: "dark",
+      workspaceTabs: ["/project"],
     });
     expect(
       normalizeAppSettings({
         keymap: { "editor.save": "Cmd+Shift+S" },
         recentWorkspacePath: null,
         theme: "light",
+        workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
     ).toEqual({
       keymap: {
@@ -78,6 +81,7 @@ describe("normalizeAppSettings", () => {
       },
       recentWorkspacePath: null,
       theme: "light",
+      workspaceTabs: ["/project-a", "/project-b"],
     });
     expect(
       normalizeAppSettings({
@@ -88,6 +92,7 @@ describe("normalizeAppSettings", () => {
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       theme: "ayuMirage",
+      workspaceTabs: [],
     });
   });
 

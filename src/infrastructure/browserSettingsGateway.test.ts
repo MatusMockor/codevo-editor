@@ -10,6 +10,7 @@ describe("BrowserSettingsGateway", () => {
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       theme: "dark",
+      workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
       autoSave: true,
@@ -52,6 +53,7 @@ describe("BrowserSettingsGateway", () => {
       },
       recentWorkspacePath: "/project",
       theme: "ayuMirage",
+      workspaceTabs: ["/project", "/another-project"],
     });
     await gateway.saveWorkspaceSettings("/project", {
       autoSave: true,
@@ -89,6 +91,7 @@ describe("BrowserSettingsGateway", () => {
       },
       recentWorkspacePath: "/project",
       theme: "ayuMirage",
+      workspaceTabs: ["/project", "/another-project"],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
       autoSave: true,
@@ -130,6 +133,7 @@ describe("BrowserSettingsGateway", () => {
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       theme: "dark",
+      workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
       autoSave: true,
