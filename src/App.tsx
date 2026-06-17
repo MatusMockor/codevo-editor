@@ -25,7 +25,7 @@ import { PhpTreePanel } from "./components/PhpTreePanel";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { SettingsDialog } from "./components/SettingsDialog";
-import { StatusBar } from "./components/StatusBar";
+import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
 import {
   languageServerCapabilityLabels,
@@ -259,9 +259,20 @@ function App() {
         .join(" · ") || null,
     [javaScriptTypeScriptLanguageServerLabel, languageServerLabel],
   );
-  const indexLabel = useMemo(
-    () => indexProgressLabel(workbench.indexProgress),
-    [workbench.indexProgress],
+  const ideActivity = useMemo(
+    () =>
+      ideActivityStatus(
+        workbench.languageServerRuntimeStatus,
+        workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+        workbench.indexProgress,
+        combinedLanguageServerLabel,
+      ),
+    [
+      combinedLanguageServerLabel,
+      workbench.indexProgress,
+      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+      workbench.languageServerRuntimeStatus,
+    ],
   );
   const monacoTheme = useMemo(
     () =>
@@ -646,8 +657,8 @@ function App() {
         statusBar={workbench.workspaceSettings.statusBar}
         workspaceRoot={workbench.workspaceRoot}
         workspaceInfoLabel={workspaceLabel}
-        languageServerLabel={combinedLanguageServerLabel}
-        indexLabel={indexLabel}
+        ideActivityLabel={ideActivity.label}
+        ideActivityState={ideActivity.state}
         workspaceTrustLabel={
           workbench.workspaceRoot
             ? workbench.workspaceTrust?.trusted
@@ -785,6 +796,93 @@ function smartModeSummary(
   }
 
   return "IDE setup needed";
+}
+
+function ideActivityStatus(
+  phpRuntimeStatus: LanguageServerRuntimeStatus | null,
+  javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
+  indexProgress: IndexProgressState,
+  languageServerLabel: string | null,
+): { label: string | null; state: IdeActivityState | null } {
+  const labels = [
+    compactLanguageServerActivityLabel(languageServerLabel),
+    compactIndexActivityLabel(indexProgress),
+  ].filter((label): label is string => Boolean(label));
+
+  if (labels.length === 0) {
+    return { label: null, state: null };
+  }
+
+  return {
+    label: `IDE: ${labels.join(" · ")}`,
+    state: ideActivityState(
+      phpRuntimeStatus,
+      javaScriptTypeScriptRuntimeStatus,
+      indexProgress,
+    ),
+  };
+}
+
+function compactLanguageServerActivityLabel(label: string | null): string | null {
+  if (!label) {
+    return null;
+  }
+
+  return label
+    .replace(/PHPactor:/g, "PHPactor")
+    .replace(/TS Server:/g, "TS Server");
+}
+
+function compactIndexActivityLabel(progress: IndexProgressState): string | null {
+  if (progress.status === "idle") {
+    return null;
+  }
+
+  if (progress.status === "scanning") {
+    return "Index scanning";
+  }
+
+  if (progress.status === "failed") {
+    return "Index failed";
+  }
+
+  const suffix =
+    progress.erroredEntries > 0 ? ` · ${progress.erroredEntries} errors` : "";
+
+  return `Index ${progress.indexedFiles} files${suffix}`;
+}
+
+function ideActivityState(
+  phpRuntimeStatus: LanguageServerRuntimeStatus | null,
+  javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
+  indexProgress: IndexProgressState,
+): IdeActivityState {
+  if (
+    phpRuntimeStatus?.kind === "crashed" ||
+    javaScriptTypeScriptRuntimeStatus?.kind === "crashed" ||
+    indexProgress.status === "failed" ||
+    indexProgress.erroredEntries > 0
+  ) {
+    return "problem";
+  }
+
+  if (
+    phpRuntimeStatus?.kind === "starting" ||
+    javaScriptTypeScriptRuntimeStatus?.kind === "starting" ||
+    indexProgress.status === "scanning"
+  ) {
+    return "scanning";
+  }
+
+  if (
+    phpRuntimeStatus?.kind === "running" ||
+    javaScriptTypeScriptRuntimeStatus?.kind === "running" ||
+    indexProgress.status === "completed"
+  ) {
+    return "active";
+  }
+
+  return "idle";
 }
 
 function indexToolbarLabel(progress: IndexProgressState): string {

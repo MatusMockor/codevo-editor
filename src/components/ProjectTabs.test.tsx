@@ -64,4 +64,27 @@ describe("ProjectTabs", () => {
 
     expect(activate).toHaveBeenCalledWith("/workspace/analytics-api");
   });
+
+  it("closes project tabs with a middle click", async () => {
+    const close = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ProjectTabs
+          activeRoot="/workspace/api"
+          onActivate={vi.fn()}
+          onClose={close}
+          workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
+        />,
+      );
+    });
+
+    act(() => {
+      host.querySelector(".project-tab")?.dispatchEvent(
+        new MouseEvent("auxclick", { bubbles: true, button: 1 }),
+      );
+    });
+
+    expect(close).toHaveBeenCalledWith("/workspace/api");
+  });
 });

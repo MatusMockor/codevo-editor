@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import type { MouseEvent } from "react";
 
 interface ProjectTabsProps {
   activeRoot: string | null;
@@ -17,6 +18,16 @@ export function ProjectTabs({
     return null;
   }
 
+  function handleAuxClick(path: string, event: MouseEvent<HTMLDivElement>) {
+    if (event.button !== 1) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onClose(path);
+  }
+
   return (
     <nav aria-label="Open projects" className="project-tabs">
       {workspaceTabs.map((path) => {
@@ -27,6 +38,7 @@ export function ProjectTabs({
           <div
             className={active ? "project-tab active" : "project-tab"}
             key={path}
+            onAuxClick={(event) => handleAuxClick(path, event)}
           >
             <button
               aria-current={active ? "page" : undefined}

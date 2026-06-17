@@ -84,6 +84,32 @@ describe("editor preview interactions", () => {
     expect(tab.classList.contains("preview")).toBe(false);
   });
 
+  it("closes file tabs with a middle click", () => {
+    const document = editorDocument("/workspace/src/User.php", "User.php");
+    const onClose = vi.fn();
+
+    act(() => {
+      root.render(
+        <EditorTabs
+          activePath={document.path}
+          documents={[document]}
+          onActivate={vi.fn()}
+          onClose={onClose}
+          onPin={vi.fn()}
+          previewPath={null}
+        />,
+      );
+    });
+
+    act(() => {
+      queryRequired(host, ".editor-tab").dispatchEvent(
+        new MouseEvent("auxclick", { bubbles: true, button: 1 }),
+      );
+    });
+
+    expect(onClose).toHaveBeenCalledWith(document.path);
+  });
+
   it("previews files on single click and opens them on double click", () => {
     const file = fileEntry("/workspace/src/User.php", "User.php", "file");
     const onPreviewFile = vi.fn();
