@@ -286,21 +286,6 @@ function App() {
       workbench.languageServerRuntimeStatus,
     ],
   );
-  const ideActivity = useMemo(
-    () =>
-      ideActivityStatus(
-        workbench.languageServerRuntimeStatus,
-        workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-        workbench.indexProgress,
-        combinedLanguageServerLabel,
-      ),
-    [
-      combinedLanguageServerLabel,
-      workbench.indexProgress,
-      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
-      workbench.languageServerRuntimeStatus,
-    ],
-  );
   const monacoTheme = useMemo(
     () =>
       monacoThemeForAppTheme(
