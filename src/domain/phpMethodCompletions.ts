@@ -12,6 +12,26 @@ export interface PhpMethodCompletion {
   returnType: string | null;
 }
 
+export interface PhpMethodParameter {
+  defaultValue: string | null;
+  name: string;
+  optional: boolean;
+  raw: string;
+  type: string | null;
+}
+
+export interface PhpMethodSignatureContext {
+  argumentIndex: number;
+  methodName: string;
+  variableName: string;
+}
+
+export interface PhpMethodSignature {
+  argumentIndex: number;
+  method: PhpMethodCompletion;
+  parameters: PhpMethodParameter[];
+}
+
 export function phpMemberAccessCompletionContextAt(
   source: string,
   position: EditorPosition,
@@ -29,6 +49,29 @@ export function phpMemberAccessCompletionContextAt(
 
   return {
     prefix: match[2] ?? "",
+    variableName: match[1],
+  };
+}
+
+export function phpMethodSignatureContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpMethodSignatureContext | null {
+  const offset = offsetAtPosition(source, position);
+  const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
+  const lineUntilCursor = source.slice(lineStart, offset);
+  const match =
+    /\$([A-Za-z_][A-Za-z0-9_]*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)$/.exec(
+      lineUntilCursor,
+    );
+
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+
+  return {
+    argumentIndex: phpArgumentIndex(match[3] ?? ""),
+    methodName: match[2],
     variableName: match[1],
   };
 }
@@ -66,6 +109,31 @@ export function phpMethodCompletionsFromSource(
   return methods;
 }
 
+export function phpMethodParameters(parameters: string): PhpMethodParameter[] {
+  return splitPhpParameterList(parameters).map((parameter) => {
+    const defaultIndex = topLevelEqualsIndex(parameter);
+    const withoutDefault =
+      defaultIndex >= 0 ? parameter.slice(0, defaultIndex).trim() : parameter;
+    const defaultValue =
+      defaultIndex >= 0 ? parameter.slice(defaultIndex + 1).trim() : null;
+    const nameMatch = /(?:\.\.\.)?(?:&\s*)?(\$[A-Za-z_][A-Za-z0-9_]*)\b/.exec(
+      withoutDefault,
+    );
+    const name = nameMatch?.[1] ?? withoutDefault;
+    const beforeName = nameMatch
+      ? withoutDefault.slice(0, nameMatch.index).trim()
+      : "";
+
+    return {
+      defaultValue,
+      name,
+      optional: defaultValue !== null,
+      raw: parameter,
+      type: normalizeParameterType(beforeName),
+    };
+  });
+}
+
 export function phpTraitClassNames(source: string): string[] {
   const typeMatch = /\b(?:class|trait|enum)\s+[A-Za-z_][A-Za-z0-9_]*/.exec(
     source,
@@ -100,6 +168,101 @@ export function phpTraitClassNames(source: string): string[] {
   return Array.from(new Set(traits));
 }
 
+function phpArgumentIndex(argumentsSource: string): number {
+  let argumentIndex = 0;
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = 0; index < argumentsSource.length; index += 1) {
+    const character = argumentsSource[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      argumentIndex += 1;
+    }
+  }
+
+  return argumentIndex;
+}
+
+function normalizeParameterType(beforeName: string): string | null {
+  const normalized = normalizeWhitespace(
+    beforeName.replace(/\b(?:public|protected|private|readonly|static)\b/g, " "),
+  );
+
+  return normalized || null;
+}
+
+function topLevelEqualsIndex(source: string): number {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "=" && depth === 0) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function normalizeReturnType(returnType: string | null): string | null {
   const normalized = normalizeWhitespace(returnType ?? "")
     .replace(/\s*\|\s*/g, "|")
@@ -110,6 +273,55 @@ function normalizeReturnType(returnType: string | null): string | null {
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function splitPhpParameterList(parameters: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = 0; index < parameters.length; index += 1) {
+    const character = parameters[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character !== "," || depth > 0) {
+      continue;
+    }
+
+    parts.push(parameters.slice(start, index).trim());
+    start = index + 1;
+  }
+
+  parts.push(parameters.slice(start).trim());
+  return parts.filter(Boolean);
 }
 
 function maskPhpStringsAndComments(source: string): string {

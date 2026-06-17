@@ -101,8 +101,11 @@ import {
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodCompletionsFromSource,
+  phpMethodParameters,
+  phpMethodSignatureContextAt,
   phpTraitClassNames,
   type PhpMethodCompletion,
+  type PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
 import {
   phpClassPathCandidates,
@@ -2142,21 +2145,20 @@ export function useWorkbenchController(
     [documents, workspaceFiles],
   );
 
-  const providePhpMethodCompletions = useCallback(
+  const resolvePhpReceiverMethodCompletions = useCallback(
     async (
       source: string,
       position: EditorPosition,
+      variableName: string,
     ): Promise<PhpMethodCompletion[]> => {
-      const accessContext = phpMemberAccessCompletionContextAt(source, position);
-
-      if (!accessContext || !workspaceRoot || !workspaceDescriptor?.php) {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
         return [];
       }
 
       const variableType = phpParameterTypeForVariable(
         source,
         position,
-        accessContext.variableName,
+        variableName,
       );
       const resolvedVariableType = variableType
         ? resolvePhpClassName(source, variableType)
@@ -2227,9 +2229,34 @@ export function useWorkbenchController(
 
       await collectMethods(resolvedVariableType);
 
+      return Array.from(completions.values());
+    },
+    [
+      readNavigationFileContent,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  const providePhpMethodCompletions = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+    ): Promise<PhpMethodCompletion[]> => {
+      const accessContext = phpMemberAccessCompletionContextAt(source, position);
+
+      if (!accessContext) {
+        return [];
+      }
+
+      const methods = await resolvePhpReceiverMethodCompletions(
+        source,
+        position,
+        accessContext.variableName,
+      );
       const normalizedPrefix = accessContext.prefix.toLowerCase();
 
-      return Array.from(completions.values())
+      return methods
         .filter((method) => method.name.toLowerCase().startsWith(normalizedPrefix))
         .sort((left, right) => {
           const leftExact = left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
@@ -2244,10 +2271,43 @@ export function useWorkbenchController(
         .slice(0, 80);
     },
     [
-      readNavigationFileContent,
-      workspaceDescriptor,
-      workspaceRoot,
+      resolvePhpReceiverMethodCompletions,
     ],
+  );
+
+  const providePhpMethodSignature = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+    ): Promise<PhpMethodSignature | null> => {
+      const signatureContext = phpMethodSignatureContextAt(source, position);
+
+      if (!signatureContext) {
+        return null;
+      }
+
+      const methods = await resolvePhpReceiverMethodCompletions(
+        source,
+        position,
+        signatureContext.variableName,
+      );
+      const method = methods.find(
+        (candidate) =>
+          candidate.name.toLowerCase() ===
+          signatureContext.methodName.toLowerCase(),
+      );
+
+      if (!method) {
+        return null;
+      }
+
+      return {
+        argumentIndex: signatureContext.argumentIndex,
+        method,
+        parameters: phpMethodParameters(method.parameters),
+      };
+    },
+    [resolvePhpReceiverMethodCompletions],
   );
 
   const openPhpClassTarget = useCallback(
@@ -4170,6 +4230,7 @@ export function useWorkbenchController(
     previewFile,
     previewPath,
     providePhpMethodCompletions,
+    providePhpMethodSignature,
     openSettingsPanel,
     openWorkspace,
     paletteOpen,

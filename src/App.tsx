@@ -501,6 +501,7 @@ function App() {
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
+            providePhpMethodSignature={workbench.providePhpMethodSignature}
           />
         )}
         {workbench.bottomPanelVisible ? (

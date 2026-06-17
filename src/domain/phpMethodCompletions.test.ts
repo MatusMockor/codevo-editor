@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodCompletionsFromSource,
+  phpMethodParameters,
+  phpMethodSignatureContextAt,
   phpTraitClassNames,
 } from "./phpMethodCompletions";
 
@@ -28,6 +30,29 @@ class Controller
     });
   });
 
+  it("detects method signature context and active argument", () => {
+    const source = `<?php
+class Controller
+{
+    public function store(StoreCommentRequest $request): void
+    {
+        $request->get($key,
+    }
+}
+`;
+
+    expect(
+      phpMethodSignatureContextAt(source, {
+        column: 28,
+        lineNumber: 6,
+      }),
+    ).toEqual({
+      argumentIndex: 1,
+      methodName: "get",
+      variableName: "request",
+    });
+  });
+
   it("extracts public methods without leaking private helpers", () => {
     const source = `<?php
 class Request
@@ -44,6 +69,36 @@ class Request
         name: "get",
         parameters: "string $key, mixed $default = null",
         returnType: "mixed",
+      },
+    ]);
+  });
+
+  it("parses parameter names, types, defaults and optionality", () => {
+    expect(
+      phpMethodParameters(
+        "string $key, mixed $default = null, array $options = ['a,b']",
+      ),
+    ).toEqual([
+      {
+        defaultValue: null,
+        name: "$key",
+        optional: false,
+        raw: "string $key",
+        type: "string",
+      },
+      {
+        defaultValue: "null",
+        name: "$default",
+        optional: true,
+        raw: "mixed $default = null",
+        type: "mixed",
+      },
+      {
+        defaultValue: "['a,b']",
+        name: "$options",
+        optional: true,
+        raw: "array $options = ['a,b']",
+        type: "array",
       },
     ]);
   });

@@ -14,7 +14,10 @@ import type {
   PhpSyntaxDiagnosticsGateway,
 } from "../domain/phpSyntaxDiagnostics";
 import { suspiciousPhpBareIdentifierDiagnostics } from "../domain/phpSyntaxDiagnostics";
-import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import type {
+  PhpMethodCompletion,
+  PhpMethodSignature,
+} from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
@@ -45,6 +48,10 @@ interface EditorSurfaceProps {
     source: string,
     position: EditorPosition,
   ): Promise<PhpMethodCompletion[]>;
+  providePhpMethodSignature(
+    source: string,
+    position: EditorPosition,
+  ): Promise<PhpMethodSignature | null>;
 }
 
 export function EditorSurface({
@@ -68,6 +75,7 @@ export function EditorSurface({
   onRevealTargetHandled,
   phpSyntaxDiagnosticsGateway,
   providePhpMethodCompletions,
+  providePhpMethodSignature,
 }: EditorSurfaceProps) {
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
@@ -77,6 +85,7 @@ export function EditorSurface({
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
   const errorReporterRef = useRef(onLanguageServerError);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
+  const phpMethodSignatureRef = useRef(providePhpMethodSignature);
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
@@ -99,6 +108,10 @@ export function EditorSurface({
   }, [providePhpMethodCompletions]);
 
   useEffect(() => {
+    phpMethodSignatureRef.current = providePhpMethodSignature;
+  }, [providePhpMethodSignature]);
+
+  useEffect(() => {
     if (!monacoApi) {
       return;
     }
@@ -110,6 +123,8 @@ export function EditorSurface({
       getRuntimeStatus: () => runtimeStatusRef.current,
       providePhpMethodCompletions: (source, position) =>
         phpMethodCompletionsRef.current(source, position),
+      providePhpMethodSignature: (source, position) =>
+        phpMethodSignatureRef.current(source, position),
       reportError: (error) => errorReporterRef.current(error),
     });
 

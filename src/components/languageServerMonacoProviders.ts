@@ -6,7 +6,12 @@ import {
 } from "../domain/languageServerFeatures";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import {
+  phpMethodParameters,
+  type PhpMethodCompletion,
+  type PhpMethodParameter,
+  type PhpMethodSignature,
+} from "../domain/phpMethodCompletions";
 import { phpVariableCompletionsAt } from "../domain/phpScopeCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
@@ -24,6 +29,10 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     position: MonacoPosition,
   ): Promise<PhpMethodCompletion[]>;
+  providePhpMethodSignature?(
+    source: string,
+    position: MonacoPosition,
+  ): Promise<PhpMethodSignature | null>;
   reportError(error: unknown): void;
 }
 
@@ -39,11 +48,18 @@ export function registerLanguageServerMonacoProviders(
     provideCompletionItems: (model, position) =>
       provideCompletionItems(monaco, context, model, position),
   });
+  const signature = monaco.languages.registerSignatureHelpProvider("php", {
+    signatureHelpRetriggerCharacters: [","],
+    signatureHelpTriggerCharacters: ["(", ","],
+    provideSignatureHelp: (model, position) =>
+      provideSignatureHelp(monaco, context, model, position),
+  });
 
   return {
     dispose: () => {
       hover.dispose();
       completion.dispose();
+      signature.dispose();
     },
   };
 }
@@ -156,8 +172,17 @@ async function phpMethodSuggestions(
     const methods = await context.providePhpMethodCompletions(source, position);
 
     return methods.map((item, index) => ({
+      command: phpMethodParameters(item.parameters).length
+        ? {
+            id: "editor.action.triggerParameterHints",
+            title: "Trigger parameter hints",
+          }
+        : undefined,
       detail: phpMethodDetail(item),
-      insertText: item.name,
+      documentation: phpMethodDocumentation(item),
+      insertText: phpMethodSnippet(item),
+      insertTextRules:
+        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
       kind: monaco.languages.CompletionItemKind.Method,
       label: item.name,
       range,
@@ -169,11 +194,108 @@ async function phpMethodSuggestions(
   }
 }
 
+async function provideSignatureHelp(
+  _monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.SignatureHelpResult | null> {
+  const documentContext = activePhpDocumentContext(context, model);
+
+  if (!documentContext || !context.providePhpMethodSignature) {
+    return null;
+  }
+
+  try {
+    const signature = await context.providePhpMethodSignature(
+      documentContext.activeDocument.content,
+      position,
+    );
+
+    if (!signature) {
+      return null;
+    }
+
+    return {
+      dispose: () => undefined,
+      value: {
+        activeParameter: Math.min(
+          signature.argumentIndex,
+          Math.max(0, signature.parameters.length - 1),
+        ),
+        activeSignature: 0,
+        signatures: [
+          {
+            documentation: signature.method.declaringClassName,
+            label: phpMethodSignatureLabel(signature.method),
+            parameters: signature.parameters.map((parameter) => ({
+              label: phpParameterLabel(parameter),
+            })),
+          },
+        ],
+      },
+    };
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
 function phpMethodDetail(item: PhpMethodCompletion): string {
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
   return `${item.declaringClassName}${parameters}${returnType}`;
+}
+
+function phpMethodDocumentation(item: PhpMethodCompletion): string {
+  const parameters = phpMethodParameters(item.parameters);
+
+  if (!parameters.length) {
+    return `${item.declaringClassName}::${item.name}()`;
+  }
+
+  return [
+    `${item.declaringClassName}::${item.name}()`,
+    "",
+    ...parameters.map((parameter) => `- ${phpParameterLabel(parameter)}`),
+  ].join("\n");
+}
+
+function phpMethodSignatureLabel(item: PhpMethodCompletion): string {
+  const parameters = item.parameters ? `(${item.parameters})` : "()";
+  const returnType = item.returnType ? `: ${item.returnType}` : "";
+
+  return `${item.name}${parameters}${returnType}`;
+}
+
+function phpMethodSnippet(item: PhpMethodCompletion): string {
+  const requiredParameters = phpMethodParameters(item.parameters).filter(
+    (parameter) => !parameter.optional,
+  );
+
+  if (!requiredParameters.length) {
+    return `${item.name}()`;
+  }
+
+  return `${item.name}(${requiredParameters
+    .map((parameter, index) => {
+      const placeholder = parameter.name.replace(/^\$/, "");
+      return `\${${index + 1}:${escapeSnippetPlaceholder(placeholder)}}`;
+    })
+    .join(", ")})`;
+}
+
+function phpParameterLabel(parameter: PhpMethodParameter): string {
+  const type = parameter.type ? `${parameter.type} ` : "";
+  const defaultValue =
+    parameter.defaultValue !== null ? ` = ${parameter.defaultValue}` : "";
+
+  return `${type}${parameter.name}${defaultValue}`;
+}
+
+function escapeSnippetPlaceholder(value: string): string {
+  return value.replace(/[\\}$]/g, "\\$&");
 }
 
 function activePhpDocumentContext(

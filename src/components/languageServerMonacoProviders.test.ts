@@ -13,7 +13,7 @@ import type {
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover and completion providers and disposes them", () => {
+  it("registers php hover, completion and signature providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -23,11 +23,13 @@ describe("registerLanguageServerMonacoProviders", () => {
 
     expect(registered.hoverLanguage).toBe("php");
     expect(registered.completionLanguage).toBe("php");
+    expect(registered.signatureLanguage).toBe("php");
 
     disposable.dispose();
 
     expect(registered.hoverDispose).toHaveBeenCalled();
     expect(registered.completionDispose).toHaveBeenCalled();
+    expect(registered.signatureDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -166,9 +168,16 @@ describe("registerLanguageServerMonacoProviders", () => {
     ).resolves.toEqual({
       suggestions: [
         {
+          command: {
+            id: "editor.action.triggerParameterHints",
+            title: "Trigger parameter hints",
+          },
           detail:
             "Symfony\\Component\\HttpFoundation\\Request(string $key, mixed $default = null): mixed",
-          insertText: "get",
+          documentation:
+            "Symfony\\Component\\HttpFoundation\\Request::get()\n\n- string $key\n- mixed $default = null",
+          insertText: "get(${1:key})",
+          insertTextRules: 4,
           kind: 2,
           label: "get",
           range: {
@@ -183,11 +192,76 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
     expect(providePhpMethodCompletions).toHaveBeenCalled();
   });
+
+  it("maps typed PHP method signatures to Monaco parameter hints", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodSignature = vi.fn(async () => ({
+      argumentIndex: 1,
+      method: {
+        declaringClassName: "Symfony\\Component\\HttpFoundation\\Request",
+        name: "get",
+        parameters: "string $key, mixed $default = null",
+        returnType: "mixed",
+      },
+      parameters: [
+        {
+          defaultValue: null,
+          name: "$key",
+          optional: false,
+          raw: "string $key",
+          type: "string",
+        },
+        {
+          defaultValue: "null",
+          name: "$default",
+          optional: true,
+          raw: "mixed $default = null",
+          type: "mixed",
+        },
+      ],
+    }));
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get($key,\n}\n",
+      },
+      providePhpMethodSignature,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.signatureProvider.provideSignatureHelp(
+        model(),
+        {
+          column: 24,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      dispose: expect.any(Function),
+      value: {
+        activeParameter: 1,
+        activeSignature: 0,
+        signatures: [
+          {
+            documentation: "Symfony\\Component\\HttpFoundation\\Request",
+            label: "get(string $key, mixed $default = null): mixed",
+            parameters: [
+              { label: "string $key" },
+              { label: "mixed $default = null" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(providePhpMethodSignature).toHaveBeenCalled();
+  });
 });
 
 function createRegisteredProviders() {
   const hoverDispose = vi.fn();
   const completionDispose = vi.fn();
+  const signatureDispose = vi.fn();
   const registered: {
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
@@ -196,6 +270,9 @@ function createRegisteredProviders() {
     hoverLanguage: string | null;
     hoverProvider: any;
     monaco: any;
+    signatureDispose: ReturnType<typeof vi.fn>;
+    signatureLanguage: string | null;
+    signatureProvider: any;
   } = {
     completionDispose,
     completionLanguage: null,
@@ -204,9 +281,13 @@ function createRegisteredProviders() {
     hoverLanguage: null,
     hoverProvider: null,
     monaco: null,
+    signatureDispose,
+    signatureLanguage: null,
+    signatureProvider: null,
   };
   registered.monaco = {
     languages: {
+      CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },
       registerCompletionItemProvider: vi.fn((language, provider) => {
         registered.completionLanguage = language;
@@ -217,6 +298,11 @@ function createRegisteredProviders() {
         registered.hoverLanguage = language;
         registered.hoverProvider = provider;
         return { dispose: hoverDispose };
+      }),
+      registerSignatureHelpProvider: vi.fn((language, provider) => {
+        registered.signatureLanguage = language;
+        registered.signatureProvider = provider;
+        return { dispose: signatureDispose };
       }),
     },
   };
@@ -232,6 +318,9 @@ function providerContext(
     providePhpMethodCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodCompletions"]
     >;
+    providePhpMethodSignature: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodSignature"]
+    >;
     runtimeStatus: LanguageServerRuntimeStatus | null;
   }> = {},
 ) {
@@ -245,6 +334,7 @@ function providerContext(
     getActiveDocument: () => activeDocument,
     getRuntimeStatus: () => runtimeStatus,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
+    providePhpMethodSignature: overrides.providePhpMethodSignature,
     reportError: vi.fn(),
   };
 }

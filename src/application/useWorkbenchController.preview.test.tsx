@@ -748,6 +748,42 @@ class Request
         returnType: "array",
       },
     ]);
+
+    const signatureSource = controllerSource.replace(
+      "$request->get",
+      "$request->get(",
+    );
+
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        signatureSource,
+        positionAfter(signatureSource, "$request->get("),
+      ),
+    ).resolves.toEqual({
+      argumentIndex: 0,
+      method: {
+        declaringClassName: "Symfony\\Component\\HttpFoundation\\Request",
+        name: "get",
+        parameters: "string $key, mixed $default = null",
+        returnType: "mixed",
+      },
+      parameters: [
+        {
+          defaultValue: null,
+          name: "$key",
+          optional: false,
+          raw: "string $key",
+          type: "string",
+        },
+        {
+          defaultValue: "null",
+          name: "$default",
+          optional: true,
+          raw: "mixed $default = null",
+          type: "mixed",
+        },
+      ],
+    });
   });
 
   it("resolves Laravel route action strings to the paired controller method before LSP fallback", async () => {
