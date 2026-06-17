@@ -3047,13 +3047,17 @@ function createControllerDependencies({
 
 function featuresGateway(): LanguageServerFeaturesGateway {
   return {
+    codeActions: vi.fn(async () => []),
     completion: vi.fn(async () => ({
       isIncomplete: false,
       items: [],
     })),
     definition: vi.fn(async () => []),
+    formatting: vi.fn(async () => []),
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
+    references: vi.fn(async () => []),
+    rename: vi.fn(async () => null),
   };
 }
 

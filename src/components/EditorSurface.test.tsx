@@ -930,10 +930,14 @@ function createMonaco(model: FakeModel) {
 
 function languageServerFeaturesGateway() {
   return {
+    codeActions: vi.fn(async () => []),
     completion: vi.fn(),
     definition: vi.fn(),
+    formatting: vi.fn(async () => []),
     hover: vi.fn(),
     implementation: vi.fn(),
+    references: vi.fn(async () => []),
+    rename: vi.fn(async () => null),
     signatureHelp: vi.fn(),
   };
 }

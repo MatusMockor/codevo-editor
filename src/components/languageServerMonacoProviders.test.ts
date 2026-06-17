@@ -754,12 +754,19 @@ function providerContext(
 
 function featuresGateway(
   responses: Partial<{
+    codeActions: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["codeActions"]>
+    >;
     completion: LanguageServerCompletionList;
     definition: LanguageServerLocation[];
+    formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     hover: LanguageServerHover | null;
+    references: LanguageServerLocation[];
+    rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
   }> = {},
 ): LanguageServerFeaturesGateway {
   return {
+    codeActions: vi.fn(async () => responses.codeActions ?? []),
     completion: vi.fn(async () =>
       responses.completion ?? {
         isIncomplete: false,
@@ -767,8 +774,11 @@ function featuresGateway(
       },
     ),
     definition: vi.fn(async () => responses.definition ?? []),
+    formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => responses.hover ?? null),
     implementation: vi.fn(async () => []),
+    references: vi.fn(async () => responses.references ?? []),
+    rename: vi.fn(async () => responses.rename ?? null),
   };
 }
 
@@ -777,10 +787,14 @@ function runningStatus(
 ): LanguageServerRuntimeStatus {
   return {
     capabilities: {
+      codeAction: true,
       completion: true,
       definition: true,
+      formatting: true,
       hover: true,
       implementation: true,
+      references: true,
+      rename: true,
       ...capabilities,
     },
     kind: "running",

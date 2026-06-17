@@ -39,10 +39,14 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       kind: "running",
       sessionId: 1,
       capabilities: {
+        codeAction: true,
         completion: true,
         definition: true,
+        formatting: true,
         hover: true,
         implementation: true,
+        references: true,
+        rename: true,
       },
     };
     const invokeCommand = vi.fn<InvokeCommand>(async () => running);

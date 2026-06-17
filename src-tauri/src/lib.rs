@@ -52,9 +52,13 @@ use lsp_document::{
     TextDocumentSyncNotificationFactory,
 };
 use lsp_features::{
-    parse_completion_result, parse_definition_result, parse_hover_result,
-    LanguageServerCompletionList, LanguageServerHover, LanguageServerLocation,
-    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory, TextDocumentPosition,
+    parse_code_action_result, parse_completion_result, parse_definition_result,
+    parse_formatting_result, parse_hover_result, parse_workspace_edit_result,
+    LanguageServerCodeAction, LanguageServerCodeActionContext, LanguageServerCompletionList,
+    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
+    LanguageServerRange, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
+    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
+    TextDocumentFormatting, TextDocumentPosition, TextDocumentRange, TextDocumentRename,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1081,6 +1085,144 @@ fn javascript_typescript_text_document_implementation(
 }
 
 #[tauri::command]
+fn text_document_references(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.references(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_references(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.references(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
+fn text_document_rename(
+    root_path: String,
+    position: TextDocumentPosition,
+    new_name: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.rename(&TextDocumentRename {
+        character: position.character,
+        line: position.line,
+        new_name,
+        path: position.path,
+    });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_workspace_edit_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_rename(
+    root_path: String,
+    position: TextDocumentPosition,
+    new_name: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.rename(&TextDocumentRename {
+        character: position.character,
+        line: position.line,
+        new_name,
+        path: position.path,
+    });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_workspace_edit_result(&result)
+}
+
+#[tauri::command]
+fn text_document_code_actions(
+    root_path: String,
+    path: String,
+    range: LanguageServerRange,
+    context: LanguageServerCodeActionContext,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerCodeAction>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_code_action_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_code_actions(
+    root_path: String,
+    path: String,
+    range: LanguageServerRange,
+    context: LanguageServerCodeActionContext,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerCodeAction>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_code_action_result(&result)
+}
+
+#[tauri::command]
+fn text_document_formatting(
+    root_path: String,
+    path: String,
+    options: LanguageServerFormattingOptions,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTextEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.formatting(&TextDocumentFormatting { path, options });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_formatting_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_formatting(
+    root_path: String,
+    path: String,
+    options: LanguageServerFormattingOptions,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTextEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.formatting(&TextDocumentFormatting { path, options });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_formatting_result(&result)
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;
     repository
@@ -1275,18 +1417,26 @@ pub fn run() {
             javascript_typescript_document_did_close,
             javascript_typescript_document_did_open,
             javascript_typescript_document_did_save,
+            javascript_typescript_text_document_code_actions,
             javascript_typescript_text_document_completion,
             javascript_typescript_text_document_definition,
+            javascript_typescript_text_document_formatting,
             javascript_typescript_text_document_hover,
             javascript_typescript_text_document_implementation,
+            javascript_typescript_text_document_references,
+            javascript_typescript_text_document_rename,
+            text_document_code_actions,
             text_document_completion,
             text_document_definition,
             text_document_did_change,
             text_document_did_close,
             text_document_did_open,
             text_document_did_save,
+            text_document_formatting,
             text_document_hover,
             text_document_implementation,
+            text_document_references,
+            text_document_rename,
             upsert_workspace_index_file,
             write_terminal_input,
             write_text_file

@@ -11,10 +11,14 @@ import type { LanguageServerCapabilities } from "./languageServerRuntime";
 describe("canUseLanguageServerFeature", () => {
   it("reads a feature flag from the provider capability registry", () => {
     const capabilities: LanguageServerCapabilities = {
+      codeAction: false,
       completion: false,
       definition: true,
+      formatting: false,
       hover: true,
       implementation: false,
+      references: false,
+      rename: false,
     };
 
     expect(canUseLanguageServerFeature(capabilities, "hover")).toBe(true);

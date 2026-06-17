@@ -249,7 +249,28 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "contextSupport": true,
                             "dynamicRegistration": false
                         },
+                        "codeAction": {
+                            "codeActionLiteralSupport": {
+                                "codeActionKind": {
+                                    "valueSet": [
+                                        "",
+                                        "quickfix",
+                                        "refactor",
+                                        "refactor.extract",
+                                        "refactor.inline",
+                                        "refactor.rewrite",
+                                        "source",
+                                        "source.fixAll",
+                                        "source.organizeImports"
+                                    ]
+                                }
+                            },
+                            "dynamicRegistration": false,
+                            "isPreferredSupport": true
+                        },
                         "definition": { "dynamicRegistration": false },
+                        "documentSymbol": { "dynamicRegistration": false },
+                        "formatting": { "dynamicRegistration": false },
                         "hover": {
                             "contentFormat": ["markdown", "plaintext"],
                             "dynamicRegistration": false
@@ -258,6 +279,11 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         "publishDiagnostics": {
                             "relatedInformation": true,
                             "versionSupport": true
+                        },
+                        "references": { "dynamicRegistration": false },
+                        "rename": {
+                            "dynamicRegistration": false,
+                            "prepareSupport": true
                         },
                         "synchronization": {
                             "didSave": true,

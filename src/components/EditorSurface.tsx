@@ -339,6 +339,11 @@ export function EditorSurface({
             return;
           }
 
+          if (isTypescriptJavascriptDocument(activeDocumentRef.current)) {
+            editorApi.trigger("keyboard", "editor.action.quickFix", {});
+            return;
+          }
+
           const markers = monacoApi.editor.getModelMarkers({
             resource: model.uri,
           });

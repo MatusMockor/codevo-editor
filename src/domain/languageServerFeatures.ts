@@ -50,6 +50,40 @@ export interface LanguageServerLocation {
   range: LanguageServerRange;
 }
 
+export interface LanguageServerTextEdit {
+  range: LanguageServerRange;
+  newText: string;
+}
+
+export interface LanguageServerWorkspaceEdit {
+  changes: Record<string, LanguageServerTextEdit[]>;
+}
+
+export interface LanguageServerCodeActionDiagnostic {
+  code?: string | number | null;
+  message: string;
+  range: LanguageServerRange;
+  severity: number | null;
+  source: string | null;
+}
+
+export interface LanguageServerCodeActionContext {
+  diagnostics: LanguageServerCodeActionDiagnostic[];
+  only: string[] | null;
+}
+
+export interface LanguageServerCodeAction {
+  edit: LanguageServerWorkspaceEdit | null;
+  isPreferred: boolean;
+  kind: string | null;
+  title: string;
+}
+
+export interface LanguageServerFormattingOptions {
+  insertSpaces: boolean;
+  tabSize: number;
+}
+
 export interface LanguageServerFeaturesGateway {
   hover(
     rootPath: string,
@@ -67,6 +101,26 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
+  references(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLocation[]>;
+  rename(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+    newName: string,
+  ): Promise<LanguageServerWorkspaceEdit | null>;
+  codeActions(
+    rootPath: string,
+    path: string,
+    range: LanguageServerRange,
+    context: LanguageServerCodeActionContext,
+  ): Promise<LanguageServerCodeAction[]>;
+  formatting(
+    rootPath: string,
+    path: string,
+    options: LanguageServerFormattingOptions,
+  ): Promise<LanguageServerTextEdit[]>;
 }
 
 export function canUseLanguageServerFeature(

@@ -49,10 +49,14 @@ pub enum LanguageServerRuntimeStatus {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerCapabilities {
+    pub code_action: bool,
     pub hover: bool,
     pub completion: bool,
     pub definition: bool,
+    pub formatting: bool,
     pub implementation: bool,
+    pub references: bool,
+    pub rename: bool,
 }
 
 pub trait StatusSink: Send + Sync {
@@ -1174,10 +1178,14 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
     }
 
     Ok(LanguageServerCapabilities {
+        code_action: is_capability_enabled(capabilities.get("codeActionProvider")),
         hover: is_capability_enabled(capabilities.get("hoverProvider")),
         completion: is_capability_enabled(capabilities.get("completionProvider")),
         definition: is_capability_enabled(capabilities.get("definitionProvider")),
+        formatting: is_capability_enabled(capabilities.get("documentFormattingProvider")),
         implementation: is_capability_enabled(capabilities.get("implementationProvider")),
+        references: is_capability_enabled(capabilities.get("referencesProvider")),
+        rename: is_capability_enabled(capabilities.get("renameProvider")),
     })
 }
 
@@ -1351,10 +1359,14 @@ mod tests {
             LanguageServerRuntimeStatus::Running {
                 session_id: 1,
                 capabilities: LanguageServerCapabilities {
+                    code_action: false,
                     hover: true,
                     completion: true,
                     definition: true,
+                    formatting: false,
                     implementation: true,
+                    references: false,
+                    rename: false,
                 },
             }
         );
@@ -1367,10 +1379,14 @@ mod tests {
         let status = LanguageServerRuntimeStatus::Running {
             session_id: 1,
             capabilities: LanguageServerCapabilities {
+                code_action: true,
                 hover: true,
                 completion: false,
                 definition: true,
+                formatting: true,
                 implementation: false,
+                references: true,
+                rename: true,
             },
         };
 
@@ -1383,7 +1399,11 @@ mod tests {
                     "hover": true,
                     "completion": false,
                     "definition": true,
+                    "formatting": true,
                     "implementation": false,
+                    "references": true,
+                    "rename": true,
+                    "codeAction": true,
                 },
             })
         );
@@ -1406,6 +1426,10 @@ mod tests {
                     "completionProvider": null,
                     "definitionProvider": {},
                     "implementationProvider": true,
+                    "referencesProvider": true,
+                    "renameProvider": { "prepareProvider": true },
+                    "codeActionProvider": { "codeActionKinds": ["quickfix"] },
+                    "documentFormattingProvider": true,
                 }
             }
         }))
@@ -1414,10 +1438,14 @@ mod tests {
         assert_eq!(
             capabilities,
             LanguageServerCapabilities {
+                code_action: true,
                 hover: false,
                 completion: false,
                 definition: true,
+                formatting: true,
                 implementation: true,
+                references: true,
+                rename: true,
             }
         );
     }
