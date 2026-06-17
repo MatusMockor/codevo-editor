@@ -7,6 +7,8 @@ import type {
 } from "../domain/languageServerDiagnostics";
 
 const DIAGNOSTICS_EVENT = "language-server://diagnostics";
+export const JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT =
+  "javascript-typescript-language-server://diagnostics";
 
 type ListenToDiagnostics = (
   event: string,
@@ -23,6 +25,7 @@ export class TauriLanguageServerDiagnosticsGateway
   constructor(
     private readonly listenToEvent: ListenToDiagnostics = listenToDiagnostics,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
+    private readonly diagnosticsEvent: string = DIAGNOSTICS_EVENT,
   ) {}
 
   subscribeDiagnostics(
@@ -32,7 +35,7 @@ export class TauriLanguageServerDiagnosticsGateway
       return Promise.resolve(() => undefined);
     }
 
-    return this.listenToEvent(DIAGNOSTICS_EVENT, (event) => {
+    return this.listenToEvent(this.diagnosticsEvent, (event) => {
       listener(event.payload);
     });
   }

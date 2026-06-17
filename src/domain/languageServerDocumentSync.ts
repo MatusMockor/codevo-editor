@@ -18,6 +18,12 @@ export function isLanguageServerDocument(document: EditorDocument): boolean {
   return document.language === "php";
 }
 
+export function isJavaScriptTypeScriptLanguageServerDocument(
+  document: EditorDocument,
+): boolean {
+  return document.language === "javascript" || document.language === "typescript";
+}
+
 export function createLanguageServerTextDocument(
   document: EditorDocument,
   version: number,

@@ -28,21 +28,22 @@ export interface LanguageServerRuntimeGateway {
 
 export function languageServerStatusLabel(
   status: LanguageServerRuntimeStatus | null,
+  serverName = "PHPactor",
 ): string | null {
   if (!status) {
     return null;
   }
 
   if (status.kind === "starting") {
-    return "PHPactor: starting";
+    return `${serverName}: starting`;
   }
 
   if (status.kind === "running") {
-    return "PHPactor: running";
+    return `${serverName}: running`;
   }
 
   if (status.kind === "crashed") {
-    return "PHPactor: crashed";
+    return `${serverName}: crashed`;
   }
 
   return null;

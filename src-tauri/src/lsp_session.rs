@@ -17,8 +17,12 @@ use std::os::unix::process::CommandExt;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const STATUS_EVENT: &str = "language-server://status";
-const DIAGNOSTICS_EVENT: &str = "language-server://diagnostics";
+pub const PHP_STATUS_EVENT: &str = "language-server://status";
+pub const PHP_DIAGNOSTICS_EVENT: &str = "language-server://diagnostics";
+pub const JAVASCRIPT_TYPESCRIPT_STATUS_EVENT: &str =
+    "javascript-typescript-language-server://status";
+pub const JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT: &str =
+    "javascript-typescript-language-server://diagnostics";
 type PendingRequestResult = Result<Value, String>;
 type PendingRequestSender = mpsc::Sender<PendingRequestResult>;
 type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
@@ -60,11 +64,33 @@ pub trait DiagnosticsSink: Send + Sync {
 
 pub struct AppHandleEventSink {
     app: tauri::AppHandle,
+    diagnostics_event: &'static str,
+    status_event: &'static str,
 }
 
 impl AppHandleEventSink {
     pub fn new(app: tauri::AppHandle) -> Self {
-        Self { app }
+        Self::new_with_events(app, PHP_STATUS_EVENT, PHP_DIAGNOSTICS_EVENT)
+    }
+
+    pub fn javascript_typescript(app: tauri::AppHandle) -> Self {
+        Self::new_with_events(
+            app,
+            JAVASCRIPT_TYPESCRIPT_STATUS_EVENT,
+            JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
+        )
+    }
+
+    fn new_with_events(
+        app: tauri::AppHandle,
+        status_event: &'static str,
+        diagnostics_event: &'static str,
+    ) -> Self {
+        Self {
+            app,
+            diagnostics_event,
+            status_event,
+        }
     }
 }
 
@@ -72,7 +98,7 @@ impl StatusSink for AppHandleEventSink {
     fn emit_status(&self, status: LanguageServerRuntimeStatus) {
         use tauri::Emitter;
 
-        let _ = self.app.emit(STATUS_EVENT, status);
+        let _ = self.app.emit(self.status_event, status);
     }
 }
 
@@ -80,7 +106,7 @@ impl DiagnosticsSink for AppHandleEventSink {
     fn emit_diagnostics(&self, event: LanguageServerDiagnosticEvent) {
         use tauri::Emitter;
 
-        let _ = self.app.emit(DIAGNOSTICS_EVENT, event);
+        let _ = self.app.emit(self.diagnostics_event, event);
     }
 }
 
@@ -215,15 +241,67 @@ struct RunningSession {
 pub struct LanguageServerSupervisor {
     next_request_id: AtomicU64,
     next_session_id: AtomicU64,
+    server_label: &'static str,
     session: Mutex<Option<RunningSession>>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
 }
 
+pub struct PhpLanguageServerSupervisor(pub LanguageServerSupervisor);
+
+impl PhpLanguageServerSupervisor {
+    pub fn new() -> Self {
+        Self(LanguageServerSupervisor::new_with_label("PHPactor"))
+    }
+}
+
+impl Default for PhpLanguageServerSupervisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::ops::Deref for PhpLanguageServerSupervisor {
+    type Target = LanguageServerSupervisor;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub struct JavaScriptTypeScriptLanguageServerSupervisor(pub LanguageServerSupervisor);
+
+impl JavaScriptTypeScriptLanguageServerSupervisor {
+    pub fn new() -> Self {
+        Self(LanguageServerSupervisor::new_with_label(
+            "TypeScript language server",
+        ))
+    }
+}
+
+impl Default for JavaScriptTypeScriptLanguageServerSupervisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::ops::Deref for JavaScriptTypeScriptLanguageServerSupervisor {
+    type Target = LanguageServerSupervisor;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl LanguageServerSupervisor {
     pub fn new() -> Self {
+        Self::new_with_label("PHPactor")
+    }
+
+    pub fn new_with_label(server_label: &'static str) -> Self {
         Self {
             next_request_id: AtomicU64::new(2),
             next_session_id: AtomicU64::new(1),
+            server_label,
             session: Mutex::new(None),
             status: Arc::new(Mutex::new(LanguageServerRuntimeStatus::Stopped)),
         }
@@ -251,7 +329,7 @@ impl LanguageServerSupervisor {
         let spawned = match spawner.spawn(command) {
             Ok(spawned) => spawned,
             Err(error) => {
-                let message = format!("Failed to start PHPactor: {error}");
+                let message = format!("Failed to start {}: {error}", self.server_label);
                 publish_crash(&self.status, status_sink.as_ref(), &message);
                 return Err(message);
             }
@@ -297,6 +375,7 @@ impl LanguageServerSupervisor {
         let (handshake_tx, handshake_rx) = mpsc::channel();
         let mut reader = Some(spawn_reader(
             spawned.stdout,
+            Arc::clone(&stdin),
             Arc::clone(&self.status),
             diagnostics_sink,
             pending_requests,
@@ -305,6 +384,7 @@ impl LanguageServerSupervisor {
             handshake_tx,
             initialize_request.id,
             session_id,
+            self.server_label,
         ));
 
         if !self.attach_reader(&stop_requested, &mut reader)? {
@@ -352,7 +432,7 @@ impl LanguageServerSupervisor {
                     return Ok(LanguageServerRuntimeStatus::Stopped);
                 }
 
-                let message = "PHPactor exited during the handshake.".to_string();
+                let message = format!("{} exited during the handshake.", self.server_label);
                 publish_crash(&self.status, status_sink.as_ref(), &message);
                 Err(message)
             }
@@ -363,7 +443,10 @@ impl LanguageServerSupervisor {
                     return Ok(LanguageServerRuntimeStatus::Stopped);
                 }
 
-                let message = "PHPactor did not respond to initialize in time.".to_string();
+                let message = format!(
+                    "{} did not respond to initialize in time.",
+                    self.server_label
+                );
                 publish_crash(&self.status, status_sink.as_ref(), &message);
                 Err(message)
             }
@@ -647,7 +730,7 @@ fn terminate_session(mut session: RunningSession) {
     session.stop_requested.store(true, Ordering::SeqCst);
     reject_pending_requests(
         &session.pending_requests,
-        "PHPactor language server request was stopped.",
+        "Language server request was stopped.",
     );
     let _ = session.killer.terminate();
 
@@ -743,6 +826,7 @@ fn set_status(status: &Arc<Mutex<LanguageServerRuntimeStatus>>, next: LanguageSe
 
 fn spawn_reader(
     stdout: Box<dyn Read + Send>,
+    stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
     diagnostics_sink: Arc<dyn DiagnosticsSink>,
     pending_requests: PendingRequests,
@@ -751,6 +835,7 @@ fn spawn_reader(
     handshake_tx: mpsc::Sender<HandshakeOutcome>,
     init_id: u64,
     session_id: u64,
+    server_label: &'static str,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -768,6 +853,10 @@ fn spawn_reader(
                             continue;
                         }
 
+                        if respond_to_server_request(&stdin, &value).is_ok() {
+                            continue;
+                        }
+
                         if let Some(event) = parse_publish_diagnostics(&value, session_id) {
                             diagnostics_sink.emit_diagnostics(event);
                         }
@@ -782,7 +871,9 @@ fn spawn_reader(
                     if value.get("result").is_some() {
                         let Ok(capabilities) = parse_capabilities(&value) else {
                             let _ = handshake_tx.send(HandshakeOutcome::Failed(
-                                "PHPactor initialize response did not include valid server capabilities."
+                                format!(
+                                    "{server_label} initialize response did not include valid server capabilities."
+                                )
                                     .to_string(),
                             ));
                             return;
@@ -797,7 +888,7 @@ fn spawn_reader(
                         .get("error")
                         .and_then(|error| error.get("message"))
                         .and_then(Value::as_str)
-                        .unwrap_or("PHPactor rejected initialize.")
+                        .unwrap_or("Language server rejected initialize.")
                         .to_string();
                     let _ = handshake_tx.send(HandshakeOutcome::Failed(message));
                     return;
@@ -814,18 +905,58 @@ fn spawn_reader(
 
                     reject_pending_requests(
                         &pending_requests,
-                        "PHPactor language server exited unexpectedly.",
+                        "Language server exited unexpectedly.",
                     );
                     publish_crash(
                         &status,
                         status_sink.as_ref(),
-                        "PHPactor language server exited unexpectedly.",
+                        &format!("{server_label} exited unexpectedly."),
                     );
                     return;
                 }
             }
         }
     })
+}
+
+fn respond_to_server_request(
+    stdin: &Arc<Mutex<Box<dyn Write + Send>>>,
+    value: &Value,
+) -> Result<(), ()> {
+    let Some(id) = value.get("id").cloned() else {
+        return Err(());
+    };
+    let Some(method) = value.get("method").and_then(Value::as_str) else {
+        return Err(());
+    };
+
+    let result = server_request_result(method, value.get("params"));
+    let response = json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result,
+    });
+    let Ok(bytes) = serde_json::to_vec(&response) else {
+        return Err(());
+    };
+
+    write_with_session_stdin(stdin, &bytes).map_err(|_| ())
+}
+
+fn server_request_result(method: &str, params: Option<&Value>) -> Value {
+    match method {
+        "workspace/configuration" => {
+            let item_count = params
+                .and_then(|params| params.get("items"))
+                .and_then(Value::as_array)
+                .map(|items| items.len())
+                .unwrap_or(0);
+            Value::Array((0..item_count).map(|_| json!({})).collect())
+        }
+        "workspace/workspaceFolders" => Value::Null,
+        "client/registerCapability" | "client/unregisterCapability" => Value::Null,
+        _ => Value::Null,
+    }
 }
 
 fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, String> {
@@ -1307,7 +1438,7 @@ mod tests {
         wait_for(
             &rx,
             &LanguageServerRuntimeStatus::Crashed {
-                message: "PHPactor language server exited unexpectedly.".to_string(),
+                message: "PHPactor exited unexpectedly.".to_string(),
             },
         );
     }

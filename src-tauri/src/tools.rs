@@ -13,6 +13,12 @@ pub struct PhpToolAvailability {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JavaScriptTypeScriptToolAvailability {
+    pub typescript_language_server: Option<ToolLocation>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ToolLocation {
     pub executable: String,
     pub path: String,
@@ -22,7 +28,9 @@ pub struct ToolLocation {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolSource {
+    BundledNodeModulesBin,
     Managed,
+    WorkspaceNodeModulesBin,
     WorkspaceVendorBin,
     Path,
 }
@@ -31,13 +39,35 @@ pub trait PhpToolDetector {
     fn detect(&self, workspace_root: Option<&Path>) -> io::Result<PhpToolAvailability>;
 }
 
+pub trait JavaScriptTypeScriptToolDetector {
+    fn detect(
+        &self,
+        workspace_root: Option<&Path>,
+    ) -> io::Result<JavaScriptTypeScriptToolAvailability>;
+}
+
 pub struct LocalPhpToolDetector;
+pub struct LocalJavaScriptTypeScriptToolDetector;
 
 impl PhpToolDetector for LocalPhpToolDetector {
     fn detect(&self, workspace_root: Option<&Path>) -> io::Result<PhpToolAvailability> {
         Ok(PhpToolAvailability {
             phpactor: find_tool("phpactor", workspace_root),
             intelephense: find_tool("intelephense", workspace_root),
+        })
+    }
+}
+
+impl JavaScriptTypeScriptToolDetector for LocalJavaScriptTypeScriptToolDetector {
+    fn detect(
+        &self,
+        workspace_root: Option<&Path>,
+    ) -> io::Result<JavaScriptTypeScriptToolAvailability> {
+        Ok(JavaScriptTypeScriptToolAvailability {
+            typescript_language_server: find_javascript_typescript_tool(
+                "typescript-language-server",
+                workspace_root,
+            ),
         })
     }
 }
@@ -52,6 +82,33 @@ fn find_tool(name: &str, workspace_root: Option<&Path>) -> Option<ToolLocation> 
         managed_override.as_deref(),
         &managed_roots,
     )
+}
+
+fn find_javascript_typescript_tool(
+    name: &str,
+    workspace_root: Option<&Path>,
+) -> Option<ToolLocation> {
+    let managed_override = env::var_os(managed_tool_env_var(name)).map(PathBuf::from);
+
+    if let Some(location) = find_managed_tool(
+        name,
+        managed_override.as_deref(),
+        &javascript_typescript_managed_tool_roots(),
+    ) {
+        return Some(location);
+    }
+
+    if let Some(location) = find_bundled_node_modules_tool(name) {
+        return Some(location);
+    }
+
+    if let Some(root) = workspace_root {
+        if let Some(location) = find_workspace_node_modules_tool(name, root) {
+            return Some(location);
+        }
+    }
+
+    find_path_tool(name)
 }
 
 fn find_tool_with_managed_locations(
@@ -127,6 +184,78 @@ fn managed_tool_roots() -> Vec<PathBuf> {
     }
 
     roots
+}
+
+fn javascript_typescript_managed_tool_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        roots.push(
+            home.join("Library")
+                .join("Application Support")
+                .join("Mockor Editor")
+                .join("tools")
+                .join("typescript-language-server")
+                .join("node_modules")
+                .join(".bin"),
+        );
+        roots.push(
+            home.join(".mockor-editor")
+                .join("tools")
+                .join("typescript-language-server")
+                .join("node_modules")
+                .join(".bin"),
+        );
+    }
+
+    roots
+}
+
+fn find_bundled_node_modules_tool(name: &str) -> Option<ToolLocation> {
+    bundled_node_modules_roots().into_iter().find_map(|root| {
+        executable_names(name).into_iter().find_map(|executable| {
+            let path = root.join(&executable);
+
+            is_executable_file(&path).then(|| ToolLocation {
+                executable,
+                path: path.to_string_lossy().to_string(),
+                source: ToolSource::BundledNodeModulesBin,
+            })
+        })
+    })
+}
+
+fn bundled_node_modules_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Ok(current_dir) = env::current_dir() {
+        roots.push(current_dir.join("node_modules").join(".bin"));
+    }
+
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace_root) = manifest_root.parent() {
+        roots.push(workspace_root.join("node_modules").join(".bin"));
+    }
+
+    if let Ok(executable) = env::current_exe() {
+        for ancestor in executable.ancestors().take(8) {
+            roots.push(ancestor.join("node_modules").join(".bin"));
+        }
+    }
+
+    roots
+}
+
+fn find_workspace_node_modules_tool(name: &str, root: &Path) -> Option<ToolLocation> {
+    executable_names(name).into_iter().find_map(|executable| {
+        let path = root.join("node_modules").join(".bin").join(&executable);
+
+        is_executable_file(&path).then(|| ToolLocation {
+            executable,
+            path: path.to_string_lossy().to_string(),
+            source: ToolSource::WorkspaceNodeModulesBin,
+        })
+    })
 }
 
 fn find_workspace_vendor_tool(name: &str, root: &Path) -> Option<ToolLocation> {

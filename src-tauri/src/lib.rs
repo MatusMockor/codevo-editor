@@ -43,8 +43,9 @@ use index_scan::{
     WorkspaceReindexMode, METADATA_SCAN_COMPLETED_EVENT,
 };
 use lsp::{
-    JsonRpcRequest, LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus,
-    LanguageServerPlanner, PhpactorLanguageServerPlanner,
+    JavaScriptTypeScriptLanguageServerPlanner, JsonRpcRequest, LanguageServerCommand,
+    LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
+    PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
 };
 use lsp_document::{
     LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
@@ -56,8 +57,9 @@ use lsp_features::{
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory, TextDocumentPosition,
 };
 use lsp_session::{
-    AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink, LanguageServerRuntimeStatus,
-    LanguageServerSupervisor, StatusSink,
+    AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
+    JavaScriptTypeScriptLanguageServerSupervisor, LanguageServerRuntimeStatus,
+    PhpLanguageServerSupervisor, StatusSink,
 };
 use php_file_outline::{
     build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
@@ -83,7 +85,10 @@ use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatu
 use terminal_session::{
     LocalTerminalProfileProvider, PortablePtySpawner, TerminalProfileProvider, TerminalSupervisor,
 };
-use tools::{LocalPhpToolDetector, PhpToolAvailability, PhpToolDetector};
+use tools::{
+    JavaScriptTypeScriptToolDetector, LocalJavaScriptTypeScriptToolDetector, LocalPhpToolDetector,
+    PhpToolAvailability, PhpToolDetector,
+};
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
     FileEntry, FileSearchResult, LocalWorkspaceFileRepository, WorkspaceFileRepository,
@@ -116,7 +121,11 @@ fn quit_application(app: AppHandle) {
 }
 
 fn shutdown_runtime_processes(app: &AppHandle) {
-    if let Some(supervisor) = app.try_state::<LanguageServerSupervisor>() {
+    if let Some(supervisor) = app.try_state::<PhpLanguageServerSupervisor>() {
+        let _ = supervisor.stop();
+    }
+
+    if let Some(supervisor) = app.try_state::<JavaScriptTypeScriptLanguageServerSupervisor>() {
         let _ = supervisor.stop();
     }
 
@@ -525,12 +534,30 @@ fn build_php_language_server_plan(
     Ok(PhpactorLanguageServerPlanner::new().plan(&root, trusted, &descriptor, &tools))
 }
 
+fn build_javascript_typescript_language_server_plan(
+    root_path: &str,
+) -> Result<LanguageServerPlan, String> {
+    let root = PathBuf::from(root_path);
+    let tools = LocalJavaScriptTypeScriptToolDetector
+        .detect(Some(&root))
+        .map_err(|error| error.to_string())?;
+
+    Ok(TypeScriptLanguageServerPlanner::new().plan(&root, &tools))
+}
+
 #[tauri::command]
 fn plan_php_language_server(
     root_path: String,
     service: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<LanguageServerPlan, String> {
     build_php_language_server_plan(&root_path, &service)
+}
+
+#[tauri::command]
+fn plan_javascript_typescript_language_server(
+    root_path: String,
+) -> Result<LanguageServerPlan, String> {
+    build_javascript_typescript_language_server_plan(&root_path)
 }
 
 #[tauri::command]
@@ -651,7 +678,14 @@ fn set_workspace_trust(
 
 #[tauri::command]
 fn get_php_language_server_status(
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
+) -> Result<LanguageServerRuntimeStatus, String> {
+    Ok(supervisor.status())
+}
+
+#[tauri::command]
+fn get_javascript_typescript_language_server_status(
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     Ok(supervisor.status())
 }
@@ -661,7 +695,7 @@ fn start_php_language_server(
     root_path: String,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     let plan = build_php_language_server_plan(&root_path, &trust)?;
 
@@ -697,8 +731,46 @@ fn start_php_language_server(
 }
 
 #[tauri::command]
+fn start_javascript_typescript_language_server(
+    root_path: String,
+    app: AppHandle,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+) -> Result<LanguageServerRuntimeStatus, String> {
+    let plan = build_javascript_typescript_language_server_plan(&root_path)?;
+
+    if !matches!(plan.status, LanguageServerPlanStatus::Ready) {
+        return Err(plan.message);
+    }
+
+    let command: LanguageServerCommand = plan
+        .command
+        .ok_or_else(|| "Language server plan is missing a launch command.".to_string())?;
+    let initialize_request: JsonRpcRequest = plan
+        .initialize_request
+        .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
+    let event_sink = Arc::new(AppHandleEventSink::javascript_typescript(app));
+    let status_sink: Arc<dyn StatusSink> = event_sink.clone();
+    let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink;
+
+    supervisor.start(
+        &command,
+        &initialize_request,
+        &ChildServerProcessSpawner,
+        status_sink,
+        diagnostics_sink,
+    )
+}
+
+#[tauri::command]
 fn stop_php_language_server(
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
+) -> Result<LanguageServerRuntimeStatus, String> {
+    Ok(supervisor.stop())
+}
+
+#[tauri::command]
+fn stop_javascript_typescript_language_server(
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     Ok(supervisor.stop())
 }
@@ -765,7 +837,7 @@ fn stop_terminal_session(
 #[tauri::command]
 fn text_document_did_open(
     document: TextDocumentContent,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
     supervisor.send_notification(&factory.did_open(&document))
@@ -774,7 +846,7 @@ fn text_document_did_open(
 #[tauri::command]
 fn text_document_did_change(
     document: TextDocumentContent,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
     supervisor.send_notification(&factory.did_change(&document))
@@ -783,7 +855,7 @@ fn text_document_did_change(
 #[tauri::command]
 fn text_document_did_save(
     document: TextDocumentContent,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
     supervisor.send_notification(&factory.did_save(&document))
@@ -792,7 +864,43 @@ fn text_document_did_save(
 #[tauri::command]
 fn text_document_did_close(
     document: TextDocumentPath,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentSyncNotificationFactory;
+    supervisor.send_notification(&factory.did_close(&document))
+}
+
+#[tauri::command]
+fn javascript_typescript_document_did_open(
+    document: TextDocumentContent,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentSyncNotificationFactory;
+    supervisor.send_notification(&factory.did_open(&document))
+}
+
+#[tauri::command]
+fn javascript_typescript_document_did_change(
+    document: TextDocumentContent,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentSyncNotificationFactory;
+    supervisor.send_notification(&factory.did_change(&document))
+}
+
+#[tauri::command]
+fn javascript_typescript_document_did_save(
+    document: TextDocumentContent,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentSyncNotificationFactory;
+    supervisor.send_notification(&factory.did_save(&document))
+}
+
+#[tauri::command]
+fn javascript_typescript_document_did_close(
+    document: TextDocumentPath,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
     supervisor.send_notification(&factory.did_close(&document))
@@ -801,7 +909,21 @@ fn text_document_did_close(
 #[tauri::command]
 fn text_document_hover(
     position: TextDocumentPosition,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
+) -> Result<Option<LanguageServerHover>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.hover(&position);
+    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_hover_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_hover(
+    position: TextDocumentPosition,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
 ) -> Result<Option<LanguageServerHover>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
@@ -815,7 +937,24 @@ fn text_document_hover(
 #[tauri::command]
 fn text_document_completion(
     position: TextDocumentPosition,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
+) -> Result<LanguageServerCompletionList, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.completion(&position);
+    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+        return Ok(LanguageServerCompletionList {
+            is_incomplete: false,
+            items: Vec::new(),
+        });
+    };
+
+    parse_completion_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_completion(
+    position: TextDocumentPosition,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
 ) -> Result<LanguageServerCompletionList, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&position);
@@ -832,7 +971,21 @@ fn text_document_completion(
 #[tauri::command]
 fn text_document_definition(
     position: TextDocumentPosition,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.definition(&position);
+    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_definition(
+    position: TextDocumentPosition,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
@@ -846,7 +999,22 @@ fn text_document_definition(
 #[tauri::command]
 fn text_document_implementation(
     position: TextDocumentPosition,
-    supervisor: State<'_, LanguageServerSupervisor>,
+    supervisor: State<'_, PhpLanguageServerSupervisor>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.implementation(&position);
+    let result = match supervisor.send_request(&request.method, request.params)? {
+        Some(result) => result,
+        None => return Ok(Vec::new()),
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_implementation(
+    position: TextDocumentPosition,
+    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.implementation(&position);
@@ -994,7 +1162,8 @@ pub fn run() {
             _ => {}
         })
         .manage(Mutex::new(SmartModeService::new()))
-        .manage(LanguageServerSupervisor::new())
+        .manage(PhpLanguageServerSupervisor::new())
+        .manage(JavaScriptTypeScriptLanguageServerSupervisor::new())
         .manage(TerminalSupervisor::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -1014,6 +1183,7 @@ pub fn run() {
             get_php_file_outline,
             get_git_diff,
             get_git_status,
+            get_javascript_typescript_language_server_status,
             get_php_language_server_status,
             get_php_tree,
             get_smart_mode_state,
@@ -1022,6 +1192,7 @@ pub fn run() {
             list_terminal_profiles,
             parse_php_file_outline,
             parse_php_syntax,
+            plan_javascript_typescript_language_server,
             plan_php_language_server,
             quit_application,
             read_directory,
@@ -1035,11 +1206,21 @@ pub fn run() {
             set_smart_mode,
             set_workspace_trust,
             start_initial_metadata_scan,
+            start_javascript_typescript_language_server,
             start_workspace_reindex,
             start_php_language_server,
             start_terminal_session,
+            stop_javascript_typescript_language_server,
             stop_php_language_server,
             stop_terminal_session,
+            javascript_typescript_document_did_change,
+            javascript_typescript_document_did_close,
+            javascript_typescript_document_did_open,
+            javascript_typescript_document_did_save,
+            javascript_typescript_text_document_completion,
+            javascript_typescript_text_document_definition,
+            javascript_typescript_text_document_hover,
+            javascript_typescript_text_document_implementation,
             text_document_completion,
             text_document_definition,
             text_document_did_change,

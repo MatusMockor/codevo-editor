@@ -46,11 +46,23 @@ import {
 import type { IntelligenceMode } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
-import { TauriLanguageServerDiagnosticsGateway } from "./infrastructure/tauriLanguageServerDiagnosticsGateway";
-import { TauriLanguageServerDocumentSyncGateway } from "./infrastructure/tauriLanguageServerDocumentSyncGateway";
-import { TauriLanguageServerFeaturesGateway } from "./infrastructure/tauriLanguageServerFeaturesGateway";
+import {
+  JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
+  TauriLanguageServerDiagnosticsGateway,
+} from "./infrastructure/tauriLanguageServerDiagnosticsGateway";
+import {
+  JAVASCRIPT_TYPESCRIPT_DOCUMENT_SYNC_COMMANDS,
+  TauriLanguageServerDocumentSyncGateway,
+} from "./infrastructure/tauriLanguageServerDocumentSyncGateway";
+import {
+  JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+  TauriLanguageServerFeaturesGateway,
+} from "./infrastructure/tauriLanguageServerFeaturesGateway";
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
-import { TauriLanguageServerRuntimeGateway } from "./infrastructure/tauriLanguageServerRuntimeGateway";
+import {
+  JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
+  TauriLanguageServerRuntimeGateway,
+} from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
@@ -82,11 +94,36 @@ const phpTreeGateway = new TauriPhpTreeGateway();
 const gitGateway = new TauriGitGateway();
 const languageServerGateway = new TauriLanguageServerGateway();
 const languageServerRuntimeGateway = new TauriLanguageServerRuntimeGateway();
+const javaScriptTypeScriptLanguageServerRuntimeGateway =
+  new TauriLanguageServerRuntimeGateway(
+    undefined,
+    undefined,
+    undefined,
+    JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
+  );
 const languageServerDocumentSyncGateway =
   new TauriLanguageServerDocumentSyncGateway();
+const javaScriptTypeScriptLanguageServerDocumentSyncGateway =
+  new TauriLanguageServerDocumentSyncGateway(
+    undefined,
+    undefined,
+    JAVASCRIPT_TYPESCRIPT_DOCUMENT_SYNC_COMMANDS,
+  );
 const languageServerDiagnosticsGateway =
   new TauriLanguageServerDiagnosticsGateway();
+const javaScriptTypeScriptLanguageServerDiagnosticsGateway =
+  new TauriLanguageServerDiagnosticsGateway(
+    undefined,
+    undefined,
+    JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
+  );
 const languageServerFeaturesGateway = new TauriLanguageServerFeaturesGateway();
+const javaScriptTypeScriptLanguageServerFeaturesGateway =
+  new TauriLanguageServerFeaturesGateway(
+    undefined,
+    undefined,
+    JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+  );
 const terminalGateway = new TauriTerminalGateway();
 const settingsGateway = new BrowserSettingsGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
@@ -109,6 +146,9 @@ function App() {
     languageServerDocumentSyncGateway,
     languageServerDiagnosticsGateway,
     languageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeGateway,
+    javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+    javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     settingsGateway,
     workbenchPrompter,
   );
@@ -192,6 +232,33 @@ function App() {
     workbench.languageServerPlan,
     workbench.languageServerRuntimeStatus,
   ]);
+  const javaScriptTypeScriptLanguageServerLabel = useMemo(() => {
+    const runtimeLabel = languageServerStatusLabel(
+      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+      "TS Server",
+    );
+
+    if (!runtimeLabel) {
+      return null;
+    }
+
+    const enabledCapabilities = languageServerCapabilityLabels(
+      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+    );
+
+    if (enabledCapabilities.length > 0) {
+      return `${runtimeLabel} · ${enabledCapabilities.join(", ")}`;
+    }
+
+    return runtimeLabel;
+  }, [workbench.javaScriptTypeScriptLanguageServerRuntimeStatus]);
+  const combinedLanguageServerLabel = useMemo(
+    () =>
+      [languageServerLabel, javaScriptTypeScriptLanguageServerLabel]
+        .filter(Boolean)
+        .join(" · ") || null,
+    [javaScriptTypeScriptLanguageServerLabel, languageServerLabel],
+  );
   const indexLabel = useMemo(
     () => indexProgressLabel(workbench.indexProgress),
     [workbench.indexProgress],
@@ -493,6 +560,15 @@ function App() {
             flushPendingLanguageServerDocument={
               workbench.flushPendingLanguageServerDocument
             }
+            flushPendingJavaScriptTypeScriptLanguageServerDocument={
+              workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
+            }
+            javaScriptTypeScriptLanguageServerFeaturesGateway={
+              javaScriptTypeScriptLanguageServerFeaturesGateway
+            }
+            javaScriptTypeScriptLanguageServerRuntimeStatus={
+              workbench.javaScriptTypeScriptLanguageServerRuntimeStatus
+            }
             languageServerFeaturesGateway={languageServerFeaturesGateway}
             languageServerDiagnosticsByPath={
               workbench.languageServerDiagnosticsByPath
@@ -569,7 +645,7 @@ function App() {
         statusBar={workbench.workspaceSettings.statusBar}
         workspaceRoot={workbench.workspaceRoot}
         workspaceInfoLabel={workspaceLabel}
-        languageServerLabel={languageServerLabel}
+        languageServerLabel={combinedLanguageServerLabel}
         indexLabel={indexLabel}
         workspaceTrustLabel={
           workbench.workspaceRoot

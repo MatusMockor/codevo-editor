@@ -33,6 +33,7 @@ import type {
 } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
+import { registerJavaScriptTypeScriptLanguageServerMonacoProviders } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import { registerMonacoAppThemes } from "./monacoThemes";
 import { getTabId, getTabPanelId } from "./tabIds";
@@ -47,7 +48,12 @@ interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
   changeHunks: EditorChangeHunk[];
   editorRevealTarget: EditorRevealTarget | null;
+  flushPendingJavaScriptTypeScriptLanguageServerDocument?(
+    path: string,
+  ): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
+  javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
+  javaScriptTypeScriptLanguageServerRuntimeStatus?: LanguageServerRuntimeStatus | null;
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
@@ -82,10 +88,13 @@ export function EditorSurface({
   activeDocument,
   changeHunks,
   editorRevealTarget,
+  flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
   languageServerDiagnosticsByPath,
   languageServerFeaturesGateway,
   languageServerRuntimeStatus,
+  javaScriptTypeScriptLanguageServerFeaturesGateway = languageServerFeaturesGateway,
+  javaScriptTypeScriptLanguageServerRuntimeStatus = null,
   keymap,
   monacoTheme,
   onCloseActiveTab,
@@ -111,7 +120,13 @@ export function EditorSurface({
     useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const activeDocumentRef = useRef(activeDocument);
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
+  const javaScriptTypeScriptRuntimeStatusRef = useRef(
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+  );
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
+  const flushPendingJavaScriptTypeScriptRef = useRef(
+    flushPendingJavaScriptTypeScriptLanguageServerDocument,
+  );
   const errorReporterRef = useRef(onLanguageServerError);
   const changeDecorationIdsRef = useRef<string[]>([]);
   const changeHunksRef = useRef(changeHunks);
@@ -160,8 +175,18 @@ export function EditorSurface({
   }, [languageServerRuntimeStatus]);
 
   useEffect(() => {
+    javaScriptTypeScriptRuntimeStatusRef.current =
+      javaScriptTypeScriptLanguageServerRuntimeStatus;
+  }, [javaScriptTypeScriptLanguageServerRuntimeStatus]);
+
+  useEffect(() => {
     flushPendingRef.current = flushPendingLanguageServerDocument;
   }, [flushPendingLanguageServerDocument]);
+
+  useEffect(() => {
+    flushPendingJavaScriptTypeScriptRef.current =
+      flushPendingJavaScriptTypeScriptLanguageServerDocument;
+  }, [flushPendingJavaScriptTypeScriptLanguageServerDocument]);
 
   useEffect(() => {
     errorReporterRef.current = onLanguageServerError;
@@ -194,6 +219,26 @@ export function EditorSurface({
 
     return () => disposable.dispose();
   }, [languageServerFeaturesGateway, monacoApi]);
+
+  useEffect(() => {
+    if (!monacoApi) {
+      return;
+    }
+
+    const disposable = registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monacoApi,
+      {
+        featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
+        flushPendingDocumentChange: (path) =>
+          flushPendingJavaScriptTypeScriptRef.current(path),
+        getActiveDocument: () => activeDocumentRef.current,
+        getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
+        reportError: (error) => errorReporterRef.current(error),
+      },
+    );
+
+    return () => disposable.dispose();
+  }, [javaScriptTypeScriptLanguageServerFeaturesGateway, monacoApi]);
 
   const handleMount: OnMount = (_editor, monaco) => {
     setEditorApi(_editor);

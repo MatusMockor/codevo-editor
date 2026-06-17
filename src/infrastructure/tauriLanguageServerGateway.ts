@@ -10,4 +10,15 @@ export class TauriLanguageServerGateway implements LanguageServerGateway {
       rootPath,
     });
   }
+
+  planJavaScriptTypeScriptLanguageServer(
+    rootPath: string,
+  ): Promise<LanguageServerPlan> {
+    return invoke<LanguageServerPlan>(
+      "plan_javascript_typescript_language_server",
+      {
+        rootPath,
+      },
+    );
+  }
 }

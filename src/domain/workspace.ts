@@ -64,7 +64,12 @@ export interface PhpToolAvailability {
 export interface ToolLocation {
   executable: string;
   path: string;
-  source: "managed" | "workspaceVendorBin" | "path";
+  source:
+    | "bundledNodeModulesBin"
+    | "managed"
+    | "path"
+    | "workspaceNodeModulesBin"
+    | "workspaceVendorBin";
 }
 
 export interface EditorDocument {

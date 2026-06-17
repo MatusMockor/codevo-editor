@@ -9,6 +9,26 @@ import type {
 const STATUS_EVENT = "language-server://status";
 const DESKTOP_RUNTIME_REQUIRED =
   "Language server requires the Tauri desktop runtime.";
+const DEFAULT_RUNTIME_COMMANDS = {
+  getStatus: "get_php_language_server_status",
+  start: "start_php_language_server",
+  stop: "stop_php_language_server",
+  statusEvent: STATUS_EVENT,
+};
+
+export const JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS = {
+  getStatus: "get_javascript_typescript_language_server_status",
+  start: "start_javascript_typescript_language_server",
+  statusEvent: "javascript-typescript-language-server://status",
+  stop: "stop_javascript_typescript_language_server",
+};
+
+export interface TauriLanguageServerRuntimeCommands {
+  getStatus: string;
+  start: string;
+  statusEvent: string;
+  stop: string;
+}
 
 type InvokeRuntimeCommand = (
   command: string,
@@ -36,6 +56,8 @@ export class TauriLanguageServerRuntimeGateway
     private readonly invokeCommand: InvokeRuntimeCommand = invokeRuntimeCommand,
     private readonly listenToEvent: ListenToRuntimeStatus = listenToRuntimeStatus,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
+    private readonly commands: TauriLanguageServerRuntimeCommands =
+      DEFAULT_RUNTIME_COMMANDS,
   ) {}
 
   getStatus(): Promise<LanguageServerRuntimeStatus> {
@@ -43,7 +65,7 @@ export class TauriLanguageServerRuntimeGateway
       return Promise.resolve(stoppedStatus());
     }
 
-    return this.invokeCommand("get_php_language_server_status");
+    return this.invokeCommand(this.commands.getStatus);
   }
 
   start(rootPath: string): Promise<LanguageServerRuntimeStatus> {
@@ -54,7 +76,7 @@ export class TauriLanguageServerRuntimeGateway
       });
     }
 
-    return this.invokeCommand("start_php_language_server", {
+    return this.invokeCommand(this.commands.start, {
       rootPath,
     });
   }
@@ -64,7 +86,7 @@ export class TauriLanguageServerRuntimeGateway
       return Promise.resolve(stoppedStatus());
     }
 
-    return this.invokeCommand("stop_php_language_server");
+    return this.invokeCommand(this.commands.stop);
   }
 
   subscribeStatus(
@@ -74,7 +96,7 @@ export class TauriLanguageServerRuntimeGateway
       return Promise.resolve(() => undefined);
     }
 
-    return this.listenToEvent(STATUS_EVENT, (event) => {
+    return this.listenToEvent(this.commands.statusEvent, (event) => {
       listener(event.payload);
     });
   }

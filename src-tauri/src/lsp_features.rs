@@ -189,7 +189,10 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
         detail: optional_string(value.get("detail")),
         documentation: value.get("documentation").and_then(markup_to_string),
         insert_text: optional_string(value.get("insertText")),
-        kind: value.get("kind").and_then(Value::as_u64).map(|kind| kind as u32),
+        kind: value
+            .get("kind")
+            .and_then(Value::as_u64)
+            .map(|kind| kind as u32),
     })
 }
 

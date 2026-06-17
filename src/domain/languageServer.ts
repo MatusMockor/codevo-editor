@@ -1,4 +1,4 @@
-export type LanguageServerProvider = "phpactor";
+export type LanguageServerProvider = "phpactor" | "typeScriptLanguageServer";
 
 export type LanguageServerPlanStatus = "blocked" | "ready" | "unavailable";
 
@@ -25,4 +25,7 @@ export interface JsonRpcRequest {
 
 export interface LanguageServerGateway {
   planPhpLanguageServer(rootPath: string): Promise<LanguageServerPlan>;
+  planJavaScriptTypeScriptLanguageServer(
+    rootPath: string,
+  ): Promise<LanguageServerPlan>;
 }

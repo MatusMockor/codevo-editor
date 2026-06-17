@@ -61,6 +61,9 @@ interface ControllerDependencies {
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerGateway: LanguageServerGateway;
   languageServerRuntimeGateway: LanguageServerRuntimeGateway;
+  javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
+  javaScriptTypeScriptLanguageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
+  javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway;
   phpFileOutlineGateway: PhpFileOutlineGateway;
   phpTreeGateway: PhpTreeGateway;
   prompter: WorkbenchPrompter;
@@ -2664,6 +2667,9 @@ function WorkbenchHarness({
     dependencies.languageServerDocumentSyncGateway,
     dependencies.languageServerDiagnosticsGateway,
     dependencies.languageServerFeaturesGateway,
+    dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
+    dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+    dependencies.javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     dependencies.settingsGateway,
     dependencies.prompter,
   );
@@ -2786,6 +2792,16 @@ function createControllerDependencies({
     languageServerFeaturesGateway:
       languageServerFeaturesGateway ?? featuresGateway(),
     languageServerGateway: {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
       planPhpLanguageServer: vi.fn(
         async () =>
           languageServerPlan ?? {
@@ -2800,6 +2816,16 @@ function createControllerDependencies({
     languageServerRuntimeGateway: {
       getStatus: vi.fn(async () => runtimeStatus),
       start: vi.fn(async () => runtimeStatus),
+      stop: vi.fn(async () => ({ kind: "stopped" as const })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    },
+    javaScriptTypeScriptLanguageServerDiagnosticsGateway: {
+      subscribeDiagnostics: vi.fn(async () => () => undefined),
+    },
+    javaScriptTypeScriptLanguageServerDocumentSyncGateway: documentSyncGateway,
+    javaScriptTypeScriptLanguageServerRuntimeGateway: {
+      getStatus: vi.fn(async () => ({ kind: "stopped" as const })),
+      start: vi.fn(async () => ({ kind: "stopped" as const })),
       stop: vi.fn(async () => ({ kind: "stopped" as const })),
       subscribeStatus: vi.fn(async () => () => undefined),
     },
