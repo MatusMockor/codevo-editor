@@ -195,6 +195,71 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("deduplicates typed PHP methods against LSP signature labels", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail:
+              "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
+            documentation: null,
+            insertText: "forceDestroy",
+            kind: 2,
+            label: "forceDestroy(...)",
+          },
+        ],
+      },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Model",
+        name: "forceDestroy",
+        parameters: "array|int $ids",
+        returnType: "int",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->force\n}\n",
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    $comment->force",
+        word: {
+          endColumn: 21,
+          startColumn: 15,
+        },
+      }),
+      {
+        column: 21,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        detail:
+          "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
+        insertText: "forceDestroy($0)",
+        label: {
+          description: "method - Illuminate\\Database\\Eloquent\\Model",
+          detail: "()",
+          label: "forceDestroy",
+        },
+      }),
+    );
+  });
+
   it("places the cursor after parentheses for LSP method completions without parameters", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({

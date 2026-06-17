@@ -257,7 +257,10 @@ async function provideCompletionItems(
     });
 
     return {
-      suggestions: dedupeCompletionItems([...suggestions, ...lspSuggestions]),
+      suggestions: dedupeCompletionItems(monaco, [
+        ...suggestions,
+        ...lspSuggestions,
+      ]),
     };
   } catch (error) {
     context.reportError(error);
@@ -587,13 +590,14 @@ function completionRange(
 }
 
 function dedupeCompletionItems(
+  monaco: MonacoApi,
   items: Monaco.languages.CompletionItem[],
 ): Monaco.languages.CompletionItem[] {
   const seen = new Set<string>();
   const unique: Monaco.languages.CompletionItem[] = [];
 
   for (const item of items) {
-    const key = completionItemLabelText(item.label).toLowerCase();
+    const key = completionItemDedupeKey(monaco, item);
 
     if (seen.has(key)) {
       continue;
@@ -604,6 +608,28 @@ function dedupeCompletionItems(
   }
 
   return unique;
+}
+
+function completionItemDedupeKey(
+  monaco: MonacoApi,
+  item: Monaco.languages.CompletionItem,
+): string {
+  const label = completionItemLabelText(item.label);
+
+  if (isCallableCompletionKind(monaco, item.kind)) {
+    const callableName = phpCallableCompletionName(label) ?? label;
+
+    return `callable:${callableName.toLowerCase()}`;
+  }
+
+  if (
+    item.kind === monaco.languages.CompletionItemKind.Property ||
+    item.kind === monaco.languages.CompletionItemKind.Field
+  ) {
+    return `property:${label.toLowerCase()}`;
+  }
+
+  return `${item.kind}:${label.toLowerCase()}`;
 }
 
 function completionItemLabelText(
