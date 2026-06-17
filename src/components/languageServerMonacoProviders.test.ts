@@ -13,7 +13,7 @@ import type {
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion and signature providers and disposes them", () => {
+  it("registers php hover, completion, signature and code action providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -24,12 +24,17 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.hoverLanguage).toBe("php");
     expect(registered.completionLanguage).toBe("php");
     expect(registered.signatureLanguage).toBe("php");
+    expect(registered.codeActionLanguage).toBe("php");
+    expect(registered.codeActionMetadata).toEqual({
+      providedCodeActionKinds: ["quickfix"],
+    });
 
     disposable.dispose();
 
     expect(registered.hoverDispose).toHaveBeenCalled();
     expect(registered.completionDispose).toHaveBeenCalled();
     expect(registered.signatureDispose).toHaveBeenCalled();
+    expect(registered.codeActionDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -257,13 +262,85 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(providePhpMethodSignature).toHaveBeenCalled();
   });
 
+  it("provides a quick fix for unexpected bare PHP identifiers", () => {
+    const registered = createRegisteredProviders();
+    const context = providerContext();
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    expect(
+      registered.codeActionProvider.provideCodeActions(
+        model(),
+        new registered.monaco.Range(4, 5, 4, 13),
+        {
+          markers: [
+            {
+              endColumn: 13,
+              endLineNumber: 4,
+              message: 'Unexpected bare PHP identifier "asdasdad".',
+              severity: 8,
+              source: "PHP Syntax",
+              startColumn: 5,
+              startLineNumber: 4,
+            },
+          ],
+          trigger: 1,
+        },
+      ),
+    ).toEqual({
+      actions: [
+        {
+          diagnostics: [
+            {
+              endColumn: 13,
+              endLineNumber: 4,
+              message: 'Unexpected bare PHP identifier "asdasdad".',
+              severity: 8,
+              source: "PHP Syntax",
+              startColumn: 5,
+              startLineNumber: 4,
+            },
+          ],
+          edit: {
+            edits: [
+              {
+                resource: {
+                  fsPath: "/project/src/User.php",
+                  path: "/project/src/User.php",
+                },
+                textEdit: {
+                  range: expect.objectContaining({
+                    endColumn: 13,
+                    endLineNumber: 4,
+                    startColumn: 5,
+                    startLineNumber: 4,
+                  }),
+                  text: "",
+                },
+                versionId: 42,
+              },
+            ],
+          },
+          isPreferred: true,
+          kind: "quickfix",
+          title: "Remove unexpected identifier",
+        },
+      ],
+      dispose: expect.any(Function),
+    });
+  });
+
 });
 
 function createRegisteredProviders() {
+  const codeActionDispose = vi.fn();
   const hoverDispose = vi.fn();
   const completionDispose = vi.fn();
   const signatureDispose = vi.fn();
   const registered: {
+    codeActionDispose: ReturnType<typeof vi.fn>;
+    codeActionLanguage: string | null;
+    codeActionMetadata: any;
+    codeActionProvider: any;
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
     completionProvider: any;
@@ -275,6 +352,10 @@ function createRegisteredProviders() {
     signatureLanguage: string | null;
     signatureProvider: any;
   } = {
+    codeActionDispose,
+    codeActionLanguage: null,
+    codeActionMetadata: null,
+    codeActionProvider: null,
     completionDispose,
     completionLanguage: null,
     completionProvider: null,
@@ -287,9 +368,33 @@ function createRegisteredProviders() {
     signatureProvider: null,
   };
   registered.monaco = {
+    Range: class FakeRange {
+      endColumn: number;
+      endLineNumber: number;
+      startColumn: number;
+      startLineNumber: number;
+
+      constructor(
+        startLineNumber: number,
+        startColumn: number,
+        endLineNumber: number,
+        endColumn: number,
+      ) {
+        this.startLineNumber = startLineNumber;
+        this.startColumn = startColumn;
+        this.endLineNumber = endLineNumber;
+        this.endColumn = endColumn;
+      }
+    },
     languages: {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },
+      registerCodeActionProvider: vi.fn((language, provider, metadata) => {
+        registered.codeActionLanguage = language;
+        registered.codeActionProvider = provider;
+        registered.codeActionMetadata = metadata;
+        return { dispose: codeActionDispose };
+      }),
       registerCompletionItemProvider: vi.fn((language, provider) => {
         registered.completionLanguage = language;
         registered.completionProvider = provider;
@@ -395,6 +500,7 @@ function model(
 ) {
   return {
     getLineContent: vi.fn(() => overrides.lineContent ?? "$user"),
+    getVersionId: vi.fn(() => 42),
     getWordUntilPosition: vi.fn(() => overrides.word ?? {
       endColumn: 5,
       startColumn: 2,

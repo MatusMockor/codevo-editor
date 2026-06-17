@@ -54,14 +54,113 @@ export function registerLanguageServerMonacoProviders(
     provideSignatureHelp: (model, position) =>
       provideSignatureHelp(monaco, context, model, position),
   });
+  const codeActions = monaco.languages.registerCodeActionProvider(
+    "php",
+    {
+      provideCodeActions: (model, range, actionContext) =>
+        provideCodeActions(monaco, model, range, actionContext),
+    },
+    {
+      providedCodeActionKinds: ["quickfix"],
+    },
+  );
 
   return {
     dispose: () => {
       hover.dispose();
       completion.dispose();
       signature.dispose();
+      codeActions.dispose();
     },
   };
+}
+
+function provideCodeActions(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  range: Monaco.Range,
+  context: Monaco.languages.CodeActionContext,
+): Monaco.languages.CodeActionList {
+  if (context.only && !context.only.startsWith("quickfix")) {
+    return emptyCodeActionList();
+  }
+
+  const actions = context.markers
+    .filter(isUnexpectedBareIdentifierMarker)
+    .filter((marker) => markerTouchesRange(marker, range))
+    .map((marker) => ({
+      diagnostics: [marker],
+      edit: {
+        edits: [
+          {
+            resource: model.uri,
+            textEdit: {
+              range: new monaco.Range(
+                marker.startLineNumber,
+                marker.startColumn,
+                marker.endLineNumber,
+                marker.endColumn,
+              ),
+              text: "",
+            },
+            versionId: model.getVersionId(),
+          },
+        ],
+      },
+      isPreferred: true,
+      kind: "quickfix",
+      title: "Remove unexpected identifier",
+    }));
+
+  return {
+    actions,
+    dispose: () => undefined,
+  };
+}
+
+function emptyCodeActionList(): Monaco.languages.CodeActionList {
+  return {
+    actions: [],
+    dispose: () => undefined,
+  };
+}
+
+function isUnexpectedBareIdentifierMarker(
+  marker: Monaco.editor.IMarkerData,
+): boolean {
+  return (
+    marker.source === "PHP Syntax" &&
+    /^Unexpected bare PHP identifier "[^"]+"\.$/.test(marker.message)
+  );
+}
+
+function markerTouchesRange(
+  marker: Monaco.editor.IMarkerData,
+  range: Monaco.Range,
+): boolean {
+  if (marker.endLineNumber < range.startLineNumber) {
+    return false;
+  }
+
+  if (marker.startLineNumber > range.endLineNumber) {
+    return false;
+  }
+
+  if (
+    marker.startLineNumber === range.endLineNumber &&
+    marker.startColumn > range.endColumn
+  ) {
+    return false;
+  }
+
+  if (
+    marker.endLineNumber === range.startLineNumber &&
+    marker.endColumn < range.startColumn
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 async function provideHover(

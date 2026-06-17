@@ -25,6 +25,7 @@ interface FakeEditor {
   onMouseDown: ReturnType<typeof vi.fn>;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
   setPosition: ReturnType<typeof vi.fn>;
+  trigger: ReturnType<typeof vi.fn>;
 }
 
 interface FakeMouseDownEvent {
@@ -182,6 +183,75 @@ interface ParserFactory
       lineNumber: 5,
     });
   });
+
+  it("registers Option+Enter as Monaco quick fix/context actions", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php echo $user;",
+      language: "php",
+      name: "User.php",
+      path: "/workspace/src/User.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          monacoTheme="vs-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const quickFixAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.quickFix");
+
+    expect(quickFixAction).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.Enter],
+        label: "Show Context Actions",
+      }),
+    );
+
+    quickFixAction.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.quickFix",
+      {},
+    );
+  });
 });
 
 function createEditor(model: FakeModel): FakeEditor {
@@ -205,6 +275,7 @@ function createEditor(model: FakeModel): FakeEditor {
     }),
     revealPositionInCenter: vi.fn(),
     setPosition: vi.fn(),
+    trigger: vi.fn(),
   };
 
   return editor;
@@ -223,16 +294,18 @@ function createMonaco(model: FakeModel) {
     KeyCode: {
       BracketLeft: 5,
       BracketRight: 6,
+      Enter: 8,
       KeyB: 1,
       KeyO: 2,
       KeyP: 3,
       KeyR: 4,
       KeyW: 7,
     },
-    KeyMod: { CtrlCmd: 2048 },
+    KeyMod: { Alt: 512, CtrlCmd: 2048 },
     languages: {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },
+      registerCodeActionProvider: vi.fn(() => ({ dispose: vi.fn() })),
       registerCompletionItemProvider: vi.fn(() => ({ dispose: vi.fn() })),
       registerHoverProvider: vi.fn(() => ({ dispose: vi.fn() })),
       registerSignatureHelpProvider: vi.fn(() => ({ dispose: vi.fn() })),

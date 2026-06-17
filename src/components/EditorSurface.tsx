@@ -191,6 +191,14 @@ export function EditorSurface({
         run: onOpenFileStructure,
       }),
       editorApi.addAction({
+        id: "mockor.quickFix",
+        label: "Show Context Actions",
+        keybindings: [monacoApi.KeyMod.Alt | monacoApi.KeyCode.Enter],
+        run: () => {
+          editorApi.trigger("keyboard", "editor.action.quickFix", {});
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.closeTab",
         label: "Close Tab",
         keybindings: [keyMod | monacoApi.KeyCode.KeyW],

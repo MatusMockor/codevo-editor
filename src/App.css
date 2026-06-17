@@ -1053,7 +1053,7 @@ button {
 .file-structure {
   display: grid;
   width: min(560px, calc(100vw - 32px));
-  max-height: min(620px, calc(100vh - 64px));
+  max-height: min(520px, calc(100vh - 72px));
   grid-template-rows: 44px 36px minmax(0, 1fr);
   border: 1px solid var(--color-border-strong);
   border-radius: 8px;
@@ -1064,6 +1064,15 @@ button {
 
 .file-structure .quick-open-result span {
   padding-left: var(--structure-indent, 0);
+}
+
+.file-structure .quick-open-results {
+  min-height: 0;
+  max-height: none;
+}
+
+.file-structure .quick-open-result {
+  min-height: 48px;
 }
 
 .file-structure-option {

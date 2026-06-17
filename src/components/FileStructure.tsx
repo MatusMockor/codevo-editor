@@ -1,6 +1,7 @@
 import { ListTree, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import type { KeyboardEvent } from "react";
 import {
   flattenPhpFileOutlineNodes,
   isNavigablePhpFileOutlineNode,
@@ -33,6 +34,7 @@ export function FileStructure({
 }: FileStructureProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [query, setQuery] = useState("");
+  const activeRowRef = useRef<HTMLButtonElement | null>(null);
   const rows = useMemo(
     () => filteredRows(structureRows(outline?.nodes ?? []), query),
     [outline, query],
@@ -50,16 +52,62 @@ export function FileStructure({
     setActiveIndex(0);
   }, [query]);
 
+  useEffect(() => {
+    setActiveIndex((current) => Math.min(current, Math.max(rows.length - 1, 0)));
+  }, [rows.length]);
+
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [activeIndex, rows.length]);
+
   if (!isOpen) {
     return null;
   }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((current) =>
+        Math.min(current + 1, Math.max(rows.length - 1, 0)),
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => Math.max(current - 1, 0));
+      return;
+    }
+
+    if (!shouldOpenActiveRow(event)) {
+      return;
+    }
+
+    if (activeRow) {
+      event.preventDefault();
+      onOpenNode(activeRow.node);
+      onClose();
+    }
+  };
 
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
       <section
         aria-label="File structure"
+        aria-modal="true"
         className="file-structure"
+        onKeyDown={handleKeyDown}
         onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
       >
         <div className="palette-search">
           <Search aria-hidden="true" size={17} />
@@ -67,32 +115,6 @@ export function FileStructure({
             aria-label="Search symbols"
             autoFocus
             onChange={(event) => setQuery(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                onClose();
-                return;
-              }
-
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                setActiveIndex((current) =>
-                  Math.min(current + 1, Math.max(rows.length - 1, 0)),
-                );
-                return;
-              }
-
-              if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setActiveIndex((current) => Math.max(current - 1, 0));
-                return;
-              }
-
-              if (event.key === "Enter" && activeRow) {
-                event.preventDefault();
-                onOpenNode(activeRow.node);
-                onClose();
-              }
-            }}
             placeholder={structurePlaceholder(fileName, scope)}
             value={query}
           />
@@ -112,7 +134,7 @@ export function FileStructure({
           <span>Include inherited members</span>
         </label>
 
-        <div className="quick-open-results">
+        <div className="quick-open-results" role="listbox">
           {isLoading ? <div className="quick-open-state">Loading symbols...</div> : null}
           {!isLoading && !outline ? (
             <div className="quick-open-state">Open a PHP file first</div>
@@ -122,6 +144,7 @@ export function FileStructure({
           ) : null}
           {rows.map((row, index) => (
             <button
+              aria-selected={index === activeIndex}
               className={
                 index === activeIndex
                   ? "quick-open-result active"
@@ -134,6 +157,8 @@ export function FileStructure({
                 onClose();
               }}
               onMouseEnter={() => setActiveIndex(index)}
+              ref={index === activeIndex ? activeRowRef : undefined}
+              role="option"
               title={row.node.fullyQualifiedName || row.node.label}
               type="button"
             >
@@ -190,6 +215,24 @@ function structureRows(nodes: PhpFileOutlineNode[]): FlatPhpFileOutlineNode[] {
   }
 
   return flattenPhpFileOutlineNodes(nodes);
+}
+
+function shouldOpenActiveRow(event: KeyboardEvent<HTMLElement>): boolean {
+  if (event.key !== "Enter") {
+    return false;
+  }
+
+  const target = event.target;
+
+  if (target instanceof HTMLButtonElement) {
+    return false;
+  }
+
+  if (target instanceof HTMLInputElement && target.type === "checkbox") {
+    return false;
+  }
+
+  return true;
 }
 
 function memberRowsForNode(node: PhpFileOutlineNode): FlatPhpFileOutlineNode[] {
