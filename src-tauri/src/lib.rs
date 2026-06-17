@@ -90,6 +90,7 @@ use workspace::{
 
 const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
 const CLOSE_ACTIVE_TAB_MENU_ID: &str = "close-active-tab";
+const QUIT_APPLICATION_MENU_ID: &str = "quit-application";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,6 +106,11 @@ fn create_directory(path: String) -> Result<(), String> {
     repository
         .create_directory(&PathBuf::from(path))
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn quit_application(app: AppHandle) {
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -356,7 +362,14 @@ fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let close_tab = MenuItemBuilder::with_id(CLOSE_ACTIVE_TAB_MENU_ID, "Close Tab")
         .accelerator("CmdOrCtrl+W")
         .build(app)?;
-    let file = SubmenuBuilder::new(app, "File").item(&close_tab).build()?;
+    let quit = MenuItemBuilder::with_id(QUIT_APPLICATION_MENU_ID, "Quit Mockor Editor")
+        .accelerator("CmdOrCtrl+Q")
+        .build(app)?;
+    let file = SubmenuBuilder::new(app, "File")
+        .item(&close_tab)
+        .separator()
+        .item(&quit)
+        .build()?;
 
     Menu::with_items(app, &[&file])
 }
@@ -889,12 +902,12 @@ pub fn run() {
     tauri::Builder::default()
         .enable_macos_default_menu(false)
         .menu(application_menu)
-        .on_menu_event(|app, event| {
-            if event.id().as_ref() != CLOSE_ACTIVE_TAB_MENU_ID {
-                return;
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            CLOSE_ACTIVE_TAB_MENU_ID => {
+                let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
             }
-
-            let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
+            QUIT_APPLICATION_MENU_ID => app.exit(0),
+            _ => {}
         })
         .manage(Mutex::new(SmartModeService::new()))
         .manage(LanguageServerSupervisor::new())
@@ -926,6 +939,7 @@ pub fn run() {
             parse_php_file_outline,
             parse_php_syntax,
             plan_php_language_server,
+            quit_application,
             read_directory,
             read_text_file,
             remove_workspace_index_file,

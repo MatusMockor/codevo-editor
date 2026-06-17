@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import {
@@ -1891,6 +1892,47 @@ export function useWorkbenchController(
     [activePath, documents, previewPath, prompter, syncClosedDocument],
   );
 
+  const closeApplicationWindow = useCallback(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    void getCurrentWindow()
+      .close()
+      .catch((error) => reportError("Window", error));
+  }, [reportError]);
+
+  const quitApplication = useCallback(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    void invoke("quit_application").catch((error) =>
+      reportError("Application", error),
+    );
+  }, [reportError]);
+
+  const closeActiveSurface = useCallback(() => {
+    if (selectedGitChange || gitDiffLoading) {
+      closeGitDiffPreview();
+      return;
+    }
+
+    if (activeDocument) {
+      closeDocument(activeDocument.path);
+      return;
+    }
+
+    closeApplicationWindow();
+  }, [
+    activeDocument,
+    closeApplicationWindow,
+    closeDocument,
+    closeGitDiffPreview,
+    gitDiffLoading,
+    selectedGitChange,
+  ]);
+
   useEffect(() => {
     if (!isTauri()) {
       return;
@@ -1900,13 +1942,7 @@ export function useWorkbenchController(
     let unlisten: TauriUnlistenFn | null = null;
 
     listen(CLOSE_ACTIVE_TAB_EVENT, () => {
-      const document = activeDocumentRef.current;
-
-      if (!document) {
-        return;
-      }
-
-      closeDocument(document.path);
+      closeActiveSurface();
     })
       .then((dispose) => {
         if (!active) {
@@ -1922,7 +1958,7 @@ export function useWorkbenchController(
       active = false;
       unlisten?.();
     };
-  }, [closeDocument, reportError]);
+  }, [closeActiveSurface, reportError]);
 
   const updateActiveDocument = useCallback(
     (content: string) => {
@@ -2736,6 +2772,7 @@ export function useWorkbenchController(
     }
   }, [
     activeDocument,
+    closeActiveSurface,
     closeDocument,
     prompter,
     refreshDirectory,
@@ -3082,15 +3119,12 @@ export function useWorkbenchController(
 
     registry.register({
       id: "editor.closeTab",
-      title: "Close Tab",
+      title: "Close",
       category: "Editor",
       shortcut: "Cmd+W",
-      isEnabled: (context) => context.hasActiveDocument,
-      run: () => {
-        if (activeDocument) {
-          closeDocument(activeDocument.path);
-        }
-      },
+      isEnabled: () =>
+        Boolean(activeDocument || selectedGitChange || gitDiffLoading || isTauri()),
+      run: closeActiveSurface,
     });
 
     registry.register({
@@ -3291,6 +3325,7 @@ export function useWorkbenchController(
     deleteActiveDocument,
     goToDefinition,
     goToImplementation,
+    gitDiffLoading,
     navigateBackward,
     navigateForwardInHistory,
     openFileStructure,
@@ -3315,6 +3350,7 @@ export function useWorkbenchController(
     intelligenceMode,
     languageServerPlan,
     languageServerRuntimeStatus,
+    selectedGitChange,
     workspaceTrust,
   ]);
 
@@ -3460,14 +3496,13 @@ export function useWorkbenchController(
 
       if (event.key.toLowerCase() === "w") {
         event.preventDefault();
-        if (selectedGitChange || gitDiffLoading) {
-          closeGitDiffPreview();
-          return;
-        }
+        closeActiveSurface();
+        return;
+      }
 
-        if (activeDocument) {
-          closeDocument(activeDocument.path);
-        }
+      if (event.key.toLowerCase() === "q") {
+        event.preventDefault();
+        quitApplication();
         return;
       }
 
@@ -3555,18 +3590,15 @@ export function useWorkbenchController(
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
-    activeDocument,
-    closeDocument,
-    closeGitDiffPreview,
+    closeActiveSurface,
     goToDefinition,
     goToImplementation,
-    gitDiffLoading,
     navigateBackward,
     navigateForwardInHistory,
     openFileStructure,
     openSettingsPanel,
+    quitApplication,
     saveActiveDocument,
-    selectedGitChange,
     toggleBottomPanel,
     workspaceRoot,
   ]);
