@@ -15,7 +15,10 @@ import type { SmartModeGateway } from "../domain/intelligence";
 import type { LanguageServerGateway } from "../domain/languageServer";
 import type { LanguageServerDiagnosticsGateway } from "../domain/languageServerDiagnostics";
 import type { LanguageServerDocumentSyncGateway } from "../domain/languageServerDocumentSync";
-import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
+import type {
+  EditorPosition,
+  LanguageServerFeaturesGateway,
+} from "../domain/languageServerFeatures";
 import {
   emptyLanguageServerCapabilities,
   type LanguageServerRuntimeGateway,
@@ -610,6 +613,143 @@ class CommentController
     });
   });
 
+  it("provides inherited Laravel request method completions in IDE mode", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const requestPath = "/workspace/app/Http/Request/AiHub/StoreCommentRequest.php";
+    const baseRequestPath = "/workspace/app/Http/Request/BaseFormRequest.php";
+    const formRequestPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Foundation/Http/FormRequest.php";
+    const laravelRequestPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Http/Request.php";
+    const symfonyRequestPath =
+      "/workspace/vendor/symfony/http-foundation/Request.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\publicapi\\AiHub;
+
+use App\\Http\\Request\\AiHub\\StoreCommentRequest;
+
+class CommentController
+{
+    public function store(StoreCommentRequest $request): void
+    {
+        $request->get
+    }
+}
+`;
+    const completionPosition = positionAfter(controllerSource, "$request->get");
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === requestPath) {
+          return `<?php
+namespace App\\Http\\Request\\AiHub;
+
+use App\\Http\\Request\\BaseFormRequest;
+
+class StoreCommentRequest extends BaseFormRequest
+{
+    public function getCommentData(): array {}
+}
+`;
+        }
+
+        if (path === baseRequestPath) {
+          return `<?php
+namespace App\\Http\\Request;
+
+use Illuminate\\Foundation\\Http\\FormRequest;
+
+class BaseFormRequest extends FormRequest
+{
+    public function getUserData(): array {}
+}
+`;
+        }
+
+        if (path === formRequestPath) {
+          return `<?php
+namespace Illuminate\\Foundation\\Http;
+
+use Illuminate\\Http\\Request;
+
+class FormRequest extends Request
+{
+}
+`;
+        }
+
+        if (path === laravelRequestPath) {
+          return `<?php
+namespace Illuminate\\Http;
+
+use Symfony\\Component\\HttpFoundation\\Request as SymfonyRequest;
+
+class Request extends SymfonyRequest
+{
+}
+`;
+        }
+
+        if (path === symfonyRequestPath) {
+          return `<?php
+namespace Symfony\\Component\\HttpFoundation;
+
+class Request
+{
+    public function get(string $key, mixed $default = null): mixed {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        completionPosition,
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Symfony\\Component\\HttpFoundation\\Request",
+        name: "get",
+        parameters: "string $key, mixed $default = null",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "App\\Http\\Request\\AiHub\\StoreCommentRequest",
+        name: "getCommentData",
+        parameters: "",
+        returnType: "array",
+      },
+      {
+        declaringClassName: "App\\Http\\Request\\BaseFormRequest",
+        name: "getUserData",
+        parameters: "",
+        returnType: "array",
+      },
+    ]);
+  });
+
   it("resolves Laravel route action strings to the paired controller method before LSP fallback", async () => {
     const routesPath = "/workspace/routes/comments.php";
     const commentControllerPath =
@@ -1077,6 +1217,21 @@ function phpProjectDescriptor(): PhpProjectDescriptor {
         ],
         version: "13.0.0",
       },
+      {
+        classmapRoots: [],
+        dev: false,
+        installPath: "../symfony/http-foundation",
+        name: "symfony/http-foundation",
+        packageType: "library",
+        psr4Roots: [
+          {
+            dev: false,
+            namespace: "Symfony\\Component\\HttpFoundation\\",
+            paths: [""],
+          },
+        ],
+        version: "8.0.0",
+      },
     ],
     psr4Roots: [
       {
@@ -1093,5 +1248,21 @@ function fileEntry(path: string, name: string): FileEntry {
     kind: "file",
     name,
     path,
+  };
+}
+
+function positionAfter(source: string, needle: string): EditorPosition {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing test needle: ${needle}`);
+  }
+
+  const before = source.slice(0, offset + needle.length);
+  const lines = before.split(/\r?\n/);
+
+  return {
+    column: (lines[lines.length - 1] ?? "").length + 1,
+    lineNumber: lines.length,
   };
 }

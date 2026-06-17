@@ -129,6 +129,60 @@ describe("registerLanguageServerMonacoProviders", () => {
       path: "/project/src/User.php",
     });
   });
+
+  it("prioritizes typed PHP receiver method completions for member access", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Symfony\\Component\\HttpFoundation\\Request",
+        name: "get",
+        parameters: "string $key, mixed $default = null",
+        returnType: "mixed",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get\n}\n",
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          lineContent: "    $request->get",
+          word: {
+            endColumn: 18,
+            startColumn: 15,
+          },
+        }),
+        {
+          column: 18,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [
+        {
+          detail:
+            "Symfony\\Component\\HttpFoundation\\Request(string $key, mixed $default = null): mixed",
+          insertText: "get",
+          kind: 2,
+          label: "get",
+          range: {
+            endColumn: 18,
+            endLineNumber: 4,
+            startColumn: 15,
+            startLineNumber: 4,
+          },
+          sortText: "0_0000",
+        },
+      ],
+    });
+    expect(providePhpMethodCompletions).toHaveBeenCalled();
+  });
 });
 
 function createRegisteredProviders() {
@@ -153,7 +207,7 @@ function createRegisteredProviders() {
   };
   registered.monaco = {
     languages: {
-      CompletionItemKind: { Text: 1, Variable: 6 },
+      CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },
       registerCompletionItemProvider: vi.fn((language, provider) => {
         registered.completionLanguage = language;
         registered.completionProvider = provider;
@@ -175,6 +229,9 @@ function providerContext(
     activeDocument: EditorDocument | null;
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
+    providePhpMethodCompletions: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodCompletions"]
+    >;
     runtimeStatus: LanguageServerRuntimeStatus | null;
   }> = {},
 ) {
@@ -187,6 +244,7 @@ function providerContext(
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: () => activeDocument,
     getRuntimeStatus: () => runtimeStatus,
+    providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     reportError: vi.fn(),
   };
 }
@@ -237,16 +295,22 @@ function document(): EditorDocument {
   };
 }
 
-function model() {
+function model(
+  overrides: Partial<{
+    lineContent: string;
+    path: string;
+    word: { endColumn: number; startColumn: number };
+  }> = {},
+) {
   return {
-    getLineContent: vi.fn(() => "$user"),
-    getWordUntilPosition: vi.fn(() => ({
+    getLineContent: vi.fn(() => overrides.lineContent ?? "$user"),
+    getWordUntilPosition: vi.fn(() => overrides.word ?? {
       endColumn: 5,
       startColumn: 2,
-    })),
+    }),
     uri: {
-      fsPath: "/project/src/User.php",
-      path: "/project/src/User.php",
+      fsPath: overrides.path ?? "/project/src/User.php",
+      path: overrides.path ?? "/project/src/User.php",
     },
   };
 }

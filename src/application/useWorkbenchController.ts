@@ -99,6 +99,12 @@ import {
   type PhpTreeNode,
 } from "../domain/phpTree";
 import {
+  phpMemberAccessCompletionContextAt,
+  phpMethodCompletionsFromSource,
+  phpTraitClassNames,
+  type PhpMethodCompletion,
+} from "../domain/phpMethodCompletions";
+import {
   phpClassPathCandidates,
   phpExtendsClassName,
   phpIdentifierContextAt,
@@ -2136,6 +2142,114 @@ export function useWorkbenchController(
     [documents, workspaceFiles],
   );
 
+  const providePhpMethodCompletions = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+    ): Promise<PhpMethodCompletion[]> => {
+      const accessContext = phpMemberAccessCompletionContextAt(source, position);
+
+      if (!accessContext || !workspaceRoot || !workspaceDescriptor?.php) {
+        return [];
+      }
+
+      const variableType = phpParameterTypeForVariable(
+        source,
+        position,
+        accessContext.variableName,
+      );
+      const resolvedVariableType = variableType
+        ? resolvePhpClassName(source, variableType)
+        : null;
+
+      if (!resolvedVariableType) {
+        return [];
+      }
+
+      const phpDescriptor = workspaceDescriptor.php;
+      const completions = new Map<string, PhpMethodCompletion>();
+      const visitedClassNames = new Set<string>();
+      const rememberMethods = (methods: PhpMethodCompletion[]) => {
+        for (const method of methods) {
+          const key = method.name.toLowerCase();
+
+          if (completions.has(key)) {
+            continue;
+          }
+
+          completions.set(key, method);
+        }
+      };
+      const collectMethods = async (className: string): Promise<void> => {
+        const normalizedClassName = className.trim().replace(/^\\+/, "");
+        const visitedKey = normalizedClassName.toLowerCase();
+
+        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+          return;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        for (const path of phpClassPathCandidates(
+          workspaceRoot,
+          phpDescriptor,
+          normalizedClassName,
+        )) {
+          try {
+            const content = await readNavigationFileContent(path);
+            rememberMethods(
+              phpMethodCompletionsFromSource(content, normalizedClassName),
+            );
+
+            for (const traitName of phpTraitClassNames(content)) {
+              const resolvedTraitName = resolvePhpClassName(content, traitName);
+
+              if (resolvedTraitName) {
+                await collectMethods(resolvedTraitName);
+              }
+            }
+
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassName(content, parentClassName)
+              : null;
+
+            if (resolvedParentClassName) {
+              await collectMethods(resolvedParentClassName);
+            }
+
+            return;
+          } catch {
+            continue;
+          }
+        }
+      };
+
+      await collectMethods(resolvedVariableType);
+
+      const normalizedPrefix = accessContext.prefix.toLowerCase();
+
+      return Array.from(completions.values())
+        .filter((method) => method.name.toLowerCase().startsWith(normalizedPrefix))
+        .sort((left, right) => {
+          const leftExact = left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
+          const rightExact = right.name.toLowerCase() === normalizedPrefix ? 0 : 1;
+
+          if (leftExact !== rightExact) {
+            return leftExact - rightExact;
+          }
+
+          return left.name.localeCompare(right.name);
+        })
+        .slice(0, 80);
+    },
+    [
+      readNavigationFileContent,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const openPhpClassTarget = useCallback(
     async (className: string, label: string): Promise<boolean> => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
@@ -4055,6 +4169,7 @@ export function useWorkbenchController(
     openPinnedFile,
     previewFile,
     previewPath,
+    providePhpMethodCompletions,
     openSettingsPanel,
     openWorkspace,
     paletteOpen,

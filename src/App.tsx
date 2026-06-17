@@ -500,6 +500,7 @@ function App() {
             onLanguageServerError={workbench.reportLanguageServerError}
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
+            providePhpMethodCompletions={workbench.providePhpMethodCompletions}
           />
         )}
         {workbench.bottomPanelVisible ? (

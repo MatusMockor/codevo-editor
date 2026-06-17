@@ -370,8 +370,17 @@ fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .separator()
         .item(&quit)
         .build()?;
+    let edit = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
 
-    Menu::with_items(app, &[&file])
+    Menu::with_items(app, &[&file, &edit])
 }
 
 fn resolve_workspace_path(root_path: &Path, path: &str) -> Result<PathBuf, String> {

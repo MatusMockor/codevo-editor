@@ -14,6 +14,7 @@ import type {
   PhpSyntaxDiagnosticsGateway,
 } from "../domain/phpSyntaxDiagnostics";
 import { suspiciousPhpBareIdentifierDiagnostics } from "../domain/phpSyntaxDiagnostics";
+import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
@@ -40,6 +41,10 @@ interface EditorSurfaceProps {
   onLanguageServerError(error: unknown): void;
   onRevealTargetHandled(): void;
   phpSyntaxDiagnosticsGateway: PhpSyntaxDiagnosticsGateway;
+  providePhpMethodCompletions(
+    source: string,
+    position: EditorPosition,
+  ): Promise<PhpMethodCompletion[]>;
 }
 
 export function EditorSurface({
@@ -62,6 +67,7 @@ export function EditorSurface({
   onLanguageServerError,
   onRevealTargetHandled,
   phpSyntaxDiagnosticsGateway,
+  providePhpMethodCompletions,
 }: EditorSurfaceProps) {
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
@@ -70,6 +76,7 @@ export function EditorSurface({
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
   const errorReporterRef = useRef(onLanguageServerError);
+  const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
@@ -88,6 +95,10 @@ export function EditorSurface({
   }, [onLanguageServerError]);
 
   useEffect(() => {
+    phpMethodCompletionsRef.current = providePhpMethodCompletions;
+  }, [providePhpMethodCompletions]);
+
+  useEffect(() => {
     if (!monacoApi) {
       return;
     }
@@ -97,6 +108,8 @@ export function EditorSurface({
       flushPendingDocumentChange: (path) => flushPendingRef.current(path),
       getActiveDocument: () => activeDocumentRef.current,
       getRuntimeStatus: () => runtimeStatusRef.current,
+      providePhpMethodCompletions: (source, position) =>
+        phpMethodCompletionsRef.current(source, position),
       reportError: (error) => errorReporterRef.current(error),
     });
 
