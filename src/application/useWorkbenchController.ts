@@ -255,6 +255,8 @@ export function useWorkbenchController(
   const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
   const [languageServerPlan, setLanguageServerPlan] =
     useState<LanguageServerPlan | null>(null);
+  const [installingManagedPhpactor, setInstallingManagedPhpactor] =
+    useState(false);
   const [
     javaScriptTypeScriptLanguageServerPlan,
     setJavaScriptTypeScriptLanguageServerPlan,
@@ -1626,17 +1628,37 @@ export function useWorkbenchController(
 
       if (!descriptor?.php) {
         setLanguageServerPlan(null);
+        setNotices((current) =>
+          replaceWorkbenchNoticeGroup(current, `phpactor-setup:${path}`, []),
+        );
         return;
       }
 
       try {
         const tools = await phpToolGateway.detectPhpTools(path);
+        const phpSetupNoticeGroup = `phpactor-setup:${path}`;
 
         if (currentWorkspaceRootRef.current !== path) {
           return;
         }
 
         setPhpTools(tools);
+        if (tools.phpactor) {
+          setNotices((current) =>
+            replaceWorkbenchNoticeGroup(current, phpSetupNoticeGroup, []),
+          );
+        } else {
+          setNotices((current) =>
+            replaceWorkbenchNoticeGroup(current, phpSetupNoticeGroup, [
+              createWorkbenchNotice(
+                "warning",
+                "PHP IDE Engine",
+                "Install the managed PHP IDE engine (one-click user profile bootstrap) to enable hover, completion, definition, and implementation support.",
+                phpSetupNoticeGroup,
+              ),
+            ]),
+          );
+        }
         await refreshLanguageServerPlan(path);
       } catch (error) {
         reportError("PHP Tools", error);
@@ -4858,6 +4880,60 @@ export function useWorkbenchController(
     await stopLanguageServerRuntime();
   }, [stopLanguageServerRuntime]);
 
+  const installManagedPhpactor = useCallback(async () => {
+    if (!workspaceRoot || !workspaceDescriptor?.php) {
+      return;
+    }
+
+    if (installingManagedPhpactor) {
+      return;
+    }
+
+    setInstallingManagedPhpactor(true);
+    const targetWorkspaceRoot = workspaceRoot;
+
+    try {
+      await phpToolGateway.installManagedPhpactor();
+
+      if (currentWorkspaceRootRef.current !== targetWorkspaceRoot) {
+        return;
+      }
+
+      const tools = await phpToolGateway.detectPhpTools(targetWorkspaceRoot);
+
+      if (currentWorkspaceRootRef.current !== targetWorkspaceRoot) {
+        return;
+      }
+
+      if (tools.phpactor) {
+        setNotices((current) =>
+          replaceWorkbenchNoticeGroup(
+            current,
+            `phpactor-setup:${targetWorkspaceRoot}`,
+            [],
+          ),
+        );
+      }
+
+      setPhpTools(tools);
+      await refreshLanguageServerPlan(targetWorkspaceRoot);
+      setLanguageServerSetupOpen(false);
+      setMessage("Installed managed PHP IDE engine.");
+    } catch (error) {
+      reportLanguageServerError(error);
+    } finally {
+      setInstallingManagedPhpactor(false);
+    }
+  }, [
+    currentWorkspaceRootRef,
+    installingManagedPhpactor,
+    phpToolGateway,
+    refreshLanguageServerPlan,
+    reportLanguageServerError,
+    workspaceDescriptor,
+    workspaceRoot,
+  ]);
+
   const startReindex = useCallback(async (
     mode: WorkspaceReindexMode,
     language?: string,
@@ -5288,6 +5364,20 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "smart.installManagedPhpactor",
+      title: "Install Managed PHP IDE Engine",
+      category: "Intelligence",
+      isEnabled: () =>
+        Boolean(
+          workspaceRoot &&
+            workspaceDescriptor?.php &&
+            !phpTools?.phpactor &&
+            !installingManagedPhpactor,
+        ),
+      run: installManagedPhpactor,
+    });
+
+    registry.register({
       id: "smart.startLanguageServer",
       title: "Start PHP Language Server",
       category: "Intelligence",
@@ -5333,6 +5423,8 @@ export function useWorkbenchController(
     startLanguageServer,
     startIndexScan,
     startPhpReindex,
+    installManagedPhpactor,
+    installingManagedPhpactor,
     stopLanguageServer,
     toggleBottomPanel,
     toggleSmartMode,
@@ -5342,6 +5434,9 @@ export function useWorkbenchController(
     languageServerPlan,
     languageServerRuntimeStatus,
     selectedGitChange,
+    workspaceDescriptor,
+    workspaceRoot,
+    phpTools,
     workspaceTrust,
   ]);
 
@@ -6224,6 +6319,7 @@ export function useWorkbenchController(
     languageServerPlan,
     languageServerRuntimeStatus,
     languageServerSetupOpen,
+    installingManagedPhpactor,
     message,
     openDocuments,
     openFile,
@@ -6283,6 +6379,7 @@ export function useWorkbenchController(
     startHardReindex,
     startLanguageServer,
     startPhpReindex,
+    installManagedPhpactor,
     stopLanguageServer,
     settingsOpen,
     selectedGitChange,

@@ -10,6 +10,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from "react";
 import { useWorkbenchController } from "./application/useWorkbenchController";
+import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { BottomPanel } from "./components/BottomPanel";
 import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
@@ -21,6 +22,7 @@ import { GitChangesPanel } from "./components/GitChangesPanel";
 import { GitDiffPreview } from "./components/GitDiffPreview";
 import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
+import { NoticeToastHost } from "./components/NoticeToastHost";
 import { PhpTreePanel } from "./components/PhpTreePanel";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { QuickOpen } from "./components/QuickOpen";
@@ -259,6 +261,15 @@ function App() {
         .join(" · ") || null,
     [javaScriptTypeScriptLanguageServerLabel, languageServerLabel],
   );
+  const renderNoticeToast = useNoticeToastRenderers({
+    intelligenceMode: workbench.intelligenceMode,
+    onInstallManagedPhpactor: workbench.installManagedPhpactor,
+    isInstallingManagedPhpactor: workbench.installingManagedPhpactor,
+    onOpenLanguageServerSetup: () => workbench.setLanguageServerSetupOpen(true),
+    workspaceRoot: workbench.workspaceRoot,
+    workspaceTrusted: workbench.workspaceTrust?.trusted ?? false,
+  });
+
   const indexLabel = useMemo(
     () => indexProgressLabel(workbench.indexProgress),
     [workbench.indexProgress],
@@ -656,6 +667,11 @@ function App() {
         }
       />
 
+      <NoticeToastHost
+        notices={workbench.notices}
+        renderNotice={renderNoticeToast}
+      />
+
       <CommandPalette
         commands={workbench.commands}
         context={workbench.commandContext}
@@ -718,6 +734,12 @@ function App() {
       <LanguageServerSetup
         isOpen={workbench.languageServerSetupOpen}
         onClose={() => workbench.setLanguageServerSetupOpen(false)}
+        isInstallingManagedPhpactor={workbench.installingManagedPhpactor}
+        onInstallManagedPhpactor={
+          workbench.installingManagedPhpactor
+            ? undefined
+            : workbench.installManagedPhpactor
+        }
         plan={workbench.languageServerPlan}
       />
 

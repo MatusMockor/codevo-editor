@@ -36,6 +36,10 @@ export class TauriWorkspaceGateway
     return invoke<PhpToolAvailability>("detect_php_tools", { workspaceRoot });
   }
 
+  installManagedPhpactor(): Promise<void> {
+    return invoke<void>("install_managed_phpactor");
+  }
+
   detectWorkspace(path: string): Promise<WorkspaceDescriptor> {
     return invoke<WorkspaceDescriptor>("detect_workspace", { path });
   }
