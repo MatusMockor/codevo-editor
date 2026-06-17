@@ -63,11 +63,9 @@ export function SettingsDialog({
     useState<WorkspaceSettings>(workspaceSettings);
   const [draftTrusted, setDraftTrusted] = useState(false);
   const [ignorePatternsText, setIgnorePatternsText] = useState("");
-  const [saving, setSaving] = useState(false);
   const draftAppSettingsRef = useRef(appSettings);
   const draftWorkspaceSettingsRef = useRef(workspaceSettings);
   const draftTrustedRef = useRef(false);
-  const saveGenerationRef = useRef(0);
   const wasOpenRef = useRef(false);
   const hasWorkspace = Boolean(workspaceRoot);
 
@@ -104,10 +102,6 @@ export function SettingsDialog({
   }
 
   const saveDraft = (input: Partial<SettingsSaveInput>) => {
-    const generation = saveGenerationRef.current + 1;
-    saveGenerationRef.current = generation;
-    setSaving(true);
-
     void onSave({
       appSettings: input.appSettings ?? draftAppSettingsRef.current,
       trusted: hasWorkspace
@@ -115,13 +109,7 @@ export function SettingsDialog({
         : null,
       workspaceSettings:
         input.workspaceSettings ?? draftWorkspaceSettingsRef.current,
-    })
-      .catch(() => undefined)
-      .finally(() => {
-        if (saveGenerationRef.current === generation) {
-          setSaving(false);
-        }
-      });
+    }).catch(() => undefined);
   };
 
   const updateAppSettings = (nextSettings: AppSettings) => {
@@ -272,15 +260,6 @@ export function SettingsDialog({
               ) : null}
             </div>
           </div>
-
-          <footer className="settings-footer">
-            <span aria-live="polite" className="settings-save-status">
-              {saving ? "Saving..." : "Saved automatically"}
-            </span>
-            <button onClick={onClose} type="button">
-              Done
-            </button>
-          </footer>
         </div>
       </section>
     </div>

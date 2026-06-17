@@ -1209,14 +1209,19 @@ button {
 .tab-close {
   display: grid;
   place-items: center;
+  justify-self: center;
+  align-self: center;
   width: 18px;
   height: 18px;
-  margin-right: 4px;
   border-radius: var(--radius-sm);
   color: var(--color-text-subtle);
   opacity: 0;
   transition: opacity var(--motion-fast) var(--ease-standard),
     background-color var(--motion-fast) var(--ease-standard);
+}
+
+.tab-close svg {
+  display: block;
 }
 
 .editor-tab:hover .tab-close,
@@ -1599,8 +1604,9 @@ button {
 
 .settings-form {
   display: grid;
+  height: 100%;
   max-height: min(620px, calc(100vh - 80px));
-  grid-template-rows: 42px minmax(0, 1fr) 46px;
+  grid-template-rows: 42px minmax(0, 1fr);
 }
 
 .settings-header {
@@ -1609,7 +1615,7 @@ button {
   justify-content: space-between;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-strong);
-  font-weight: 700;
+  font-weight: 600;
   padding: 0 10px 0 14px;
 }
 
@@ -1625,10 +1631,12 @@ button {
   height: 26px;
   place-items: center;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-subtle);
   cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
 }
 
 .settings-header button:hover {
@@ -1654,29 +1662,35 @@ button {
 .settings-nav-item {
   min-height: 34px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
   padding: 0 10px;
   text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
 }
 
-.settings-nav-item:hover,
-.settings-nav-item.active {
+.settings-nav-item:hover {
   background: var(--color-hover);
+  color: var(--color-text);
+}
+
+.settings-nav-item.active {
+  background: var(--color-accent-soft);
   color: var(--color-text-strong);
 }
 
 .settings-section {
   min-height: 0;
   overflow: auto;
-  padding: 12px;
+  padding: 14px;
 }
 
 .settings-group {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .settings-field {
@@ -1689,7 +1703,7 @@ button {
 .settings-readout span {
   color: var(--color-text-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .settings-field input,
@@ -1697,22 +1711,24 @@ button {
 .settings-field textarea {
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-text);
   outline: 0;
-  padding: 0 9px;
+  padding: 0 10px;
+  transition: border-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
 }
 
 .settings-field input,
 .settings-field select {
-  height: 32px;
+  height: 34px;
 }
 
 .settings-field textarea {
   min-height: 168px;
-  padding: 8px 9px;
+  padding: 8px 10px;
   resize: vertical;
 }
 
@@ -1720,6 +1736,7 @@ button {
 .settings-field select:focus,
 .settings-field textarea:focus {
   border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
 }
 
 .settings-field input:disabled,
@@ -1732,12 +1749,12 @@ button {
 .settings-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 
 .settings-toggle input {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   accent-color: var(--color-accent);
 }
 
@@ -1745,7 +1762,7 @@ button {
   display: grid;
   gap: 5px;
   border-top: 1px solid var(--color-border);
-  padding-top: 10px;
+  padding-top: 12px;
 }
 
 .settings-readout code {
@@ -1757,43 +1774,6 @@ button {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.settings-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  border-top: 1px solid var(--color-border);
-  padding: 0 10px;
-}
-
-.settings-save-status {
-  color: var(--color-text-subtle);
-  font-size: 12px;
-}
-
-.settings-footer button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 30px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 6px;
-  background: var(--color-control);
-  color: var(--color-text);
-  cursor: pointer;
-  padding: 0 11px;
-}
-
-.settings-footer button:hover:not(:disabled) {
-  border-color: var(--color-accent);
-  color: var(--color-text-strong);
-}
-
-.settings-footer button:disabled {
-  color: var(--color-disabled);
-  cursor: not-allowed;
 }
 
 @media (max-width: 680px) {
