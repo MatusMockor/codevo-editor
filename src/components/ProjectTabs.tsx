@@ -13,7 +13,7 @@ export function ProjectTabs({
   onClose,
   workspaceTabs,
 }: ProjectTabsProps) {
-  if (workspaceTabs.length === 0) {
+  if (workspaceTabs.length <= 1) {
     return null;
   }
 
