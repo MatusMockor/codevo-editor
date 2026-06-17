@@ -43,14 +43,14 @@ export function ClassOpen({
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
       <section
-        aria-label="Open class"
+        aria-label="Open class or interface"
         className="quick-open"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="palette-search">
           <Search aria-hidden="true" size={17} />
           <input
-            aria-label="Search classes"
+            aria-label="Search classes and interfaces"
             autoFocus
             onChange={(event) => onChangeQuery(event.currentTarget.value)}
             onKeyDown={(event) => {
@@ -78,7 +78,7 @@ export function ClassOpen({
                 onOpen(activeResult);
               }
             }}
-            placeholder="Open class"
+            placeholder="Open class, interface, trait, or enum"
             value={query}
           />
         </div>
@@ -86,7 +86,7 @@ export function ClassOpen({
         <div className="quick-open-results">
           {isLoading ? <div className="quick-open-state">Searching...</div> : null}
           {!isLoading && results.length === 0 ? (
-            <div className="quick-open-state">No classes found</div>
+            <div className="quick-open-state">No types found</div>
           ) : null}
           {results.map((result, index) => (
             <button
@@ -104,7 +104,9 @@ export function ClassOpen({
               <Boxes aria-hidden="true" size={16} />
               <span>
                 <strong>{result.name}</strong>
-                <small>{result.fullyQualifiedName}</small>
+                <small>
+                  {result.kind} · {result.fullyQualifiedName}
+                </small>
               </span>
             </button>
           ))}

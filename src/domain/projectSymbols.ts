@@ -25,3 +25,16 @@ export interface ProjectSymbolSearchGateway {
     limit: number,
   ): Promise<ProjectSymbolSearchResult[]>;
 }
+
+const typeSymbolKinds = new Set<ProjectSymbolKind>([
+  "class",
+  "enum",
+  "interface",
+  "trait",
+]);
+
+export function isTypeProjectSymbol(
+  symbol: Pick<ProjectSymbolSearchResult, "kind">,
+): boolean {
+  return typeSymbolKinds.has(symbol.kind);
+}

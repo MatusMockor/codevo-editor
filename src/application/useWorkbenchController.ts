@@ -136,6 +136,7 @@ import type {
   ProjectSymbolSearchGateway,
   ProjectSymbolSearchResult,
 } from "../domain/projectSymbols";
+import { isTypeProjectSymbol } from "../domain/projectSymbols";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -4330,7 +4331,7 @@ export function useWorkbenchController(
           }
 
           setClassOpenResults(
-            results.filter((result) => result.kind === "class").slice(0, 80),
+            results.filter(isTypeProjectSymbol).slice(0, 80),
           );
           setMessage(null);
         })

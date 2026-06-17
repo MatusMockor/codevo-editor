@@ -398,6 +398,71 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith(parentPath, expect.stringContaining("inherited"));
   });
 
+  it("shows interfaces in Cmd+O class search results", async () => {
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Contracts\\CommentRepository",
+        kind: "interface",
+        lineNumber: 3,
+        name: "CommentRepository",
+        path: "/workspace/app/Contracts/CommentRepository.php",
+        relativePath: "app/Contracts/CommentRepository.php",
+      },
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Services\\CommentService",
+        kind: "class",
+        lineNumber: 5,
+        name: "CommentService",
+        path: "/workspace/app/Services/CommentService.php",
+        relativePath: "app/Services/CommentService.php",
+      },
+      {
+        column: 21,
+        containerName: "App\\Services\\CommentService",
+        fullyQualifiedName: "App\\Services\\CommentService::store",
+        kind: "method",
+        lineNumber: 12,
+        name: "store",
+        path: "/workspace/app/Services/CommentService.php",
+        relativePath: "app/Services/CommentService.php",
+      },
+    ];
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "lightSmart",
+      },
+    });
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "class.quickOpen",
+    );
+
+    act(() => {
+      command?.run();
+      getWorkbench().setClassOpenQuery("Comment");
+    });
+    await waitForClassSearch();
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).toHaveBeenCalledWith("/workspace", "Comment", 120);
+    expect(getWorkbench().classOpenResults.map((result) => result.kind)).toEqual([
+      "interface",
+      "class",
+    ]);
+  });
+
   it("uses the project index for go to definition when the language server is unavailable", async () => {
     const controllerPath = "/workspace/src/CommentController.php";
     const agentPath = "/workspace/src/CommentsAgent.php";
@@ -1577,6 +1642,13 @@ async function flushAsyncTurns(count = 12): Promise<void> {
     for (let index = 0; index < count; index += 1) {
       await Promise.resolve();
     }
+  });
+}
+
+async function waitForClassSearch(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 160));
+    await Promise.resolve();
   });
 }
 
