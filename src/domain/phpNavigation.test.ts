@@ -148,6 +148,24 @@ class UserAccountModel extends Model
       ),
     ).toBe("Illuminate\\Database\\Eloquent\\Model");
   });
+
+  it("resolves relative qualified class names inside a namespace", () => {
+    const source = `<?php
+namespace Illuminate\\Http;
+
+class Request
+{
+    use Concerns\\InteractsWithInput;
+}
+`;
+
+    expect(resolvePhpClassName(source, "Concerns\\InteractsWithInput")).toBe(
+      "Illuminate\\Http\\Concerns\\InteractsWithInput",
+    );
+    expect(resolvePhpClassName(source, "\\App\\Models\\User")).toBe(
+      "App\\Models\\User",
+    );
+  });
 });
 
 function phpProjectDescriptor(): PhpProjectDescriptor {
@@ -172,6 +190,8 @@ function phpProjectDescriptor(): PhpProjectDescriptor {
         version: "13.0.0",
       },
     ],
+    phpPlatformVersion: null,
+    phpVersionConstraint: "^8.3",
     psr4Roots: [
       {
         dev: false,

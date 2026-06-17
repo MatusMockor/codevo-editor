@@ -2224,7 +2224,8 @@ export function useWorkbenchController(
 
   const resolvePhpClassReference = useCallback(
     (source: string, className: string): string | null => {
-      const normalizedClassName = className.trim().replace(/^\\+/, "");
+      const classReference = className.trim();
+      const normalizedClassName = classReference.replace(/^\\+/, "");
 
       if (!normalizedClassName) {
         return null;
@@ -2242,15 +2243,19 @@ export function useWorkbenchController(
         return parentClassName ? resolvePhpClassName(source, parentClassName) : null;
       }
 
-      return resolvePhpClassName(source, normalizedClassName);
+      return resolvePhpClassName(source, classReference);
     },
     [],
   );
 
   const resolvePhpDeclaredType = useCallback(
     (source: string, typeName: string | null): string | null => {
+      const rawTypeName = typeName?.trim() ?? "";
+      const isFullyQualified = rawTypeName.replace(/^\?/, "").startsWith("\\");
       const candidate = typeName ? phpDeclaredTypeCandidate(typeName) : null;
-      return candidate ? resolvePhpClassReference(source, candidate) : null;
+      return candidate
+        ? resolvePhpClassReference(source, isFullyQualified ? `\\${candidate}` : candidate)
+        : null;
     },
     [resolvePhpClassReference],
   );

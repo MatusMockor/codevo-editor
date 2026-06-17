@@ -67,7 +67,9 @@ export function resolvePhpClassName(
   source: string,
   className: string,
 ): string | null {
-  const normalizedClassName = className.trim().replace(/^\\+/, "");
+  const trimmedClassName = className.trim();
+  const isFullyQualified = trimmedClassName.startsWith("\\");
+  const normalizedClassName = trimmedClassName.replace(/^\\+/, "");
 
   if (!normalizedClassName) {
     return null;
@@ -81,7 +83,7 @@ export function resolvePhpClassName(
     return [importedName, ...remainingSegments].join("\\");
   }
 
-  if (normalizedClassName.includes("\\")) {
+  if (isFullyQualified) {
     return normalizedClassName;
   }
 
@@ -90,7 +92,6 @@ export function resolvePhpClassName(
   if (namespace) {
     return `${namespace}\\${normalizedClassName}`;
   }
-
   return normalizedClassName;
 }
 

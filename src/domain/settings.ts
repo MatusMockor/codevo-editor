@@ -32,6 +32,7 @@ export interface WorkspaceSettings {
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
   phpBackend: PhpBackendPreference;
+  phpVersionOverride: string | null;
   phpactorPath: string | null;
   revealActiveFileInTree: boolean;
   session: WorkspaceSessionState;
@@ -69,6 +70,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     intelligenceMode: "basic",
     intelephensePath: null,
     phpBackend: "auto",
+    phpVersionOverride: null,
     phpactorPath: null,
     revealActiveFileInTree: true,
     session: defaultWorkspaceSessionState(),
@@ -130,6 +132,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     phpBackend: isPhpBackendPreference(value.phpBackend)
       ? value.phpBackend
       : defaults.phpBackend,
+    phpVersionOverride: normalizeNullableString(
+      value.phpVersionOverride,
+      defaults.phpVersionOverride,
+    ),
     phpactorPath: normalizeNullableString(
       value.phpactorPath,
       defaults.phpactorPath,

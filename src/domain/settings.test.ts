@@ -26,6 +26,7 @@ describe("settings defaults", () => {
       intelligenceMode: "basic",
       intelephensePath: null,
       phpBackend: "auto",
+      phpVersionOverride: null,
       phpactorPath: null,
       revealActiveFileInTree: true,
       session: {
@@ -85,6 +86,7 @@ describe("normalizeWorkspaceSettings", () => {
         intelligenceMode: "lightSmart",
         intelephensePath: "/tools/intelephense",
         phpBackend: "phpactor",
+        phpVersionOverride: "8.3",
         phpactorPath: " /tools/phpactor ",
         revealActiveFileInTree: false,
         session: {
@@ -105,6 +107,7 @@ describe("normalizeWorkspaceSettings", () => {
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
+      phpVersionOverride: "8.3",
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
       session: {

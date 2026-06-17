@@ -686,6 +686,8 @@ class CommentController
       "/workspace/vendor/laravel/framework/src/Illuminate/Foundation/Http/FormRequest.php";
     const laravelRequestPath =
       "/workspace/vendor/laravel/framework/src/Illuminate/Http/Request.php";
+    const inputTraitPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Http/Concerns/InteractsWithInput.php";
     const symfonyRequestPath =
       "/workspace/vendor/symfony/http-foundation/Request.php";
     const controllerSource = `<?php
@@ -758,6 +760,25 @@ use Symfony\\Component\\HttpFoundation\\Request as SymfonyRequest;
 
 class Request extends SymfonyRequest
 {
+    use Concerns\\InteractsWithInput;
+}
+`;
+        }
+
+        if (path === inputTraitPath) {
+          return `<?php
+namespace Illuminate\\Http\\Concerns;
+
+trait InteractsWithInput
+{
+    /**
+     * Retrieve an input item from the request.
+     *
+     * @param  string|null  $key
+     * @param  mixed  $default
+     * @return mixed
+     */
+    public function input($key = null, $default = null) {}
 }
 `;
         }
@@ -811,6 +832,25 @@ class Request
         name: "getUserData",
         parameters: "",
         returnType: "array",
+      },
+    ]);
+
+    const inputCompletionSource = controllerSource.replace(
+      "$request->get",
+      "$request->inp",
+    );
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        inputCompletionSource,
+        positionAfter(inputCompletionSource, "$request->inp"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Http\\Concerns\\InteractsWithInput",
+        name: "input",
+        parameters: "string|null $key = null, mixed $default = null",
+        returnType: "mixed",
       },
     ]);
 
@@ -1858,6 +1898,8 @@ function phpProjectDescriptor(): PhpProjectDescriptor {
         version: "8.0.0",
       },
     ],
+    phpPlatformVersion: null,
+    phpVersionConstraint: "^8.3",
     psr4Roots: [
       {
         dev: false,

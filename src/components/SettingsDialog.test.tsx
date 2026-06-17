@@ -33,6 +33,7 @@ describe("SettingsDialog", () => {
           onClose={vi.fn()}
           onSave={onSave}
           phpTools={null}
+          workspaceDescriptor={null}
           workspaceRoot="/workspace"
           workspaceSettings={defaultWorkspaceSettings()}
           workspaceTrust={{ rootPath: "/workspace", trusted: true }}

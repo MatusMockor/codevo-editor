@@ -16,6 +16,7 @@ describe("BrowserSettingsGateway", () => {
       intelligenceMode: "basic",
       intelephensePath: null,
       phpBackend: "auto",
+      phpVersionOverride: null,
       phpactorPath: null,
       revealActiveFileInTree: true,
       session: {
@@ -42,6 +43,7 @@ describe("BrowserSettingsGateway", () => {
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
+      phpVersionOverride: "8.2",
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
       session: {
@@ -63,6 +65,7 @@ describe("BrowserSettingsGateway", () => {
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
       phpBackend: "phpactor",
+      phpVersionOverride: "8.2",
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
       session: {
@@ -91,6 +94,7 @@ describe("BrowserSettingsGateway", () => {
       intelligenceMode: "basic",
       intelephensePath: null,
       phpBackend: "auto",
+      phpVersionOverride: null,
       phpactorPath: null,
       revealActiveFileInTree: true,
       session: {

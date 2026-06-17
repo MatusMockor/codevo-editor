@@ -120,19 +120,30 @@ function App() {
     }
 
     const packageName = php.packageName || "PHP Composer";
+    const phpLevel =
+      workbench.workspaceSettings.phpVersionOverride ||
+      php.phpPlatformVersion ||
+      php.phpVersionConstraint;
+    const packageLabel = phpLevel
+      ? `${packageName} · PHP ${phpLevel}`
+      : packageName;
 
     if (workbench.phpTools?.phpactor) {
-      return `${packageName} · ${toolSourceLabel(
+      return `${packageLabel} · ${toolSourceLabel(
         workbench.phpTools.phpactor.source,
       )}`;
     }
 
     if (workbench.phpTools?.intelephense) {
-      return `${packageName} · Intelephense`;
+      return `${packageLabel} · Intelephense`;
     }
 
-    return `${packageName} · PHP tools missing`;
-  }, [workbench.phpTools, workbench.workspaceDescriptor]);
+    return `${packageLabel} · PHP tools missing`;
+  }, [
+    workbench.phpTools,
+    workbench.workspaceDescriptor,
+    workbench.workspaceSettings.phpVersionOverride,
+  ]);
   const languageServerLabel = useMemo(() => {
     const runtimeLabel = languageServerStatusLabel(
       workbench.languageServerRuntimeStatus,
@@ -625,6 +636,7 @@ function App() {
           )
         }
         phpTools={workbench.phpTools}
+        workspaceDescriptor={workbench.workspaceDescriptor}
         workspaceRoot={workbench.workspaceRoot}
         workspaceSettings={workbench.workspaceSettings}
         workspaceTrust={workbench.workspaceTrust}

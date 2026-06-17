@@ -30,6 +30,8 @@ export interface PhpProjectDescriptor {
   hasComposer: boolean;
   packageName: string | null;
   packages: ComposerPackageDescriptor[];
+  phpPlatformVersion: string | null;
+  phpVersionConstraint: string | null;
   psr4Roots: Psr4Root[];
 }
 

@@ -144,6 +144,34 @@ class Request
     ]);
   });
 
+  it("uses PHPDoc parameter types when method parameters are untyped", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+trait InteractsWithInput
+{
+    /**
+     * Retrieve an input item from the request.
+     *
+     * @param  string|null  $key
+     * @param  mixed  $default
+     * @return mixed
+     */
+    public function input($key = null, $default = null) {}
+}
+`,
+        "Illuminate\\Http\\Concerns\\InteractsWithInput",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Illuminate\\Http\\Concerns\\InteractsWithInput",
+        name: "input",
+        parameters: "string|null $key = null, mixed $default = null",
+        returnType: "mixed",
+      },
+    ]);
+  });
+
   it("parses parameter names, types, defaults and optionality", () => {
     expect(
       phpMethodParameters(

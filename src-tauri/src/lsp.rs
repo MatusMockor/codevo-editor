@@ -312,6 +312,8 @@ mod tests {
                 has_composer: true,
                 package_name: Some("example/app".to_string()),
                 packages: Vec::new(),
+                php_platform_version: None,
+                php_version_constraint: Some("^8.3".to_string()),
                 psr4_roots: Vec::new(),
             }),
         }

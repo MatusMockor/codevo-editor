@@ -152,16 +152,19 @@ export function phpMethodCompletionsFromSource(
       continue;
     }
 
+    const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
+    const docBlock = phpDocBlockBefore(source, functionOffset);
+
     methods.push({
       declaringClassName,
       name,
-      parameters: normalizeWhitespace(match[3] ?? ""),
+      parameters: enrichParametersFromPhpDoc(
+        normalizeWhitespace(match[3] ?? ""),
+        docBlock,
+      ),
       returnType:
         normalizeReturnType(match[4] ?? null) ??
-        phpDocReturnTypeBefore(
-          source,
-          (match.index ?? 0) + match[0].lastIndexOf("function"),
-        ),
+        phpDocReturnTypeFromBlock(docBlock),
       ...(modifiers.includes("static") ? { isStatic: true } : {}),
     });
   }
@@ -237,7 +240,7 @@ function normalizeReceiverExpression(receiverExpression: string): string {
   return receiverExpression.replace(/\s*->\s*/g, "->").trim();
 }
 
-function phpDocReturnTypeBefore(source: string, functionOffset: number): string | null {
+function phpDocBlockBefore(source: string, functionOffset: number): string | null {
   const beforeFunction = source.slice(0, functionOffset);
   const docStart = beforeFunction.lastIndexOf("/**");
   const docEnd = beforeFunction.lastIndexOf("*/");
@@ -255,11 +258,70 @@ function phpDocReturnTypeBefore(source: string, functionOffset: number): string 
     return null;
   }
 
-  const returnMatch = /@return\s+([^\s*]+)/.exec(
-    beforeFunction.slice(docStart, docEnd + 2),
-  );
+  return beforeFunction.slice(docStart, docEnd + 2);
+}
+
+function phpDocReturnTypeFromBlock(docBlock: string | null): string | null {
+  const returnMatch = /@return\s+([^\s*]+)/.exec(docBlock ?? "");
 
   return normalizeReturnType(returnMatch?.[1] ?? null);
+}
+
+function enrichParametersFromPhpDoc(
+  parameters: string,
+  docBlock: string | null,
+): string {
+  if (!parameters || !docBlock) {
+    return parameters;
+  }
+
+  const docTypes = phpDocParameterTypes(docBlock);
+
+  if (!docTypes.size) {
+    return parameters;
+  }
+
+  return splitPhpParameterList(parameters)
+    .map((parameter) => enrichParameterFromPhpDoc(parameter, docTypes))
+    .join(", ");
+}
+
+function enrichParameterFromPhpDoc(
+  parameter: string,
+  docTypes: Map<string, string>,
+): string {
+  const parsedParameter = phpMethodParameters(parameter)[0];
+
+  if (!parsedParameter || parsedParameter.type) {
+    return parameter;
+  }
+
+  const docType = docTypes.get(parsedParameter.name.slice(1).toLowerCase());
+
+  if (!docType) {
+    return parameter;
+  }
+
+  return `${docType} ${parameter}`;
+}
+
+function phpDocParameterTypes(docBlock: string): Map<string, string> {
+  const types = new Map<string, string>();
+
+  for (const match of docBlock.matchAll(
+    /@param\s+([^\s*]+)\s+(?:&\s*)?(?:\.\.\.)?\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
+  )) {
+    const type = normalizeReturnType(match[1] ?? "");
+    const name = match[2]?.toLowerCase();
+
+    if (!type || !name) {
+      continue;
+    }
+
+    types.set(name, type);
+  }
+
+  return types;
 }
 
 function phpArgumentIndex(argumentsSource: string): number {

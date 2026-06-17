@@ -24,6 +24,8 @@ impl ComposerMetadataDetector for LocalComposerMetadataDetector {
         Ok(Some(ComposerProjectMetadata {
             classmap_roots: collect_classmap_roots(&manifest, false),
             packages,
+            php_platform_version: composer_php_platform_version(&manifest),
+            php_version_constraint: composer_php_version_constraint(&manifest),
             psr4_roots: collect_psr4_roots(&manifest, false),
             root_package_name: manifest
                 .get("name")
@@ -38,6 +40,8 @@ impl ComposerMetadataDetector for LocalComposerMetadataDetector {
 pub struct ComposerProjectMetadata {
     pub classmap_roots: Vec<ComposerClassmapRoot>,
     pub packages: Vec<ComposerPackageMetadata>,
+    pub php_platform_version: Option<String>,
+    pub php_version_constraint: Option<String>,
     pub psr4_roots: Vec<ComposerPsr4Root>,
     pub root_package_name: Option<String>,
 }
@@ -270,6 +274,23 @@ fn normalize_composer_paths(value: &Value) -> Vec<String> {
     }
 }
 
+fn composer_php_version_constraint(composer: &Value) -> Option<String> {
+    composer
+        .get("require")
+        .and_then(|require| require.get("php"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn composer_php_platform_version(composer: &Value) -> Option<String> {
+    composer
+        .get("config")
+        .and_then(|config| config.get("platform"))
+        .and_then(|platform| platform.get("php"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
 fn read_json_file(path: &Path, label: &str) -> io::Result<Value> {
     let content = fs::read_to_string(path)?;
     serde_json::from_str(&content).map_err(|error| {
@@ -307,6 +328,8 @@ mod tests {
             root.join("composer.json"),
             r#"{
               "name": "example/app",
+              "require": { "php": "^8.3" },
+              "config": { "platform": { "php": "8.3.7" } },
               "autoload": {
                 "psr-4": { "App\\": "src/" },
                 "classmap": "legacy/"
@@ -325,6 +348,8 @@ mod tests {
             .expect("metadata");
 
         assert_eq!(metadata.root_package_name.as_deref(), Some("example/app"));
+        assert_eq!(metadata.php_version_constraint.as_deref(), Some("^8.3"));
+        assert_eq!(metadata.php_platform_version.as_deref(), Some("8.3.7"));
         assert_eq!(metadata.psr4_roots.len(), 2);
         assert_eq!(metadata.psr4_roots[0].namespace, "App\\");
         assert_eq!(metadata.psr4_roots[0].paths, vec!["src/"]);

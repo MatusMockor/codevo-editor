@@ -12,6 +12,7 @@ import {
 import type { WorkspaceTrustState } from "../domain/trust";
 import type {
   IntelligenceMode,
+  WorkspaceDescriptor,
   PhpToolAvailability,
   ToolLocation,
 } from "../domain/workspace";
@@ -26,6 +27,7 @@ interface SettingsDialogProps {
   appSettings: AppSettings;
   isOpen: boolean;
   phpTools: PhpToolAvailability | null;
+  workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceRoot: string | null;
   workspaceSettings: WorkspaceSettings;
   workspaceTrust: WorkspaceTrustState | null;
@@ -48,6 +50,7 @@ export function SettingsDialog({
   onClose,
   onSave,
   phpTools,
+  workspaceDescriptor,
   workspaceRoot,
   workspaceSettings,
   workspaceTrust,
@@ -224,6 +227,12 @@ export function SettingsDialog({
                       phpBackend,
                     })
                   }
+                  onChangePhpVersionOverride={(phpVersionOverride) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      phpVersionOverride: nullableInputValue(phpVersionOverride),
+                    })
+                  }
                   onChangeToolPath={(key, value) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -231,6 +240,7 @@ export function SettingsDialog({
                     })
                   }
                   phpTools={phpTools}
+                  workspaceDescriptor={workspaceDescriptor}
                   workspaceSettings={draftWorkspaceSettings}
                 />
               ) : null}
@@ -360,8 +370,10 @@ function GeneralSettings({
 interface PhpSettingsProps {
   hasWorkspace: boolean;
   phpTools: PhpToolAvailability | null;
+  workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceSettings: WorkspaceSettings;
   onChangePhpBackend(backend: PhpBackendPreference): void;
+  onChangePhpVersionOverride(version: string): void;
   onChangeToolPath(
     key: "phpactorPath" | "intelephensePath",
     value: string,
@@ -371,10 +383,16 @@ interface PhpSettingsProps {
 function PhpSettings({
   hasWorkspace,
   onChangePhpBackend,
+  onChangePhpVersionOverride,
   onChangeToolPath,
   phpTools,
+  workspaceDescriptor,
   workspaceSettings,
 }: PhpSettingsProps) {
+  const detectedPhpVersion = detectedComposerPhpVersion(workspaceDescriptor);
+  const effectivePhpVersion =
+    workspaceSettings.phpVersionOverride || detectedPhpVersion || "Auto";
+
   return (
     <div className="settings-group">
       <label className="settings-field">
@@ -392,6 +410,18 @@ function PhpSettings({
           <option value="phpactor">Managed PHP engine</option>
           <option value="intelephense">Intelephense</option>
         </select>
+      </label>
+
+      <label className="settings-field">
+        <span>PHP language level override</span>
+        <input
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangePhpVersionOverride(event.currentTarget.value)
+          }
+          placeholder={detectedPhpVersion || "Composer / Auto"}
+          value={workspaceSettings.phpVersionOverride || ""}
+        />
       </label>
 
       <label className="settings-field">
@@ -419,6 +449,14 @@ function PhpSettings({
       </label>
 
       <div className="settings-readout">
+        <span>Composer PHP</span>
+        <code>{detectedPhpVersion || "Not declared"}</code>
+      </div>
+      <div className="settings-readout">
+        <span>Effective PHP level</span>
+        <code>{effectivePhpVersion}</code>
+      </div>
+      <div className="settings-readout">
         <span>Detected PHP engine</span>
         <code>{detectedToolPath(phpTools?.phpactor)}</code>
       </div>
@@ -428,6 +466,18 @@ function PhpSettings({
       </div>
     </div>
   );
+}
+
+function detectedComposerPhpVersion(
+  workspaceDescriptor: WorkspaceDescriptor | null,
+): string | null {
+  const php = workspaceDescriptor?.php;
+
+  if (!php) {
+    return null;
+  }
+
+  return php.phpPlatformVersion || php.phpVersionConstraint || null;
 }
 
 interface IndexSettingsProps {

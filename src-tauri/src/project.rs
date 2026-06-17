@@ -19,6 +19,8 @@ pub struct PhpProjectDescriptor {
     pub has_composer: bool,
     pub package_name: Option<String>,
     pub packages: Vec<ComposerPackageMetadata>,
+    pub php_platform_version: Option<String>,
+    pub php_version_constraint: Option<String>,
     pub psr4_roots: Vec<ComposerPsr4Root>,
 }
 
@@ -70,6 +72,8 @@ impl<D: ComposerMetadataDetector> WorkspaceDetector for ComposerWorkspaceDetecto
                 has_composer: true,
                 package_name: metadata.root_package_name,
                 packages: metadata.packages,
+                php_platform_version: metadata.php_platform_version,
+                php_version_constraint: metadata.php_version_constraint,
                 psr4_roots: metadata.psr4_roots,
             }),
         })
@@ -99,6 +103,7 @@ mod tests {
             root.join("composer.json"),
             r#"{
               "name": "example/app",
+              "require": { "php": "^8.2" },
               "autoload": { "psr-4": { "App\\": "src/" } },
               "autoload-dev": { "psr-4": { "Tests\\": ["tests/", "spec/"] } }
             }"#,
@@ -125,6 +130,8 @@ mod tests {
 
         assert!(php.has_composer);
         assert_eq!(php.package_name.as_deref(), Some("example/app"));
+        assert_eq!(php.php_version_constraint.as_deref(), Some("^8.2"));
+        assert_eq!(php.php_platform_version, None);
         assert_eq!(php.psr4_roots.len(), 2);
         assert_eq!(php.psr4_roots[0].namespace, "App\\");
         assert!(!php.psr4_roots[0].dev);
