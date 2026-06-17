@@ -71,6 +71,11 @@ import {
   type LanguageServerLocation,
 } from "../domain/languageServerFeatures";
 import {
+  matchesShortcut,
+  shortcutForCommand,
+  type KeymapCommandId,
+} from "../domain/keymap";
+import {
   implementationChooserTitle,
   implementationTargetFromLocation,
   type ImplementationTarget,
@@ -148,6 +153,7 @@ import {
   defaultWorkspaceSettings,
   type AppSettings,
   type SettingsGateway,
+  type StatusBarItemVisibility,
   type WorkspaceSessionState,
   type WorkspaceSettings,
 } from "../domain/settings";
@@ -186,6 +192,16 @@ export interface WorkbenchWorkspaceGateways {
 interface OpenFileOptions {
   pin?: boolean;
   recordNavigation?: boolean;
+}
+
+interface PhpClassMemberCacheEntry {
+  members: PhpMethodCompletion[];
+  sourceSignature: string;
+}
+
+interface PhpClassMemberReadResult {
+  content: string;
+  members: PhpMethodCompletion[];
 }
 
 const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
@@ -345,6 +361,9 @@ export function useWorkbenchController(
   >({});
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
+    {},
+  );
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
@@ -628,6 +647,7 @@ export function useWorkbenchController(
     pendingIndexScanRef.current = false;
     activeIndexRootRef.current = null;
     lastPhpFileOutlineRefreshKeyRef.current = null;
+    phpClassMemberCacheRef.current = {};
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
     setPhpTree(emptyPhpTree());
@@ -1033,6 +1053,7 @@ export function useWorkbenchController(
       setClassOpenResults([]);
       setFileStructureScope("current");
       lastPhpFileOutlineRefreshKeyRef.current = null;
+      phpClassMemberCacheRef.current = {};
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
       autoStartedLanguageServerRootRef.current = null;
@@ -1887,6 +1908,27 @@ export function useWorkbenchController(
     [persistWorkspaceSettings, reportError, workspaceRoot],
   );
 
+  const setStatusBarItemVisibility = useCallback(
+    async (key: keyof StatusBarItemVisibility, visible: boolean) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      try {
+        await persistWorkspaceSettings(workspaceRoot, {
+          ...workspaceSettingsRef.current,
+          statusBar: {
+            ...workspaceSettingsRef.current.statusBar,
+            [key]: visible,
+          },
+        });
+      } catch (error) {
+        reportError("Status Bar", error);
+      }
+    },
+    [persistWorkspaceSettings, reportError, workspaceRoot],
+  );
+
   const setSmartMode = useCallback(
     async (mode: IntelligenceMode) => {
       if (!workspaceRoot) {
@@ -2311,6 +2353,37 @@ export function useWorkbenchController(
     ],
   );
 
+  const readPhpClassMembersFromPath = useCallback(
+    async (
+      path: string,
+      className: string,
+    ): Promise<PhpClassMemberReadResult> => {
+      const content = await readNavigationFileContent(path);
+      const sourceSignature = phpSourceSignature(content);
+      const cacheKey = phpClassMemberCacheKey(path, className);
+      const cached = phpClassMemberCacheRef.current[cacheKey];
+
+      if (cached?.sourceSignature === sourceSignature) {
+        return {
+          content,
+          members: cached.members,
+        };
+      }
+
+      const members = phpMethodCompletionsFromSource(content, className);
+      phpClassMemberCacheRef.current[cacheKey] = {
+        members,
+        sourceSignature,
+      };
+
+      return {
+        content,
+        members,
+      };
+    },
+    [readNavigationFileContent],
+  );
+
   const collectPhpMethodsForClass = useCallback(
     async (className: string): Promise<PhpMethodCompletion[]> => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
@@ -2321,7 +2394,7 @@ export function useWorkbenchController(
       const visitedClassNames = new Set<string>();
       const rememberMethods = (methods: PhpMethodCompletion[]) => {
         for (const method of methods) {
-          const key = method.name.toLowerCase();
+          const key = `${method.kind ?? "method"}:${method.name.toLowerCase()}`;
 
           if (completions.has(key)) {
             continue;
@@ -2342,10 +2415,11 @@ export function useWorkbenchController(
 
         for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
           try {
-            const content = await readNavigationFileContent(path);
-            rememberMethods(
-              phpMethodCompletionsFromSource(content, normalizedClassName),
+            const { content, members } = await readPhpClassMembersFromPath(
+              path,
+              normalizedClassName,
             );
+            rememberMethods(members);
 
             for (const traitName of phpTraitClassNames(content)) {
               const resolvedTraitName = resolvePhpClassName(content, traitName);
@@ -2376,7 +2450,7 @@ export function useWorkbenchController(
       return Array.from(completions.values());
     },
     [
-      readNavigationFileContent,
+      readPhpClassMembersFromPath,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
@@ -2471,11 +2545,11 @@ export function useWorkbenchController(
 
       for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
         try {
-          const content = await readNavigationFileContent(path);
-          const method = phpMethodCompletionsFromSource(
-            content,
+          const { content, members } = await readPhpClassMembersFromPath(
+            path,
             normalizedClassName,
-          ).find(
+          );
+          const method = members.find(
             (candidate) =>
               candidate.name.toLowerCase() === methodName.toLowerCase(),
           );
@@ -2538,7 +2612,7 @@ export function useWorkbenchController(
       return null;
     },
     [
-      readNavigationFileContent,
+      readPhpClassMembersFromPath,
       resolvePhpClassReference,
       resolvePhpDeclaredType,
       resolvePhpClassSourcePaths,
@@ -2760,7 +2834,7 @@ export function useWorkbenchController(
         parameters: phpMethodParameters(method.parameters),
       };
     },
-    [resolvePhpReceiverMethodCompletions],
+    [resolvePhpReceiverMethodCompletions, resolvePhpStaticMethodCompletions],
   );
 
   const openPhpClassTarget = useCallback(
@@ -3719,8 +3793,71 @@ export function useWorkbenchController(
     setSettingsOpen(true);
   }, []);
 
+  const closeFloatingSurface = useCallback((): boolean => {
+    if (implementationChooser) {
+      setImplementationChooser(null);
+      return true;
+    }
+
+    if (languageServerSetupOpen) {
+      setLanguageServerSetupOpen(false);
+      return true;
+    }
+
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      return true;
+    }
+
+    if (fileStructureOpen) {
+      setFileStructureOpen(false);
+      return true;
+    }
+
+    if (textSearchOpen) {
+      setTextSearchOpen(false);
+      return true;
+    }
+
+    if (classOpenOpen) {
+      setClassOpenOpen(false);
+      return true;
+    }
+
+    if (quickOpenOpen) {
+      setQuickOpenOpen(false);
+      return true;
+    }
+
+    if (paletteOpen) {
+      setPaletteOpen(false);
+      return true;
+    }
+
+    if (selectedGitChange || gitDiffLoading) {
+      closeGitDiffPreview();
+      return true;
+    }
+
+    return false;
+  }, [
+    classOpenOpen,
+    closeGitDiffPreview,
+    fileStructureOpen,
+    gitDiffLoading,
+    implementationChooser,
+    languageServerSetupOpen,
+    paletteOpen,
+    quickOpenOpen,
+    selectedGitChange,
+    settingsOpen,
+    textSearchOpen,
+  ]);
+
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
+    const shortcut = (commandId: KeymapCommandId) =>
+      shortcutForCommand(appSettings.keymap, commandId);
 
     registry.register({
       id: "workspace.open",
@@ -3760,7 +3897,7 @@ export function useWorkbenchController(
       id: "file.quickOpen",
       title: "Quick Open File",
       category: "File",
-      shortcut: "Cmd+P",
+      shortcut: shortcut("file.quickOpen"),
       isEnabled: (context) => context.hasWorkspace,
       run: () => {
         setClassOpenOpen(false);
@@ -3772,7 +3909,7 @@ export function useWorkbenchController(
       id: "class.quickOpen",
       title: "Open Class",
       category: "PHP",
-      shortcut: "Cmd+O",
+      shortcut: shortcut("class.quickOpen"),
       isEnabled: (context) => context.hasWorkspace,
       run: () => {
         setQuickOpenOpen(false);
@@ -3784,7 +3921,7 @@ export function useWorkbenchController(
       id: "search.text",
       title: "Search Text",
       category: "Search",
-      shortcut: "Cmd+Shift+F",
+      shortcut: shortcut("search.text"),
       isEnabled: (context) => context.hasWorkspace,
       run: () => setTextSearchOpen(true),
     });
@@ -3793,7 +3930,7 @@ export function useWorkbenchController(
       id: "navigation.back",
       title: "Go Back",
       category: "Navigation",
-      shortcut: "Cmd+[",
+      shortcut: shortcut("navigation.back"),
       isEnabled: () => navigationHistory.backStack.length > 0,
       run: navigateBackward,
     });
@@ -3802,7 +3939,7 @@ export function useWorkbenchController(
       id: "navigation.forward",
       title: "Go Forward",
       category: "Navigation",
-      shortcut: "Cmd+]",
+      shortcut: shortcut("navigation.forward"),
       isEnabled: () => navigationHistory.forwardStack.length > 0,
       run: navigateForwardInHistory,
     });
@@ -3835,7 +3972,7 @@ export function useWorkbenchController(
       id: "editor.save",
       title: "Save File",
       category: "Editor",
-      shortcut: "Cmd+S",
+      shortcut: shortcut("editor.save"),
       isEnabled: (context) =>
         context.hasActiveDocument && context.activeDocumentDirty,
       run: saveActiveDocument,
@@ -3845,7 +3982,7 @@ export function useWorkbenchController(
       id: "editor.closeTab",
       title: "Close",
       category: "Editor",
-      shortcut: "Cmd+W",
+      shortcut: shortcut("editor.closeTab"),
       isEnabled: () =>
         Boolean(activeDocument || selectedGitChange || gitDiffLoading || isTauri()),
       run: closeActiveSurface,
@@ -3855,7 +3992,7 @@ export function useWorkbenchController(
       id: "editor.goToDefinition",
       title: "Go to Definition",
       category: "Editor",
-      shortcut: "Cmd+B",
+      shortcut: shortcut("editor.goToDefinition"),
       isEnabled: () => Boolean(activeDocument),
       run: goToDefinition,
     });
@@ -3864,7 +4001,7 @@ export function useWorkbenchController(
       id: "editor.goToImplementation",
       title: "Go to Implementation",
       category: "Editor",
-      shortcut: "Cmd+Alt+B",
+      shortcut: shortcut("editor.goToImplementation"),
       isEnabled: () =>
         Boolean(activeDocument) &&
         languageServerRuntimeStatus?.kind === "running" &&
@@ -3879,7 +4016,7 @@ export function useWorkbenchController(
       id: "editor.fileStructure",
       title: "File Structure",
       category: "Editor",
-      shortcut: "Cmd+R",
+      shortcut: shortcut("editor.fileStructure"),
       isEnabled: () =>
         Boolean(activeDocument) &&
         Boolean(activeDocument && isLanguageServerDocument(activeDocument)),
@@ -3890,7 +4027,7 @@ export function useWorkbenchController(
       id: "commands.show",
       title: "Show Commands",
       category: "Workbench",
-      shortcut: "Cmd+K",
+      shortcut: shortcut("commands.show"),
       isEnabled: () => true,
       run: () => setPaletteOpen(true),
     });
@@ -3899,7 +4036,7 @@ export function useWorkbenchController(
       id: "workbench.openSettings",
       title: "Open Settings",
       category: "Workbench",
-      shortcut: "Cmd+,",
+      shortcut: shortcut("workbench.openSettings"),
       isEnabled: () => true,
       run: openSettingsPanel,
     });
@@ -3924,7 +4061,7 @@ export function useWorkbenchController(
       id: "panel.toggle",
       title: "Toggle Panel",
       category: "Workbench",
-      shortcut: "Cmd+J",
+      shortcut: shortcut("panel.toggle"),
       isEnabled: () => true,
       run: toggleBottomPanel,
     });
@@ -3933,7 +4070,7 @@ export function useWorkbenchController(
       id: "terminal.show",
       title: "Show Terminal",
       category: "Terminal",
-      shortcut: "Ctrl+`",
+      shortcut: shortcut("terminal.show"),
       isEnabled: () => true,
       run: () => showBottomPanelView("terminal"),
     });
@@ -4043,6 +4180,7 @@ export function useWorkbenchController(
     return registry;
   }, [
     activeDocument,
+    appSettings.keymap,
     closeDocument,
     createDirectory,
     createFile,
@@ -4194,98 +4332,93 @@ export function useWorkbenchController(
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        if (closeFloatingSurface()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+
+        return;
+      }
+
       if (event.key === "F12") {
         event.preventDefault();
         void goToDefinition();
         return;
       }
 
-      const primaryModifier = event.metaKey || event.ctrlKey;
-
-      if (!primaryModifier) {
-        return;
-      }
-
-      if (event.key === ",") {
-        event.preventDefault();
-        openSettingsPanel();
-        return;
-      }
-
-      if (event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        void saveActiveDocument();
-        return;
-      }
-
-      if (event.key.toLowerCase() === "w") {
-        event.preventDefault();
-        closeActiveSurface();
-        return;
-      }
-
-      if (event.key.toLowerCase() === "q") {
+      if (event.metaKey && !event.altKey && !event.ctrlKey && event.key.toLowerCase() === "q") {
         event.preventDefault();
         quitApplication();
         return;
       }
 
-      if (event.key.toLowerCase() === "r") {
+      const keymap = appSettingsRef.current.keymap;
+      const matches = (commandId: KeymapCommandId) =>
+        matchesShortcut(event, shortcutForCommand(keymap, commandId));
+
+      if (matches("workbench.openSettings")) {
+        event.preventDefault();
+        openSettingsPanel();
+        return;
+      }
+
+      if (matches("editor.save")) {
+        event.preventDefault();
+        void saveActiveDocument();
+        return;
+      }
+
+      if (matches("editor.closeTab")) {
+        event.preventDefault();
+        closeActiveSurface();
+        return;
+      }
+
+      if (matches("editor.fileStructure")) {
         event.preventDefault();
         openFileStructure();
         return;
       }
 
-      if (event.key.toLowerCase() === "j") {
+      if (matches("panel.toggle")) {
         event.preventDefault();
         toggleBottomPanel();
         return;
       }
 
-      if (!event.altKey && event.key.toLowerCase() === "b") {
+      if (matches("editor.goToDefinition")) {
         event.preventDefault();
         void goToDefinition();
         return;
       }
 
-      if (event.altKey && event.key.toLowerCase() === "b") {
+      if (matches("editor.goToImplementation")) {
         event.preventDefault();
         void goToImplementation();
         return;
       }
 
-      if (event.altKey && event.key === "ArrowLeft") {
+      if (matches("navigation.back")) {
         event.preventDefault();
         void navigateBackward();
         return;
       }
 
-      if (event.altKey && event.key === "ArrowRight") {
+      if (matches("navigation.forward")) {
         event.preventDefault();
         void navigateForwardInHistory();
         return;
       }
 
-      if (!event.altKey && event.key === "[") {
-        event.preventDefault();
-        void navigateBackward();
-        return;
-      }
-
-      if (!event.altKey && event.key === "]") {
-        event.preventDefault();
-        void navigateForwardInHistory();
-        return;
-      }
-
-      if (event.key.toLowerCase() === "k") {
+      if (matches("commands.show")) {
         event.preventDefault();
         setClassOpenOpen(false);
         setPaletteOpen(true);
         return;
       }
 
-      if (event.key.toLowerCase() === "o") {
+      if (matches("class.quickOpen")) {
         event.preventDefault();
         if (workspaceRoot) {
           setQuickOpenOpen(false);
@@ -4294,7 +4427,7 @@ export function useWorkbenchController(
         return;
       }
 
-      if (event.key.toLowerCase() === "p") {
+      if (matches("file.quickOpen")) {
         event.preventDefault();
         if (workspaceRoot) {
           setClassOpenOpen(false);
@@ -4303,11 +4436,17 @@ export function useWorkbenchController(
         return;
       }
 
-      if (event.shiftKey && event.key.toLowerCase() === "f") {
+      if (matches("search.text")) {
         event.preventDefault();
         if (workspaceRoot) {
           setTextSearchOpen(true);
         }
+        return;
+      }
+
+      if (matches("terminal.show")) {
+        event.preventDefault();
+        showBottomPanelView("terminal");
       }
     }
 
@@ -4315,6 +4454,7 @@ export function useWorkbenchController(
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     closeActiveSurface,
+    closeFloatingSurface,
     goToDefinition,
     goToImplementation,
     navigateBackward,
@@ -4323,6 +4463,7 @@ export function useWorkbenchController(
     openSettingsPanel,
     quitApplication,
     saveActiveDocument,
+    showBottomPanelView,
     toggleBottomPanel,
     workspaceRoot,
   ]);
@@ -4823,6 +4964,7 @@ export function useWorkbenchController(
     setTextSearchQuery,
     setLanguageServerSetupOpen,
     setAutoSave,
+    setStatusBarItemVisibility,
     setFileStructureOpen,
     setFileStructureScopeMode,
     setSmartMode,
@@ -4974,6 +5116,21 @@ function editorPositionFromProjectSymbol(
 function shortPhpName(className: string): string {
   const parts = className.split("\\");
   return parts[parts.length - 1] || className;
+}
+
+function phpClassMemberCacheKey(path: string, className: string): string {
+  return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}`;
+}
+
+function phpSourceSignature(source: string): string {
+  let hash = 2166136261;
+
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return `${source.length}:${hash >>> 0}`;
 }
 
 function laravelFacadeTargetClassName(className: string): string | null {

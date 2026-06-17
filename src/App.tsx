@@ -31,6 +31,7 @@ import {
   languageServerStatusLabel,
   type LanguageServerRuntimeStatus,
 } from "./domain/languageServerRuntime";
+import { shouldStartLanguageServer } from "./domain/intelligence";
 import type { LanguageServerPlan } from "./domain/languageServer";
 import {
   indexProgressLabel,
@@ -145,6 +146,10 @@ function App() {
     workbench.workspaceSettings.phpVersionOverride,
   ]);
   const languageServerLabel = useMemo(() => {
+    if (!shouldStartLanguageServer(workbench.intelligenceMode)) {
+      return null;
+    }
+
     const runtimeLabel = languageServerStatusLabel(
       workbench.languageServerRuntimeStatus,
     );
@@ -168,7 +173,11 @@ function App() {
     }
 
     return languageServerPlanLabel(plan);
-  }, [workbench.languageServerPlan, workbench.languageServerRuntimeStatus]);
+  }, [
+    workbench.intelligenceMode,
+    workbench.languageServerPlan,
+    workbench.languageServerRuntimeStatus,
+  ]);
   const indexLabel = useMemo(
     () => indexProgressLabel(workbench.indexProgress),
     [workbench.indexProgress],
@@ -485,6 +494,7 @@ function App() {
               workbench.languageServerDiagnosticsByPath
             }
             languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+            keymap={workbench.appSettings.keymap}
             monacoTheme={monacoTheme}
             onCloseActiveTab={() => {
               if (workbench.activeDocument) {
@@ -543,11 +553,14 @@ function App() {
 
       <StatusBar
         activeLanguage={activeLanguage}
+        activePath={workbench.activePath}
         dirtyCount={workbench.dirtyCount}
         intelligenceMode={workbench.intelligenceMode}
         message={workbench.message}
+        onChangeVisibility={workbench.setStatusBarItemVisibility}
+        statusBar={workbench.workspaceSettings.statusBar}
         workspaceRoot={workbench.workspaceRoot}
-        workspaceLabel={workspaceLabel}
+        workspaceInfoLabel={workspaceLabel}
         languageServerLabel={languageServerLabel}
         indexLabel={indexLabel}
         workspaceTrustLabel={

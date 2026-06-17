@@ -9,6 +9,7 @@ export interface PhpMemberAccessCompletionContext {
 export interface PhpMethodCompletion {
   declaringClassName: string;
   isStatic?: boolean;
+  kind?: "property";
   name: string;
   parameters: string;
   returnType: string | null;
@@ -134,7 +135,7 @@ export function phpMethodCompletionsFromSource(
   source: string,
   declaringClassName: string,
 ): PhpMethodCompletion[] {
-  const methods: PhpMethodCompletion[] = [];
+  const members: PhpMethodCompletion[] = [];
   const masked = maskPhpStringsAndComments(source);
   const pattern =
     /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?::\s*([^{;\n]+))?/g;
@@ -155,7 +156,7 @@ export function phpMethodCompletionsFromSource(
     const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
     const docBlock = phpDocBlockBefore(source, functionOffset);
 
-    methods.push({
+    members.push({
       declaringClassName,
       name,
       parameters: enrichParametersFromPhpDoc(
@@ -169,7 +170,86 @@ export function phpMethodCompletionsFromSource(
     });
   }
 
-  return methods;
+  members.push(...phpPropertyCompletionsFromSource(source, declaringClassName));
+
+  return dedupePhpMembers(members);
+}
+
+function phpPropertyCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+): PhpMethodCompletion[] {
+  const members: PhpMethodCompletion[] = [];
+
+  for (const match of source.matchAll(
+    /@property(?:-read|-write)?\s+([^\s*]+)\s+\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
+  )) {
+    const returnType = normalizeReturnType(match[1] ?? null);
+    const name = match[2];
+
+    if (!name) {
+      continue;
+    }
+
+    members.push({
+      declaringClassName,
+      kind: "property",
+      name,
+      parameters: "",
+      returnType,
+    });
+  }
+
+  const masked = maskPhpStringsAndComments(source);
+  const propertyPattern =
+    /(?:^|\n)\s*((?:(?:public|protected|private|readonly|static)\s+)*)((?:\??[\\A-Za-z_][\\A-Za-z0-9_]*(?:\|[\\A-Za-z_][\\A-Za-z0-9_]*)?\s+)?)\$([A-Za-z_][A-Za-z0-9_]*)\b/g;
+
+  for (const match of masked.matchAll(propertyPattern)) {
+    const modifiers = (match[1] ?? "").toLowerCase();
+
+    if (!modifiers.includes("public")) {
+      continue;
+    }
+
+    if (/\bprivate\b|\bprotected\b/.test(modifiers)) {
+      continue;
+    }
+
+    const name = match[3];
+
+    if (!name) {
+      continue;
+    }
+
+    members.push({
+      declaringClassName,
+      ...(modifiers.includes("static") ? { isStatic: true } : {}),
+      kind: "property",
+      name,
+      parameters: "",
+      returnType: normalizeReturnType(match[2] ?? null),
+    });
+  }
+
+  return members;
+}
+
+function dedupePhpMembers(members: PhpMethodCompletion[]): PhpMethodCompletion[] {
+  const seen = new Set<string>();
+  const unique: PhpMethodCompletion[] = [];
+
+  for (const member of members) {
+    const key = `${member.kind ?? "method"}:${member.name.toLowerCase()}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(member);
+  }
+
+  return unique;
 }
 
 export function phpMethodParameters(parameters: string): PhpMethodParameter[] {

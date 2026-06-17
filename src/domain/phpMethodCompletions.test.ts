@@ -172,6 +172,56 @@ trait InteractsWithInput
     ]);
   });
 
+  it("extracts public and PHPDoc properties as member completions", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+/**
+ * @property string $body
+ * @property-read int $externalId
+ */
+class Comment
+{
+    public string $status;
+    protected string $internal;
+    private string $secret;
+
+    public function getBody(): string {}
+}
+`,
+        "Comment",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "getBody",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "body",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "externalId",
+        parameters: "",
+        returnType: "int",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "status",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("parses parameter names, types, defaults and optionality", () => {
     expect(
       phpMethodParameters(

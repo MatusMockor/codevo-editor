@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { defaultKeymapSettings } from "../domain/keymap";
 import type { EditorDocument } from "../domain/workspace";
 import { EditorSurface } from "./EditorSurface";
 
@@ -117,6 +118,7 @@ interface ParserFactory
           languageServerDiagnosticsByPath={{}}
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
           monacoTheme="vs-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
@@ -212,6 +214,7 @@ interface ParserFactory
           languageServerDiagnosticsByPath={{}}
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
           monacoTheme="vs-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
@@ -305,6 +308,7 @@ function createMonaco(model: FakeModel) {
       getModels: vi.fn(() => [model]),
       GlyphMarginLane: { Center: 2 },
       MouseTargetType: { GUTTER_GLYPH_MARGIN: 4 },
+      OverviewRulerLane: { Right: 4 },
       setModelMarkers: vi.fn(),
       TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },
     },
@@ -318,7 +322,7 @@ function createMonaco(model: FakeModel) {
       KeyR: 4,
       KeyW: 7,
     },
-    KeyMod: { Alt: 512, CtrlCmd: 2048 },
+    KeyMod: { Alt: 512, CtrlCmd: 2048, Shift: 1024, WinCtrl: 4096 },
     languages: {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },

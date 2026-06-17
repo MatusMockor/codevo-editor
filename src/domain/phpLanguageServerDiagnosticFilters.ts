@@ -79,6 +79,7 @@ export function filterPhpLanguageServerDiagnostics(
   return diagnostics.filter(
     (diagnostic) =>
       !isIgnoredPhpactorDocblockDiagnostic(diagnostic) &&
+      !isPhpactorKeywordMethodDiagnostic(source, diagnostic) &&
       !isLaravelEloquentStaticBuilderDiagnostic(source, diagnostic),
   );
 }
@@ -130,6 +131,23 @@ function isLaravelEloquentStaticBuilderDiagnostic(
   }
 
   return false;
+}
+
+function isPhpactorKeywordMethodDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): boolean {
+  if (diagnostic.source?.toLowerCase() !== "phpactor") {
+    return false;
+  }
+
+  if (!/\bmethod\b.*["']?return["']?.*\bdoes not exist\b/i.test(diagnostic.message)) {
+    return false;
+  }
+
+  const line = lineAt(source, diagnostic.line);
+
+  return Boolean(line && /^\s*return\b/.test(line));
 }
 
 function diagnosticTouchesMethod(

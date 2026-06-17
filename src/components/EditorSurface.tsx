@@ -7,6 +7,12 @@ import type {
   EditorRevealTarget,
   LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
+import {
+  parseShortcut,
+  shortcutForCommand,
+  type KeymapCommandId,
+  type KeymapSettings,
+} from "../domain/keymap";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { phpImplementationGutterTargets } from "../domain/phpImplementationGutterTargets";
 import { filterPhpLanguageServerDiagnostics } from "../domain/phpLanguageServerDiagnosticFilters";
@@ -33,6 +39,7 @@ interface EditorSurfaceProps {
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
+  keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
@@ -64,6 +71,7 @@ export function EditorSurface({
   languageServerDiagnosticsByPath,
   languageServerFeaturesGateway,
   languageServerRuntimeStatus,
+  keymap,
   monacoTheme,
   onCloseActiveTab,
   onCursorPositionChange,
@@ -90,8 +98,12 @@ export function EditorSurface({
   const errorReporterRef = useRef(onLanguageServerError);
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
   const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
+  const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
+  const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
+    Record<string, PhpSyntaxDiagnostic[]>
+  >({});
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
@@ -164,36 +176,40 @@ export function EditorSurface({
       return;
     }
 
-    const keyMod = monacoApi.KeyMod.CtrlCmd;
+    const keybinding = (commandId: KeymapCommandId) =>
+      monacoKeybindingsForShortcut(
+        monacoApi,
+        shortcutForCommand(keymap, commandId),
+      );
     const disposables = [
       editorApi.addAction({
         id: "mockor.goToDefinition",
         label: "Go to Definition",
-        keybindings: [keyMod | monacoApi.KeyCode.KeyB],
+        keybindings: keybinding("editor.goToDefinition"),
         run: onGoToDefinition,
       }),
       editorApi.addAction({
         id: "mockor.openClass",
         label: "Open Class",
-        keybindings: [keyMod | monacoApi.KeyCode.KeyO],
+        keybindings: keybinding("class.quickOpen"),
         run: onOpenClass,
       }),
       editorApi.addAction({
         id: "mockor.openFile",
         label: "Open File",
-        keybindings: [keyMod | monacoApi.KeyCode.KeyP],
+        keybindings: keybinding("file.quickOpen"),
         run: onOpenFile,
       }),
       editorApi.addAction({
         id: "mockor.fileStructure",
         label: "File Structure",
-        keybindings: [keyMod | monacoApi.KeyCode.KeyR],
+        keybindings: keybinding("editor.fileStructure"),
         run: onOpenFileStructure,
       }),
       editorApi.addAction({
         id: "mockor.quickFix",
         label: "Show Context Actions",
-        keybindings: [monacoApi.KeyMod.Alt | monacoApi.KeyCode.Enter],
+        keybindings: keybinding("editor.quickFix"),
         run: () => {
           const model = editorApi.getModel();
           const position = editorApi.getPosition();
@@ -216,19 +232,19 @@ export function EditorSurface({
       editorApi.addAction({
         id: "mockor.closeTab",
         label: "Close Tab",
-        keybindings: [keyMod | monacoApi.KeyCode.KeyW],
+        keybindings: keybinding("editor.closeTab"),
         run: onCloseActiveTab,
       }),
       editorApi.addAction({
         id: "mockor.goBack",
         label: "Go Back",
-        keybindings: [keyMod | monacoApi.KeyCode.BracketLeft],
+        keybindings: keybinding("navigation.back"),
         run: onGoBack,
       }),
       editorApi.addAction({
         id: "mockor.goForward",
         label: "Go Forward",
-        keybindings: [keyMod | monacoApi.KeyCode.BracketRight],
+        keybindings: keybinding("navigation.forward"),
         run: onGoForward,
       }),
     ];
@@ -238,6 +254,7 @@ export function EditorSurface({
     };
   }, [
     editorApi,
+    keymap,
     monacoApi,
     onCloseActiveTab,
     onGoBack,
@@ -403,6 +420,54 @@ export function EditorSurface({
   }, [activeDocument, languageServerDiagnosticsByPath, monacoApi]);
 
   useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    const languageServerDiagnostics =
+      activeDocument.language === "php"
+        ? filterPhpLanguageServerDiagnostics(
+            activeDocument.content,
+            languageServerDiagnosticsByPath[activeDocument.path] ?? [],
+          )
+        : languageServerDiagnosticsByPath[activeDocument.path] ?? [];
+    const syntaxDiagnostics =
+      activeDocument.language === "php"
+        ? syntaxDiagnosticsByPath[activeDocument.path] ?? []
+        : [];
+    diagnosticOverviewDecorationIdsRef.current = editorApi.deltaDecorations(
+      diagnosticOverviewDecorationIdsRef.current,
+      [
+        ...languageServerDiagnostics.map((diagnostic) =>
+          toDiagnosticOverviewDecoration(monacoApi, diagnostic),
+        ),
+        ...syntaxDiagnostics.map((diagnostic) =>
+          toSyntaxOverviewDecoration(monacoApi, diagnostic),
+        ),
+      ],
+    );
+
+    return () => {
+      diagnosticOverviewDecorationIdsRef.current = editorApi.deltaDecorations(
+        diagnosticOverviewDecorationIdsRef.current,
+        [],
+      );
+    };
+  }, [
+    activeDocument,
+    editorApi,
+    languageServerDiagnosticsByPath,
+    monacoApi,
+    syntaxDiagnosticsByPath,
+  ]);
+
+  useEffect(() => {
     if (!monacoApi) {
       return;
     }
@@ -419,6 +484,15 @@ export function EditorSurface({
 
     if (activeDocument.language !== "php") {
       monacoApi.editor.setModelMarkers(model, "php-syntax", []);
+      setSyntaxDiagnosticsByPath((current) => {
+        if (!current[activeDocument.path]) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[activeDocument.path];
+        return next;
+      });
       return;
     }
 
@@ -434,10 +508,15 @@ export function EditorSurface({
           const localDiagnostics = suspiciousPhpBareIdentifierDiagnostics(
             activeDocument.content,
           );
+          const allDiagnostics = [...diagnostics, ...localDiagnostics];
+          setSyntaxDiagnosticsByPath((current) => ({
+            ...current,
+            [activeDocument.path]: allDiagnostics,
+          }));
           monacoApi.editor.setModelMarkers(
             model,
             "php-syntax",
-            [...diagnostics, ...localDiagnostics].map((diagnostic) =>
+            allDiagnostics.map((diagnostic) =>
               toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
             ),
           );
@@ -510,6 +589,81 @@ function toMonacoDiagnosticMarker(
     startColumn: diagnostic.character + 1,
     startLineNumber: diagnostic.line + 1,
   };
+}
+
+function toDiagnosticOverviewDecoration(
+  monaco: typeof Monaco,
+  diagnostic: LanguageServerDiagnostic,
+): Monaco.editor.IModelDeltaDecoration {
+  return {
+    options: {
+      hoverMessage: {
+        value: diagnosticHoverText(
+          diagnostic.source || "Language Server",
+          diagnostic.message,
+        ),
+      },
+      overviewRuler: {
+        color: diagnosticOverviewColor(diagnostic.severity),
+        position: monaco.editor.OverviewRulerLane.Right,
+      },
+      stickiness:
+        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+    },
+    range: new monaco.Range(
+      diagnostic.line + 1,
+      diagnostic.character + 1,
+      diagnostic.line + 1,
+      diagnostic.character + 2,
+    ),
+  };
+}
+
+function toSyntaxOverviewDecoration(
+  monaco: typeof Monaco,
+  diagnostic: PhpSyntaxDiagnostic,
+): Monaco.editor.IModelDeltaDecoration {
+  return {
+    options: {
+      hoverMessage: {
+        value: diagnosticHoverText("PHP Syntax", diagnostic.message),
+      },
+      overviewRuler: {
+        color: "#d98b8b",
+        position: monaco.editor.OverviewRulerLane.Right,
+      },
+      stickiness:
+        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+    },
+    range: new monaco.Range(
+      diagnostic.line + 1,
+      diagnostic.character + 1,
+      diagnostic.endLine + 1,
+      syntaxDiagnosticEndColumn(diagnostic),
+    ),
+  };
+}
+
+function diagnosticHoverText(source: string, message: string): string {
+  return `**${escapeMarkdown(source)}**: ${escapeMarkdown(message)}`;
+}
+
+function escapeMarkdown(value: string): string {
+  return value.replace(/[\\`*_{}[\]()#+\-.!|]/g, "\\$&");
+}
+
+function diagnosticOverviewColor(
+  severity: LanguageServerDiagnostic["severity"],
+): string {
+  if (severity === "warning") {
+    return "#d8b878";
+  }
+
+  if (severity === "hint" || severity === "information") {
+    return "#8fbcae";
+  }
+
+  return "#d98b8b";
 }
 
 function isFixableQuickFixMarkerAt(
@@ -590,4 +744,63 @@ function modelPath(model: Monaco.editor.ITextModel): string | null {
   }
 
   return null;
+}
+
+function monacoKeybindingsForShortcut(
+  monaco: typeof Monaco,
+  shortcut: string,
+): number[] {
+  const parsed = parseShortcut(shortcut);
+
+  if (!parsed) {
+    return [];
+  }
+
+  const keyCode = monacoKeyCode(monaco, parsed.key);
+
+  if (!keyCode) {
+    return [];
+  }
+
+  let keybinding = keyCode;
+
+  if (parsed.meta) {
+    keybinding |= monaco.KeyMod.CtrlCmd;
+  }
+
+  if (parsed.ctrl) {
+    keybinding |= monaco.KeyMod.WinCtrl ?? monaco.KeyMod.CtrlCmd;
+  }
+
+  if (parsed.alt) {
+    keybinding |= monaco.KeyMod.Alt;
+  }
+
+  if (parsed.shift) {
+    keybinding |= monaco.KeyMod.Shift;
+  }
+
+  return [keybinding];
+}
+
+function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
+  if (/^[a-z]$/.test(key)) {
+    return monaco.KeyCode[`Key${key.toUpperCase()}` as keyof typeof monaco.KeyCode] ?? null;
+  }
+
+  const specialKeyCodes: Record<string, keyof typeof monaco.KeyCode> = {
+    ",": "Comma",
+    "`": "Backquote",
+    "[": "BracketLeft",
+    "]": "BracketRight",
+    arrowdown: "DownArrow",
+    arrowleft: "LeftArrow",
+    arrowright: "RightArrow",
+    arrowup: "UpArrow",
+    enter: "Enter",
+    escape: "Escape",
+  };
+  const keyCodeName = specialKeyCodes[key];
+
+  return keyCodeName ? monaco.KeyCode[keyCodeName] ?? null : null;
 }

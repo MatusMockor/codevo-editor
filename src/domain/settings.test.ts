@@ -12,10 +12,12 @@ import {
   settingsIgnorePatternsText,
   terminalThemeForAppTheme,
 } from "./settings";
+import { defaultKeymapSettings } from "./keymap";
 
 describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
+      keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       theme: "dark",
     });
@@ -35,6 +37,17 @@ describe("settings defaults", () => {
         openPaths: [],
         sidebarView: "files",
       },
+      statusBar: {
+        activePath: true,
+        dirtyCount: true,
+        index: true,
+        language: true,
+        languageServer: true,
+        message: true,
+        mode: true,
+        workspaceInfo: true,
+        workspaceTrust: true,
+      },
     });
     expect(defaultWorkspaceSessionState()).toEqual({
       activePath: null,
@@ -48,12 +61,21 @@ describe("settings defaults", () => {
 describe("normalizeAppSettings", () => {
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
+      keymap: defaultKeymapSettings(),
       recentWorkspacePath: "/project",
       theme: "dark",
     });
     expect(
-      normalizeAppSettings({ recentWorkspacePath: null, theme: "light" }),
+      normalizeAppSettings({
+        keymap: { "editor.save": "Cmd+Shift+S" },
+        recentWorkspacePath: null,
+        theme: "light",
+      }),
     ).toEqual({
+      keymap: {
+        ...defaultKeymapSettings(),
+        "editor.save": "Cmd+Shift+S",
+      },
       recentWorkspacePath: null,
       theme: "light",
     });
@@ -63,6 +85,7 @@ describe("normalizeAppSettings", () => {
         theme: "ayuMirage",
       }),
     ).toEqual({
+      keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       theme: "ayuMirage",
     });
@@ -99,6 +122,17 @@ describe("normalizeWorkspaceSettings", () => {
           ],
           sidebarView: "git",
         },
+        statusBar: {
+          activePath: true,
+          dirtyCount: false,
+          index: false,
+          language: true,
+          languageServer: true,
+          message: true,
+          mode: false,
+          workspaceInfo: false,
+          workspaceTrust: true,
+        },
       }),
     ).toEqual({
       autoSave: true,
@@ -115,6 +149,17 @@ describe("normalizeWorkspaceSettings", () => {
         bottomPanelView: "index",
         openPaths: ["/project/src/User.php", "/project/README.md"],
         sidebarView: "git",
+      },
+      statusBar: {
+        activePath: true,
+        dirtyCount: false,
+        index: false,
+        language: true,
+        languageServer: true,
+        message: true,
+        mode: false,
+        workspaceInfo: false,
+        workspaceTrust: true,
       },
     });
   });

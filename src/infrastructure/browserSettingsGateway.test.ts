@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { BrowserSettingsGateway, type KeyValueStorage } from "./browserSettingsGateway";
+import { defaultKeymapSettings } from "../domain/keymap";
 
 describe("BrowserSettingsGateway", () => {
   it("returns defaults when settings are missing", async () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       theme: "dark",
     });
@@ -25,6 +27,17 @@ describe("BrowserSettingsGateway", () => {
         openPaths: [],
         sidebarView: "files",
       },
+      statusBar: {
+        activePath: true,
+        dirtyCount: true,
+        index: true,
+        language: true,
+        languageServer: true,
+        message: true,
+        mode: true,
+        workspaceInfo: true,
+        workspaceTrust: true,
+      },
     });
   });
 
@@ -33,6 +46,10 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await gateway.saveAppSettings({
+      keymap: {
+        ...defaultKeymapSettings(),
+        "editor.save": "Cmd+Shift+S",
+      },
       recentWorkspacePath: "/project",
       theme: "ayuMirage",
     });
@@ -52,9 +69,24 @@ describe("BrowserSettingsGateway", () => {
         openPaths: ["/project/src/User.php", "/project/README.md"],
         sidebarView: "php",
       },
+      statusBar: {
+        activePath: true,
+        dirtyCount: true,
+        index: false,
+        language: true,
+        languageServer: true,
+        message: true,
+        mode: true,
+        workspaceInfo: false,
+        workspaceTrust: true,
+      },
     });
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      keymap: {
+        ...defaultKeymapSettings(),
+        "editor.save": "Cmd+Shift+S",
+      },
       recentWorkspacePath: "/project",
       theme: "ayuMirage",
     });
@@ -74,6 +106,17 @@ describe("BrowserSettingsGateway", () => {
         openPaths: ["/project/src/User.php", "/project/README.md"],
         sidebarView: "php",
       },
+      statusBar: {
+        activePath: true,
+        dirtyCount: true,
+        index: false,
+        language: true,
+        languageServer: true,
+        message: true,
+        mode: true,
+        workspaceInfo: false,
+        workspaceTrust: true,
+      },
     });
   });
 
@@ -84,6 +127,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       theme: "dark",
     });
@@ -102,6 +146,17 @@ describe("BrowserSettingsGateway", () => {
         bottomPanelView: "problems",
         openPaths: [],
         sidebarView: "files",
+      },
+      statusBar: {
+        activePath: true,
+        dirtyCount: true,
+        index: true,
+        language: true,
+        languageServer: true,
+        message: true,
+        mode: true,
+        workspaceInfo: true,
+        workspaceTrust: true,
       },
     });
   });

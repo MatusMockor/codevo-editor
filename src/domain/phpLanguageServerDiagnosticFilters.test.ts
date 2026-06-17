@@ -100,6 +100,41 @@ interface LocalUserInterface
       ]),
     ).toEqual([syntax]);
   });
+
+  it("suppresses PHPactor keyword-as-method false positives on return statements", () => {
+    const source = `<?php
+
+return (new CommentResource($comment))->response()->setStatusCode(200);
+`;
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [
+        diagnostic({
+          character: 0,
+          line: 2,
+          message:
+            'Method "return" does not exist on class "Kontentino\\Communication\\Models\\Comment"',
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("keeps unknown method diagnostics away from return statements", () => {
+    const source = `<?php
+
+$comment->return();
+`;
+    const unresolved = diagnostic({
+      character: 10,
+      line: 2,
+      message:
+        'Method "return" does not exist on class "Kontentino\\Communication\\Models\\Comment"',
+    });
+
+    expect(filterPhpLanguageServerDiagnostics(source, [unresolved])).toEqual([
+      unresolved,
+    ]);
+  });
 });
 
 function diagnostic(

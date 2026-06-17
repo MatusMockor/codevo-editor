@@ -198,6 +198,62 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(providePhpMethodCompletions).toHaveBeenCalled();
   });
 
+  it("maps typed PHP receiver properties without method parentheses", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Comment",
+        kind: "property" as const,
+        name: "body",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->bo\n}\n",
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          lineContent: "    $comment->bo",
+          word: {
+            endColumn: 17,
+            startColumn: 15,
+          },
+        }),
+        {
+          column: 17,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [
+        {
+          command: undefined,
+          detail: "App\\Models\\Comment::$body: string",
+          documentation: "App\\Models\\Comment::$body",
+          insertText: "body",
+          insertTextRules: 4,
+          kind: 10,
+          label: "body",
+          range: {
+            endColumn: 17,
+            endLineNumber: 4,
+            startColumn: 15,
+            startLineNumber: 4,
+          },
+          sortText: "0_0000",
+        },
+      ],
+    });
+  });
+
   it("maps typed PHP method signatures to Monaco parameter hints", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodSignature = vi.fn(async () => ({
@@ -388,7 +444,7 @@ function createRegisteredProviders() {
     },
     languages: {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
-      CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },
+      CompletionItemKind: { Method: 2, Property: 10, Text: 1, Variable: 6 },
       registerCodeActionProvider: vi.fn((language, provider, metadata) => {
         registered.codeActionLanguage = language;
         registered.codeActionProvider = provider;

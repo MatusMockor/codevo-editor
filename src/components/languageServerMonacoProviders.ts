@@ -271,7 +271,7 @@ async function phpMethodSuggestions(
     const methods = await context.providePhpMethodCompletions(source, position);
 
     return methods.map((item, index) => ({
-      command: phpMethodParameters(item.parameters).length
+      command: item.kind !== "property" && phpMethodParameters(item.parameters).length
         ? {
             id: "editor.action.triggerParameterHints",
             title: "Trigger parameter hints",
@@ -282,7 +282,10 @@ async function phpMethodSuggestions(
       insertText: phpMethodSnippet(item),
       insertTextRules:
         monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-      kind: monaco.languages.CompletionItemKind.Method,
+      kind:
+        item.kind === "property"
+          ? monaco.languages.CompletionItemKind.Property
+          : monaco.languages.CompletionItemKind.Method,
       label: item.name,
       range,
       sortText: `0_${String(index).padStart(4, "0")}`,
@@ -341,6 +344,12 @@ async function provideSignatureHelp(
 }
 
 function phpMethodDetail(item: PhpMethodCompletion): string {
+  if (item.kind === "property") {
+    const returnType = item.returnType ? `: ${item.returnType}` : "";
+
+    return `${item.declaringClassName}::$${item.name}${returnType}`;
+  }
+
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
@@ -348,6 +357,10 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
 }
 
 function phpMethodDocumentation(item: PhpMethodCompletion): string {
+  if (item.kind === "property") {
+    return `${item.declaringClassName}::$${item.name}`;
+  }
+
   const parameters = phpMethodParameters(item.parameters);
 
   if (!parameters.length) {
@@ -369,6 +382,10 @@ function phpMethodSignatureLabel(item: PhpMethodCompletion): string {
 }
 
 function phpMethodSnippet(item: PhpMethodCompletion): string {
+  if (item.kind === "property") {
+    return item.name;
+  }
+
   const requiredParameters = phpMethodParameters(item.parameters).filter(
     (parameter) => !parameter.optional,
   );

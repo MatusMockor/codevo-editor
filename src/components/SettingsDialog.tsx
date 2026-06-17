@@ -1,12 +1,18 @@
 import { Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  keymapCommands,
+  normalizeShortcutInput,
+  type KeymapCommandId,
+} from "../domain/keymap";
+import {
   appThemeOptions,
   settingsIgnorePatternsFromText,
   settingsIgnorePatternsText,
   type AppSettings,
   type AppTheme,
   type PhpBackendPreference,
+  type StatusBarItemVisibility,
   type WorkspaceSettings,
 } from "../domain/settings";
 import type { WorkspaceTrustState } from "../domain/trust";
@@ -35,10 +41,11 @@ interface SettingsDialogProps {
   onSave(input: SettingsSaveInput): Promise<void>;
 }
 
-type SettingsSection = "general" | "php" | "index" | "appearance";
+type SettingsSection = "general" | "keymap" | "php" | "index" | "appearance";
 
 const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: "general", label: "General" },
+  { id: "keymap", label: "Keymap" },
   { id: "php", label: "PHP" },
   { id: "index", label: "Index" },
   { id: "appearance", label: "Appearance" },
@@ -200,9 +207,33 @@ export function SettingsDialog({
                       revealActiveFileInTree,
                     })
                   }
+                  onChangeStatusBarVisibility={(key, visible) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      statusBar: {
+                        ...draftWorkspaceSettingsRef.current.statusBar,
+                        [key]: visible,
+                      },
+                    })
+                  }
                   onChangeTrusted={updateTrusted}
                   workspaceRoot={workspaceRoot}
                   workspaceSettings={draftWorkspaceSettings}
+                />
+              ) : null}
+
+              {activeSection === "keymap" ? (
+                <KeymapSettingsPanel
+                  appSettings={draftAppSettings}
+                  onChangeShortcut={(commandId, shortcut) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      keymap: {
+                        ...draftAppSettingsRef.current.keymap,
+                        [commandId]: normalizeShortcutInput(shortcut),
+                      },
+                    })
+                  }
                 />
               ) : null}
 
@@ -274,6 +305,10 @@ interface GeneralSettingsProps {
   onChangeAutoSave(autoSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeRevealActiveFileInTree(enabled: boolean): void;
+  onChangeStatusBarVisibility(
+    key: keyof StatusBarItemVisibility,
+    visible: boolean,
+  ): void;
   onChangeTrusted(trusted: boolean): void;
 }
 
@@ -283,6 +318,7 @@ function GeneralSettings({
   onChangeAutoSave,
   onChangeIntelligenceMode,
   onChangeRevealActiveFileInTree,
+  onChangeStatusBarVisibility,
   onChangeTrusted,
   workspaceRoot,
   workspaceSettings,
@@ -342,6 +378,75 @@ function GeneralSettings({
         />
         <span>Trusted workspace</span>
       </label>
+
+      <div className="settings-subgroup">
+        <span>Status bar</span>
+        {statusBarItems.map((item) => (
+          <label className="settings-toggle" key={item.key}>
+            <input
+              checked={workspaceSettings.statusBar[item.key]}
+              disabled={!hasWorkspace}
+              onChange={(event) =>
+                onChangeStatusBarVisibility(
+                  item.key,
+                  event.currentTarget.checked,
+                )
+              }
+              type="checkbox"
+            />
+            <span>{item.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const statusBarItems: Array<{
+  key: keyof StatusBarItemVisibility;
+  label: string;
+}> = [
+  { key: "activePath", label: "File path" },
+  { key: "workspaceInfo", label: "Project info" },
+  { key: "index", label: "Index" },
+  { key: "languageServer", label: "IDE engine" },
+  { key: "workspaceTrust", label: "Trust" },
+  { key: "mode", label: "Mode" },
+  { key: "language", label: "Language" },
+  { key: "dirtyCount", label: "Unsaved files" },
+  { key: "message", label: "Messages" },
+];
+
+interface KeymapSettingsPanelProps {
+  appSettings: AppSettings;
+  onChangeShortcut(commandId: KeymapCommandId, shortcut: string): void;
+}
+
+function KeymapSettingsPanel({
+  appSettings,
+  onChangeShortcut,
+}: KeymapSettingsPanelProps) {
+  return (
+    <div className="settings-group">
+      {keymapCommands.map((command) => (
+        <label className="settings-field keymap-field" key={command.id}>
+          <span>
+            <strong>{command.label}</strong>
+            <small>{command.category}</small>
+          </span>
+          <input
+            onBlur={(event) =>
+              onChangeShortcut(command.id, event.currentTarget.value)
+            }
+            onChange={(event) =>
+              onChangeShortcut(command.id, event.currentTarget.value)
+            }
+            placeholder={command.defaultShortcut}
+            spellCheck={false}
+            value={appSettings.keymap[command.id]}
+          />
+        </label>
+      ))}
     </div>
   );
 }

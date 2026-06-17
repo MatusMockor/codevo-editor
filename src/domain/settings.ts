@@ -1,4 +1,9 @@
 import type { IntelligenceMode } from "./workspace";
+import {
+  defaultKeymapSettings,
+  normalizeKeymapSettings,
+  type KeymapSettings,
+} from "./keymap";
 
 export const appThemeOptions = [
   { id: "dark", label: "Dark" },
@@ -21,6 +26,7 @@ export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
 
 export interface AppSettings {
+  keymap: KeymapSettings;
   recentWorkspacePath: string | null;
   theme: AppTheme;
 }
@@ -36,6 +42,7 @@ export interface WorkspaceSettings {
   phpactorPath: string | null;
   revealActiveFileInTree: boolean;
   session: WorkspaceSessionState;
+  statusBar: StatusBarItemVisibility;
 }
 
 export interface WorkspaceSessionState {
@@ -43,6 +50,18 @@ export interface WorkspaceSessionState {
   bottomPanelView: WorkspaceSessionBottomPanelView;
   openPaths: string[];
   sidebarView: WorkspaceSessionSidebarView;
+}
+
+export interface StatusBarItemVisibility {
+  activePath: boolean;
+  dirtyCount: boolean;
+  index: boolean;
+  language: boolean;
+  languageServer: boolean;
+  message: boolean;
+  mode: boolean;
+  workspaceInfo: boolean;
+  workspaceTrust: boolean;
 }
 
 export interface SettingsGateway {
@@ -57,6 +76,7 @@ export interface SettingsGateway {
 
 export function defaultAppSettings(): AppSettings {
   return {
+    keymap: defaultKeymapSettings(),
     recentWorkspacePath: null,
     theme: "dark",
   };
@@ -74,6 +94,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     phpactorPath: null,
     revealActiveFileInTree: true,
     session: defaultWorkspaceSessionState(),
+    statusBar: defaultStatusBarItemVisibility(),
   };
 }
 
@@ -83,6 +104,20 @@ export function defaultWorkspaceSessionState(): WorkspaceSessionState {
     bottomPanelView: "problems",
     openPaths: [],
     sidebarView: "files",
+  };
+}
+
+export function defaultStatusBarItemVisibility(): StatusBarItemVisibility {
+  return {
+    activePath: true,
+    dirtyCount: true,
+    index: true,
+    language: true,
+    languageServer: true,
+    message: true,
+    mode: true,
+    workspaceInfo: true,
+    workspaceTrust: true,
   };
 }
 
@@ -97,9 +132,11 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     value.recentWorkspacePath,
     defaults.recentWorkspacePath,
   );
+  const keymap = normalizeKeymapSettings(value.keymap);
   const theme = isAppTheme(value.theme) ? value.theme : defaults.theme;
 
   return {
+    keymap,
     recentWorkspacePath,
     theme,
   };
@@ -145,6 +182,7 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
         ? value.revealActiveFileInTree
         : defaults.revealActiveFileInTree,
     session: normalizeWorkspaceSession(value.session),
+    statusBar: normalizeStatusBarItemVisibility(value.statusBar),
   };
 }
 
@@ -167,6 +205,37 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
     sidebarView: isWorkspaceSessionSidebarView(value.sidebarView)
       ? value.sidebarView
       : defaults.sidebarView,
+  };
+}
+
+export function normalizeStatusBarItemVisibility(
+  value: unknown,
+): StatusBarItemVisibility {
+  const defaults = defaultStatusBarItemVisibility();
+
+  if (!isRecord(value)) {
+    return defaults;
+  }
+
+  return {
+    activePath: normalizeBoolean(value.activePath, defaults.activePath),
+    dirtyCount: normalizeBoolean(value.dirtyCount, defaults.dirtyCount),
+    index: normalizeBoolean(value.index, defaults.index),
+    language: normalizeBoolean(value.language, defaults.language),
+    languageServer: normalizeBoolean(
+      value.languageServer,
+      defaults.languageServer,
+    ),
+    message: normalizeBoolean(value.message, defaults.message),
+    mode: normalizeBoolean(value.mode, defaults.mode),
+    workspaceInfo: normalizeBoolean(
+      value.workspaceInfo,
+      defaults.workspaceInfo,
+    ),
+    workspaceTrust: normalizeBoolean(
+      value.workspaceTrust,
+      defaults.workspaceTrust,
+    ),
   };
 }
 
@@ -393,6 +462,10 @@ function normalizeNullableString(
   }
 
   return trimmed;
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function normalizePatternList(
