@@ -1,6 +1,6 @@
 import type { EditorPosition } from "./languageServerFeatures";
 
-export interface PhpImplementationCodeLensTarget {
+export interface PhpImplementationGutterTarget {
   methodName: string;
   position: EditorPosition;
 }
@@ -10,10 +10,10 @@ const interfaceDeclarationPattern =
 const methodDeclarationPattern =
   /\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
-export function phpImplementationCodeLensTargets(
+export function phpImplementationGutterTargets(
   source: string,
-): PhpImplementationCodeLensTarget[] {
-  const targets: PhpImplementationCodeLensTarget[] = [];
+): PhpImplementationGutterTarget[] {
+  const targets: PhpImplementationGutterTarget[] = [];
 
   for (const declaration of source.matchAll(interfaceDeclarationPattern)) {
     const openBrace = (declaration.index ?? 0) + declaration[0].lastIndexOf("{");

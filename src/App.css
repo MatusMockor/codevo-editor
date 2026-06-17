@@ -655,6 +655,43 @@ button {
   min-height: 0;
 }
 
+.monaco-editor .implementation-gutter-glyph {
+  position: relative;
+  width: 18px !important;
+  height: 20px;
+  cursor: pointer;
+}
+
+.monaco-editor .implementation-gutter-glyph::before {
+  position: absolute;
+  top: 4px;
+  left: 3px;
+  width: 11px;
+  height: 11px;
+  border: 1px solid #7ddc9f;
+  border-radius: 999px;
+  background: rgba(45, 185, 112, 0.16);
+  box-shadow: 0 0 0 1px rgba(125, 220, 159, 0.16);
+  content: "";
+}
+
+.monaco-editor .implementation-gutter-glyph::after {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  width: 4px;
+  height: 4px;
+  border-top: 1.5px solid #b8f7cc;
+  border-right: 1.5px solid #b8f7cc;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.monaco-editor .implementation-gutter-glyph:hover::before {
+  border-color: #a6f4bd;
+  background: rgba(45, 185, 112, 0.28);
+}
+
 .bottom-panel {
   position: relative;
   display: grid;

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { phpImplementationCodeLensTargets } from "./phpImplementationCodeLenses";
+import { phpImplementationGutterTargets } from "./phpImplementationGutterTargets";
 
-describe("phpImplementationCodeLensTargets", () => {
+describe("phpImplementationGutterTargets", () => {
   it("finds methods declared inside PHP interfaces", () => {
     expect(
-      phpImplementationCodeLensTargets(`<?php
+      phpImplementationGutterTargets(`<?php
 
 namespace App\\Contracts;
 
@@ -35,7 +35,7 @@ interface SearchRepository
 
   it("does not add implementation lenses for regular classes", () => {
     expect(
-      phpImplementationCodeLensTargets(`<?php
+      phpImplementationGutterTargets(`<?php
 
 final class SearchService
 {

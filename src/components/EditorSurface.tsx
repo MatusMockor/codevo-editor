@@ -8,6 +8,7 @@ import type {
   LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
+import { phpImplementationGutterTargets } from "../domain/phpImplementationGutterTargets";
 import { filterPhpLanguageServerDiagnostics } from "../domain/phpLanguageServerDiagnosticFilters";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type {
@@ -21,10 +22,7 @@ import type {
 } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
-import {
-  GO_TO_IMPLEMENTATION_AT_COMMAND_ID,
-  registerLanguageServerMonacoProviders,
-} from "./languageServerMonacoProviders";
+import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import { registerMonacoAppThemes } from "./monacoThemes";
 import { getTabId, getTabPanelId } from "./tabIds";
 
@@ -90,6 +88,8 @@ export function EditorSurface({
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
   const errorReporterRef = useRef(onLanguageServerError);
+  const implementationGutterDecorationIdsRef = useRef<string[]>([]);
+  const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
 
@@ -166,16 +166,6 @@ export function EditorSurface({
 
     const keyMod = monacoApi.KeyMod.CtrlCmd;
     const disposables = [
-      monacoApi.editor.registerCommand(
-        GO_TO_IMPLEMENTATION_AT_COMMAND_ID,
-        (_accessor, position?: EditorPosition) => {
-          const targetPosition = position ?? editorApi.getPosition();
-
-          if (targetPosition) {
-            onGoToImplementationAt(targetPosition);
-          }
-        },
-      ),
       editorApi.addAction({
         id: "mockor.goToDefinition",
         label: "Go to Definition",
@@ -230,11 +220,100 @@ export function EditorSurface({
     onGoBack,
     onGoForward,
     onGoToDefinition,
-    onGoToImplementationAt,
     onOpenClass,
     onOpenFile,
     onOpenFileStructure,
   ]);
+
+  useEffect(() => {
+    if (!editorApi || !monacoApi) {
+      return;
+    }
+
+    const disposable = editorApi.onMouseDown((event) => {
+      if (
+        event.target.type !== monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
+      ) {
+        return;
+      }
+
+      const lineNumber = event.target.position?.lineNumber;
+
+      if (!lineNumber) {
+        return;
+      }
+
+      const target = implementationGutterTargetsRef.current.get(lineNumber);
+
+      if (!target) {
+        return;
+      }
+
+      event.event.preventDefault();
+      event.event.stopPropagation();
+      onGoToImplementationAt(target);
+    });
+
+    return () => disposable.dispose();
+  }, [editorApi, monacoApi, onGoToImplementationAt]);
+
+  useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    if (activeDocument.language !== "php") {
+      implementationGutterTargetsRef.current = new Map();
+      implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+        implementationGutterDecorationIdsRef.current,
+        [],
+      );
+      return;
+    }
+
+    const targets = phpImplementationGutterTargets(activeDocument.content);
+    implementationGutterTargetsRef.current = new Map(
+      targets.map((target) => [target.position.lineNumber, target.position]),
+    );
+    implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+      implementationGutterDecorationIdsRef.current,
+      targets.map((target) => ({
+        options: {
+          glyphMargin: {
+            position: monacoApi.editor.GlyphMarginLane.Center,
+          },
+          glyphMarginClassName: "implementation-gutter-glyph",
+          glyphMarginHoverMessage: {
+            value: "Go to implementation",
+          },
+          isWholeLine: false,
+          stickiness:
+            monacoApi.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          zIndex: 20,
+        },
+        range: new monacoApi.Range(
+          target.position.lineNumber,
+          1,
+          target.position.lineNumber,
+          1,
+        ),
+      })),
+    );
+
+    return () => {
+      implementationGutterTargetsRef.current = new Map();
+      implementationGutterDecorationIdsRef.current = editorApi.deltaDecorations(
+        implementationGutterDecorationIdsRef.current,
+        [],
+      );
+    };
+  }, [activeDocument, editorApi, monacoApi]);
 
   useEffect(() => {
     if (!editorApi) {
@@ -379,6 +458,7 @@ export function EditorSurface({
           fontFamily:
             "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
           fontSize: 13,
+          glyphMargin: true,
           lineHeight: 20,
           minimap: { enabled: false },
           padding: { top: 14, bottom: 14 },
