@@ -68,7 +68,13 @@ import {
   type EditorRevealTarget,
   type LanguageServerFeature,
   type LanguageServerFeaturesGateway,
+  type LanguageServerLocation,
 } from "../domain/languageServerFeatures";
+import {
+  implementationChooserTitle,
+  implementationTargetFromLocation,
+  type ImplementationTarget,
+} from "../domain/implementationTargets";
 import {
   isLanguageServerActive,
   languageServerCrashMessage,
@@ -301,6 +307,10 @@ export function useWorkbenchController(
   const [textSearchResults, setTextSearchResults] = useState<TextSearchResult[]>(
     [],
   );
+  const [implementationChooser, setImplementationChooser] = useState<{
+    targets: ImplementationTarget[];
+    title: string;
+  } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
   const [appSettings, setAppSettings] =
@@ -2988,6 +2998,50 @@ export function useWorkbenchController(
     openPhpClassTarget,
   ]);
 
+  const implementationTargetsFromLocations = useCallback(
+    async (
+      locations: LanguageServerLocation[],
+    ): Promise<ImplementationTarget[]> => {
+      const targets = await Promise.all(
+        locations.map(async (location) => {
+          const path = pathFromLanguageServerUri(location.uri);
+          let source: string | null = null;
+
+          if (path) {
+            try {
+              source =
+                documents[path]?.content ?? (await workspaceFiles.readTextFile(path));
+            } catch {
+              source = null;
+            }
+          }
+
+          return implementationTargetFromLocation(location, source);
+        }),
+      );
+      const uniqueTargets = new Map<string, ImplementationTarget>();
+
+      for (const target of targets) {
+        if (!target) {
+          continue;
+        }
+
+        uniqueTargets.set(target.id, target);
+      }
+
+      return [...uniqueTargets.values()];
+    },
+    [documents, workspaceFiles],
+  );
+
+  const openImplementationTarget = useCallback(
+    async (target: ImplementationTarget) => {
+      setImplementationChooser(null);
+      await openNavigationTarget(target.path, target.position, target.label);
+    },
+    [openNavigationTarget],
+  );
+
   const goToLanguageServerLocation = useCallback(async (
     feature: Extract<LanguageServerFeature, "definition" | "implementation">,
     label: string,
@@ -3020,11 +3074,39 @@ export function useWorkbenchController(
       return false;
     }
 
+    if (feature === "implementation") {
+      setImplementationChooser(null);
+    }
+
     try {
       await flushPendingDocumentChange(activeDocument.path);
       const locations = await languageServerFeaturesGateway[feature](
         toLanguageServerTextDocumentPosition(activeDocument.path, editorPosition),
       );
+      const symbolName = identifierAtEditorPosition(
+        activeDocument.content,
+        editorPosition,
+      );
+
+      if (feature === "implementation" && locations.length > 1) {
+        const targets = await implementationTargetsFromLocations(locations);
+
+        if (targets.length > 1) {
+          setImplementationChooser({
+            targets,
+            title: implementationChooserTitle(symbolName),
+          });
+          return true;
+        }
+
+        const [onlyTarget] = targets;
+
+        if (onlyTarget) {
+          await openImplementationTarget(onlyTarget);
+          return true;
+        }
+      }
+
       const [target] = locations;
 
       if (!target) {
@@ -3061,8 +3143,10 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     flushPendingDocumentChange,
+    implementationTargetsFromLocations,
     languageServerFeaturesGateway,
     languageServerRuntimeStatus,
+    openImplementationTarget,
     openPathForNavigation,
     recordCurrentNavigationLocation,
     reportLanguageServerError,
@@ -4606,6 +4690,7 @@ export function useWorkbenchController(
     classOpenOpen,
     classOpenQuery,
     classOpenResults,
+    closeImplementationChooser: () => setImplementationChooser(null),
     closeDocument,
     closeGitDiffPreview,
     commandContext,
@@ -4632,6 +4717,7 @@ export function useWorkbenchController(
     indexHealthLogs,
     indexProgress,
     intelligenceMode,
+    implementationChooser,
     languageServerDiagnosticsByPath,
     loadingDirectories,
     loadingPhpFileOutlinePaths,
@@ -4642,6 +4728,7 @@ export function useWorkbenchController(
     openDocuments,
     openFile,
     openFileStructure,
+    openImplementationTarget,
     openPhpFileOutlineNode,
     openClassSearchResult,
     openPinnedFile,

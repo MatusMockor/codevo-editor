@@ -19,6 +19,7 @@ import { FileTree } from "./components/FileTree";
 import { FileStructure } from "./components/FileStructure";
 import { GitChangesPanel } from "./components/GitChangesPanel";
 import { GitDiffPreview } from "./components/GitDiffPreview";
+import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { PhpTreePanel } from "./components/PhpTreePanel";
 import { QuickOpen } from "./components/QuickOpen";
@@ -597,6 +598,16 @@ function App() {
         onOpenNode={workbench.openPhpFileOutlineNode}
         outline={workbench.fileStructureOutline}
         scope={workbench.fileStructureScope}
+      />
+
+      <ImplementationChooser
+        isOpen={Boolean(workbench.implementationChooser)}
+        onClose={workbench.closeImplementationChooser}
+        onOpen={workbench.openImplementationTarget}
+        targets={workbench.implementationChooser?.targets ?? []}
+        title={
+          workbench.implementationChooser?.title ?? "Choose implementation"
+        }
       />
 
       <LanguageServerSetup

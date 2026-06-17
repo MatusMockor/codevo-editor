@@ -1376,6 +1376,168 @@ interface SearchRepository
     });
   });
 
+  it("asks which implementation to open when a symbol has multiple targets", async () => {
+    const interfacePath = "/workspace/app/Contracts/PlatformAdapter.php";
+    const baseAdapterPath =
+      "/workspace/app/Services/Analytics/Adapters/BaseAdapter.php";
+    const facebookAdapterPath =
+      "/workspace/app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php";
+    const interfaceSource = `<?php
+
+namespace App\\Contracts;
+
+interface PlatformAdapter
+{
+    public function getPlatform(): Platform;
+}
+`;
+    const implementation = vi.fn(async () => [
+      {
+        range: {
+          end: {
+            character: 31,
+            line: 6,
+          },
+          start: {
+            character: 20,
+            line: 6,
+          },
+        },
+        uri: "file:///workspace/app/Services/Analytics/Adapters/BaseAdapter.php",
+      },
+      {
+        range: {
+          end: {
+            character: 31,
+            line: 6,
+          },
+          start: {
+            character: 20,
+            line: 6,
+          },
+        },
+        uri: "file:///workspace/app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php",
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway: {
+        ...featuresGateway(),
+        implementation,
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === interfacePath) {
+          return interfaceSource;
+        }
+
+        if (path === baseAdapterPath) {
+          return `<?php
+
+namespace App\\Services\\Analytics\\Adapters;
+
+abstract class BaseAdapter
+{
+    public function getPlatform(): Platform
+    {
+    }
+}
+`;
+        }
+
+        if (path === facebookAdapterPath) {
+          return `<?php
+
+namespace App\\Services\\Analytics\\Adapters\\Facebook;
+
+final class FacebookAdapterService extends BaseAdapter
+{
+    public function getPlatform(): Platform
+    {
+    }
+}
+`;
+        }
+
+        return "<?php\n";
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          implementation: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().startLanguageServer();
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(interfacePath, "PlatformAdapter.php"),
+      );
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().goToImplementationAt({
+        column: 23,
+        lineNumber: 7,
+      });
+    });
+
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().implementationChooser?.title).toBe(
+      "Choose implementation of getPlatform",
+    );
+    expect(
+      getWorkbench().implementationChooser?.targets.map((target) => ({
+        detail: target.detail,
+        label: target.label,
+        path: target.path,
+      })),
+    ).toEqual([
+      {
+        detail: "\\App\\Services\\Analytics\\Adapters",
+        label: "BaseAdapter",
+        path: baseAdapterPath,
+      },
+      {
+        detail: "\\App\\Services\\Analytics\\Adapters\\Facebook",
+        label: "FacebookAdapterService",
+        path: facebookAdapterPath,
+      },
+    ]);
+
+    await act(async () => {
+      const target = getWorkbench().implementationChooser?.targets[1];
+
+      if (!target) {
+        throw new Error("Expected a second implementation target.");
+      }
+
+      await getWorkbench().openImplementationTarget(target);
+    });
+
+    expect(getWorkbench().implementationChooser).toBe(null);
+    expect(getWorkbench().activePath).toBe(facebookAdapterPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: facebookAdapterPath,
+      position: {
+        column: 21,
+        lineNumber: 7,
+      },
+    });
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     languageServerFeaturesGateway,
