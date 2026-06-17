@@ -587,8 +587,7 @@ button {
   padding: 4px 10px;
 }
 
-.smart-mode-switch,
-.toolbar-toggle {
+.smart-mode-switch {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -606,18 +605,15 @@ button {
     border-color var(--motion-fast) var(--ease-standard);
 }
 
-.smart-mode-switch.active,
-.toolbar-toggle.active {
+.smart-mode-switch.active {
   color: var(--color-text-strong);
 }
 
-.smart-mode-switch:hover:not(:disabled),
-.toolbar-toggle:hover:not(:disabled) {
+.smart-mode-switch:hover:not(:disabled) {
   color: var(--color-text-strong);
 }
 
-.smart-mode-switch:disabled,
-.toolbar-toggle:disabled {
+.smart-mode-switch:disabled {
   color: var(--color-disabled);
   cursor: not-allowed;
 }
@@ -643,13 +639,11 @@ button {
     background-color var(--motion-fast) var(--ease-standard);
 }
 
-.smart-mode-switch.active .switch-track,
-.toolbar-toggle.active .switch-track {
+.smart-mode-switch.active .switch-track {
   background: var(--color-accent);
 }
 
-.smart-mode-switch.active .switch-thumb,
-.toolbar-toggle.active .switch-thumb {
+.smart-mode-switch.active .switch-thumb {
   background: var(--color-white);
   transform: translateX(15px);
 }
@@ -687,8 +681,59 @@ button {
 }
 
 .editor-panel {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.monaco-editor .editor-change-glyph {
+  position: relative;
+  width: 12px !important;
+  height: 20px;
+  cursor: pointer;
+}
+
+.monaco-editor .editor-change-glyph::before {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  width: 4px;
+  height: 14px;
+  border-radius: 999px;
+  content: "";
+}
+
+.monaco-editor .editor-change-glyph-added::before {
+  background: #7ddc9f;
+  box-shadow: 0 0 0 1px rgba(125, 220, 159, 0.2);
+}
+
+.monaco-editor .editor-change-glyph-modified::before {
+  background: #e7c66c;
+  box-shadow: 0 0 0 1px rgba(231, 198, 108, 0.22);
+}
+
+.monaco-editor .editor-change-glyph-deleted::before {
+  background: #ef7373;
+  box-shadow: 0 0 0 1px rgba(239, 115, 115, 0.22);
+}
+
+.monaco-editor .editor-change-line-added,
+.monaco-editor .editor-change-line-modified,
+.monaco-editor .editor-change-line-deleted {
+  border-left: 2px solid transparent;
+}
+
+.monaco-editor .editor-change-line-added {
+  border-left-color: #7ddc9f;
+}
+
+.monaco-editor .editor-change-line-modified {
+  border-left-color: #e7c66c;
+}
+
+.monaco-editor .editor-change-line-deleted {
+  border-left-color: #ef7373;
 }
 
 .monaco-editor .implementation-gutter-glyph {
@@ -726,6 +771,126 @@ button {
 .monaco-editor .implementation-gutter-glyph:hover::before {
   border-color: #a6f4bd;
   background: rgba(45, 185, 112, 0.28);
+}
+
+.editor-change-popover {
+  position: absolute;
+  top: 18px;
+  left: 66px;
+  z-index: 45;
+  display: grid;
+  width: min(620px, calc(100% - 92px));
+  max-height: min(360px, calc(100% - 42px));
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-panel);
+  color: var(--color-text);
+}
+
+.editor-change-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px 10px;
+}
+
+.editor-change-popover-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--color-text-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.editor-change-popover-kind::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  content: "";
+}
+
+.editor-change-popover-kind.added::before {
+  background: #7ddc9f;
+}
+
+.editor-change-popover-kind.modified::before {
+  background: #e7c66c;
+}
+
+.editor-change-popover-kind.deleted::before {
+  background: #ef7373;
+}
+
+.editor-change-popover-icon-button,
+.editor-change-popover-action {
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.editor-change-popover-icon-button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.editor-change-popover-section-label {
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 7px 10px;
+  text-transform: uppercase;
+}
+
+.editor-change-popover-code {
+  min-height: 44px;
+  max-height: 210px;
+  margin: 0;
+  overflow: auto;
+  background: var(--color-editor);
+  color: var(--color-text);
+  font-family: "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas,
+    monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 10px;
+  white-space: pre;
+}
+
+.editor-change-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--color-border);
+  padding: 8px 10px;
+}
+
+.editor-change-popover-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.editor-change-popover-icon-button:hover,
+.editor-change-popover-action:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
 }
 
 .bottom-panel {
@@ -1170,6 +1335,15 @@ button {
   background: var(--color-accent-soft);
   color: var(--color-text-strong);
   box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+
+.editor-tab.changed .tab-main span {
+  color: var(--color-text-strong);
+  font-weight: 800;
+}
+
+.editor-tab.changed:not(.active) {
+  box-shadow: inset 0 -2px 0 var(--color-warning);
 }
 
 .editor-tab.preview .tab-main span {

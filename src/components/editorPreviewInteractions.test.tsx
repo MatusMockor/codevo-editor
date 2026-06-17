@@ -59,6 +59,31 @@ describe("editor preview interactions", () => {
     expect(onPin).toHaveBeenCalledWith(document.path);
   });
 
+  it("marks changed tabs separately from preview tabs", () => {
+    const document = {
+      ...editorDocument("/workspace/src/User.php", "User.php"),
+      content: "<?php echo 'changed';",
+      savedContent: "<?php echo 'saved';",
+    };
+
+    act(() => {
+      root.render(
+        <EditorTabs
+          activePath={document.path}
+          documents={[document]}
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          onPin={vi.fn()}
+          previewPath={document.path}
+        />,
+      );
+    });
+
+    const tab = queryRequired(host, ".editor-tab");
+    expect(tab.classList.contains("changed")).toBe(true);
+    expect(tab.classList.contains("preview")).toBe(false);
+  });
+
   it("previews files on single click and opens them on double click", () => {
     const file = fileEntry("/workspace/src/User.php", "User.php", "file");
     const onPreviewFile = vi.fn();
@@ -137,6 +162,26 @@ describe("editor preview interactions", () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it("scrolls the active file again when the reveal signal changes", () => {
+    const file = fileEntry("/workspace/src/User.php", "User.php", "file");
+
+    renderFileTree({
+      activePath: file.path,
+      file,
+      revealActivePath: true,
+      revealActivePathSignal: 0,
+    });
+    scrollIntoView.mockClear();
+    renderFileTree({
+      activePath: file.path,
+      file,
+      revealActivePath: true,
+      revealActivePathSignal: 1,
+    });
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+  });
+
   function renderFileTree({
     activePath = null,
     file,
@@ -144,6 +189,7 @@ describe("editor preview interactions", () => {
     onPreviewFile = vi.fn(),
     onToggleDirectory = vi.fn(),
     revealActivePath = false,
+    revealActivePathSignal = 0,
   }: {
     activePath?: string | null;
     file: FileEntry;
@@ -151,6 +197,7 @@ describe("editor preview interactions", () => {
     onPreviewFile?: (entry: FileEntry) => void;
     onToggleDirectory?: (path: string) => void;
     revealActivePath?: boolean;
+    revealActivePathSignal?: number;
   }) {
     act(() => {
       root.render(
@@ -170,6 +217,7 @@ describe("editor preview interactions", () => {
           phpFileOutlineExpandedNodeIds={new Set()}
           phpFileOutlinesByPath={{}}
           revealActivePath={revealActivePath}
+          revealActivePathSignal={revealActivePathSignal}
           rootPath="/workspace"
         />,
       );

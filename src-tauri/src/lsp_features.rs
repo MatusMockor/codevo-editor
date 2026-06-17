@@ -51,6 +51,7 @@ pub struct LanguageServerCompletionItem {
     pub detail: Option<String>,
     pub documentation: Option<String>,
     pub insert_text: Option<String>,
+    pub kind: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -188,6 +189,7 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
         detail: optional_string(value.get("detail")),
         documentation: value.get("documentation").and_then(markup_to_string),
         insert_text: optional_string(value.get("insertText")),
+        kind: value.get("kind").and_then(Value::as_u64).map(|kind| kind as u32),
     })
 }
 
@@ -302,6 +304,7 @@ mod tests {
                         "detail": "class",
                         "documentation": { "kind": "markdown", "value": "A user" },
                         "insertText": "User",
+                        "kind": 7,
                     },
                     { "detail": "missing label" },
                 ],
@@ -314,6 +317,7 @@ mod tests {
                     detail: Some("class".to_string()),
                     documentation: Some("A user".to_string()),
                     insert_text: Some("User".to_string()),
+                    kind: Some(7),
                 }],
             }
         );

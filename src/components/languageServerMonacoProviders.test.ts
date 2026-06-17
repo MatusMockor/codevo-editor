@@ -89,6 +89,7 @@ describe("registerLanguageServerMonacoProviders", () => {
             detail: "class",
             documentation: "A user",
             insertText: "User",
+            kind: 7,
             label: "User",
           },
         ],
@@ -118,7 +119,7 @@ describe("registerLanguageServerMonacoProviders", () => {
           detail: "class",
           documentation: "A user",
           insertText: "User",
-          kind: 1,
+          kind: 7,
           label: "User",
           range: {
             endColumn: 5,
@@ -178,13 +179,18 @@ describe("registerLanguageServerMonacoProviders", () => {
             title: "Trigger parameter hints",
           },
           detail:
-            "Symfony\\Component\\HttpFoundation\\Request(string $key, mixed $default = null): mixed",
+            "Symfony\\Component\\HttpFoundation\\Request::get(string $key, mixed $default = null): mixed",
           documentation:
-            "Symfony\\Component\\HttpFoundation\\Request::get()\n\n- string $key\n- mixed $default = null",
-          insertText: "get(${1:key})",
+            "Method\n\nSymfony\\Component\\HttpFoundation\\Request::get()\n\n- string $key\n- mixed $default = null",
+          insertText: "get($0)",
           insertTextRules: 4,
           kind: 2,
-          label: "get",
+          label: {
+            description:
+              "method - Symfony\\Component\\HttpFoundation\\Request",
+            detail: "()",
+            label: "get",
+          },
           range: {
             endColumn: 18,
             endLineNumber: 4,
@@ -237,11 +243,15 @@ describe("registerLanguageServerMonacoProviders", () => {
         {
           command: undefined,
           detail: "App\\Models\\Comment::$body: string",
-          documentation: "App\\Models\\Comment::$body",
+          documentation: "Property\n\nApp\\Models\\Comment::$body",
           insertText: "body",
           insertTextRules: 4,
           kind: 10,
-          label: "body",
+          label: {
+            description: "property - App\\Models\\Comment",
+            detail: "",
+            label: "body",
+          },
           range: {
             endColumn: 17,
             endLineNumber: 4,
@@ -250,6 +260,54 @@ describe("registerLanguageServerMonacoProviders", () => {
           },
           sortText: "0_0000",
         },
+      ],
+    });
+  });
+
+  it("places the cursor after parentheses for typed PHP methods without parameters", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "refresh",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->ref\n}\n",
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          lineContent: "    $comment->ref",
+          word: {
+            endColumn: 18,
+            startColumn: 15,
+          },
+        }),
+        {
+          column: 18,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [
+        expect.objectContaining({
+          command: undefined,
+          insertText: "refresh()$0",
+          label: {
+            description: "method - App\\Models\\Comment",
+            detail: "()",
+            label: "refresh",
+          },
+        }),
       ],
     });
   });
@@ -444,7 +502,17 @@ function createRegisteredProviders() {
     },
     languages: {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
-      CompletionItemKind: { Method: 2, Property: 10, Text: 1, Variable: 6 },
+      CompletionItemKind: {
+        Class: 7,
+        Constant: 21,
+        Field: 5,
+        Function: 3,
+        Interface: 8,
+        Method: 2,
+        Property: 10,
+        Text: 1,
+        Variable: 6,
+      },
       registerCodeActionProvider: vi.fn((language, provider, metadata) => {
         registered.codeActionLanguage = language;
         registered.codeActionProvider = provider;

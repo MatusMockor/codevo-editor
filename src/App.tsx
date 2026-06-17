@@ -37,6 +37,7 @@ import {
   indexProgressLabel,
   type IndexProgressState,
 } from "./domain/indexProgress";
+import { editorChangeHunks } from "./domain/editorChangeMarkers";
 import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
@@ -93,6 +94,7 @@ function App() {
   const prefersLightTheme = usePrefersLightTheme();
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(152);
+  const [activeFileRevealSignal, setActiveFileRevealSignal] = useState(0);
   const workbench = useWorkbenchController(
     workspaceGateways,
     smartModeGateway,
@@ -112,6 +114,17 @@ function App() {
   const activeLanguage = useMemo(
     () => workbench.activeDocument?.language ?? null,
     [workbench.activeDocument],
+  );
+  const activeEditorChangeHunks = useMemo(
+    () =>
+      workbench.activeDocument
+        ? editorChangeHunks(
+            workbench.activeDocumentGitBaseline ??
+              workbench.activeDocument.savedContent,
+            workbench.activeDocument.content,
+          )
+        : [],
+    [workbench.activeDocument, workbench.activeDocumentGitBaseline],
   );
   const workspaceLabel = useMemo(() => {
     const php = workbench.workspaceDescriptor?.php;
@@ -395,6 +408,7 @@ function App() {
             revealActivePath={
               workbench.workspaceSettings.revealActiveFileInTree
             }
+            revealActivePathSignal={activeFileRevealSignal}
             rootPath={workbench.workspaceRoot}
           />
         )}
@@ -448,24 +462,6 @@ function App() {
               Trust
             </button>
           ) : null}
-          <button
-            aria-pressed={workbench.workspaceSettings.autoSave}
-            className={
-              workbench.workspaceSettings.autoSave
-                ? "toolbar-toggle active"
-                : "toolbar-toggle"
-            }
-            disabled={!workbench.workspaceRoot}
-            onClick={() =>
-              workbench.setAutoSave(!workbench.workspaceSettings.autoSave)
-            }
-            type="button"
-          >
-            <span>Auto Save</span>
-            <span className="switch-track" aria-hidden="true">
-              <span className="switch-thumb" />
-            </span>
-          </button>
         </header>
         <EditorTabs
           activePath={workbench.activePath}
@@ -485,6 +481,7 @@ function App() {
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}
+            changeHunks={activeEditorChangeHunks}
             editorRevealTarget={workbench.editorRevealTarget}
             flushPendingLanguageServerDocument={
               workbench.flushPendingLanguageServerDocument
@@ -508,6 +505,9 @@ function App() {
             onGoToImplementationAt={(position) =>
               void workbench.goToImplementationAt(position)
             }
+            onEditorFocused={() =>
+              setActiveFileRevealSignal((current) => current + 1)
+            }
             onOpenClass={() => {
               if (workbench.workspaceRoot) {
                 workbench.setQuickOpenOpen(false);
@@ -524,6 +524,7 @@ function App() {
             onChange={workbench.updateActiveDocument}
             onLanguageServerError={workbench.reportLanguageServerError}
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
+            onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
             providePhpMethodSignature={workbench.providePhpMethodSignature}

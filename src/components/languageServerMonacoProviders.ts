@@ -241,7 +241,7 @@ async function provideCompletionItems(
       detail: item.detail || undefined,
       documentation: item.documentation || undefined,
       insertText: item.insertText || item.label,
-      kind: monaco.languages.CompletionItemKind.Text,
+      kind: monacoCompletionKindFromLspKind(monaco, item.kind),
       label: item.label,
       range,
       sortText: `1_${String(index).padStart(4, "0")}`,
@@ -286,7 +286,7 @@ async function phpMethodSuggestions(
         item.kind === "property"
           ? monaco.languages.CompletionItemKind.Property
           : monaco.languages.CompletionItemKind.Method,
-      label: item.name,
+      label: phpMethodCompletionLabel(item),
       range,
       sortText: `0_${String(index).padStart(4, "0")}`,
     }));
@@ -353,25 +353,40 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
-  return `${item.declaringClassName}${parameters}${returnType}`;
+  return `${item.declaringClassName}::${item.name}${parameters}${returnType}`;
 }
 
 function phpMethodDocumentation(item: PhpMethodCompletion): string {
   if (item.kind === "property") {
-    return `${item.declaringClassName}::$${item.name}`;
+    return `Property\n\n${item.declaringClassName}::$${item.name}`;
   }
 
   const parameters = phpMethodParameters(item.parameters);
 
   if (!parameters.length) {
-    return `${item.declaringClassName}::${item.name}()`;
+    return `Method\n\n${item.declaringClassName}::${item.name}()`;
   }
 
   return [
+    "Method",
+    "",
     `${item.declaringClassName}::${item.name}()`,
     "",
     ...parameters.map((parameter) => `- ${phpParameterLabel(parameter)}`),
   ].join("\n");
+}
+
+function phpMethodCompletionLabel(
+  item: PhpMethodCompletion,
+): Monaco.languages.CompletionItemLabel {
+  return {
+    description:
+      item.kind === "property"
+        ? `property - ${item.declaringClassName}`
+        : `method - ${item.declaringClassName}`,
+    detail: item.kind === "property" ? "" : "()",
+    label: item.name,
+  };
 }
 
 function phpMethodSignatureLabel(item: PhpMethodCompletion): string {
@@ -386,20 +401,13 @@ function phpMethodSnippet(item: PhpMethodCompletion): string {
     return item.name;
   }
 
-  const requiredParameters = phpMethodParameters(item.parameters).filter(
-    (parameter) => !parameter.optional,
-  );
+  const parameters = phpMethodParameters(item.parameters);
 
-  if (!requiredParameters.length) {
-    return `${item.name}()`;
+  if (!parameters.length) {
+    return `${item.name}()$0`;
   }
 
-  return `${item.name}(${requiredParameters
-    .map((parameter, index) => {
-      const placeholder = parameter.name.replace(/^\$/, "");
-      return `\${${index + 1}:${escapeSnippetPlaceholder(placeholder)}}`;
-    })
-    .join(", ")})`;
+  return `${item.name}($0)`;
 }
 
 function phpParameterLabel(parameter: PhpMethodParameter): string {
@@ -408,10 +416,6 @@ function phpParameterLabel(parameter: PhpMethodParameter): string {
     parameter.defaultValue !== null ? ` = ${parameter.defaultValue}` : "";
 
   return `${type}${parameter.name}${defaultValue}`;
-}
-
-function escapeSnippetPlaceholder(value: string): string {
-  return value.replace(/[\\}$]/g, "\\$&");
 }
 
 function activePhpDocumentContext(
@@ -467,7 +471,7 @@ function dedupeCompletionItems(
   const unique: Monaco.languages.CompletionItem[] = [];
 
   for (const item of items) {
-    const key = String(item.label).toLowerCase();
+    const key = completionItemLabelText(item.label).toLowerCase();
 
     if (seen.has(key)) {
       continue;
@@ -478,6 +482,38 @@ function dedupeCompletionItems(
   }
 
   return unique;
+}
+
+function completionItemLabelText(
+  label: Monaco.languages.CompletionItem["label"],
+): string {
+  return typeof label === "string" ? label : label.label;
+}
+
+function monacoCompletionKindFromLspKind(
+  monaco: MonacoApi,
+  kind: number | null,
+): Monaco.languages.CompletionItemKind {
+  switch (kind) {
+    case 2:
+      return monaco.languages.CompletionItemKind.Method;
+    case 3:
+      return monaco.languages.CompletionItemKind.Function;
+    case 5:
+      return monaco.languages.CompletionItemKind.Field;
+    case 6:
+      return monaco.languages.CompletionItemKind.Variable;
+    case 7:
+      return monaco.languages.CompletionItemKind.Class;
+    case 8:
+      return monaco.languages.CompletionItemKind.Interface;
+    case 10:
+      return monaco.languages.CompletionItemKind.Property;
+    case 21:
+      return monaco.languages.CompletionItemKind.Constant;
+    default:
+      return monaco.languages.CompletionItemKind.Text;
+  }
 }
 
 function featureRequestContext(

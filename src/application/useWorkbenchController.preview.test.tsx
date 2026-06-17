@@ -35,6 +35,7 @@ import {
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type {
   FileEntry,
+  FileSearchResult,
   PhpProjectDescriptor,
   WorkspaceDescriptor,
 } from "../domain/workspace";
@@ -174,6 +175,50 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().selectedGitChange).toBeNull();
     expect(getWorkbench().gitDiffPreview).toBeNull();
     expect(getWorkbench().activePath).toBe(file.path);
+  });
+
+  it("loads the Git original content for active editor change markers", async () => {
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    const change = {
+      oldPath: null,
+      oldRelativePath: null,
+      path: file.path,
+      relativePath: "src/User.php",
+      status: "modified" as const,
+    };
+    const gitGateway: GitGateway = {
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: "<?php\nfinal class User {}\n",
+        originalContent: "<?php\nfinal class OriginalUser {}\n",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+      readTextFile: vi.fn(async () => "<?php\nfinal class User {}\n"),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(file);
+    });
+    await flushAsyncTurns();
+
+    expect(gitGateway.getDiff).toHaveBeenCalledWith("/workspace", change);
+    expect(getWorkbench().activeDocumentGitBaseline).toBe(
+      "<?php\nfinal class OriginalUser {}\n",
+    );
   });
 
   it("reuses a clean preview tab for search result opens", async () => {
@@ -332,6 +377,42 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.indexProgressGateway.startInitialMetadataScan,
     ).toHaveBeenCalledWith("/workspace");
+  });
+
+  it("detects PHP workspace metadata before restoring startup tabs", async () => {
+    const restoredPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const readTextFile = vi.fn(async () => "<?php\nclass CommentController {}\n");
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        session: {
+          activePath: restoredPath,
+          bottomPanelView: "problems",
+          openPaths: [restoredPath],
+          sidebarView: "files",
+        },
+      },
+    });
+    await flushAsyncTurns();
+
+    const detectOrder = vi.mocked(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).mock.invocationCallOrder[0];
+    const restoreReadOrder = readTextFile.mock.invocationCallOrder[0];
+
+    expect(detectOrder).toBeDefined();
+    expect(restoreReadOrder).toBeDefined();
+    expect(detectOrder ?? Number.MAX_SAFE_INTEGER).toBeLessThan(
+      restoreReadOrder ?? 0,
+    );
+    expect(getWorkbench().workspaceDescriptor?.php).not.toBeNull();
+    expect(getWorkbench().activePath).toBe(restoredPath);
   });
 
   it("clears indexed intelligence and stops the language server when IDE mode is turned off", async () => {
@@ -1266,6 +1347,123 @@ class Comment
     ]);
   });
 
+  it("falls back to verified PHP filename lookup before the index is warm", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
+    const commentPath =
+      "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\communication;
+
+use App\\Http\\Requests\\GetOneCommentRequest;
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->get
+    }
+}
+`;
+    const searchFiles = vi.fn(
+      async (_root: string, query: string): Promise<FileSearchResult[]> => {
+        if (query === "CommentRepositoryInterface.php") {
+          return [
+            {
+              name: "CommentRepositoryInterface.php",
+              path: repositoryInterfacePath,
+              relativePath:
+                "app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php",
+            },
+          ];
+        }
+
+        if (query === "Comment.php") {
+          return [
+            {
+              name: "Comment.php",
+              path: commentPath,
+              relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
+            },
+          ];
+        }
+
+        return [];
+      },
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace Kontentino\\Communication\\Interfaces;
+
+use Kontentino\\Communication\\Models\\Comment;
+
+interface CommentRepositoryInterface
+{
+    public function findOrFail(int $id): Comment;
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchFiles,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    expect(searchFiles).toHaveBeenCalledWith(
+      "/workspace",
+      "CommentRepositoryInterface.php",
+      40,
+    );
+    expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
+  });
+
   it("opens Laravel database connection methods inferred from return expressions", async () => {
     const localUserPath = "/workspace/app/Models/LocalUser.php";
     const userAccountPath = "/workspace/app/Models/UserAccount.php";
@@ -1824,28 +2022,38 @@ final class FacebookAdapterService extends BaseAdapter
 
   function renderController({
     appSettings = defaultAppSettings(),
+    gitGateway,
     languageServerFeaturesGateway,
     projectSymbols = [],
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
+    searchFiles = vi.fn(async () => []),
     workspaceDescriptor,
     workspaceSettings = defaultWorkspaceSettings(),
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
+    gitGateway?: GitGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     projectSymbols?: ProjectSymbolSearchResult[];
     readTextFile?: (path: string) => Promise<string>;
     runtimeStatus?: LanguageServerRuntimeStatus;
+    searchFiles?: (
+      root: string,
+      query: string,
+      limit: number,
+    ) => Promise<FileSearchResult[]>;
     workspaceDescriptor?: WorkspaceDescriptor;
     workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
   } = {}) {
     let workbench: WorkbenchController | null = null;
     const dependencies = createControllerDependencies({
       appSettings,
+      gitGateway,
       languageServerFeaturesGateway,
       projectSymbols,
       readTextFile,
       runtimeStatus,
+      searchFiles,
       workspaceDescriptor,
       workspaceSettings,
     });
@@ -1905,18 +2113,26 @@ function WorkbenchHarness({
 
 function createControllerDependencies({
   appSettings,
+  gitGateway,
   languageServerFeaturesGateway,
   projectSymbols,
   readTextFile,
   runtimeStatus,
+  searchFiles,
   workspaceDescriptor,
   workspaceSettings,
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
+  gitGateway?: GitGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   projectSymbols: ProjectSymbolSearchResult[];
   readTextFile(path: string): Promise<string>;
   runtimeStatus: LanguageServerRuntimeStatus;
+  searchFiles(
+    root: string,
+    query: string,
+    limit: number,
+  ): Promise<FileSearchResult[]>;
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
 }): ControllerDependencies {
@@ -1934,7 +2150,7 @@ function createControllerDependencies({
       })),
     },
     fileSearch: {
-      searchFiles: vi.fn(async () => []),
+      searchFiles,
     },
     files: {
       createDirectory: vi.fn(async () => undefined),
@@ -1961,7 +2177,7 @@ function createControllerDependencies({
 
   return {
     documentSyncGateway,
-    gitGateway: {
+    gitGateway: gitGateway ?? {
       getDiff: vi.fn(async (_rootPath, change) => ({
         change,
         language: "plaintext",

@@ -49,7 +49,7 @@ export function EditorTabs({
 
         return (
           <div
-            className={getEditorTabClassName(active, preview)}
+            className={getEditorTabClassName(active, preview, dirty)}
             key={document.path}
           >
             <button
@@ -110,7 +110,11 @@ function getNextTabIndex(
   return null;
 }
 
-function getEditorTabClassName(active: boolean, preview: boolean): string {
+function getEditorTabClassName(
+  active: boolean,
+  preview: boolean,
+  dirty: boolean,
+): string {
   const classNames = ["editor-tab"];
 
   if (active) {
@@ -119,6 +123,10 @@ function getEditorTabClassName(active: boolean, preview: boolean): string {
 
   if (preview) {
     classNames.push("preview");
+  }
+
+  if (dirty) {
+    classNames.push("changed");
   }
 
   return classNames.join(" ");

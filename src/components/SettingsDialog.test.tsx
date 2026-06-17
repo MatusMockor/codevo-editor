@@ -65,6 +65,44 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("keeps Auto Save enabled by default and persists disabling it from settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(autoSaveCheckbox().checked).toBe(true);
+
+    await act(async () => {
+      autoSaveCheckbox().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        autoSaveConfigured: true,
+      },
+    });
+  });
+
   function revealActiveFileCheckbox(): HTMLInputElement {
     const labels = Array.from(host.querySelectorAll("label"));
     const label = labels.find((item) =>
@@ -74,6 +112,18 @@ describe("SettingsDialog", () => {
 
     if (!input) {
       throw new Error("Reveal active file checkbox was not rendered.");
+    }
+
+    return input;
+  }
+
+  function autoSaveCheckbox(): HTMLInputElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) => item.textContent?.includes("Auto Save"));
+    const input = label?.querySelector<HTMLInputElement>("input");
+
+    if (!input) {
+      throw new Error("Auto Save checkbox was not rendered.");
     }
 
     return input;

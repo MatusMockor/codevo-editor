@@ -27,6 +27,7 @@ export interface LanguageServerCompletionItem {
   detail: string | null;
   documentation: string | null;
   insertText: string | null;
+  kind: number | null;
 }
 
 export interface LanguageServerCompletionList {

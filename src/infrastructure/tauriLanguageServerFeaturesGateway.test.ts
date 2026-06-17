@@ -29,7 +29,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     const hover = { contents: "Hover text" };
     const completion = {
       isIncomplete: false,
-      items: [{ detail: null, documentation: null, insertText: null, label: "User" }],
+      items: [
+        {
+          detail: null,
+          documentation: null,
+          insertText: null,
+          kind: 7,
+          label: "User",
+        },
+      ],
     };
     const definition = [
       {

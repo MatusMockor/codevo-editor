@@ -1,7 +1,12 @@
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
+import { RotateCcw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type * as Monaco from "monaco-editor";
+import type {
+  EditorChangeHunk,
+  EditorChangeKind,
+} from "../domain/editorChangeMarkers";
 import type {
   EditorPosition,
   EditorRevealTarget,
@@ -34,6 +39,7 @@ import { getTabId, getTabPanelId } from "./tabIds";
 
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  changeHunks: EditorChangeHunk[];
   editorRevealTarget: EditorRevealTarget | null;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
@@ -47,12 +53,14 @@ interface EditorSurfaceProps {
   onGoForward(): void;
   onGoToDefinition(): void;
   onGoToImplementationAt(position: EditorPosition): void;
+  onEditorFocused(): void;
   onOpenClass(): void;
   onOpenFile(): void;
   onOpenFileStructure(): void;
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
   onRevealTargetHandled(): void;
+  onRevertChangeHunk(hunk: EditorChangeHunk): void;
   phpSyntaxDiagnosticsGateway: PhpSyntaxDiagnosticsGateway;
   providePhpMethodCompletions(
     source: string,
@@ -66,6 +74,7 @@ interface EditorSurfaceProps {
 
 export function EditorSurface({
   activeDocument,
+  changeHunks,
   editorRevealTarget,
   flushPendingLanguageServerDocument,
   languageServerDiagnosticsByPath,
@@ -79,12 +88,14 @@ export function EditorSurface({
   onGoForward,
   onGoToDefinition,
   onGoToImplementationAt,
+  onEditorFocused,
   onOpenClass,
   onOpenFile,
   onOpenFileStructure,
   onChange,
   onLanguageServerError,
   onRevealTargetHandled,
+  onRevertChangeHunk,
   phpSyntaxDiagnosticsGateway,
   providePhpMethodCompletions,
   providePhpMethodSignature,
@@ -96,6 +107,8 @@ export function EditorSurface({
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
   const errorReporterRef = useRef(onLanguageServerError);
+  const changeDecorationIdsRef = useRef<string[]>([]);
+  const changeHunksRef = useRef(changeHunks);
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
   const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
@@ -104,10 +117,21 @@ export function EditorSurface({
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
     Record<string, PhpSyntaxDiagnostic[]>
   >({});
+  const [changePreviewHunk, setChangePreviewHunk] =
+    useState<EditorChangeHunk | null>(null);
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
   }, [activeDocument]);
+
+  useEffect(() => {
+    changeHunksRef.current = changeHunks;
+    setChangePreviewHunk((current) =>
+      current && changeHunks.some((hunk) => hunk.id === current.id)
+        ? current
+        : null,
+    );
+  }, [changeHunks]);
 
   useEffect(() => {
     runtimeStatusRef.current = languageServerRuntimeStatus;
@@ -283,19 +307,70 @@ export function EditorSurface({
         return;
       }
 
+      const lane = glyphMarginLaneFromMouseEvent(event);
+      const changeHunk = findChangeHunkAtLine(
+        changeHunksRef.current,
+        lineNumber,
+      );
       const target = implementationGutterTargetsRef.current.get(lineNumber);
 
-      if (!target) {
+      if (target && lane !== monacoApi.editor.GlyphMarginLane.Left) {
+        event.event.preventDefault();
+        event.event.stopPropagation();
+        onGoToImplementationAt(target);
         return;
       }
 
-      event.event.preventDefault();
-      event.event.stopPropagation();
-      onGoToImplementationAt(target);
+      if (changeHunk) {
+        event.event.preventDefault();
+        event.event.stopPropagation();
+        setChangePreviewHunk(changeHunk);
+      }
     });
 
     return () => disposable.dispose();
   }, [editorApi, monacoApi, onGoToImplementationAt]);
+
+  useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    changeDecorationIdsRef.current = editorApi.deltaDecorations(
+      changeDecorationIdsRef.current,
+      changeHunks.map((hunk) => toEditorChangeDecoration(monacoApi, hunk)),
+    );
+
+    return () => {
+      changeDecorationIdsRef.current = editorApi.deltaDecorations(
+        changeDecorationIdsRef.current,
+        [],
+      );
+    };
+  }, [activeDocument, changeHunks, editorApi, monacoApi]);
+
+  useEffect(() => {
+    if (!changePreviewHunk) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      setChangePreviewHunk(null);
+    };
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [changePreviewHunk]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -547,6 +622,8 @@ export function EditorSurface({
       aria-labelledby={getTabId(activeDocument.path)}
       className="editor-panel"
       id={getTabPanelId(activeDocument.path)}
+      onFocusCapture={onEditorFocused}
+      onMouseDown={onEditorFocused}
       role="tabpanel"
     >
       <Editor
@@ -572,8 +649,137 @@ export function EditorSurface({
         theme={monacoTheme}
         value={activeDocument.content}
       />
+      {changePreviewHunk ? (
+        <div
+          aria-label="Local change preview"
+          className="editor-change-popover"
+          role="dialog"
+        >
+          <div className="editor-change-popover-header">
+            <span
+              className={`editor-change-popover-kind ${changePreviewHunk.kind}`}
+            >
+              {editorChangeKindLabel(changePreviewHunk.kind)}
+            </span>
+            <button
+              aria-label="Close local change preview"
+              className="editor-change-popover-icon-button"
+              onClick={() => setChangePreviewHunk(null)}
+              type="button"
+            >
+              <X aria-hidden="true" size={14} />
+            </button>
+          </div>
+          <div className="editor-change-popover-section-label">
+            Previous content
+          </div>
+          <pre className="editor-change-popover-code">
+            {changePreviewText(changePreviewHunk)}
+          </pre>
+          <div className="editor-change-popover-actions">
+            <button
+              className="editor-change-popover-action"
+              onClick={() => {
+                onRevertChangeHunk(changePreviewHunk);
+                setChangePreviewHunk(null);
+              }}
+              type="button"
+            >
+              <RotateCcw aria-hidden="true" size={13} />
+              Revert change
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function toEditorChangeDecoration(
+  monaco: typeof Monaco,
+  hunk: EditorChangeHunk,
+): Monaco.editor.IModelDeltaDecoration {
+  return {
+    options: {
+      glyphMargin: {
+        position: monaco.editor.GlyphMarginLane.Left,
+      },
+      glyphMarginClassName: `editor-change-glyph editor-change-glyph-${hunk.kind}`,
+      glyphMarginHoverMessage: {
+        value: `${editorChangeKindLabel(hunk.kind)}. Click to preview or revert.`,
+      },
+      isWholeLine: true,
+      linesDecorationsClassName: `editor-change-line editor-change-line-${hunk.kind}`,
+      overviewRuler: {
+        color: editorChangeColor(hunk.kind),
+        position: monaco.editor.OverviewRulerLane.Left,
+      },
+      stickiness:
+        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+      zIndex: 15,
+    },
+    range: new monaco.Range(
+      hunk.startLineNumber,
+      1,
+      hunk.endLineNumber,
+      1,
+    ),
+  };
+}
+
+function findChangeHunkAtLine(
+  hunks: EditorChangeHunk[],
+  lineNumber: number,
+): EditorChangeHunk | null {
+  return (
+    hunks.find(
+      (hunk) =>
+        lineNumber >= hunk.startLineNumber &&
+        lineNumber <= hunk.endLineNumber,
+    ) ?? null
+  );
+}
+
+function glyphMarginLaneFromMouseEvent(
+  event: Monaco.editor.IEditorMouseEvent,
+): Monaco.editor.GlyphMarginLane | null {
+  const target = event.target as {
+    detail?: { glyphMarginLane?: Monaco.editor.GlyphMarginLane };
+  };
+
+  return target.detail?.glyphMarginLane ?? null;
+}
+
+function editorChangeKindLabel(kind: EditorChangeKind): string {
+  if (kind === "added") {
+    return "Added lines";
+  }
+
+  if (kind === "deleted") {
+    return "Deleted lines";
+  }
+
+  return "Modified lines";
+}
+
+function editorChangeColor(kind: EditorChangeKind): string {
+  if (kind === "added") {
+    return "#7ddc9f";
+  }
+
+  if (kind === "deleted") {
+    return "#ef7373";
+  }
+
+  return "#e7c66c";
+}
+
+function changePreviewText(hunk: EditorChangeHunk): string {
+  if (!hunk.originalLines.length) {
+    return "No previous lines.";
+  }
+
+  return hunk.originalLines.join("\n");
 }
 
 function toMonacoDiagnosticMarker(

@@ -81,6 +81,10 @@ import {
   type ImplementationTarget,
 } from "../domain/implementationTargets";
 import {
+  applyEditorChangeRevert,
+  type EditorChangeHunk,
+} from "../domain/editorChangeMarkers";
+import {
   isLanguageServerActive,
   languageServerCrashMessage,
   type LanguageServerRuntimeGateway,
@@ -265,6 +269,9 @@ export function useWorkbenchController(
   const [gitDiffPreview, setGitDiffPreview] = useState<GitFileDiff | null>(
     null,
   );
+  const [editorGitBaselinesByPath, setEditorGitBaselinesByPath] = useState<
+    Record<string, string | null>
+  >({});
   const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState<
     Set<string>
   >(new Set());
@@ -348,6 +355,7 @@ export function useWorkbenchController(
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const openFileRequestTokenRef = useRef(0);
   const gitDiffRequestTokenRef = useRef(0);
+  const editorGitBaselineRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
   const autoStartedLanguageServerRootRef = useRef<string | null>(null);
@@ -361,6 +369,7 @@ export function useWorkbenchController(
   >({});
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const phpClassSourcePathCacheRef = useRef<Record<string, string[]>>({});
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
   );
@@ -589,6 +598,7 @@ export function useWorkbenchController(
 
       pendingIndexScanRef.current = false;
       activeIndexRootRef.current = event.rootPath;
+      phpClassSourcePathCacheRef.current = {};
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
       );
@@ -647,6 +657,7 @@ export function useWorkbenchController(
     pendingIndexScanRef.current = false;
     activeIndexRootRef.current = null;
     lastPhpFileOutlineRefreshKeyRef.current = null;
+    phpClassSourcePathCacheRef.current = {};
     phpClassMemberCacheRef.current = {};
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
@@ -1042,6 +1053,7 @@ export function useWorkbenchController(
       setGitDiffLoading(false);
       setSelectedGitChange(null);
       setGitDiffPreview(null);
+      setEditorGitBaselinesByPath({});
       setPhpFileOutlinesByPath({});
       setPhpInheritedFileOutlinesByPath({});
       setExpandedPhpFilePaths(new Set());
@@ -1053,6 +1065,7 @@ export function useWorkbenchController(
       setClassOpenResults([]);
       setFileStructureScope("current");
       lastPhpFileOutlineRefreshKeyRef.current = null;
+      phpClassSourcePathCacheRef.current = {};
       phpClassMemberCacheRef.current = {};
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
@@ -1081,29 +1094,59 @@ export function useWorkbenchController(
       }
 
       await loadDirectory(path);
+      let descriptor: WorkspaceDescriptor | null = null;
+      try {
+        const trust = await workspaceTrustGateway.getTrust(path);
+
+        if (currentWorkspaceRootRef.current !== path) {
+          return;
+        }
+
+        setWorkspaceTrust(trust);
+      } catch (error) {
+        reportError("Workspace Trust", error);
+      }
+
+      try {
+        descriptor = await workspaceDetection.detectWorkspace(path);
+
+        if (currentWorkspaceRootRef.current !== path) {
+          return;
+        }
+
+        setWorkspaceDescriptor(descriptor);
+      } catch (error) {
+        reportError("Workspace Detection", error);
+      }
+
       await restoreWorkspaceSession(path, workspaceSettings.session);
+
+      if (currentWorkspaceRootRef.current !== path) {
+        return;
+      }
+
       workspaceSessionRestoredRef.current = true;
 
       if (shouldIndexWorkspace(resolvedIntelligenceMode)) {
         void startInitialIndexScan(path);
       }
 
-      try {
-        const trust = await workspaceTrustGateway.getTrust(path);
-        setWorkspaceTrust(trust);
-        const descriptor = await workspaceDetection.detectWorkspace(path);
-        setWorkspaceDescriptor(descriptor);
+      if (!descriptor?.php) {
+        setLanguageServerPlan(null);
+        return;
+      }
 
-        if (!descriptor.php) {
-          setLanguageServerPlan(null);
+      try {
+        const tools = await phpToolGateway.detectPhpTools(path);
+
+        if (currentWorkspaceRootRef.current !== path) {
           return;
         }
 
-        const tools = await phpToolGateway.detectPhpTools(path);
         setPhpTools(tools);
         await refreshLanguageServerPlan(path);
       } catch (error) {
-        reportError("Workspace Detection", error);
+        reportError("PHP Tools", error);
       }
     },
     [
@@ -1407,6 +1450,81 @@ export function useWorkbenchController(
       setGitLoading(false);
     }
   }, [gitGateway, reportError, workspaceRoot]);
+
+  useEffect(() => {
+    if (!workspaceRoot || !activeDocument) {
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    const requestedPath = activeDocument.path;
+    const token = (editorGitBaselineRequestTokenRef.current += 1);
+    let active = true;
+
+    const loadGitBaseline = async () => {
+      try {
+        const status = await gitGateway.getStatus(requestedRoot);
+
+        if (
+          !active ||
+          token !== editorGitBaselineRequestTokenRef.current ||
+          currentWorkspaceRootRef.current !== requestedRoot
+        ) {
+          return;
+        }
+
+        setGitStatus(status);
+
+        const change = status.changes.find(
+          (candidate) =>
+            candidate.path === requestedPath ||
+            candidate.oldPath === requestedPath,
+        );
+
+        if (!status.isRepository || !change) {
+          setEditorGitBaselinesByPath((current) => ({
+            ...current,
+            [requestedPath]: null,
+          }));
+          return;
+        }
+
+        const diff = await gitGateway.getDiff(requestedRoot, change);
+
+        if (
+          !active ||
+          token !== editorGitBaselineRequestTokenRef.current ||
+          currentWorkspaceRootRef.current !== requestedRoot
+        ) {
+          return;
+        }
+
+        setEditorGitBaselinesByPath((current) => ({
+          ...current,
+          [requestedPath]: diff.originalContent,
+        }));
+      } catch {
+        if (
+          !active ||
+          token !== editorGitBaselineRequestTokenRef.current ||
+          currentWorkspaceRootRef.current !== requestedRoot
+        ) {
+          return;
+        }
+
+        setEditorGitBaselinesByPath((current) => ({
+          ...current,
+          [requestedPath]: null,
+        }));
+      }
+    };
+
+    void loadGitBaseline();
+
+    return () => {
+      active = false;
+    };
+  }, [activeDocument?.path, activeDocument?.savedContent, gitGateway, workspaceRoot]);
 
   const previewGitChange = useCallback(
     async (change: GitChangedFile) => {
@@ -1888,26 +2006,6 @@ export function useWorkbenchController(
     return () => window.clearTimeout(timer);
   }, [activeDocument, saveActiveDocument, workspaceSettings.autoSave]);
 
-  const setAutoSave = useCallback(
-    async (autoSave: boolean) => {
-      if (!workspaceRoot) {
-        return;
-      }
-
-      try {
-        await persistWorkspaceSettings(workspaceRoot, {
-          ...workspaceSettingsRef.current,
-          autoSave,
-          autoSaveConfigured: true,
-        });
-        setMessage(autoSave ? "Auto Save enabled." : "Auto Save disabled.");
-      } catch (error) {
-        reportError("Auto Save", error);
-      }
-    },
-    [persistWorkspaceSettings, reportError, workspaceRoot],
-  );
-
   const setStatusBarItemVisibility = useCallback(
     async (key: keyof StatusBarItemVisibility, visible: boolean) => {
       if (!workspaceRoot) {
@@ -2110,6 +2208,23 @@ export function useWorkbenchController(
     [activeDocument, pinDocument],
   );
 
+  const revertActiveEditorChangeHunk = useCallback(
+    (hunk: EditorChangeHunk) => {
+      if (!activeDocument) {
+        return;
+      }
+
+      const content = applyEditorChangeRevert(activeDocument.content, hunk);
+
+      if (content === activeDocument.content) {
+        return;
+      }
+
+      updateActiveDocument(content);
+    },
+    [activeDocument, updateActiveDocument],
+  );
+
   const createFile = useCallback(async () => {
     if (!workspaceRoot) {
       return;
@@ -2302,6 +2417,42 @@ export function useWorkbenchController(
     [resolvePhpClassReference],
   );
 
+  const findPhpClassSourcePathsByFileName = useCallback(
+    async (className: string): Promise<string[]> => {
+      if (!workspaceRoot) {
+        return [];
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+      const shortName = shortPhpName(normalizedClassName);
+      const fileName = `${shortName}.php`;
+      const results = await fileSearch.searchFiles(workspaceRoot, fileName, 40);
+      const paths: string[] = [];
+
+      for (const result of results) {
+        if (result.name.toLowerCase() !== fileName.toLowerCase()) {
+          continue;
+        }
+
+        try {
+          const content = await readNavigationFileContent(result.path);
+          const sourceClassName = phpCurrentClassName(content);
+
+          if (sourceClassName?.toLowerCase() !== normalizedClassName.toLowerCase()) {
+            continue;
+          }
+
+          paths.push(result.path);
+        } catch {
+          continue;
+        }
+      }
+
+      return paths;
+    },
+    [fileSearch, readNavigationFileContent, workspaceRoot],
+  );
+
   const resolvePhpClassSourcePaths = useCallback(
     async (className: string): Promise<string[]> => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
@@ -2343,9 +2494,28 @@ export function useWorkbenchController(
         }
       }
 
+      if (paths.size === 0) {
+        const cacheKey = normalizedClassName.toLowerCase();
+        const cachedPaths = phpClassSourcePathCacheRef.current[cacheKey];
+        const fallbackPaths =
+          cachedPaths ??
+          (await findPhpClassSourcePathsByFileName(
+            normalizedClassName,
+          ));
+
+        if (!cachedPaths && fallbackPaths.length > 0) {
+          phpClassSourcePathCacheRef.current[cacheKey] = fallbackPaths;
+        }
+
+        for (const path of fallbackPaths) {
+          paths.add(path);
+        }
+      }
+
       return [...paths];
     },
     [
+      findPhpClassSourcePathsByFileName,
       intelligenceMode,
       projectSymbolSearch,
       workspaceDescriptor,
@@ -4874,6 +5044,9 @@ export function useWorkbenchController(
 
   return {
     activeDocument,
+    activeDocumentGitBaseline: activeDocument
+      ? editorGitBaselinesByPath[activeDocument.path] ?? null
+      : null,
     activePath,
     appSettings,
     classOpenLoading,
@@ -4948,6 +5121,7 @@ export function useWorkbenchController(
     previewGitChange,
     refreshPhpTree,
     refreshGitStatus,
+    revertActiveEditorChangeHunk,
     saveActiveDocument,
     saveWorkbenchSettings,
     setActivePath: activateDocument,
@@ -4963,7 +5137,6 @@ export function useWorkbenchController(
     setTextSearchOpen,
     setTextSearchQuery,
     setLanguageServerSetupOpen,
-    setAutoSave,
     setStatusBarItemVisibility,
     setFileStructureOpen,
     setFileStructureScopeMode,

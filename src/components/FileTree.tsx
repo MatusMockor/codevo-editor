@@ -20,6 +20,7 @@ interface FileTreeProps {
   phpFileOutlinesByPath: Record<string, PhpFileOutline>;
   activePath: string | null;
   revealActivePath: boolean;
+  revealActivePathSignal: number;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
   onOpenPhpFileOutlineNode(node: PhpFileOutlineNode): void;
@@ -39,6 +40,7 @@ export function FileTree({
   phpFileOutlinesByPath,
   activePath,
   revealActivePath,
+  revealActivePathSignal,
   onOpenFile,
   onPreviewFile,
   onOpenPhpFileOutlineNode,
@@ -56,7 +58,7 @@ export function FileTree({
     activeRowRef.current?.scrollIntoView({
       block: "nearest",
     });
-  }, [activePath, expandedDirectories, revealActivePath]);
+  }, [activePath, expandedDirectories, revealActivePath, revealActivePathSignal]);
 
   if (!rootPath) {
     return (
