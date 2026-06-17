@@ -195,6 +195,21 @@ export function EditorSurface({
         label: "Show Context Actions",
         keybindings: [monacoApi.KeyMod.Alt | monacoApi.KeyCode.Enter],
         run: () => {
+          const model = editorApi.getModel();
+          const position = editorApi.getPosition();
+
+          if (!model || !position) {
+            return;
+          }
+
+          const markers = monacoApi.editor.getModelMarkers({
+            resource: model.uri,
+          });
+
+          if (!markers.some((marker) => isFixableQuickFixMarkerAt(marker, position))) {
+            return;
+          }
+
           editorApi.trigger("keyboard", "editor.action.quickFix", {});
         },
       }),
@@ -495,6 +510,23 @@ function toMonacoDiagnosticMarker(
     startColumn: diagnostic.character + 1,
     startLineNumber: diagnostic.line + 1,
   };
+}
+
+function isFixableQuickFixMarkerAt(
+  marker: Monaco.editor.IMarkerData,
+  position: EditorPosition,
+): boolean {
+  if (
+    marker.source !== "PHP Syntax" ||
+    !/^Unexpected bare PHP identifier "[^"]+"\.$/.test(marker.message)
+  ) {
+    return false;
+  }
+
+  return (
+    position.lineNumber >= marker.startLineNumber &&
+    position.lineNumber <= marker.endLineNumber
+  );
 }
 
 function diagnosticSeverity(

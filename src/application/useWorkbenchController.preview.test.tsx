@@ -1022,6 +1022,118 @@ class CommentFactory
     ]);
   });
 
+  it("infers assigned variable completions from indexed interface method return types", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
+    const commentPath =
+      "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\communication;
+
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $comment = $this->commentRepository->findOrFail(1);
+        $comment->get
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName:
+            "Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface",
+          kind: "interface",
+          lineNumber: 7,
+          name: "CommentRepositoryInterface",
+          path: repositoryInterfacePath,
+          relativePath:
+            "app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "Kontentino\\Communication\\Models\\Comment",
+          kind: "class",
+          lineNumber: 7,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace Kontentino\\Communication\\Interfaces;
+
+use Kontentino\\Communication\\Models\\Comment;
+
+interface CommentRepositoryInterface
+{
+    public function findOrFail(int $id): Comment;
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("opens Laravel database connection methods inferred from return expressions", async () => {
     const localUserPath = "/workspace/app/Models/LocalUser.php";
     const userAccountPath = "/workspace/app/Models/UserAccount.php";

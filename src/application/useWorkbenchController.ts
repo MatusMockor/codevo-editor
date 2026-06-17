@@ -2260,13 +2260,63 @@ export function useWorkbenchController(
     [resolvePhpClassReference],
   );
 
+  const resolvePhpClassSourcePaths = useCallback(
+    async (className: string): Promise<string[]> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return [];
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+      if (!normalizedClassName) {
+        return [];
+      }
+
+      const paths = new Set(
+        phpClassPathCandidates(
+          workspaceRoot,
+          workspaceDescriptor.php,
+          normalizedClassName,
+        ),
+      );
+
+      if (shouldIndexWorkspace(intelligenceMode)) {
+        const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
+          workspaceRoot,
+          shortPhpName(normalizedClassName),
+          50,
+        );
+        const normalizedLookup = normalizedClassName.toLowerCase();
+
+        for (const symbol of indexedSymbols) {
+          if (!isTypeProjectSymbol(symbol)) {
+            continue;
+          }
+
+          if (symbol.fullyQualifiedName.toLowerCase() !== normalizedLookup) {
+            continue;
+          }
+
+          paths.add(symbol.path);
+        }
+      }
+
+      return [...paths];
+    },
+    [
+      intelligenceMode,
+      projectSymbolSearch,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const collectPhpMethodsForClass = useCallback(
     async (className: string): Promise<PhpMethodCompletion[]> => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
         return [];
       }
 
-      const phpDescriptor = workspaceDescriptor.php;
       const completions = new Map<string, PhpMethodCompletion>();
       const visitedClassNames = new Set<string>();
       const rememberMethods = (methods: PhpMethodCompletion[]) => {
@@ -2290,11 +2340,7 @@ export function useWorkbenchController(
 
         visitedClassNames.add(visitedKey);
 
-        for (const path of phpClassPathCandidates(
-          workspaceRoot,
-          phpDescriptor,
-          normalizedClassName,
-        )) {
+        for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
           try {
             const content = await readNavigationFileContent(path);
             rememberMethods(
@@ -2331,6 +2377,7 @@ export function useWorkbenchController(
     },
     [
       readNavigationFileContent,
+      resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -2422,11 +2469,7 @@ export function useWorkbenchController(
         return null;
       };
 
-      for (const path of phpClassPathCandidates(
-        workspaceRoot,
-        workspaceDescriptor.php,
-        normalizedClassName,
-      )) {
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
         try {
           const content = await readNavigationFileContent(path);
           const method = phpMethodCompletionsFromSource(
@@ -2498,6 +2541,7 @@ export function useWorkbenchController(
       readNavigationFileContent,
       resolvePhpClassReference,
       resolvePhpDeclaredType,
+      resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
     ],

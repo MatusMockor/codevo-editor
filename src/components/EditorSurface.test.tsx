@@ -184,7 +184,7 @@ interface ParserFactory
     });
   });
 
-  it("registers Option+Enter as Monaco quick fix/context actions", async () => {
+  it("registers guarded Option+Enter quick fix/context actions", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
       language: "php",
@@ -246,6 +246,22 @@ interface ParserFactory
 
     quickFixAction.run();
 
+    expect(editor.trigger).not.toHaveBeenCalled();
+
+    monaco.editor.getModelMarkers.mockReturnValue([
+      {
+        endColumn: 12,
+        endLineNumber: 1,
+        message: 'Unexpected bare PHP identifier "bad".',
+        severity: monaco.MarkerSeverity.Error,
+        source: "PHP Syntax",
+        startColumn: 9,
+        startLineNumber: 1,
+      },
+    ]);
+
+    quickFixAction.run();
+
     expect(editor.trigger).toHaveBeenCalledWith(
       "keyboard",
       "editor.action.quickFix",
@@ -285,6 +301,7 @@ function createMonaco(model: FakeModel) {
   return {
     editor: {
       defineTheme: vi.fn(),
+      getModelMarkers: vi.fn((): any[] => []),
       getModels: vi.fn(() => [model]),
       GlyphMarginLane: { Center: 2 },
       MouseTargetType: { GUTTER_GLYPH_MARGIN: 4 },
