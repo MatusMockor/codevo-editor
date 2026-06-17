@@ -285,6 +285,79 @@ interface ParserFactory
     );
   });
 
+  it("uses Monaco TypeScript navigation actions for JavaScript and TypeScript files", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class UserService {}\n",
+      language: "typescript",
+      name: "UserService.ts",
+      path: "/workspace/src/UserService.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onGoToDefinition = vi.fn();
+    const onGoToImplementationAt = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="vs-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={onGoToDefinition}
+          onGoToImplementationAt={onGoToImplementationAt}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    actions.find((action) => action.id === "mockor.goToDefinition")?.run();
+    actions.find((action) => action.id === "mockor.goToImplementation")?.run();
+
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(onGoToImplementationAt).not.toHaveBeenCalled();
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.revealDefinition",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.goToImplementation",
+      {},
+    );
+  });
+
   it("notifies when the editor panel receives focus back", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",

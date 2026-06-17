@@ -36,6 +36,7 @@ import type { MonacoAppTheme } from "../domain/settings";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import { registerMonacoAppThemes } from "./monacoThemes";
 import { getTabId, getTabPanelId } from "./tabIds";
+import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
 
 interface ChangePreviewState {
   anchorLineNumber: number;
@@ -231,7 +232,33 @@ export function EditorSurface({
         id: "mockor.goToDefinition",
         label: "Go to Definition",
         keybindings: keybinding("editor.goToDefinition"),
-        run: onGoToDefinition,
+        run: () => {
+          if (isTypescriptJavascriptDocument(activeDocumentRef.current)) {
+            editorApi.trigger("keyboard", "editor.action.revealDefinition", {});
+            return;
+          }
+
+          onGoToDefinition();
+        },
+      }),
+      editorApi.addAction({
+        id: "mockor.goToImplementation",
+        label: "Go to Implementation",
+        keybindings: keybinding("editor.goToImplementation"),
+        run: () => {
+          if (isTypescriptJavascriptDocument(activeDocumentRef.current)) {
+            editorApi.trigger("keyboard", "editor.action.goToImplementation", {});
+            return;
+          }
+
+          const position = editorApi.getPosition();
+
+          if (!position) {
+            return;
+          }
+
+          onGoToImplementationAt(position);
+        },
       }),
       editorApi.addAction({
         id: "mockor.openClass",
@@ -305,6 +332,7 @@ export function EditorSurface({
     onGoBack,
     onGoForward,
     onGoToDefinition,
+    onGoToImplementationAt,
     onOpenClass,
     onOpenFile,
     onOpenFileStructure,
@@ -662,7 +690,7 @@ export function EditorSurface({
       role="tabpanel"
     >
       <Editor
-        beforeMount={registerMonacoAppThemes}
+        beforeMount={beforeMonacoMount}
         height="100%"
         language={activeDocument.language}
         onChange={(value) => onChange(value || "")}
@@ -728,6 +756,20 @@ export function EditorSurface({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function beforeMonacoMount(monaco: typeof Monaco): void {
+  registerMonacoAppThemes(monaco);
+  configureTypescriptJavascriptDefaults(monaco);
+}
+
+function isTypescriptJavascriptDocument(
+  document: EditorDocument | null,
+): boolean {
+  return (
+    document?.language === "typescript" ||
+    document?.language === "javascript"
   );
 }
 
