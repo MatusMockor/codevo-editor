@@ -9,6 +9,7 @@ describe("BrowserSettingsGateway", () => {
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
+      runtimePolicy: "keepAlive",
       theme: "dark",
       workspaceTabs: [],
     });
@@ -52,6 +53,7 @@ describe("BrowserSettingsGateway", () => {
         "editor.save": "Cmd+Shift+S",
       },
       recentWorkspacePath: "/project",
+      runtimePolicy: "keepAlive",
       theme: "ayuMirage",
       workspaceTabs: ["/project", "/another-project"],
     });
@@ -90,6 +92,7 @@ describe("BrowserSettingsGateway", () => {
         "editor.save": "Cmd+Shift+S",
       },
       recentWorkspacePath: "/project",
+      runtimePolicy: "keepAlive",
       theme: "ayuMirage",
       workspaceTabs: ["/project", "/another-project"],
     });
@@ -132,6 +135,7 @@ describe("BrowserSettingsGateway", () => {
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
+      runtimePolicy: "keepAlive",
       theme: "dark",
       workspaceTabs: [],
     });

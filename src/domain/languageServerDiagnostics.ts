@@ -18,6 +18,7 @@ export interface LanguageServerDiagnostic {
 }
 
 export interface LanguageServerDiagnosticEvent {
+  rootPath?: string;
   sessionId: number;
   uri: string;
   version: number | null;

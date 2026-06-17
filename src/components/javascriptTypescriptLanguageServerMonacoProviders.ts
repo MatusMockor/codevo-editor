@@ -3,8 +3,14 @@ import {
   canUseLanguageServerFeature,
   pathFromLanguageServerUri,
   toLanguageServerTextDocumentPosition,
+  type LanguageServerCodeAction,
+  type LanguageServerCodeActionContext,
   type LanguageServerFeaturesGateway,
+  type LanguageServerFormattingOptions,
   type LanguageServerLocation,
+  type LanguageServerRange,
+  type LanguageServerTextEdit,
+  type LanguageServerWorkspaceEdit,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
@@ -19,6 +25,7 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+  getWorkspaceRoot?(): string | null;
   reportError(error: unknown): void;
 }
 
@@ -67,6 +74,54 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         }),
       );
     }
+
+    if (registry.registerReferenceProvider) {
+      disposables.push(
+        registry.registerReferenceProvider(language, {
+          provideReferences: (model, position) =>
+            provideReferences(monaco, context, model, position),
+        }),
+      );
+    }
+
+    if (registry.registerRenameProvider) {
+      disposables.push(
+        registry.registerRenameProvider(language, {
+          provideRenameEdits: (model, position, newName) =>
+            provideRenameEdits(monaco, context, model, position, newName),
+        }),
+      );
+    }
+
+    if (registry.registerCodeActionProvider) {
+      disposables.push(
+        registry.registerCodeActionProvider(
+          language,
+          {
+            provideCodeActions: (model, range, actionContext) =>
+              provideCodeActions(monaco, context, model, range, actionContext),
+          },
+          {
+            providedCodeActionKinds: [
+              "quickfix",
+              "refactor",
+              "source",
+              "source.fixAll",
+              "source.organizeImports",
+            ],
+          },
+        ),
+      );
+    }
+
+    if (registry.registerDocumentFormattingEditProvider) {
+      disposables.push(
+        registry.registerDocumentFormattingEditProvider(language, {
+          provideDocumentFormattingEdits: (model, options) =>
+            provideDocumentFormattingEdits(monaco, context, model, options),
+        }),
+      );
+    }
   });
 
   return {
@@ -90,7 +145,10 @@ async function provideHover(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const hover = await context.featuresGateway.hover(request.position);
+    const hover = await context.featuresGateway.hover(
+      request.rootPath,
+      request.position,
+    );
 
     return hover ? { contents: [{ value: hover.contents }] } : null;
   } catch (error) {
@@ -113,7 +171,10 @@ async function provideCompletionItems(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const completion = await context.featuresGateway.completion(request.position);
+    const completion = await context.featuresGateway.completion(
+      request.rootPath,
+      request.position,
+    );
     const word = model.getWordUntilPosition(position);
     const range = {
       endColumn: word.endColumn,
@@ -162,7 +223,10 @@ async function provideDefinition(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const locations = await context.featuresGateway.definition(request.position);
+    const locations = await context.featuresGateway.definition(
+      request.rootPath,
+      request.position,
+    );
 
     return toMonacoLocations(monaco, locations);
   } catch (error) {
@@ -191,6 +255,7 @@ async function provideImplementation(
   try {
     await context.flushPendingDocumentChange(request.path);
     const locations = await context.featuresGateway.implementation(
+      request.rootPath,
       request.position,
     );
 
@@ -201,11 +266,132 @@ async function provideImplementation(
   }
 }
 
+async function provideReferences(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  const request = featureRequestContext(context, model, position, "references");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const locations = await context.featuresGateway.references(
+      request.rootPath,
+      request.position,
+    );
+
+    return toMonacoLocations(monaco, locations);
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
+async function provideRenameEdits(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  newName: string,
+): Promise<Monaco.languages.WorkspaceEdit | null> {
+  const request = featureRequestContext(context, model, position, "rename");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const edit = await context.featuresGateway.rename(
+      request.rootPath,
+      request.position,
+      newName,
+    );
+
+    return edit ? toMonacoWorkspaceEdit(monaco, model, edit) : null;
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
+async function provideCodeActions(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+  actionContext: Monaco.languages.CodeActionContext,
+): Promise<Monaco.languages.CodeActionList> {
+  const request = documentRequestContext(context, model, "codeAction");
+
+  if (!request) {
+    return emptyCodeActionList();
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const actions = await context.featuresGateway.codeActions(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
+      toLanguageServerCodeActionContext(monaco, actionContext),
+    );
+
+    return {
+      actions: actions.flatMap((action) =>
+        toMonacoCodeAction(monaco, model, action, actionContext),
+      ),
+      dispose: () => undefined,
+    };
+  } catch (error) {
+    context.reportError(error);
+    return emptyCodeActionList();
+  }
+}
+
+async function provideDocumentFormattingEdits(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  options: Monaco.languages.FormattingOptions,
+): Promise<Monaco.languages.TextEdit[]> {
+  const request = documentRequestContext(context, model, "formatting");
+
+  if (!request) {
+    return [];
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const edits = await context.featuresGateway.formatting(
+      request.rootPath,
+      request.path,
+      toLanguageServerFormattingOptions(options),
+    );
+
+    return edits.map((edit) => toMonacoTextEdit(monaco, edit));
+  } catch (error) {
+    context.reportError(error);
+    return [];
+  }
+}
+
 function featureRequestContext(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
-  feature: "completion" | "definition" | "hover" | "implementation",
+  feature:
+    | "completion"
+    | "definition"
+    | "hover"
+    | "implementation"
+    | "references"
+    | "rename",
 ) {
   const status = context.getRuntimeStatus();
 
@@ -217,8 +403,10 @@ function featureRequestContext(
   }
 
   const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
 
   if (
+    !rootPath ||
     !activeDocument ||
     !isJavaScriptTypeScriptDocument(activeDocument) ||
     modelPath(model) !== activeDocument.path
@@ -232,6 +420,39 @@ function featureRequestContext(
       column: position.column,
       lineNumber: position.lineNumber,
     }),
+    rootPath,
+  };
+}
+
+function documentRequestContext(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  feature: "codeAction" | "formatting",
+) {
+  const status = context.getRuntimeStatus();
+
+  if (
+    status?.kind !== "running" ||
+    !canUseLanguageServerFeature(status.capabilities, feature)
+  ) {
+    return null;
+  }
+
+  const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (
+    !rootPath ||
+    !activeDocument ||
+    !isJavaScriptTypeScriptDocument(activeDocument) ||
+    modelPath(model) !== activeDocument.path
+  ) {
+    return null;
+  }
+
+  return {
+    path: activeDocument.path,
+    rootPath,
   };
 }
 
@@ -258,6 +479,166 @@ function toMonacoLocations(
       },
     ];
   });
+}
+
+function toMonacoWorkspaceEdit(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  edit: LanguageServerWorkspaceEdit,
+): Monaco.languages.WorkspaceEdit {
+  return {
+    edits: Object.entries(edit.changes).flatMap(([uri, edits]) => {
+      const path = pathFromLanguageServerUri(uri);
+
+      if (!path) {
+        return [];
+      }
+
+      const resource = monaco.Uri.file(path);
+      const versionId =
+        modelPath(model) === path && typeof model.getVersionId === "function"
+          ? model.getVersionId()
+          : undefined;
+
+      return edits.map((textEdit) => ({
+        resource,
+        textEdit: toMonacoTextEdit(monaco, textEdit),
+        versionId,
+      }));
+    }),
+  };
+}
+
+function toMonacoTextEdit(
+  monaco: MonacoApi,
+  edit: LanguageServerTextEdit,
+): Monaco.languages.TextEdit {
+  return {
+    range: toMonacoRange(monaco, edit.range),
+    text: edit.newText,
+  };
+}
+
+function toMonacoRange(
+  monaco: MonacoApi,
+  range: LanguageServerRange,
+): Monaco.Range {
+  return new monaco.Range(
+    range.start.line + 1,
+    range.start.character + 1,
+    range.end.line + 1,
+    range.end.character + 1,
+  );
+}
+
+function toLanguageServerRange(range: Monaco.Range): LanguageServerRange {
+  return {
+    end: {
+      character: Math.max(0, range.endColumn - 1),
+      line: Math.max(0, range.endLineNumber - 1),
+    },
+    start: {
+      character: Math.max(0, range.startColumn - 1),
+      line: Math.max(0, range.startLineNumber - 1),
+    },
+  };
+}
+
+function toLanguageServerCodeActionContext(
+  monaco: MonacoApi,
+  context: Monaco.languages.CodeActionContext,
+): LanguageServerCodeActionContext {
+  return {
+    diagnostics: context.markers.map((marker) => ({
+      code: markerCode(marker),
+      message: marker.message,
+      range: {
+        end: {
+          character: Math.max(0, marker.endColumn - 1),
+          line: Math.max(0, marker.endLineNumber - 1),
+        },
+        start: {
+          character: Math.max(0, marker.startColumn - 1),
+          line: Math.max(0, marker.startLineNumber - 1),
+        },
+      },
+      severity: lspDiagnosticSeverity(monaco, marker.severity),
+      source: marker.source ?? null,
+    })),
+    only: context.only ? [context.only] : null,
+  };
+}
+
+function markerCode(marker: Monaco.editor.IMarkerData): string | number | null {
+  if (!marker.code) {
+    return null;
+  }
+
+  if (typeof marker.code === "string" || typeof marker.code === "number") {
+    return marker.code;
+  }
+
+  return marker.code.value;
+}
+
+function lspDiagnosticSeverity(
+  monaco: MonacoApi,
+  severity: Monaco.MarkerSeverity,
+): number | null {
+  if (severity === monaco.MarkerSeverity.Error) {
+    return 1;
+  }
+
+  if (severity === monaco.MarkerSeverity.Warning) {
+    return 2;
+  }
+
+  if (severity === monaco.MarkerSeverity.Info) {
+    return 3;
+  }
+
+  if (severity === monaco.MarkerSeverity.Hint) {
+    return 4;
+  }
+
+  return null;
+}
+
+function toMonacoCodeAction(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  action: LanguageServerCodeAction,
+  context: Monaco.languages.CodeActionContext,
+): Monaco.languages.CodeAction[] {
+  if (!action.edit) {
+    return [];
+  }
+
+  return [
+    {
+      diagnostics: context.markers,
+      edit: toMonacoWorkspaceEdit(monaco, model, action.edit),
+      isPreferred: action.isPreferred,
+      kind: action.kind ?? "quickfix",
+      title: action.title,
+    },
+  ];
+}
+
+function emptyCodeActionList(): Monaco.languages.CodeActionList {
+  return {
+    actions: [],
+    dispose: () => undefined,
+  };
+}
+
+function toLanguageServerFormattingOptions(
+  options: Monaco.languages.FormattingOptions,
+): LanguageServerFormattingOptions {
+  return {
+    insertSpaces: options.insertSpaces,
+    tabSize: options.tabSize,
+  };
 }
 
 function completionInsert(

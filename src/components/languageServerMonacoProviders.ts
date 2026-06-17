@@ -25,6 +25,7 @@ export interface LanguageServerMonacoProviderContext {
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+  getWorkspaceRoot?(): string | null;
   providePhpMethodCompletions?(
     source: string,
     position: MonacoPosition,
@@ -177,7 +178,10 @@ async function provideHover(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const hover = await context.featuresGateway.hover(request.position);
+    const hover = await context.featuresGateway.hover(
+      request.rootPath,
+      request.position,
+    );
 
     if (!hover) {
       return null;
@@ -236,7 +240,10 @@ async function provideCompletionItems(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const completion = await context.featuresGateway.completion(request.position);
+    const completion = await context.featuresGateway.completion(
+      request.rootPath,
+      request.position,
+    );
     const lspSuggestions = completion.items.map((item, index) => {
       const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
       const insert = lspCompletionInsert(monaco, item, kind);
@@ -548,8 +555,9 @@ function activePhpDocumentContext(
   model: MonacoModel,
 ) {
   const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
 
-  if (!activeDocument) {
+  if (!activeDocument || !rootPath) {
     return null;
   }
 
@@ -671,8 +679,9 @@ function featureRequestContext(
   feature: "completion" | "hover",
 ) {
   const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
 
-  if (!activeDocument) {
+  if (!activeDocument || !rootPath) {
     return null;
   }
 
@@ -699,6 +708,7 @@ function featureRequestContext(
   return {
     path,
     position: toLanguageServerTextDocumentPosition(path, position),
+    rootPath,
   };
 }
 

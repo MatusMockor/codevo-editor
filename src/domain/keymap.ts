@@ -36,6 +36,12 @@ export const keymapCommands = [
     label: "Context Actions",
   },
   {
+    category: "Editor",
+    defaultShortcut: "Alt+ArrowUp",
+    id: "editor.extendSelection",
+    label: "Extend Selection",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",

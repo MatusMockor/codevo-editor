@@ -9,9 +9,9 @@ interface StatusBarProps {
   activeLanguage: string | null;
   activePath: string | null;
   dirtyCount: number;
-  indexLabel: string | null;
+  ideActivityLabel: string | null;
+  ideActivityState: IdeActivityState | null;
   intelligenceMode: IntelligenceMode;
-  languageServerLabel: string | null;
   message: string | null;
   statusBar: StatusBarItemVisibility;
   workspaceInfoLabel: string | null;
@@ -42,9 +42,9 @@ export function StatusBar({
   activeLanguage,
   activePath,
   dirtyCount,
-  indexLabel,
+  ideActivityLabel,
+  ideActivityState,
   intelligenceMode,
-  languageServerLabel,
   message,
   onChangeVisibility,
   statusBar,
@@ -102,9 +102,13 @@ export function StatusBar({
       {statusBar.workspaceInfo && workspaceInfoLabel ? (
         <span title={workspaceInfoLabel}>{workspaceInfoLabel}</span>
       ) : null}
-      {statusBar.index && indexLabel ? <span>{indexLabel}</span> : null}
-      {statusBar.languageServer && languageServerLabel ? (
-        <span>{languageServerLabel}</span>
+      {(statusBar.index || statusBar.languageServer) && ideActivityLabel ? (
+        <span
+          className={`status-ide-activity ${ideActivityState ?? "idle"}`}
+          title={ideActivityLabel}
+        >
+          {ideActivityLabel}
+        </span>
       ) : null}
       {statusBar.workspaceTrust && workspaceTrustLabel ? (
         <span>{workspaceTrustLabel}</span>
@@ -147,6 +151,8 @@ export function StatusBar({
     </footer>
   );
 }
+
+export type IdeActivityState = "active" | "idle" | "problem" | "scanning";
 
 function formatMode(mode: IntelligenceMode): string {
   if (mode === "lightSmart") {

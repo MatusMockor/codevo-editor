@@ -45,10 +45,14 @@ describe("isLanguageServerActive", () => {
 describe("languageServerCapabilities", () => {
   it("returns running capabilities or an empty registry", () => {
     expect(languageServerCapabilities(status("running"))).toEqual({
+      codeAction: true,
       completion: true,
       definition: true,
+      formatting: true,
       hover: true,
       implementation: true,
+      references: true,
+      rename: true,
     });
     expect(languageServerCapabilities(status("starting"))).toEqual(
       emptyLanguageServerCapabilities(),
@@ -64,6 +68,10 @@ describe("languageServerCapabilities", () => {
       "completion",
       "definition",
       "implementation",
+      "references",
+      "rename",
+      "code actions",
+      "formatting",
     ]);
     expect(languageServerCapabilityLabels(status("starting"))).toEqual([]);
   });
@@ -78,10 +86,14 @@ function status(
         kind,
         sessionId: 1,
         capabilities: {
+          codeAction: true,
           completion: true,
           definition: true,
+          formatting: true,
           hover: true,
           implementation: true,
+          references: true,
+          rename: true,
         },
       };
     }

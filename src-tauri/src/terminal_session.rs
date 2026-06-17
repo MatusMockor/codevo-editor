@@ -9,7 +9,7 @@ use std::{
     collections::HashMap,
     env,
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
@@ -159,6 +159,7 @@ impl TerminalKiller for PortableTerminalKiller {
 }
 
 struct RunningTerminalSession {
+    cwd: PathBuf,
     killer: Box<dyn TerminalKiller>,
     reader: Option<JoinHandle<()>>,
     resizer: Box<dyn TerminalResizer>,
@@ -233,6 +234,7 @@ impl TerminalSupervisor {
         self.insert_session(
             session_id,
             RunningTerminalSession {
+                cwd,
                 killer,
                 reader: Some(reader),
                 resizer: spawned.resizer,
@@ -244,6 +246,39 @@ impl TerminalSupervisor {
         )?;
         sink.emit_status(status.clone());
         Ok(status)
+    }
+
+    pub fn stop_root(&self, root: &Path) -> Result<(), String> {
+        let sessions = {
+            let mut sessions = self.sessions.lock().map_err(|error| error.to_string())?;
+            let session_ids = sessions
+                .iter()
+                .filter_map(|(session_id, session)| {
+                    if session.cwd == root {
+                        Some(*session_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            session_ids
+                .into_iter()
+                .filter_map(|session_id| {
+                    sessions
+                        .remove(&session_id)
+                        .map(|session| (session_id, session))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (session_id, session) in sessions {
+            let sink = Arc::clone(&session.sink);
+            terminate_session(session);
+            sink.emit_status(TerminalRuntimeStatus::Stopped { session_id });
+        }
+
+        Ok(())
     }
 
     pub fn write_input(&self, session_id: u64, data: &str) -> Result<(), String> {
@@ -492,7 +527,7 @@ mod tests {
     };
     use std::{
         io::{self, Cursor, Read, Write},
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{Arc, Condvar, Mutex},
         thread,
         time::{Duration, Instant},
@@ -626,6 +661,55 @@ mod tests {
             TerminalRuntimeStatus::Stopped { session_id: 1 }
         );
         assert_eq!(*killed.lock().expect("killed"), 1);
+        assert!(sink
+            .statuses()
+            .contains(&TerminalRuntimeStatus::Stopped { session_id: 1 }));
+    }
+
+    #[test]
+    fn stop_root_kills_only_matching_workspace_sessions() {
+        let supervisor = TerminalSupervisor::new();
+        let sink = Arc::new(RecordingTerminalSink::default());
+        let workspace_a_process = RecordingTerminalChild::blocking();
+        let workspace_a_killed = workspace_a_process.killed();
+        let workspace_b_process = RecordingTerminalChild::blocking();
+        let workspace_b_killed = workspace_b_process.killed();
+        let workspace_a_spawner = FakeTerminalSpawner::with_child(
+            Box::new(BlockingReader::default()),
+            Box::new(SharedWriter::default()),
+            Box::new(workspace_a_process),
+        );
+        let workspace_b_spawner = FakeTerminalSpawner::with_child(
+            Box::new(BlockingReader::default()),
+            Box::new(SharedWriter::default()),
+            Box::new(workspace_b_process),
+        );
+
+        supervisor
+            .start(
+                PathBuf::from("/workspace-a"),
+                TerminalSize::default(),
+                default_test_profile(),
+                &workspace_a_spawner,
+                sink.clone(),
+            )
+            .expect("start workspace a terminal");
+        supervisor
+            .start(
+                PathBuf::from("/workspace-b"),
+                TerminalSize::default(),
+                default_test_profile(),
+                &workspace_b_spawner,
+                sink.clone(),
+            )
+            .expect("start workspace b terminal");
+
+        supervisor
+            .stop_root(Path::new("/workspace-a"))
+            .expect("stop workspace a terminals");
+
+        assert_eq!(*workspace_a_killed.lock().expect("workspace a killed"), 1);
+        assert_eq!(*workspace_b_killed.lock().expect("workspace b killed"), 0);
         assert!(sink
             .statuses()
             .contains(&TerminalRuntimeStatus::Stopped { session_id: 1 }));

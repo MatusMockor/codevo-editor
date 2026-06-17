@@ -42,21 +42,25 @@ export class TauriLanguageServerDocumentSyncGateway
       DEFAULT_DOCUMENT_SYNC_COMMANDS,
   ) {}
 
-  didOpen(document: LanguageServerTextDocument): Promise<void> {
-    return this.invokeWhenAvailable(this.commands.didOpen, { document });
+  didOpen(rootPath: string, document: LanguageServerTextDocument): Promise<void> {
+    return this.invokeWhenAvailable(this.commands.didOpen, { document, rootPath });
   }
 
-  didChange(document: LanguageServerTextDocument): Promise<void> {
-    return this.invokeWhenAvailable(this.commands.didChange, { document });
+  didChange(rootPath: string, document: LanguageServerTextDocument): Promise<void> {
+    return this.invokeWhenAvailable(this.commands.didChange, {
+      document,
+      rootPath,
+    });
   }
 
-  didSave(document: LanguageServerTextDocument): Promise<void> {
-    return this.invokeWhenAvailable(this.commands.didSave, { document });
+  didSave(rootPath: string, document: LanguageServerTextDocument): Promise<void> {
+    return this.invokeWhenAvailable(this.commands.didSave, { document, rootPath });
   }
 
-  didClose(path: string): Promise<void> {
+  didClose(rootPath: string, path: string): Promise<void> {
     return this.invokeWhenAvailable(this.commands.didClose, {
       document: { path },
+      rootPath,
     });
   }
 

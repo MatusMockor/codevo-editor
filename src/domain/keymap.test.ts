@@ -13,6 +13,7 @@ describe("keymap", () => {
       "class.quickOpen": "Cmd+O",
       "editor.closeTab": "Cmd+W",
       "editor.fileStructure": "Cmd+R",
+      "editor.extendSelection": "Alt+ArrowUp",
       "editor.goToDefinition": "Cmd+B",
       "editor.quickFix": "Alt+Enter",
       "file.quickOpen": "Cmd+P",

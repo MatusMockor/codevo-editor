@@ -15,10 +15,10 @@ describe("TauriLanguageServerDocumentSyncGateway", () => {
       () => false,
     );
 
-    await gateway.didOpen(document());
-    await gateway.didChange(document());
-    await gateway.didSave(document());
-    await gateway.didClose("/project/src/User.php");
+    await gateway.didOpen("/project", document());
+    await gateway.didChange("/project", document());
+    await gateway.didSave("/project", document());
+    await gateway.didClose("/project", "/project/src/User.php");
 
     expect(invokeCommand).not.toHaveBeenCalled();
   });
@@ -31,22 +31,26 @@ describe("TauriLanguageServerDocumentSyncGateway", () => {
     );
     const syncedDocument = document();
 
-    await gateway.didOpen(syncedDocument);
-    await gateway.didChange(syncedDocument);
-    await gateway.didSave(syncedDocument);
-    await gateway.didClose(syncedDocument.path);
+    await gateway.didOpen("/project", syncedDocument);
+    await gateway.didChange("/project", syncedDocument);
+    await gateway.didSave("/project", syncedDocument);
+    await gateway.didClose("/project", syncedDocument.path);
 
     expect(invokeCommand).toHaveBeenCalledWith("text_document_did_open", {
       document: syncedDocument,
+      rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_did_change", {
       document: syncedDocument,
+      rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_did_save", {
       document: syncedDocument,
+      rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_did_close", {
       document: { path: "/project/src/User.php" },
+      rootPath: "/project",
     });
   });
 });

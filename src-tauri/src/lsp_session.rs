@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufReader, Read, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -48,10 +49,14 @@ pub enum LanguageServerRuntimeStatus {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerCapabilities {
+    pub code_action: bool,
     pub hover: bool,
     pub completion: bool,
     pub definition: bool,
+    pub formatting: bool,
     pub implementation: bool,
+    pub references: bool,
+    pub rename: bool,
 }
 
 pub trait StatusSink: Send + Sync {
@@ -65,30 +70,39 @@ pub trait DiagnosticsSink: Send + Sync {
 pub struct AppHandleEventSink {
     app: tauri::AppHandle,
     diagnostics_event: &'static str,
+    root_path: Option<String>,
     status_event: &'static str,
 }
 
 impl AppHandleEventSink {
-    pub fn new(app: tauri::AppHandle) -> Self {
-        Self::new_with_events(app, PHP_STATUS_EVENT, PHP_DIAGNOSTICS_EVENT)
-    }
-
-    pub fn javascript_typescript(app: tauri::AppHandle) -> Self {
-        Self::new_with_events(
+    pub fn for_workspace(app: tauri::AppHandle, root_path: String) -> Self {
+        Self::new_with_events_and_root(
             app,
-            JAVASCRIPT_TYPESCRIPT_STATUS_EVENT,
-            JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
+            PHP_STATUS_EVENT,
+            PHP_DIAGNOSTICS_EVENT,
+            Some(root_path),
         )
     }
 
-    fn new_with_events(
+    pub fn javascript_typescript_for_workspace(app: tauri::AppHandle, root_path: String) -> Self {
+        Self::new_with_events_and_root(
+            app,
+            JAVASCRIPT_TYPESCRIPT_STATUS_EVENT,
+            JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
+            Some(root_path),
+        )
+    }
+
+    fn new_with_events_and_root(
         app: tauri::AppHandle,
         status_event: &'static str,
         diagnostics_event: &'static str,
+        root_path: Option<String>,
     ) -> Self {
         Self {
             app,
             diagnostics_event,
+            root_path,
             status_event,
         }
     }
@@ -98,7 +112,10 @@ impl StatusSink for AppHandleEventSink {
     fn emit_status(&self, status: LanguageServerRuntimeStatus) {
         use tauri::Emitter;
 
-        let _ = self.app.emit(self.status_event, status);
+        let _ = self.app.emit(
+            self.status_event,
+            status_event_payload(&self.root_path, status),
+        );
     }
 }
 
@@ -106,8 +123,34 @@ impl DiagnosticsSink for AppHandleEventSink {
     fn emit_diagnostics(&self, event: LanguageServerDiagnosticEvent) {
         use tauri::Emitter;
 
-        let _ = self.app.emit(self.diagnostics_event, event);
+        let _ = self.app.emit(
+            self.diagnostics_event,
+            diagnostics_event_payload(&self.root_path, event),
+        );
     }
+}
+
+fn status_event_payload(root_path: &Option<String>, status: LanguageServerRuntimeStatus) -> Value {
+    let mut value = serde_json::to_value(status).unwrap_or(Value::Null);
+
+    if let (Some(root_path), Value::Object(object)) = (root_path, &mut value) {
+        object.insert("rootPath".to_string(), Value::String(root_path.clone()));
+    }
+
+    value
+}
+
+fn diagnostics_event_payload(
+    root_path: &Option<String>,
+    event: LanguageServerDiagnosticEvent,
+) -> Value {
+    let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
+
+    if let (Some(root_path), Value::Object(object)) = (root_path, &mut value) {
+        object.insert("rootPath".to_string(), Value::String(root_path.clone()));
+    }
+
+    value
 }
 
 pub trait ServerProcessSpawner {
@@ -223,6 +266,17 @@ fn signal_process_group(process_group_id: i32, signal: i32) -> io::Result<()> {
     Err(error)
 }
 
+fn workspace_runtime_id(root_path: &str) -> String {
+    let path = PathBuf::from(root_path);
+    let normalized = path
+        .canonicalize()
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    normalized.trim_end_matches('/').to_string()
+}
+
 enum HandshakeOutcome {
     Ready(LanguageServerCapabilities),
     Failed(String),
@@ -246,49 +300,201 @@ pub struct LanguageServerSupervisor {
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
 }
 
-pub struct PhpLanguageServerSupervisor(pub LanguageServerSupervisor);
+pub struct LanguageServerRegistry {
+    server_label: &'static str,
+    supervisors: Mutex<HashMap<String, Arc<LanguageServerSupervisor>>>,
+}
 
-impl PhpLanguageServerSupervisor {
+pub struct PhpLanguageServerRegistry(pub LanguageServerRegistry);
+
+impl PhpLanguageServerRegistry {
     pub fn new() -> Self {
-        Self(LanguageServerSupervisor::new_with_label("PHPactor"))
+        Self(LanguageServerRegistry::new_with_label("PHPactor"))
     }
 }
 
-impl Default for PhpLanguageServerSupervisor {
+impl Default for PhpLanguageServerRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl std::ops::Deref for PhpLanguageServerSupervisor {
-    type Target = LanguageServerSupervisor;
+impl std::ops::Deref for PhpLanguageServerRegistry {
+    type Target = LanguageServerRegistry;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct JavaScriptTypeScriptLanguageServerSupervisor(pub LanguageServerSupervisor);
+pub struct JavaScriptTypeScriptLanguageServerRegistry(pub LanguageServerRegistry);
 
-impl JavaScriptTypeScriptLanguageServerSupervisor {
+impl JavaScriptTypeScriptLanguageServerRegistry {
     pub fn new() -> Self {
-        Self(LanguageServerSupervisor::new_with_label(
+        Self(LanguageServerRegistry::new_with_label(
             "TypeScript language server",
         ))
     }
 }
 
-impl Default for JavaScriptTypeScriptLanguageServerSupervisor {
+impl Default for JavaScriptTypeScriptLanguageServerRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl std::ops::Deref for JavaScriptTypeScriptLanguageServerSupervisor {
-    type Target = LanguageServerSupervisor;
+impl std::ops::Deref for JavaScriptTypeScriptLanguageServerRegistry {
+    type Target = LanguageServerRegistry;
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl LanguageServerRegistry {
+    pub fn new_with_label(server_label: &'static str) -> Self {
+        Self {
+            server_label,
+            supervisors: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn status(&self, root_path: &str) -> LanguageServerRuntimeStatus {
+        self.existing_supervisor(root_path)
+            .map(|supervisor| supervisor.status())
+            .unwrap_or(LanguageServerRuntimeStatus::Stopped)
+    }
+
+    pub fn start(
+        &self,
+        root_path: &str,
+        command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
+        spawner: &dyn ServerProcessSpawner,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        self.supervisor_for(root_path)?.start(
+            command,
+            initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+        )
+    }
+
+    pub fn stop(&self, root_path: &str) -> LanguageServerRuntimeStatus {
+        let supervisor = self.remove_supervisor(root_path);
+        supervisor
+            .map(|supervisor| supervisor.stop())
+            .unwrap_or(LanguageServerRuntimeStatus::Stopped)
+    }
+
+    pub fn stop_all(&self) -> LanguageServerRuntimeStatus {
+        let supervisors = self.drain_supervisors();
+
+        for supervisor in supervisors {
+            supervisor.stop();
+        }
+
+        LanguageServerRuntimeStatus::Stopped
+    }
+
+    pub fn send_notification(
+        &self,
+        root_path: &str,
+        notification: &JsonRpcNotification,
+    ) -> Result<(), String> {
+        let Some(supervisor) = self.existing_supervisor(root_path) else {
+            return Ok(());
+        };
+
+        supervisor.send_notification(notification)
+    }
+
+    pub fn send_request(
+        &self,
+        root_path: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Option<Value>, String> {
+        let Some(supervisor) = self.existing_supervisor(root_path) else {
+            return Ok(None);
+        };
+
+        supervisor.send_request(method, params)
+    }
+
+    #[cfg(test)]
+    pub fn running_roots(&self) -> Vec<String> {
+        let Ok(supervisors) = self.supervisors.lock() else {
+            return Vec::new();
+        };
+
+        let mut roots = supervisors
+            .iter()
+            .filter_map(|(root_path, supervisor)| {
+                matches!(
+                    supervisor.status(),
+                    LanguageServerRuntimeStatus::Starting { .. }
+                        | LanguageServerRuntimeStatus::Running { .. }
+                )
+                .then(|| root_path.clone())
+            })
+            .collect::<Vec<_>>();
+        roots.sort();
+        roots
+    }
+
+    fn supervisor_for(&self, root_path: &str) -> Result<Arc<LanguageServerSupervisor>, String> {
+        let runtime_id = workspace_runtime_id(root_path);
+        let mut supervisors = self.supervisors.lock().map_err(|error| error.to_string())?;
+
+        Ok(supervisors
+            .entry(runtime_id)
+            .or_insert_with(|| {
+                Arc::new(LanguageServerSupervisor::new_with_label(self.server_label))
+            })
+            .clone())
+    }
+
+    fn existing_supervisor(&self, root_path: &str) -> Option<Arc<LanguageServerSupervisor>> {
+        self.supervisors
+            .lock()
+            .ok()?
+            .get(&workspace_runtime_id(root_path))
+            .cloned()
+    }
+
+    fn remove_supervisor(&self, root_path: &str) -> Option<Arc<LanguageServerSupervisor>> {
+        self.supervisors
+            .lock()
+            .ok()?
+            .remove(&workspace_runtime_id(root_path))
+    }
+
+    fn drain_supervisors(&self) -> Vec<Arc<LanguageServerSupervisor>> {
+        self.supervisors
+            .lock()
+            .map(|mut supervisors| {
+                supervisors
+                    .drain()
+                    .map(|(_, supervisor)| supervisor)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+impl Drop for LanguageServerRegistry {
+    fn drop(&mut self) {
+        let Ok(mut supervisors) = self.supervisors.lock() else {
+            return;
+        };
+
+        for supervisor in supervisors.drain().map(|(_, supervisor)| supervisor) {
+            supervisor.stop();
+        }
     }
 }
 
@@ -972,10 +1178,14 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
     }
 
     Ok(LanguageServerCapabilities {
+        code_action: is_capability_enabled(capabilities.get("codeActionProvider")),
         hover: is_capability_enabled(capabilities.get("hoverProvider")),
         completion: is_capability_enabled(capabilities.get("completionProvider")),
         definition: is_capability_enabled(capabilities.get("definitionProvider")),
+        formatting: is_capability_enabled(capabilities.get("documentFormattingProvider")),
         implementation: is_capability_enabled(capabilities.get("implementationProvider")),
+        references: is_capability_enabled(capabilities.get("referencesProvider")),
+        rename: is_capability_enabled(capabilities.get("renameProvider")),
     })
 }
 
@@ -994,7 +1204,7 @@ fn is_capability_enabled(value: Option<&Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_capabilities, DiagnosticsSink, LanguageServerCapabilities,
+        parse_capabilities, DiagnosticsSink, LanguageServerCapabilities, LanguageServerRegistry,
         LanguageServerRuntimeStatus, LanguageServerSupervisor, ProcessKiller, ServerProcessSpawner,
         SpawnedServer, StatusSink,
     };
@@ -1075,6 +1285,60 @@ mod tests {
     }
 
     #[test]
+    fn registry_keeps_workspace_sessions_isolated() {
+        let registry = LanguageServerRegistry::new_with_label("Test server");
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command(),
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/workspace-b",
+                &command(),
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        assert_eq!(
+            registry.running_roots(),
+            vec![
+                "/tmp/workspace-a".to_string(),
+                "/tmp/workspace-b".to_string()
+            ]
+        );
+
+        assert_eq!(
+            registry.stop("/tmp/workspace-a"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+        assert!(matches!(
+            registry.status("/tmp/workspace-b"),
+            LanguageServerRuntimeStatus::Running { .. }
+        ));
+        assert_eq!(
+            registry.running_roots(),
+            vec!["/tmp/workspace-b".to_string()]
+        );
+
+        assert_eq!(registry.stop_all(), LanguageServerRuntimeStatus::Stopped);
+        assert!(registry.running_roots().is_empty());
+    }
+
+    #[test]
     fn initialize_result_capabilities_are_reported_on_running_status() {
         let spawner = FakeSpawner::new(ready_script_with_capabilities(), true);
         let (sink, rx) = ChannelSink::new();
@@ -1095,10 +1359,14 @@ mod tests {
             LanguageServerRuntimeStatus::Running {
                 session_id: 1,
                 capabilities: LanguageServerCapabilities {
+                    code_action: false,
                     hover: true,
                     completion: true,
                     definition: true,
+                    formatting: false,
                     implementation: true,
+                    references: false,
+                    rename: false,
                 },
             }
         );
@@ -1111,10 +1379,14 @@ mod tests {
         let status = LanguageServerRuntimeStatus::Running {
             session_id: 1,
             capabilities: LanguageServerCapabilities {
+                code_action: true,
                 hover: true,
                 completion: false,
                 definition: true,
+                formatting: true,
                 implementation: false,
+                references: true,
+                rename: true,
             },
         };
 
@@ -1127,7 +1399,11 @@ mod tests {
                     "hover": true,
                     "completion": false,
                     "definition": true,
+                    "formatting": true,
                     "implementation": false,
+                    "references": true,
+                    "rename": true,
+                    "codeAction": true,
                 },
             })
         );
@@ -1150,6 +1426,10 @@ mod tests {
                     "completionProvider": null,
                     "definitionProvider": {},
                     "implementationProvider": true,
+                    "referencesProvider": true,
+                    "renameProvider": { "prepareProvider": true },
+                    "codeActionProvider": { "codeActionKinds": ["quickfix"] },
+                    "documentFormattingProvider": true,
                 }
             }
         }))
@@ -1158,10 +1438,14 @@ mod tests {
         assert_eq!(
             capabilities,
             LanguageServerCapabilities {
+                code_action: true,
                 hover: false,
                 completion: false,
                 definition: true,
+                formatting: true,
                 implementation: true,
+                references: true,
+                rename: true,
             }
         );
     }

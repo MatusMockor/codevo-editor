@@ -60,12 +60,12 @@ export class TauriLanguageServerRuntimeGateway
       DEFAULT_RUNTIME_COMMANDS,
   ) {}
 
-  getStatus(): Promise<LanguageServerRuntimeStatus> {
+  getStatus(rootPath: string): Promise<LanguageServerRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
       return Promise.resolve(stoppedStatus());
     }
 
-    return this.invokeCommand(this.commands.getStatus);
+    return this.invokeCommand(this.commands.getStatus, { rootPath });
   }
 
   start(rootPath: string): Promise<LanguageServerRuntimeStatus> {
@@ -81,12 +81,12 @@ export class TauriLanguageServerRuntimeGateway
     });
   }
 
-  stop(): Promise<LanguageServerRuntimeStatus> {
+  stop(rootPath: string): Promise<LanguageServerRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
       return Promise.resolve(stoppedStatus());
     }
 
-    return this.invokeCommand(this.commands.stop);
+    return this.invokeCommand(this.commands.stop, { rootPath });
   }
 
   subscribeStatus(

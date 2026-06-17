@@ -1,5 +1,6 @@
 import { Circle, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
+import type { MouseEvent } from "react";
 import type { EditorDocument } from "../domain/workspace";
 import { isDirty } from "../domain/workspace";
 import { getTabId, getTabPanelId } from "./tabIds";
@@ -40,6 +41,19 @@ export function EditorTabs({
     });
   }
 
+  function handleAuxClick(
+    path: string,
+    event: MouseEvent<HTMLDivElement>,
+  ) {
+    if (event.button !== 1) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onClose(path);
+  }
+
   return (
     <div aria-label="Open files" className="editor-tabs" role="tablist">
       {documents.map((document, index) => {
@@ -51,6 +65,7 @@ export function EditorTabs({
           <div
             className={getEditorTabClassName(active, preview, dirty)}
             key={document.path}
+            onAuxClick={(event) => handleAuxClick(document.path, event)}
           >
             <button
               aria-controls={getTabPanelId(document.path)}

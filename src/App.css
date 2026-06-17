@@ -627,26 +627,30 @@ button {
   min-height: 34px;
   max-height: 34px;
   align-items: flex-end;
-  gap: 3px;
-  overflow-x: auto;
+  gap: 0;
+  overflow-x: hidden;
   overflow-y: hidden;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-panel-deep);
-  padding: 0 8px;
+  padding: 0;
 }
 
 .project-tab {
   display: grid;
-  min-width: 128px;
-  max-width: 260px;
+  flex: 1 1 0;
+  min-width: 0;
   grid-template-columns: minmax(0, 1fr) 26px;
   align-items: center;
   height: 30px;
   border: 1px solid transparent;
   border-bottom: 0;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-radius: 0;
   background: transparent;
   color: var(--color-text-muted);
+}
+
+.project-tab + .project-tab {
+  border-left-color: var(--color-border);
 }
 
 .project-tab:hover {
@@ -1666,6 +1670,59 @@ button {
 .status-mode {
   color: var(--color-accent);
   font-weight: 600;
+}
+
+.status-ide-activity {
+  position: relative;
+  gap: 6px;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.status-ide-activity::after {
+  position: absolute;
+  right: 8px;
+  bottom: 1px;
+  left: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  content: "";
+  opacity: 0.65;
+}
+
+.status-ide-activity.scanning::after {
+  right: auto;
+  width: 38%;
+  animation: status-activity-sweep 1.2s ease-in-out infinite;
+}
+
+.status-ide-activity.problem {
+  color: var(--color-error);
+}
+
+.status-ide-activity.problem::after {
+  background: var(--color-error);
+}
+
+.status-ide-activity.idle::after {
+  opacity: 0.25;
+}
+
+@keyframes status-activity-sweep {
+  0% {
+    left: 8px;
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 0.9;
+  }
+
+  100% {
+    left: calc(62% - 8px);
+    opacity: 0.35;
+  }
 }
 
 .status-message {

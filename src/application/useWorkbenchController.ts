@@ -164,11 +164,13 @@ import {
   defaultAppSettings,
   defaultWorkspaceSettings,
   type AppSettings,
+  type BackgroundRuntimePolicy,
   type SettingsGateway,
   type StatusBarItemVisibility,
   type WorkspaceSessionState,
   type WorkspaceSettings,
 } from "../domain/settings";
+import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import {
   detectLanguage,
@@ -216,6 +218,19 @@ interface PhpClassMemberReadResult {
   members: PhpMethodCompletion[];
 }
 
+interface CachedWorkspaceWorkbenchState {
+  activePath: string | null;
+  bottomPanelView: BottomPanelView;
+  bottomPanelVisible: boolean;
+  documents: Record<string, EditorDocument>;
+  entriesByDirectory: Record<string, FileEntry[]>;
+  expandedDirectories: Set<string>;
+  navigationHistory: NavigationHistory;
+  openPaths: string[];
+  previewPath: string | null;
+  sidebarView: SidebarView;
+}
+
 const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
 
 export type SidebarView = "files" | "git" | "php";
@@ -236,6 +251,7 @@ export function useWorkbenchController(
   javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway,
   javaScriptTypeScriptLanguageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway,
+  terminalGateway: TerminalGateway,
   settingsGateway: SettingsGateway,
   prompter: WorkbenchPrompter,
 ) {
@@ -425,6 +441,9 @@ export function useWorkbenchController(
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  const workspaceStateCacheRef = useRef<
+    Record<string, CachedWorkspaceWorkbenchState>
+  >({});
   const lastPhpFileOutlineRefreshKeyRef = useRef<string | null>(null);
   const contextualDiagnosticsFilterRef = useRef(
     async (
@@ -515,6 +534,51 @@ export function useWorkbenchController(
     [applyWorkspaceSettings, settingsGateway],
   );
 
+  const cacheCurrentWorkspaceState = useCallback(
+    (rootPath: string) => {
+      workspaceStateCacheRef.current[rootPath] = {
+        activePath,
+        bottomPanelView,
+        bottomPanelVisible,
+        documents,
+        entriesByDirectory,
+        expandedDirectories: new Set(expandedDirectories),
+        navigationHistory,
+        openPaths,
+        previewPath,
+        sidebarView,
+      };
+    },
+    [
+      activePath,
+      bottomPanelView,
+      bottomPanelVisible,
+      documents,
+      entriesByDirectory,
+      expandedDirectories,
+      navigationHistory,
+      openPaths,
+      previewPath,
+      sidebarView,
+    ],
+  );
+
+  const restoreCachedWorkspaceState = useCallback(
+    (cached: CachedWorkspaceWorkbenchState) => {
+      setEntriesByDirectory(cached.entriesByDirectory);
+      setExpandedDirectories(new Set(cached.expandedDirectories));
+      setDocuments(cached.documents);
+      setOpenPaths(cached.openPaths);
+      setActivePath(cached.activePath);
+      setPreviewPath(cached.previewPath);
+      setNavigationHistory(cached.navigationHistory);
+      setSidebarView(cached.sidebarView);
+      setBottomPanelView(cached.bottomPanelView);
+      setBottomPanelVisible(cached.bottomPanelVisible);
+    },
+    [],
+  );
+
   const currentNavigationLocation =
     useCallback((): NavigationLocation | null => {
       if (!activeDocument) {
@@ -558,6 +622,14 @@ export function useWorkbenchController(
 
   const applyLanguageServerDiagnostics = useCallback(
     (event: LanguageServerDiagnosticEvent) => {
+      if (
+        event.rootPath &&
+        currentWorkspaceRootRef.current &&
+        event.rootPath !== currentWorkspaceRootRef.current
+      ) {
+        return;
+      }
+
       const currentSessionId =
         languageServerRuntimeStatus?.kind === "running"
           ? languageServerRuntimeStatus.sessionId
@@ -627,6 +699,14 @@ export function useWorkbenchController(
 
   const applyJavaScriptTypeScriptLanguageServerDiagnostics = useCallback(
     (event: LanguageServerDiagnosticEvent) => {
+      if (
+        event.rootPath &&
+        currentWorkspaceRootRef.current &&
+        event.rootPath !== currentWorkspaceRootRef.current
+      ) {
+        return;
+      }
+
       const currentSessionId =
         javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running"
           ? javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId
@@ -710,6 +790,14 @@ export function useWorkbenchController(
 
   const handleLanguageServerRuntimeStatus = useCallback(
     (status: LanguageServerRuntimeStatus) => {
+      if (
+        status.rootPath &&
+        currentWorkspaceRootRef.current &&
+        status.rootPath !== currentWorkspaceRootRef.current
+      ) {
+        return;
+      }
+
       setLanguageServerRuntimeStatus(status);
       const crash = languageServerCrashMessage(status);
 
@@ -729,6 +817,14 @@ export function useWorkbenchController(
 
   const handleJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
     (status: LanguageServerRuntimeStatus) => {
+      if (
+        status.rootPath &&
+        currentWorkspaceRootRef.current &&
+        status.rootPath !== currentWorkspaceRootRef.current
+      ) {
+        return;
+      }
+
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
       const crash = languageServerCrashMessage(status);
 
@@ -972,13 +1068,23 @@ export function useWorkbenchController(
     javaScriptTypeScriptDocumentSyncQueuesRef.current = {};
   }, [clearJavaScriptTypeScriptDocumentChangeTimer]);
 
-  const stopLanguageServerRuntime = useCallback(async () => {
+  const stopLanguageServerRuntime = useCallback(async (rootPath?: string) => {
+    const targetRootPath = rootPath ?? currentWorkspaceRootRef.current;
+
+    if (!targetRootPath) {
+      return null;
+    }
+
     try {
-      const status = await languageServerRuntimeGateway.stop();
-      setLanguageServerRuntimeStatus(status);
-      lastLanguageServerCrashRef.current = null;
-      clearLanguageServerDiagnostics();
-      resetLanguageServerDocuments();
+      const status = await languageServerRuntimeGateway.stop(targetRootPath);
+
+      if (targetRootPath === currentWorkspaceRootRef.current) {
+        setLanguageServerRuntimeStatus(status);
+        lastLanguageServerCrashRef.current = null;
+        clearLanguageServerDiagnostics();
+        resetLanguageServerDocuments();
+      }
+
       return status;
     } catch (error) {
       reportLanguageServerError(error);
@@ -991,13 +1097,23 @@ export function useWorkbenchController(
     resetLanguageServerDocuments,
   ]);
 
-  const stopJavaScriptTypeScriptLanguageServerRuntime = useCallback(async () => {
+  const stopJavaScriptTypeScriptLanguageServerRuntime = useCallback(async (rootPath?: string) => {
+    const targetRootPath = rootPath ?? currentWorkspaceRootRef.current;
+
+    if (!targetRootPath) {
+      return null;
+    }
+
     try {
       const status =
-        await javaScriptTypeScriptLanguageServerRuntimeGateway.stop();
-      setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
-      clearJavaScriptTypeScriptLanguageServerDiagnostics();
-      resetJavaScriptTypeScriptLanguageServerDocuments();
+        await javaScriptTypeScriptLanguageServerRuntimeGateway.stop(targetRootPath);
+
+      if (targetRootPath === currentWorkspaceRootRef.current) {
+        setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+        clearJavaScriptTypeScriptLanguageServerDiagnostics();
+        resetJavaScriptTypeScriptLanguageServerDocuments();
+      }
+
       return status;
     } catch (error) {
       reportError("JavaScript/TypeScript", error);
@@ -1010,13 +1126,60 @@ export function useWorkbenchController(
     resetJavaScriptTypeScriptLanguageServerDocuments,
   ]);
 
+  const stopProjectRuntimes = useCallback(
+    async (rootPath?: string) => {
+      const targetRootPath = rootPath ?? currentWorkspaceRootRef.current;
+
+      if (!targetRootPath) {
+        return;
+      }
+
+      await Promise.allSettled([
+        stopLanguageServerRuntime(targetRootPath),
+        stopJavaScriptTypeScriptLanguageServerRuntime(targetRootPath),
+        terminalGateway.stopRoot(targetRootPath),
+      ]);
+    },
+    [
+      stopJavaScriptTypeScriptLanguageServerRuntime,
+      stopLanguageServerRuntime,
+      terminalGateway,
+    ],
+  );
+
+  const stopBackgroundProjectRuntimes = useCallback(
+    async (
+      policy: BackgroundRuntimePolicy,
+      activeRootPath: string | null,
+      previousRootPath: string | null,
+    ) => {
+      if (policy === "keepAlive") {
+        return;
+      }
+
+      const rootPaths =
+        policy === "singleActive" || previousRootPath === null
+          ? appSettingsRef.current.workspaceTabs.filter(
+              (rootPath) => rootPath !== activeRootPath,
+            )
+          : previousRootPath && previousRootPath !== activeRootPath
+            ? [previousRootPath]
+            : [];
+
+      await Promise.all(rootPaths.map((rootPath) => stopProjectRuntimes(rootPath)));
+    },
+    [stopProjectRuntimes],
+  );
+
   const syncOpenDocument = useCallback(
     async (document: EditorDocument) => {
+      const rootPath = currentWorkspaceRootRef.current;
+
       if (languageServerRuntimeStatus?.kind !== "running") {
         return;
       }
 
-      if (!isLanguageServerDocument(document)) {
+      if (!rootPath || !isLanguageServerDocument(document)) {
         return;
       }
 
@@ -1031,7 +1194,7 @@ export function useWorkbenchController(
 
       try {
         await enqueueDocumentSync(document.path, () =>
-          languageServerDocumentSyncGateway.didOpen(syncedDocument),
+          languageServerDocumentSyncGateway.didOpen(rootPath, syncedDocument),
         );
       } catch (error) {
         syncedDocumentPathsRef.current.delete(document.path);
@@ -1050,11 +1213,13 @@ export function useWorkbenchController(
 
   const syncOpenJavaScriptTypeScriptDocument = useCallback(
     async (document: EditorDocument) => {
+      const rootPath = currentWorkspaceRootRef.current;
+
       if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
         return;
       }
 
-      if (!isJavaScriptTypeScriptLanguageServerDocument(document)) {
+      if (!rootPath || !isJavaScriptTypeScriptLanguageServerDocument(document)) {
         return;
       }
 
@@ -1071,6 +1236,7 @@ export function useWorkbenchController(
       try {
         await enqueueJavaScriptTypeScriptDocumentSync(document.path, () =>
           javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen(
+            rootPath,
             syncedDocument,
           ),
         );
@@ -1092,10 +1258,15 @@ export function useWorkbenchController(
   );
 
   const clearActiveWorkspace = useCallback(async () => {
-    await stopLanguageServerRuntime();
-    await stopJavaScriptTypeScriptLanguageServerRuntime();
+    const currentRootPath = currentWorkspaceRootRef.current;
+
+    if (currentRootPath) {
+      await stopProjectRuntimes(currentRootPath);
+    }
+
     workspaceSessionRestoredRef.current = false;
     currentWorkspaceRootRef.current = null;
+    workspaceStateCacheRef.current = {};
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -1129,17 +1300,18 @@ export function useWorkbenchController(
     clearIndexWorkspaceState();
   }, [
     clearIndexWorkspaceState,
-    stopJavaScriptTypeScriptLanguageServerRuntime,
-    stopLanguageServerRuntime,
+    stopProjectRuntimes,
   ]);
 
   const scheduleDocumentChange = useCallback(
     (document: EditorDocument) => {
+      const rootPath = currentWorkspaceRootRef.current;
+
       if (languageServerRuntimeStatus?.kind !== "running") {
         return;
       }
 
-      if (!syncedDocumentPathsRef.current.has(document.path)) {
+      if (!rootPath || !syncedDocumentPathsRef.current.has(document.path)) {
         return;
       }
 
@@ -1163,7 +1335,7 @@ export function useWorkbenchController(
         }
 
         void enqueueDocumentSync(document.path, () =>
-          languageServerDocumentSyncGateway.didChange(pendingDocument),
+          languageServerDocumentSyncGateway.didChange(rootPath, pendingDocument),
         )
           .catch(reportLanguageServerError);
       }, 150);
@@ -1180,11 +1352,16 @@ export function useWorkbenchController(
 
   const scheduleJavaScriptTypeScriptDocumentChange = useCallback(
     (document: EditorDocument) => {
+      const rootPath = currentWorkspaceRootRef.current;
+
       if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
         return;
       }
 
-      if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)) {
+      if (
+        !rootPath ||
+        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)
+      ) {
         return;
       }
 
@@ -1220,6 +1397,7 @@ export function useWorkbenchController(
 
           void enqueueJavaScriptTypeScriptDocumentSync(document.path, () =>
             javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
+              rootPath,
               pendingDocument,
             ),
           ).catch((error) => reportError("JavaScript/TypeScript", error));
@@ -1237,9 +1415,10 @@ export function useWorkbenchController(
 
   const flushPendingDocumentChange = useCallback(
     async (path: string) => {
+      const rootPath = currentWorkspaceRootRef.current;
       const pendingDocument = pendingDocumentChangesRef.current[path];
 
-      if (!pendingDocument) {
+      if (!rootPath || !pendingDocument) {
         return;
       }
 
@@ -1247,7 +1426,7 @@ export function useWorkbenchController(
       delete pendingDocumentChangesRef.current[path];
 
       await enqueueDocumentSync(path, () =>
-        languageServerDocumentSyncGateway.didChange(pendingDocument),
+        languageServerDocumentSyncGateway.didChange(rootPath, pendingDocument),
       );
     },
     [
@@ -1259,10 +1438,11 @@ export function useWorkbenchController(
 
   const flushPendingJavaScriptTypeScriptDocumentChange = useCallback(
     async (path: string) => {
+      const rootPath = currentWorkspaceRootRef.current;
       const pendingDocument =
         javaScriptTypeScriptPendingDocumentChangesRef.current[path];
 
-      if (!pendingDocument) {
+      if (!rootPath || !pendingDocument) {
         return;
       }
 
@@ -1271,6 +1451,7 @@ export function useWorkbenchController(
 
       await enqueueJavaScriptTypeScriptDocumentSync(path, () =>
         javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
+          rootPath,
           pendingDocument,
         ),
       );
@@ -1284,11 +1465,13 @@ export function useWorkbenchController(
 
   const syncSavedDocument = useCallback(
     async (document: EditorDocument) => {
-      if (!syncedDocumentPathsRef.current.has(document.path)) {
+      const rootPath = currentWorkspaceRootRef.current;
+
+      if (!rootPath || !syncedDocumentPathsRef.current.has(document.path)) {
         return;
       }
 
-      if (!isLanguageServerDocument(document)) {
+      if (!rootPath || !isLanguageServerDocument(document)) {
         return;
       }
 
@@ -1296,6 +1479,7 @@ export function useWorkbenchController(
         await flushPendingDocumentChange(document.path);
         await enqueueDocumentSync(document.path, () =>
           languageServerDocumentSyncGateway.didSave(
+            rootPath,
             createLanguageServerTextDocument(
               document,
               documentVersionsRef.current[document.path] || 0,
@@ -1316,11 +1500,13 @@ export function useWorkbenchController(
 
   const syncSavedJavaScriptTypeScriptDocument = useCallback(
     async (document: EditorDocument) => {
+      const rootPath = currentWorkspaceRootRef.current;
+
       if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)) {
         return;
       }
 
-      if (!isJavaScriptTypeScriptLanguageServerDocument(document)) {
+      if (!rootPath || !isJavaScriptTypeScriptLanguageServerDocument(document)) {
         return;
       }
 
@@ -1328,6 +1514,7 @@ export function useWorkbenchController(
         await flushPendingJavaScriptTypeScriptDocumentChange(document.path);
         await enqueueJavaScriptTypeScriptDocumentSync(document.path, () =>
           javaScriptTypeScriptLanguageServerDocumentSyncGateway.didSave(
+            rootPath,
             createLanguageServerTextDocument(
               document,
               javaScriptTypeScriptDocumentVersionsRef.current[document.path] ||
@@ -1349,7 +1536,9 @@ export function useWorkbenchController(
 
   const syncClosedDocument = useCallback(
     async (document: EditorDocument) => {
-      if (!syncedDocumentPathsRef.current.has(document.path)) {
+      const rootPath = currentWorkspaceRootRef.current;
+
+      if (!rootPath || !syncedDocumentPathsRef.current.has(document.path)) {
         return;
       }
 
@@ -1362,7 +1551,7 @@ export function useWorkbenchController(
 
       try {
         await enqueueDocumentSync(document.path, () =>
-          languageServerDocumentSyncGateway.didClose(document.path),
+          languageServerDocumentSyncGateway.didClose(rootPath, document.path),
         );
       } catch (error) {
         reportLanguageServerError(error);
@@ -1378,7 +1567,12 @@ export function useWorkbenchController(
 
   const syncClosedJavaScriptTypeScriptDocument = useCallback(
     async (document: EditorDocument) => {
-      if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)) {
+      const rootPath = currentWorkspaceRootRef.current;
+
+      if (
+        !rootPath ||
+        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)
+      ) {
         return;
       }
 
@@ -1396,6 +1590,7 @@ export function useWorkbenchController(
       try {
         await enqueueJavaScriptTypeScriptDocumentSync(document.path, () =>
           javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose(
+            rootPath,
             document.path,
           ),
         );
@@ -1502,9 +1697,16 @@ export function useWorkbenchController(
 
   const openWorkspacePath = useCallback(
     async (path: string) => {
-      await stopLanguageServerRuntime();
-      await stopJavaScriptTypeScriptLanguageServerRuntime();
+      const previousRootPath = currentWorkspaceRootRef.current;
+      const cachedWorkspaceState = workspaceStateCacheRef.current[path] ?? null;
+
+      if (previousRootPath && previousRootPath !== path) {
+        cacheCurrentWorkspaceState(previousRootPath);
+      }
+
       workspaceSessionRestoredRef.current = false;
+      resetLanguageServerDocuments();
+      resetJavaScriptTypeScriptLanguageServerDocuments();
       let workspaceSettings = defaultWorkspaceSettings();
 
       try {
@@ -1515,15 +1717,22 @@ export function useWorkbenchController(
 
       setWorkspaceRoot(path);
       currentWorkspaceRootRef.current = path;
-      setEntriesByDirectory({});
-      setExpandedDirectories(new Set([path]));
-      setDocuments({});
-      setOpenPaths([]);
-      setActivePath(null);
-      setPreviewPath(null);
-      setNavigationHistory(createNavigationHistory());
-      setSidebarView("files");
-      setBottomPanelView("problems");
+
+      if (cachedWorkspaceState) {
+        restoreCachedWorkspaceState(cachedWorkspaceState);
+      } else {
+        setEntriesByDirectory({});
+        setExpandedDirectories(new Set([path]));
+        setDocuments({});
+        setOpenPaths([]);
+        setActivePath(null);
+        setPreviewPath(null);
+        setNavigationHistory(createNavigationHistory());
+        setSidebarView("files");
+        setBottomPanelView("problems");
+        setBottomPanelVisible(false);
+      }
+
       applyWorkspaceSettings(workspaceSettings);
       setIntelligenceMode(workspaceSettings.intelligenceMode);
       setWorkspaceDescriptor(null);
@@ -1531,6 +1740,8 @@ export function useWorkbenchController(
       setWorkspaceTrust(null);
       setLanguageServerPlan(null);
       setJavaScriptTypeScriptLanguageServerPlan(null);
+      setLanguageServerRuntimeStatus(null);
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
       setIndexProgress(initialIndexProgress());
       setIndexHealthLogs([]);
       setPhpTree(emptyPhpTree());
@@ -1570,6 +1781,11 @@ export function useWorkbenchController(
           recentWorkspacePath: path,
           workspaceTabs: nextWorkspaceTabs,
         });
+        await stopBackgroundProjectRuntimes(
+          appSettingsRef.current.runtimePolicy,
+          path,
+          previousRootPath,
+        );
       } catch (error) {
         reportError("Settings", error);
       }
@@ -1587,7 +1803,10 @@ export function useWorkbenchController(
         reportError("IDE Mode", error);
       }
 
-      await loadDirectory(path);
+      if (!cachedWorkspaceState?.entriesByDirectory[path]) {
+        await loadDirectory(path);
+      }
+
       let descriptor: WorkspaceDescriptor | null = null;
       try {
         const trust = await workspaceTrustGateway.getTrust(path);
@@ -1613,13 +1832,18 @@ export function useWorkbenchController(
         reportError("Workspace Detection", error);
       }
 
-      await restoreWorkspaceSession(path, workspaceSettings.session);
+      if (cachedWorkspaceState) {
+        workspaceSessionRestoredRef.current = true;
+      } else {
+        await restoreWorkspaceSession(path, workspaceSettings.session);
 
-      if (currentWorkspaceRootRef.current !== path) {
-        return;
+        if (currentWorkspaceRootRef.current !== path) {
+          return;
+        }
+
+        workspaceSessionRestoredRef.current = true;
       }
 
-      workspaceSessionRestoredRef.current = true;
       void refreshJavaScriptTypeScriptLanguageServerPlan(path);
 
       if (shouldIndexWorkspace(resolvedIntelligenceMode)) {
@@ -1666,17 +1890,20 @@ export function useWorkbenchController(
     },
     [
       applyWorkspaceSettings,
+      cacheCurrentWorkspaceState,
       loadDirectory,
       persistAppSettings,
       phpToolGateway,
       refreshLanguageServerPlan,
       reportError,
+      restoreCachedWorkspaceState,
       restoreWorkspaceSession,
+      resetJavaScriptTypeScriptLanguageServerDocuments,
+      resetLanguageServerDocuments,
       settingsGateway,
       smartModeGateway,
       startInitialIndexScan,
-      stopLanguageServerRuntime,
-      stopJavaScriptTypeScriptLanguageServerRuntime,
+      stopBackgroundProjectRuntimes,
       workspaceDetection,
       workspaceTrustGateway,
       refreshJavaScriptTypeScriptLanguageServerPlan,
@@ -1713,16 +1940,28 @@ export function useWorkbenchController(
       const currentSettings = appSettingsRef.current;
       const currentTabs = currentSettings.workspaceTabs;
       const nextTabs = workspaceTabsWithoutPath(currentTabs, path);
+      const cachedWorkspaceState = workspaceStateCacheRef.current[path] ?? null;
 
       if (nextTabs.length === currentTabs.length) {
         return;
       }
 
       if (path !== workspaceRoot) {
+        if (
+          cachedWorkspaceState &&
+          cachedWorkspaceHasDirtyDocuments(cachedWorkspaceState) &&
+          !prompter.confirm("Close workspace and discard unsaved changes?")
+        ) {
+          return;
+        }
+
         const nextRecentPath =
           currentSettings.recentWorkspacePath === path
             ? workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null
             : currentSettings.recentWorkspacePath;
+
+        delete workspaceStateCacheRef.current[path];
+        await stopProjectRuntimes(path);
 
         try {
           await persistAppSettings({
@@ -1749,6 +1988,9 @@ export function useWorkbenchController(
         nextTabs[nextTabs.length - 1] ??
         null;
 
+      delete workspaceStateCacheRef.current[path];
+      await stopProjectRuntimes(path);
+
       try {
         await persistAppSettings({
           ...currentSettings,
@@ -1774,6 +2016,7 @@ export function useWorkbenchController(
       persistAppSettings,
       prompter,
       reportError,
+      stopProjectRuntimes,
       workspaceRoot,
     ],
   );
@@ -4323,7 +4566,7 @@ export function useWorkbenchController(
       return false;
     }
 
-    if (!isLanguageServerDocument(activeDocument)) {
+    if (!workspaceRoot || !isLanguageServerDocument(activeDocument)) {
       return false;
     }
 
@@ -4353,6 +4596,7 @@ export function useWorkbenchController(
     try {
       await flushPendingDocumentChange(activeDocument.path);
       const locations = await languageServerFeaturesGateway[feature](
+        workspaceRoot,
         toLanguageServerTextDocumentPosition(activeDocument.path, editorPosition),
       );
       const symbolName = identifierAtEditorPosition(
@@ -4422,6 +4666,7 @@ export function useWorkbenchController(
     openPathForNavigation,
     recordCurrentNavigationLocation,
     reportLanguageServerError,
+    workspaceRoot,
   ]);
 
   const goToIndexedSymbolDefinition = useCallback(async (): Promise<boolean> => {
@@ -4777,11 +5022,20 @@ export function useWorkbenchController(
       nextTrusted: boolean | null,
     ) => {
       try {
+        const previousAppSettings = appSettingsRef.current;
         await persistAppSettings(nextAppSettings);
 
         if (!workspaceRoot) {
           setMessage("Settings saved.");
           return;
+        }
+
+        if (previousAppSettings.runtimePolicy !== nextAppSettings.runtimePolicy) {
+          await stopBackgroundProjectRuntimes(
+            nextAppSettings.runtimePolicy,
+            workspaceRoot,
+            null,
+          );
         }
 
         const previousMode = intelligenceModeRef.current;
@@ -4844,6 +5098,7 @@ export function useWorkbenchController(
       reportError,
       smartModeGateway,
       startInitialIndexScan,
+      stopBackgroundProjectRuntimes,
       stopLanguageServerRuntime,
       workspaceDescriptor,
       workspaceRoot,
@@ -5958,16 +6213,20 @@ export function useWorkbenchController(
     let active = true;
     let unsubscribe: UnsubscribeFn | null = null;
 
-    languageServerRuntimeGateway
-      .getStatus()
-      .then((status) => {
-        if (!active) {
-          return;
-        }
+    if (workspaceRoot) {
+      languageServerRuntimeGateway
+        .getStatus(workspaceRoot)
+        .then((status) => {
+          if (!active) {
+            return;
+          }
 
-        setLanguageServerRuntimeStatus(status);
-      })
-      .catch((error) => reportError("Language Server", error));
+          setLanguageServerRuntimeStatus(status);
+        })
+        .catch((error) => reportError("Language Server", error));
+    } else {
+      setLanguageServerRuntimeStatus(null);
+    }
 
     languageServerRuntimeGateway
       .subscribeStatus((status) => {
@@ -5996,22 +6255,27 @@ export function useWorkbenchController(
     languageServerRuntimeGateway,
     reportLanguageServerError,
     reportError,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
     let active = true;
     let unsubscribe: UnsubscribeFn | null = null;
 
-    javaScriptTypeScriptLanguageServerRuntimeGateway
-      .getStatus()
-      .then((status) => {
-        if (!active) {
-          return;
-        }
+    if (workspaceRoot) {
+      javaScriptTypeScriptLanguageServerRuntimeGateway
+        .getStatus(workspaceRoot)
+        .then((status) => {
+          if (!active) {
+            return;
+          }
 
-        setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
-      })
-      .catch((error) => reportError("JavaScript/TypeScript", error));
+          setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+        })
+        .catch((error) => reportError("JavaScript/TypeScript", error));
+    } else {
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
+    }
 
     javaScriptTypeScriptLanguageServerRuntimeGateway
       .subscribeStatus((status) => {
@@ -6039,6 +6303,7 @@ export function useWorkbenchController(
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     reportError,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -6139,16 +6404,22 @@ export function useWorkbenchController(
       return;
     }
 
-    openDocumentPaths.forEach((path) => {
-      const document = documents[path];
+    const documentsToSync = openDocumentPaths
+      .map((path) => documents[path])
+      .filter((document): document is EditorDocument => Boolean(document));
 
-      if (!document) {
-        return;
-      }
+    if (
+      activeDocument &&
+      !documentsToSync.some((document) => document.path === activeDocument.path)
+    ) {
+      documentsToSync.push(activeDocument);
+    }
 
+    documentsToSync.forEach((document) => {
       void syncOpenDocument(document);
     });
   }, [
+    activeDocument,
     documents,
     languageServerRuntimeStatus,
     openDocumentPaths,
@@ -6162,16 +6433,22 @@ export function useWorkbenchController(
       return;
     }
 
-    openDocumentPaths.forEach((path) => {
-      const document = documents[path];
+    const documentsToSync = openDocumentPaths
+      .map((path) => documents[path])
+      .filter((document): document is EditorDocument => Boolean(document));
 
-      if (!document) {
-        return;
-      }
+    if (
+      activeDocument &&
+      !documentsToSync.some((document) => document.path === activeDocument.path)
+    ) {
+      documentsToSync.push(activeDocument);
+    }
 
+    documentsToSync.forEach((document) => {
       void syncOpenJavaScriptTypeScriptDocument(document);
     });
   }, [
+    activeDocument,
     documents,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     openDocumentPaths,
@@ -6184,16 +6461,22 @@ export function useWorkbenchController(
       return;
     }
 
-    openDocumentPaths.forEach((path) => {
-      const document = documents[path];
+    const documentsToSync = openDocumentPaths
+      .map((path) => documents[path])
+      .filter((document): document is EditorDocument => Boolean(document));
 
-      if (!document) {
-        return;
-      }
+    if (
+      activeDocument &&
+      !documentsToSync.some((document) => document.path === activeDocument.path)
+    ) {
+      documentsToSync.push(activeDocument);
+    }
 
+    documentsToSync.forEach((document) => {
       scheduleDocumentChange(document);
     });
   }, [
+    activeDocument,
     documents,
     languageServerRuntimeStatus,
     openDocumentPaths,
@@ -6205,16 +6488,22 @@ export function useWorkbenchController(
       return;
     }
 
-    openDocumentPaths.forEach((path) => {
-      const document = documents[path];
+    const documentsToSync = openDocumentPaths
+      .map((path) => documents[path])
+      .filter((document): document is EditorDocument => Boolean(document));
 
-      if (!document) {
-        return;
-      }
+    if (
+      activeDocument &&
+      !documentsToSync.some((document) => document.path === activeDocument.path)
+    ) {
+      documentsToSync.push(activeDocument);
+    }
 
+    documentsToSync.forEach((document) => {
       scheduleJavaScriptTypeScriptDocumentChange(document);
     });
   }, [
+    activeDocument,
     documents,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     openDocumentPaths,
@@ -6768,6 +7057,12 @@ function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
 
 function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
+}
+
+function cachedWorkspaceHasDirtyDocuments(
+  cached: CachedWorkspaceWorkbenchState,
+): boolean {
+  return Object.values(cached.documents).some(isDirty);
 }
 
 function workspaceTabsWithPath(tabs: string[], path: string): string[] {

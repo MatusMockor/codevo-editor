@@ -25,8 +25,10 @@ Sources checked:
 - Monaco has a TypeScript worker wired for `typescript` and `javascript`.
 - The editor already detects `.js`, `.jsx`, `.ts`, and `.tsx`.
 - The indexer extracts lightweight JS/TS symbols for project symbol search.
-- The custom Monaco LSP provider is PHP-only, which is correct because PHPactor must not receive JS/TS documents.
-- `Cmd+B` was routed through our custom controller, which made JS/TS miss Monaco's native TypeScript navigation path.
+- PHPactor remains PHP-only, which is correct because PHPactor must not receive JS/TS documents.
+- JS/TS now has a managed `typescript-language-server` LSP runtime that is independent from PHP IDE Mode.
+- JS/TS documents are synchronized with the managed language server and diagnostics are routed back to Monaco.
+- JS/TS Monaco providers now cover hover, completions, go to definition, go to implementation, references, rename, code actions and document formatting.
 
 ## Implemented First Slice
 
@@ -39,6 +41,23 @@ Sources checked:
 - Keep PHP navigation on our PHP controller and implementation chooser.
 
 This gives a stronger Basic-mode partial experience without starting any PHP IDE process.
+
+## Implemented Managed LSP Slice
+
+- Added a managed JS/TS language-server runtime using `typescript-language-server --stdio`.
+- Added workspace-root keyed JS/TS runtime status and document sync.
+- Added JS/TS LSP feature commands for:
+  - hover
+  - completion
+  - definition
+  - implementation
+  - references
+  - rename
+  - code actions
+  - document formatting
+- Added Monaco providers for JS/TS references, rename, quick fixes/refactors/source actions and formatting.
+- Routed JS/TS quick-fix shortcut through Monaco so Option+Enter can surface tsserver actions.
+- Added unit and Rust coverage for the new feature gateway, request factory and Monaco mappings.
 
 ## Full VS Code-Like Target
 
@@ -139,7 +158,7 @@ Add settings:
 
 1. Partial-mode Monaco fixes.
 2. JS/TS project detector and settings.
-3. Managed tsserver/LSP runtime.
-4. Document sync and diagnostics routing.
-5. Navigation, references, rename, quick fixes, organize imports.
+3. Managed tsserver/LSP runtime. Done for `typescript-language-server`.
+4. Document sync and diagnostics routing. Done for managed JS/TS LSP.
+5. Navigation, references, rename, quick fixes, organize imports. Mostly done; command-only LSP actions and deeper organize-import UX still need hardening.
 6. Framework-specific plugins and inlay hints.

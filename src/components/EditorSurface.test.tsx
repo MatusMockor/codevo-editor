@@ -10,6 +10,7 @@ import type { EditorDocument } from "../domain/workspace";
 import { EditorSurface } from "./EditorSurface";
 
 interface FakeModel {
+  getLineContent?: ReturnType<typeof vi.fn>;
   uri: {
     fsPath: string;
     path: string;
@@ -23,6 +24,7 @@ interface FakeEditor {
   getLayoutInfo: ReturnType<typeof vi.fn>;
   getModel: ReturnType<typeof vi.fn>;
   getPosition: ReturnType<typeof vi.fn>;
+  getSelection: ReturnType<typeof vi.fn>;
   getScrollTop: ReturnType<typeof vi.fn>;
   getTopForLineNumber: ReturnType<typeof vi.fn>;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
@@ -30,6 +32,7 @@ interface FakeEditor {
   onMouseDown: ReturnType<typeof vi.fn>;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
   setPosition: ReturnType<typeof vi.fn>;
+  setSelection: ReturnType<typeof vi.fn>;
   trigger: ReturnType<typeof vi.fn>;
 }
 
@@ -282,6 +285,182 @@ interface ParserFactory
       "keyboard",
       "editor.action.quickFix",
       {},
+    );
+  });
+
+  it("extends selection from identifier to full member call with Option+Up", async () => {
+    const line =
+      "$comment = $this->commentRepository->findOrFail($request->getCommentId());";
+    const activeDocument: EditorDocument = {
+      content: `<?php\n${line}\n`,
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/app/CommentController.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getLineContent: vi.fn(() => line),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const methodStart = line.indexOf("getCommentId");
+    const expressionStart = line.indexOf("$request");
+    const expressionEnd = line.indexOf(")", methodStart) + 1;
+    editor.getPosition.mockReturnValue({
+      column: methodStart + 4,
+      lineNumber: 2,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="vs-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const extendSelectionAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.extendSelection");
+
+    expect(extendSelectionAction).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.UpArrow],
+        label: "Extend Selection",
+      }),
+    );
+
+    extendSelectionAction.run();
+
+    expect(editor.setSelection).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        endColumn: methodStart + "getCommentId".length + 1,
+        endLineNumber: 2,
+        startColumn: methodStart + 1,
+        startLineNumber: 2,
+      }),
+    );
+
+    extendSelectionAction.run();
+
+    expect(editor.setSelection).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        endColumn: expressionEnd + 1,
+        endLineNumber: 2,
+        startColumn: expressionStart + 1,
+        startLineNumber: 2,
+      }),
+    );
+  });
+
+  it("extends JavaScript member calls with the same global action", async () => {
+    const line = "const id = request.getCommentId(user.id);";
+    const activeDocument: EditorDocument = {
+      content: line,
+      language: "typescript",
+      name: "comment.ts",
+      path: "/workspace/comment.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getLineContent: vi.fn(() => line),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const methodStart = line.indexOf("getCommentId");
+    const expressionStart = line.indexOf("request");
+    const expressionEnd = line.indexOf(";", methodStart);
+    editor.getPosition.mockReturnValue({
+      column: methodStart + 4,
+      lineNumber: 1,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="vs-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const extendSelectionAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.extendSelection");
+
+    extendSelectionAction.run();
+    extendSelectionAction.run();
+
+    expect(editor.setSelection).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        endColumn: expressionEnd + 1,
+        endLineNumber: 1,
+        startColumn: expressionStart + 1,
+        startLineNumber: 1,
+      }),
     );
   });
 
@@ -633,6 +812,12 @@ interface ParserFactory
 });
 
 function createEditor(model: FakeModel): FakeEditor {
+  let selection: {
+    endColumn: number;
+    endLineNumber: number;
+    startColumn: number;
+    startLineNumber: number;
+  } | null = null;
   const editor: FakeEditor = {
     addAction: vi.fn(() => ({ dispose: vi.fn() })),
     deltaDecorations: vi.fn((_oldDecorations: string[], decorations: any[]) =>
@@ -649,6 +834,7 @@ function createEditor(model: FakeModel): FakeEditor {
       column: 1,
       lineNumber: 1,
     })),
+    getSelection: vi.fn(() => selection),
     getScrollTop: vi.fn(() => 10),
     getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
     mouseDownHandler: null,
@@ -660,6 +846,9 @@ function createEditor(model: FakeModel): FakeEditor {
     }),
     revealPositionInCenter: vi.fn(),
     setPosition: vi.fn(),
+    setSelection: vi.fn((nextSelection) => {
+      selection = nextSelection;
+    }),
     trigger: vi.fn(),
   };
 
@@ -700,6 +889,7 @@ function createMonaco(model: FakeModel) {
       KeyP: 3,
       KeyR: 4,
       KeyW: 7,
+      UpArrow: 9,
     },
     KeyMod: { Alt: 512, CtrlCmd: 2048, Shift: 1024, WinCtrl: 4096 },
     languages: {
@@ -740,10 +930,14 @@ function createMonaco(model: FakeModel) {
 
 function languageServerFeaturesGateway() {
   return {
+    codeActions: vi.fn(async () => []),
     completion: vi.fn(),
     definition: vi.fn(),
+    formatting: vi.fn(async () => []),
     hover: vi.fn(),
     implementation: vi.fn(),
+    references: vi.fn(async () => []),
+    rename: vi.fn(async () => null),
     signatureHelp: vi.fn(),
   };
 }

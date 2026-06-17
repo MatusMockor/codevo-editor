@@ -19,6 +19,7 @@ describe("settings defaults", () => {
     expect(defaultAppSettings()).toEqual({
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
+      runtimePolicy: "keepAlive",
       theme: "dark",
       workspaceTabs: [],
     });
@@ -64,6 +65,7 @@ describe("normalizeAppSettings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: "/project",
+      runtimePolicy: "keepAlive",
       theme: "dark",
       workspaceTabs: ["/project"],
     });
@@ -71,6 +73,7 @@ describe("normalizeAppSettings", () => {
       normalizeAppSettings({
         keymap: { "editor.save": "Cmd+Shift+S" },
         recentWorkspacePath: null,
+        runtimePolicy: "suspendOnBackground",
         theme: "light",
         workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
@@ -80,6 +83,7 @@ describe("normalizeAppSettings", () => {
         "editor.save": "Cmd+Shift+S",
       },
       recentWorkspacePath: null,
+      runtimePolicy: "suspendOnBackground",
       theme: "light",
       workspaceTabs: ["/project-a", "/project-b"],
     });
@@ -91,6 +95,7 @@ describe("normalizeAppSettings", () => {
     ).toEqual({
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
+      runtimePolicy: "keepAlive",
       theme: "ayuMirage",
       workspaceTabs: [],
     });

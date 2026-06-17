@@ -1,26 +1,31 @@
 export interface LanguageServerCapabilities {
+  codeAction: boolean;
   hover: boolean;
   completion: boolean;
   definition: boolean;
+  formatting: boolean;
   implementation: boolean;
+  references: boolean;
+  rename: boolean;
 }
 
 export type LanguageServerRuntimeStatus =
-  | { kind: "starting"; sessionId: number }
+  | { kind: "starting"; rootPath?: string; sessionId: number }
   | {
       kind: "running";
+      rootPath?: string;
       sessionId: number;
       capabilities: LanguageServerCapabilities;
     }
-  | { kind: "stopped" }
-  | { kind: "crashed"; message: string };
+  | { kind: "stopped"; rootPath?: string }
+  | { kind: "crashed"; message: string; rootPath?: string };
 
 export type UnsubscribeFn = () => void;
 
 export interface LanguageServerRuntimeGateway {
-  getStatus(): Promise<LanguageServerRuntimeStatus>;
+  getStatus(rootPath: string): Promise<LanguageServerRuntimeStatus>;
   start(rootPath: string): Promise<LanguageServerRuntimeStatus>;
-  stop(): Promise<LanguageServerRuntimeStatus>;
+  stop(rootPath: string): Promise<LanguageServerRuntimeStatus>;
   subscribeStatus(
     listener: (status: LanguageServerRuntimeStatus) => void,
   ): Promise<UnsubscribeFn>;
@@ -101,14 +106,34 @@ export function languageServerCapabilityLabels(
     labels.push("implementation");
   }
 
+  if (capabilities.references) {
+    labels.push("references");
+  }
+
+  if (capabilities.rename) {
+    labels.push("rename");
+  }
+
+  if (capabilities.codeAction) {
+    labels.push("code actions");
+  }
+
+  if (capabilities.formatting) {
+    labels.push("formatting");
+  }
+
   return labels;
 }
 
 export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
   return {
+    codeAction: false,
     completion: false,
     definition: false,
+    formatting: false,
     hover: false,
     implementation: false,
+    references: false,
+    rename: false,
   };
 }
