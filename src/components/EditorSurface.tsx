@@ -37,6 +37,11 @@ import { registerLanguageServerMonacoProviders } from "./languageServerMonacoPro
 import { registerMonacoAppThemes } from "./monacoThemes";
 import { getTabId, getTabPanelId } from "./tabIds";
 
+interface ChangePreviewState {
+  anchorLineNumber: number;
+  hunk: EditorChangeHunk;
+}
+
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
   changeHunks: EditorChangeHunk[];
@@ -117,8 +122,9 @@ export function EditorSurface({
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
     Record<string, PhpSyntaxDiagnostic[]>
   >({});
-  const [changePreviewHunk, setChangePreviewHunk] =
-    useState<EditorChangeHunk | null>(null);
+  const [changePreview, setChangePreview] = useState<ChangePreviewState | null>(
+    null,
+  );
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
@@ -126,11 +132,26 @@ export function EditorSurface({
 
   useEffect(() => {
     changeHunksRef.current = changeHunks;
-    setChangePreviewHunk((current) =>
-      current && changeHunks.some((hunk) => hunk.id === current.id)
-        ? current
-        : null,
-    );
+    setChangePreview((current) => {
+      if (!current) {
+        return null;
+      }
+
+      const hunk = changeHunks.find(
+        (candidate) => candidate.id === current.hunk.id,
+      );
+
+      return hunk
+        ? {
+            anchorLineNumber: clampNumber(
+              current.anchorLineNumber,
+              hunk.startLineNumber,
+              hunk.endLineNumber,
+            ),
+            hunk,
+          }
+        : null;
+    });
   }, [changeHunks]);
 
   useEffect(() => {
@@ -324,7 +345,10 @@ export function EditorSurface({
       if (changeHunk) {
         event.event.preventDefault();
         event.event.stopPropagation();
-        setChangePreviewHunk(changeHunk);
+        setChangePreview({
+          anchorLineNumber: lineNumber,
+          hunk: changeHunk,
+        });
       }
     });
 
@@ -356,7 +380,7 @@ export function EditorSurface({
   }, [activeDocument, changeHunks, editorApi, monacoApi]);
 
   useEffect(() => {
-    if (!changePreviewHunk) {
+    if (!changePreview) {
       return;
     }
 
@@ -365,12 +389,12 @@ export function EditorSurface({
         return;
       }
 
-      setChangePreviewHunk(null);
+      setChangePreview(null);
     };
 
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [changePreviewHunk]);
+  }, [changePreview]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -618,8 +642,12 @@ export function EditorSurface({
   }
 
   const changePreviewStyle =
-    changePreviewHunk && editorApi
-      ? editorChangePopoverStyle(editorApi, changePreviewHunk)
+    changePreview && editorApi
+      ? editorChangePopoverStyle(
+          editorApi,
+          changePreview.hunk,
+          changePreview.anchorLineNumber,
+        )
       : undefined;
 
   return (
@@ -654,7 +682,7 @@ export function EditorSurface({
         theme={monacoTheme}
         value={activeDocument.content}
       />
-      {changePreviewHunk ? (
+      {changePreview ? (
         <div
           aria-label="Local change preview"
           className="editor-change-popover"
@@ -663,14 +691,14 @@ export function EditorSurface({
         >
           <div className="editor-change-popover-header">
             <span
-              className={`editor-change-popover-kind ${changePreviewHunk.kind}`}
+              className={`editor-change-popover-kind ${changePreview.hunk.kind}`}
             >
-              {editorChangeKindLabel(changePreviewHunk.kind)}
+              {editorChangeKindLabel(changePreview.hunk.kind)}
             </span>
             <button
               aria-label="Close local change preview"
               className="editor-change-popover-icon-button"
-              onClick={() => setChangePreviewHunk(null)}
+              onClick={() => setChangePreview(null)}
               type="button"
             >
               <X aria-hidden="true" size={14} />
@@ -680,14 +708,14 @@ export function EditorSurface({
             Previous content
           </div>
           <pre className="editor-change-popover-code">
-            {changePreviewText(changePreviewHunk)}
+            {changePreviewText(changePreview.hunk)}
           </pre>
           <div className="editor-change-popover-actions">
             <button
               className="editor-change-popover-action"
               onClick={() => {
-                onRevertChangeHunk(changePreviewHunk);
-                setChangePreviewHunk(null);
+                onRevertChangeHunk(changePreview.hunk);
+                setChangePreview(null);
               }}
               type="button"
             >
@@ -704,20 +732,26 @@ export function EditorSurface({
 function editorChangePopoverStyle(
   editor: Monaco.editor.IStandaloneCodeEditor,
   hunk: EditorChangeHunk,
+  anchorLineNumber: number,
 ): CSSProperties {
   const layout = editor.getLayoutInfo();
+  const clampedAnchorLine = clampNumber(
+    anchorLineNumber,
+    hunk.startLineNumber,
+    hunk.endLineNumber,
+  );
   const lineTop =
-    editor.getTopForLineNumber(hunk.startLineNumber) - editor.getScrollTop();
+    editor.getTopForLineNumber(clampedAnchorLine) - editor.getScrollTop();
   const nextLineTop =
-    editor.getTopForLineNumber(hunk.endLineNumber + 1) - editor.getScrollTop();
-  const hunkHeight = Math.max(20, nextLineTop - lineTop);
+    editor.getTopForLineNumber(clampedAnchorLine + 1) - editor.getScrollTop();
+  const lineHeight = Math.max(20, nextLineTop - lineTop);
   const estimatedHeight = 170;
   const minimumEdgeGap = 12;
   const left = Math.max(
     54,
     Math.min(layout.contentLeft + 12, layout.width - 320),
   );
-  const belowTop = lineTop + hunkHeight + 6;
+  const belowTop = lineTop + lineHeight + 6;
   const aboveTop = lineTop - estimatedHeight - 6;
   const maxTop = Math.max(
     minimumEdgeGap,

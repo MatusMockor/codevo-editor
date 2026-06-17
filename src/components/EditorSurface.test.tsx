@@ -466,6 +466,94 @@ interface ParserFactory
 
     expect(onRevertChangeHunk).toHaveBeenCalledWith(changeHunks[0]);
   });
+
+  it("anchors local change previews to the clicked line inside a larger hunk", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\n$first = 'new';\n$second = 'new';\n",
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/src/CommentController.php",
+      savedContent: "<?php\n$first = 'old';\n$second = 'old';\n",
+    };
+    const changeHunks = editorChangeHunks(
+      activeDocument.savedContent,
+      activeDocument.content,
+    );
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={changeHunks}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="vs-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(changeHunks[0]).toEqual(
+      expect.objectContaining({
+        endLineNumber: 3,
+        startLineNumber: 2,
+      }),
+    );
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          detail: {
+            glyphMarginLane: monaco.editor.GlyphMarginLane.Left,
+          },
+          position: {
+            column: 1,
+            lineNumber: 3,
+          },
+          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+        },
+      });
+    });
+
+    const popover = queryRequired<HTMLElement>(host, ".editor-change-popover");
+    expect(popover.style.left).toBe("92px");
+    expect(popover.style.top).toBe("76px");
+  });
 });
 
 function createEditor(model: FakeModel): FakeEditor {
