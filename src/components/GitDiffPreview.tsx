@@ -1,4 +1,5 @@
 import { DiffEditor } from "@monaco-editor/react";
+import { X } from "lucide-react";
 import type { MonacoAppTheme } from "../domain/settings";
 import type { GitFileDiff } from "../domain/git";
 import { registerMonacoAppThemes } from "./monacoThemes";
@@ -7,12 +8,14 @@ interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
   isLoading: boolean;
   monacoTheme: MonacoAppTheme;
+  onClose(): void;
 }
 
 export function GitDiffPreview({
   diff,
   isLoading,
   monacoTheme,
+  onClose,
 }: GitDiffPreviewProps) {
   if (isLoading) {
     return (
@@ -33,8 +36,13 @@ export function GitDiffPreview({
   return (
     <section className="git-diff-preview" aria-label="Git diff">
       <header className="git-diff-header">
-        <strong>{diff.change.relativePath}</strong>
-        <span>{diff.change.status}</span>
+        <div>
+          <strong>{diff.change.relativePath}</strong>
+          <span>{diff.change.status}</span>
+        </div>
+        <button onClick={onClose} title="Close diff" type="button">
+          <X aria-hidden="true" size={14} />
+        </button>
       </header>
       <div className="editor-panel">
         <DiffEditor

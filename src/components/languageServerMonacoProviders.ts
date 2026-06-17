@@ -6,6 +6,7 @@ import {
 } from "../domain/languageServerFeatures";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { phpVariableCompletionsAt } from "../domain/phpScopeCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 type MonacoApi = typeof Monaco;
@@ -29,6 +30,7 @@ export function registerLanguageServerMonacoProviders(
     provideHover: (model, position) => provideHover(monaco, context, model, position),
   });
   const completion = monaco.languages.registerCompletionItemProvider("php", {
+    triggerCharacters: ["$"],
     provideCompletionItems: (model, position) =>
       provideCompletionItems(monaco, context, model, position),
   });
@@ -76,37 +78,117 @@ async function provideCompletionItems(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.CompletionList> {
+  const documentContext = activePhpDocumentContext(context, model);
+
+  if (!documentContext) {
+    return { suggestions: [] };
+  }
+
+  const word = model.getWordUntilPosition(position);
+  const range = completionRange(model, position, word);
+  const suggestions: Monaco.languages.CompletionItem[] = phpVariableCompletionsAt(
+    documentContext.activeDocument.content,
+    position,
+  ).map((item, index) => ({
+    detail: item.detail,
+    insertText: item.name,
+    kind: monaco.languages.CompletionItemKind.Variable,
+    label: item.name,
+    range,
+    sortText: `0_${String(index).padStart(4, "0")}`,
+  }));
   const request = featureRequestContext(context, model, position, "completion");
 
   if (!request) {
-    return { suggestions: [] };
+    return { suggestions };
   }
 
   try {
     await context.flushPendingDocumentChange(request.path);
     const completion = await context.featuresGateway.completion(request.position);
-    const word = model.getWordUntilPosition(position);
-    const range = {
-      endColumn: word.endColumn,
-      endLineNumber: position.lineNumber,
-      startColumn: word.startColumn,
-      startLineNumber: position.lineNumber,
-    };
-
-    return {
-      suggestions: completion.items.map((item) => ({
+    const lspSuggestions = completion.items.map((item, index) => ({
         detail: item.detail || undefined,
         documentation: item.documentation || undefined,
         insertText: item.insertText || item.label,
         kind: monaco.languages.CompletionItemKind.Text,
         label: item.label,
         range,
-      })),
+        sortText: `1_${String(index).padStart(4, "0")}`,
+      }));
+
+    return {
+      suggestions: dedupeCompletionItems([...suggestions, ...lspSuggestions]),
     };
   } catch (error) {
     context.reportError(error);
-    return { suggestions: [] };
+    return { suggestions };
   }
+}
+
+function activePhpDocumentContext(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+) {
+  const activeDocument = context.getActiveDocument();
+
+  if (!activeDocument) {
+    return null;
+  }
+
+  if (activeDocument.language !== "php") {
+    return null;
+  }
+
+  const path = modelPath(model);
+
+  if (path !== activeDocument.path) {
+    return null;
+  }
+
+  return {
+    activeDocument,
+    path,
+  };
+}
+
+function completionRange(
+  model: MonacoModel,
+  position: MonacoPosition,
+  word: { endColumn: number; startColumn: number },
+) {
+  const line = model.getLineContent?.(position.lineNumber) ?? "";
+  const characterBeforeWord = line[word.startColumn - 2] || "";
+  const startColumn =
+    characterBeforeWord === "$"
+      ? Math.max(1, word.startColumn - 1)
+      : word.startColumn;
+
+  return {
+    endColumn: word.endColumn,
+    endLineNumber: position.lineNumber,
+    startColumn,
+    startLineNumber: position.lineNumber,
+  };
+}
+
+function dedupeCompletionItems(
+  items: Monaco.languages.CompletionItem[],
+): Monaco.languages.CompletionItem[] {
+  const seen = new Set<string>();
+  const unique: Monaco.languages.CompletionItem[] = [];
+
+  for (const item of items) {
+    const key = String(item.label).toLowerCase();
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(item);
+  }
+
+  return unique;
 }
 
 function featureRequestContext(

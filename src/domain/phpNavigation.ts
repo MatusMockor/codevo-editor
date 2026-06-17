@@ -12,6 +12,11 @@ export type PhpIdentifierContext =
       name: string;
     }
   | {
+      className: string;
+      kind: "laravelRouteActionMethod";
+      methodName: string;
+    }
+  | {
       kind: "methodCall";
       methodName: string;
       variableName: string;
@@ -37,6 +42,12 @@ export function phpIdentifierContextAt(
 
   if (!identifier) {
     return null;
+  }
+
+  const routeAction = laravelRouteActionContextAt(source, identifier);
+
+  if (routeAction) {
+    return routeAction;
   }
 
   const methodCall = methodCallContextAt(source, identifier);
@@ -176,12 +187,22 @@ export function phpMethodPosition(
   source: string,
   methodName: string,
 ): EditorPosition {
+  return phpMethodPositionOrNull(source, methodName) ?? {
+    column: 1,
+    lineNumber: 1,
+  };
+}
+
+export function phpMethodPositionOrNull(
+  source: string,
+  methodName: string,
+): EditorPosition | null {
   const match = new RegExp(
     `\\bfunction\\s+${escapeRegExp(methodName)}\\b`,
   ).exec(source);
 
   if (!match) {
-    return { column: 1, lineNumber: 1 };
+    return null;
   }
 
   return editorPositionAtOffset(
@@ -221,6 +242,146 @@ function methodCallContextAt(
         methodName: identifier.name,
         variableName: match[1] || "",
       };
+    }
+  }
+
+  return null;
+}
+
+function laravelRouteActionContextAt(
+  source: string,
+  identifier: IdentifierAtOffset,
+): PhpIdentifierContext | null {
+  const literal = stringLiteralAtOffset(source, identifier.start);
+
+  if (!literal) {
+    return null;
+  }
+
+  if (literal.value !== identifier.name) {
+    return null;
+  }
+
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(literal.value)) {
+    return null;
+  }
+
+  const arrayStart = source.lastIndexOf("[", literal.quoteStart);
+
+  if (arrayStart < 0) {
+    return null;
+  }
+
+  const arrayEnd = matchingBracketOffset(source, arrayStart, "[", "]");
+
+  if (!arrayEnd || literal.quoteEnd > arrayEnd) {
+    return null;
+  }
+
+  const beforeLiteral = source.slice(arrayStart + 1, literal.quoteStart);
+  const classMatch =
+    /(?:^|[,\s])((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*class\s*,\s*$/m.exec(
+      beforeLiteral,
+    );
+
+  if (!classMatch?.[1]) {
+    return null;
+  }
+
+  return {
+    className: classMatch[1],
+    kind: "laravelRouteActionMethod",
+    methodName: literal.value,
+  };
+}
+
+function stringLiteralAtOffset(
+  source: string,
+  offset: number,
+): { quoteEnd: number; quoteStart: number; value: string } | null {
+  let quote: string | null = null;
+  let quoteStart = -1;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character !== quote) {
+        continue;
+      }
+
+      if (offset > quoteStart && offset < index) {
+        return {
+          quoteEnd: index,
+          quoteStart,
+          value: source.slice(quoteStart + 1, index),
+        };
+      }
+
+      quote = null;
+      quoteStart = -1;
+      continue;
+    }
+
+    if (character !== "'" && character !== "\"") {
+      continue;
+    }
+
+    quote = character;
+    quoteStart = index;
+  }
+
+  return null;
+}
+
+function matchingBracketOffset(
+  source: string,
+  openOffset: number,
+  open: string,
+  close: string,
+): number | null {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = openOffset; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+      continue;
+    }
+
+    if (character === open) {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== close) {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth === 0) {
+      return index;
     }
   }
 

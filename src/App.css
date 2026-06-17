@@ -469,11 +469,19 @@ button {
   display: flex;
   min-height: 34px;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 12px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-tabs);
   color: var(--color-text);
   padding: 0 12px;
+}
+
+.git-diff-header div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
 }
 
 .git-diff-header strong {
@@ -489,6 +497,25 @@ button {
   color: var(--color-text-subtle);
   font-size: 12px;
   text-transform: capitalize;
+}
+
+.git-diff-header button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.git-diff-header button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-panel-soft);
+  color: var(--color-text);
 }
 
 .tree-chevron {

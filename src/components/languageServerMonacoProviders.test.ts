@@ -95,6 +95,19 @@ describe("registerLanguageServerMonacoProviders", () => {
     ).resolves.toEqual({
       suggestions: [
         {
+          detail: "local variable",
+          insertText: "$user",
+          kind: 6,
+          label: "$user",
+          range: {
+            endColumn: 5,
+            endLineNumber: 11,
+            startColumn: 1,
+            startLineNumber: 11,
+          },
+          sortText: "0_0000",
+        },
+        {
           detail: "class",
           documentation: "A user",
           insertText: "User",
@@ -103,9 +116,10 @@ describe("registerLanguageServerMonacoProviders", () => {
           range: {
             endColumn: 5,
             endLineNumber: 11,
-            startColumn: 2,
+            startColumn: 1,
             startLineNumber: 11,
           },
+          sortText: "1_0000",
         },
       ],
     });
@@ -139,7 +153,7 @@ function createRegisteredProviders() {
   };
   registered.monaco = {
     languages: {
-      CompletionItemKind: { Text: 1 },
+      CompletionItemKind: { Text: 1, Variable: 6 },
       registerCompletionItemProvider: vi.fn((language, provider) => {
         registered.completionLanguage = language;
         registered.completionProvider = provider;
@@ -215,7 +229,7 @@ function runningStatus(
 
 function document(): EditorDocument {
   return {
-    content: "<?php echo $user;",
+    content: "<?php\nfunction show() {\n    $user = null;\n    echo $user;\n}",
     language: "php",
     name: "User.php",
     path: "/project/src/User.php",
@@ -225,6 +239,7 @@ function document(): EditorDocument {
 
 function model() {
   return {
+    getLineContent: vi.fn(() => "$user"),
     getWordUntilPosition: vi.fn(() => ({
       endColumn: 5,
       startColumn: 2,

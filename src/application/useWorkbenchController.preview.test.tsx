@@ -140,6 +140,39 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activeDocument?.path).toBe(previewFile.path);
   });
 
+  it("closes a Git diff preview without closing the active editor document", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(file);
+      await getWorkbench().previewGitChange({
+        oldPath: null,
+        oldRelativePath: null,
+        path: "/workspace/src/User.php",
+        relativePath: "src/User.php",
+        status: "modified",
+      });
+    });
+
+    expect(getWorkbench().selectedGitChange?.path).toBe(file.path);
+    expect(getWorkbench().activePath).toBe(file.path);
+
+    act(() => {
+      getWorkbench().closeGitDiffPreview();
+    });
+
+    expect(getWorkbench().selectedGitChange).toBeNull();
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().activePath).toBe(file.path);
+  });
+
   it("reuses a clean preview tab for search result opens", async () => {
     const { getWorkbench } = renderController();
     const firstFile = fileEntry("/workspace/src/First.php", "First.php");
@@ -577,6 +610,102 @@ class CommentController
     });
   });
 
+  it("resolves Laravel route action strings to the paired controller method before LSP fallback", async () => {
+    const routesPath = "/workspace/routes/comments.php";
+    const commentControllerPath =
+      "/workspace/app/Http/Controllers/communication/CommentController.php";
+    const reactionControllerPath =
+      "/workspace/app/Http/Controllers/communication/ReactionController.php";
+    const languageServerFeaturesGateway = featuresGateway();
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 21,
+        containerName: "App\\Http\\Controllers\\communication\\ReactionController",
+        fullyQualifiedName:
+          "App\\Http\\Controllers\\communication\\ReactionController::store",
+        kind: "method",
+        lineNumber: 8,
+        name: "store",
+        path: reactionControllerPath,
+        relativePath: "app/Http/Controllers/communication/ReactionController.php",
+      },
+      {
+        column: 21,
+        containerName: "App\\Http\\Controllers\\communication\\CommentController",
+        fullyQualifiedName:
+          "App\\Http\\Controllers\\communication\\CommentController::store",
+        kind: "method",
+        lineNumber: 12,
+        name: "store",
+        path: commentControllerPath,
+        relativePath: "app/Http/Controllers/communication/CommentController.php",
+      },
+    ];
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === routesPath) {
+          return `<?php
+use App\\Http\\Controllers\\communication\\CommentController;
+use App\\Http\\Controllers\\communication\\ReactionController;
+
+Route::post('/comments', [CommentController::class, 'store']);
+Route::post('/reactions', [ReactionController::class, 'store']);
+`;
+        }
+
+        return "<?php\nclass Controller { public function store() {} }\n";
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(routesPath, "comments.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 54,
+        lineNumber: 5,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).toHaveBeenCalledWith("/workspace", "store", 50);
+    expect(getWorkbench().activePath).toBe(commentControllerPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentControllerPath,
+      position: {
+        column: 21,
+        lineNumber: 12,
+      },
+    });
+  });
+
   it("resolves imported FormRequest to vendor instead of a local substring class", async () => {
     const requestPath = "/workspace/app/Http/Request/AiHub/StoreCommentRequest.php";
     const baseRequestPath = "/workspace/app/Http/Request/BaseFormRequest.php";
@@ -653,6 +782,7 @@ class StoreCommentRequest extends FormRequest
 
   function renderController({
     appSettings = defaultAppSettings(),
+    languageServerFeaturesGateway,
     projectSymbols = [],
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
@@ -660,6 +790,7 @@ class StoreCommentRequest extends FormRequest
     workspaceSettings = defaultWorkspaceSettings(),
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
+    languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     projectSymbols?: ProjectSymbolSearchResult[];
     readTextFile?: (path: string) => Promise<string>;
     runtimeStatus?: LanguageServerRuntimeStatus;
@@ -669,6 +800,7 @@ class StoreCommentRequest extends FormRequest
     let workbench: WorkbenchController | null = null;
     const dependencies = createControllerDependencies({
       appSettings,
+      languageServerFeaturesGateway,
       projectSymbols,
       readTextFile,
       runtimeStatus,
@@ -731,6 +863,7 @@ function WorkbenchHarness({
 
 function createControllerDependencies({
   appSettings,
+  languageServerFeaturesGateway,
   projectSymbols,
   readTextFile,
   runtimeStatus,
@@ -738,6 +871,7 @@ function createControllerDependencies({
   workspaceSettings,
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
+  languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   projectSymbols: ProjectSymbolSearchResult[];
   readTextFile(path: string): Promise<string>;
   runtimeStatus: LanguageServerRuntimeStatus;
@@ -816,15 +950,8 @@ function createControllerDependencies({
       subscribeDiagnostics: vi.fn(async () => () => undefined),
     },
     languageServerDocumentSyncGateway: documentSyncGateway,
-    languageServerFeaturesGateway: {
-      completion: vi.fn(async () => ({
-        isIncomplete: false,
-        items: [],
-      })),
-      definition: vi.fn(async () => []),
-      hover: vi.fn(async () => null),
-      implementation: vi.fn(async () => []),
-    },
+    languageServerFeaturesGateway:
+      languageServerFeaturesGateway ?? featuresGateway(),
     languageServerGateway: {
       planPhpLanguageServer: vi.fn(async () => ({
         command: null,
@@ -880,6 +1007,18 @@ function createControllerDependencies({
         trusted,
       })),
     },
+  };
+}
+
+function featuresGateway(): LanguageServerFeaturesGateway {
+  return {
+    completion: vi.fn(async () => ({
+      isIncomplete: false,
+      items: [],
+    })),
+    definition: vi.fn(async () => []),
+    hover: vi.fn(async () => null),
+    implementation: vi.fn(async () => []),
   };
 }
 

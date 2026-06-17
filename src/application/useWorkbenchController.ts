@@ -103,6 +103,7 @@ import {
   phpIdentifierContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
+  phpMethodPositionOrNull,
   phpNamedTypePosition,
   phpParameterTypeForVariable,
   resolvePhpClassName,
@@ -1347,6 +1348,14 @@ export function useWorkbenchController(
     [gitGateway, reportError, workspaceRoot],
   );
 
+  const closeGitDiffPreview = useCallback(() => {
+    gitDiffRequestTokenRef.current += 1;
+    setGitDiffLoading(false);
+    setSelectedGitChange(null);
+    setGitDiffPreview(null);
+    setMessage(null);
+  }, []);
+
   const refreshPhpTree = useCallback(async () => {
     if (!workspaceRoot) {
       setPhpTree(emptyPhpTree());
@@ -2187,35 +2196,64 @@ export function useWorkbenchController(
         return false;
       }
 
-      if (!shouldIndexWorkspace(intelligenceMode)) {
-        return false;
-      }
-
-      const symbols = await projectSymbolSearch.searchProjectSymbols(
-        workspaceRoot,
-        methodName,
-        50,
-      );
       const normalizedClassName = className.toLowerCase();
       const normalizedMethodName = methodName.toLowerCase();
-      const target = symbols.find(
-        (symbol) =>
-          symbol.kind === "method" &&
-          symbol.name.toLowerCase() === normalizedMethodName &&
-          symbol.containerName?.toLowerCase() === normalizedClassName,
-      );
 
-      if (!target) {
+      if (shouldIndexWorkspace(intelligenceMode)) {
+        const symbols = await projectSymbolSearch.searchProjectSymbols(
+          workspaceRoot,
+          methodName,
+          50,
+        );
+        const target = symbols.find(
+          (symbol) =>
+            symbol.kind === "method" &&
+            symbol.name.toLowerCase() === normalizedMethodName &&
+            symbol.containerName?.toLowerCase() === normalizedClassName,
+        );
+
+        if (target) {
+          return openNavigationTarget(
+            target.path,
+            editorPositionFromProjectSymbol(target),
+            `${methodName}()`,
+          );
+        }
+      }
+
+      if (!workspaceDescriptor?.php) {
         return false;
       }
 
-      return openNavigationTarget(
-        target.path,
-        editorPositionFromProjectSymbol(target),
-        `${methodName}()`,
-      );
+      for (const path of phpClassPathCandidates(
+        workspaceRoot,
+        workspaceDescriptor.php,
+        className,
+      )) {
+        try {
+          const content = await readNavigationFileContent(path);
+          const position = phpMethodPositionOrNull(content, methodName);
+
+          if (!position) {
+            continue;
+          }
+
+          return openNavigationTarget(path, position, `${methodName}()`);
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
     },
-    [intelligenceMode, openNavigationTarget, projectSymbolSearch, workspaceRoot],
+    [
+      intelligenceMode,
+      openNavigationTarget,
+      projectSymbolSearch,
+      readNavigationFileContent,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
   );
 
   const goToPhpMethodCallDefinition = useCallback(
@@ -2234,6 +2272,14 @@ export function useWorkbenchController(
       const resolvedVariableType = variableType
         ? resolvePhpClassName(activeDocument.content, variableType)
         : null;
+      const frameworkHint = phpLaravelRequestMethodDefinition(
+        resolvedVariableType,
+        context.methodName,
+      );
+
+      if (frameworkHint) {
+        return openPhpMethodHintTarget(frameworkHint);
+      }
 
       if (resolvedVariableType) {
         const directTargetOpened = await openDirectPhpMethodTarget(
@@ -2244,15 +2290,6 @@ export function useWorkbenchController(
         if (directTargetOpened) {
           return true;
         }
-      }
-
-      const frameworkHint = phpLaravelRequestMethodDefinition(
-        resolvedVariableType,
-        context.methodName,
-      );
-
-      if (frameworkHint) {
-        return openPhpMethodHintTarget(frameworkHint);
       }
 
       setMessage(
@@ -2283,6 +2320,57 @@ export function useWorkbenchController(
     },
     [activeDocument, openPhpClassTarget],
   );
+
+  const goToContextualPhpDefinition = useCallback(async (): Promise<boolean> => {
+    if (!activeDocument || activeDocument.language !== "php") {
+      return false;
+    }
+
+    const editorPosition = activeEditorPositionRef.current;
+
+    if (!editorPosition) {
+      return false;
+    }
+
+    const context = phpIdentifierContextAt(activeDocument.content, editorPosition);
+
+    if (!context) {
+      return false;
+    }
+
+    if (context.kind === "methodCall") {
+      return goToPhpMethodCallDefinition(context);
+    }
+
+    if (context.kind === "laravelRouteActionMethod") {
+      const className = resolvePhpClassName(
+        activeDocument.content,
+        context.className,
+      );
+
+      if (!className) {
+        return false;
+      }
+
+      const openedMethodTarget = await openDirectPhpMethodTarget(
+        className,
+        context.methodName,
+      );
+
+      if (openedMethodTarget) {
+        return true;
+      }
+
+      return openPhpClassTarget(className, context.className);
+    }
+
+    return false;
+  }, [
+    activeDocument,
+    goToPhpMethodCallDefinition,
+    openDirectPhpMethodTarget,
+    openPhpClassTarget,
+  ]);
 
   const goToLanguageServerLocation = useCallback(async (
     feature: Extract<LanguageServerFeature, "definition" | "implementation">,
@@ -2402,6 +2490,19 @@ export function useWorkbenchController(
           return goToPhpMethodCallDefinition(context);
         }
 
+        if (context.kind === "laravelRouteActionMethod") {
+          const className = resolvePhpClassName(
+            activeDocument.content,
+            context.className,
+          );
+
+          if (!className) {
+            return false;
+          }
+
+          return openDirectPhpMethodTarget(className, context.methodName);
+        }
+
         const openedClassTarget = await goToPhpClassIdentifierDefinition(
           context.name,
         );
@@ -2473,6 +2574,7 @@ export function useWorkbenchController(
     goToPhpClassIdentifierDefinition,
     goToPhpMethodCallDefinition,
     intelligenceMode,
+    openDirectPhpMethodTarget,
     openNavigationTarget,
     projectSymbolSearch,
     reportError,
@@ -2480,6 +2582,12 @@ export function useWorkbenchController(
   ]);
 
   const goToDefinition = useCallback(async () => {
+    const openedContextualPhpTarget = await goToContextualPhpDefinition();
+
+    if (openedContextualPhpTarget) {
+      return;
+    }
+
     const openedLanguageServerTarget = await goToLanguageServerLocation(
       "definition",
       "definition",
@@ -2490,7 +2598,11 @@ export function useWorkbenchController(
     }
 
     await goToIndexedSymbolDefinition();
-  }, [goToIndexedSymbolDefinition, goToLanguageServerLocation]);
+  }, [
+    goToContextualPhpDefinition,
+    goToIndexedSymbolDefinition,
+    goToLanguageServerLocation,
+  ]);
 
   const goToImplementation = useCallback(async () => {
     await goToLanguageServerLocation("implementation", "implementation");
@@ -3348,6 +3460,11 @@ export function useWorkbenchController(
 
       if (event.key.toLowerCase() === "w") {
         event.preventDefault();
+        if (selectedGitChange || gitDiffLoading) {
+          closeGitDiffPreview();
+          return;
+        }
+
         if (activeDocument) {
           closeDocument(activeDocument.path);
         }
@@ -3440,13 +3557,16 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     closeDocument,
+    closeGitDiffPreview,
     goToDefinition,
     goToImplementation,
+    gitDiffLoading,
     navigateBackward,
     navigateForwardInHistory,
     openFileStructure,
     openSettingsPanel,
     saveActiveDocument,
+    selectedGitChange,
     toggleBottomPanel,
     workspaceRoot,
   ]);
@@ -3864,6 +3984,7 @@ export function useWorkbenchController(
     classOpenQuery,
     classOpenResults,
     closeDocument,
+    closeGitDiffPreview,
     commandContext,
     commands: commandRegistry.list(),
     dirtyCount,

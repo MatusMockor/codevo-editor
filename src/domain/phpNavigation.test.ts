@@ -39,6 +39,27 @@ class CommentController
     });
   });
 
+  it("detects Laravel route action strings as controller methods", () => {
+    const routeSource = `<?php
+use App\\Http\\Controllers\\communication\\CommentController;
+use App\\Http\\Controllers\\communication\\ReactionController;
+
+Route::post('/comments', [CommentController::class, 'store']);
+Route::post('/reactions', [ReactionController::class, 'store']);
+`;
+
+    expect(
+      phpIdentifierContextAt(routeSource, {
+        column: 54,
+        lineNumber: 5,
+      }),
+    ).toEqual({
+      className: "CommentController",
+      kind: "laravelRouteActionMethod",
+      methodName: "store",
+    });
+  });
+
   it("resolves imports and typed request parameters", () => {
     expect(resolvePhpClassName(controllerSource, "StoreCommentRequest")).toBe(
       "App\\Http\\Request\\AiHub\\StoreCommentRequest",

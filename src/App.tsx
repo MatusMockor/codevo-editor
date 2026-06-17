@@ -459,6 +459,7 @@ function App() {
             diff={workbench.gitDiffPreview}
             isLoading={workbench.gitDiffLoading}
             monacoTheme={monacoTheme}
+            onClose={workbench.closeGitDiffPreview}
           />
         ) : (
           <EditorSurface
