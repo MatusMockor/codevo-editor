@@ -75,12 +75,20 @@ const staticMethodCallPattern =
 export function filterPhpLanguageServerDiagnostics(
   source: string,
   diagnostics: LanguageServerDiagnostic[],
+  options: {
+    path?: string | null;
+  } = {},
 ): LanguageServerDiagnostic[] {
   return diagnostics.filter(
     (diagnostic) =>
       !isIgnoredPhpactorDocblockDiagnostic(diagnostic) &&
       !isPhpactorKeywordMethodDiagnostic(source, diagnostic) &&
       !isPhpactorStaleReturnParseDiagnostic(source, diagnostic) &&
+      !isPhpactorDependencyTraitHostMethodDiagnostic(
+        source,
+        diagnostic,
+        options.path,
+      ) &&
       !isLaravelEloquentStaticBuilderDiagnostic(source, diagnostic),
   );
 }
@@ -174,6 +182,51 @@ function isPhpactorStaleReturnParseDiagnostic(
   );
 }
 
+function isPhpactorDependencyTraitHostMethodDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  path: string | null | undefined,
+): boolean {
+  if (!isDependencyPath(path)) {
+    return false;
+  }
+
+  if (diagnostic.source?.toLowerCase() !== "phpactor") {
+    return false;
+  }
+
+  const methodName = methodMissingOnTraitName(diagnostic.message);
+
+  if (!methodName) {
+    return false;
+  }
+
+  const line = lineAt(source, diagnostic.line);
+
+  return Boolean(
+    line &&
+      new RegExp(
+        String.raw`\$this\s*->\s*${escapeRegExp(methodName)}\s*\(`,
+        "i",
+      ).test(line),
+  );
+}
+
+function methodMissingOnTraitName(message: string): string | null {
+  const match =
+    /\bmethod\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s+does not exist on trait\b/i.exec(
+      message,
+    );
+
+  return match?.[1] ?? null;
+}
+
+function isDependencyPath(path: string | null | undefined): boolean {
+  return Boolean(
+    path && /(?:^|[/\\])(?:vendor|node_modules)(?:[/\\]|$)/.test(path),
+  );
+}
+
 function diagnosticTouchesMethod(
   diagnostic: LanguageServerDiagnostic,
   method: string,
@@ -213,4 +266,8 @@ function previousMeaningfulLine(
   }
 
   return null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

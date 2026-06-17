@@ -506,6 +506,7 @@ export function EditorSurface({
           ? filterPhpLanguageServerDiagnostics(
               activeDocument.content,
               diagnostics,
+              { path },
             )
           : diagnostics;
       monacoApi.editor.setModelMarkers(
@@ -534,6 +535,7 @@ export function EditorSurface({
         ? filterPhpLanguageServerDiagnostics(
             activeDocument.content,
             languageServerDiagnosticsByPath[activeDocument.path] ?? [],
+            { path: activeDocument.path },
           )
         : languageServerDiagnosticsByPath[activeDocument.path] ?? [];
     const syntaxDiagnostics =

@@ -172,6 +172,63 @@ return (new CommentResource($comment))->response()->setStatusCode(200);
       parseError,
     ]);
   });
+
+  it("suppresses PHPactor trait host-method diagnostics in dependencies", () => {
+    const source = `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+trait SoftDeletes
+{
+    public function forceDelete()
+    {
+        if ($this->fireModelEvent('forceDeleting') === false) {
+            return false;
+        }
+    }
+}
+`;
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          diagnostic({
+            character: 20,
+            line: 7,
+            message:
+              'Method "fireModelEvent" does not exist on trait "Illuminate\\Database\\Eloquent\\SoftDeletes"',
+          }),
+        ],
+        {
+          path:
+            "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps PHPactor trait diagnostics outside dependency folders", () => {
+    const source = `<?php
+trait BrokenTrait
+{
+    public function run()
+    {
+        $this->missingMethod();
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 15,
+      line: 5,
+      message: 'Method "missingMethod" does not exist on trait "BrokenTrait"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        path: "/workspace/app/BrokenTrait.php",
+      }),
+    ).toEqual([unresolved]);
+  });
 });
 
 function diagnostic(

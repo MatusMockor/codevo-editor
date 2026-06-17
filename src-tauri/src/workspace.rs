@@ -1,6 +1,4 @@
-use crate::ignore_matcher::{
-    is_default_ignored_name, GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher,
-};
+use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
 use serde::Serialize;
 use std::{
     fs,
@@ -100,7 +98,7 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy().to_string();
 
-            if is_default_ignored_name(&name) {
+            if name == ".git" {
                 continue;
             }
 
@@ -310,8 +308,10 @@ mod tests {
     use std::{fs, time::SystemTime};
 
     #[test]
-    fn read_directory_sorts_directories_before_files_and_hides_heavy_folders() {
+    fn read_directory_sorts_directories_before_files_and_shows_dependencies() {
         let root = create_temp_dir("workspace-directory");
+        fs::create_dir(root.join(".git")).expect("create git");
+        fs::create_dir(root.join("node_modules")).expect("create node modules");
         fs::create_dir(root.join("src")).expect("create src");
         fs::create_dir(root.join("vendor")).expect("create vendor");
         fs::write(root.join("README.md"), "hello").expect("write readme");
@@ -325,7 +325,7 @@ mod tests {
             .map(|entry| entry.name.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(names, vec!["src", "README.md"]);
+        assert_eq!(names, vec!["node_modules", "src", "vendor", "README.md"]);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
