@@ -677,6 +677,61 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("starts JavaScript and TypeScript language service in Basic mode", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+        definition: true,
+        hover: true,
+        inlayHint: true,
+      },
+      kind: "running",
+      sessionId: 12,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
   it("detects PHP workspace metadata before restoring startup tabs", async () => {
     const restoredPath = "/workspace/app/Http/Controllers/CommentController.php";
     const readTextFile = vi.fn(async () => "<?php\nclass CommentController {}\n");
@@ -2060,6 +2115,85 @@ class Builder
     ]);
   });
 
+  it("opens Laravel fluent builder methods from chained calls", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        $album = Album::query()->whereNull('parent_id')->first();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    public function whereNull($columns, $boolean = 'and')
+    {
+        return $this;
+    }
+
+    public function first($columns = ['*'])
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "->first"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(builderPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: builderPath,
+      position: {
+        column: 21,
+        lineNumber: 11,
+      },
+    });
+  });
+
   it("falls back to verified PHP filename lookup before the index is warm", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =
@@ -2736,6 +2870,8 @@ final class FacebookAdapterService extends BaseAdapter
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
+    javaScriptTypeScriptLanguageServerPlan,
+    javaScriptTypeScriptRuntimeStatus = { kind: "stopped" as const },
     languageServerPlan,
     languageServerDiagnosticsGateway,
     languageServerFeaturesGateway,
@@ -2749,6 +2885,8 @@ final class FacebookAdapterService extends BaseAdapter
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
+    javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
+    javaScriptTypeScriptRuntimeStatus?: LanguageServerRuntimeStatus;
     languageServerPlan?: LanguageServerPlan;
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
@@ -2772,6 +2910,8 @@ final class FacebookAdapterService extends BaseAdapter
     const dependencies = createControllerDependencies({
       appSettings,
       gitGateway,
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptRuntimeStatus,
       languageServerPlan,
       languageServerDiagnosticsGateway,
       languageServerFeaturesGateway,
@@ -2844,6 +2984,8 @@ function WorkbenchHarness({
 function createControllerDependencies({
   appSettings,
   gitGateway,
+  javaScriptTypeScriptLanguageServerPlan,
+  javaScriptTypeScriptRuntimeStatus,
   languageServerPlan,
   languageServerFeaturesGateway,
   languageServerDiagnosticsGateway,
@@ -2857,6 +2999,8 @@ function createControllerDependencies({
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   gitGateway?: GitGateway;
+  javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
+  javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus;
   languageServerPlan?: LanguageServerPlan;
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
@@ -2955,13 +3099,14 @@ function createControllerDependencies({
     languageServerGateway: {
       planJavaScriptTypeScriptLanguageServer: vi.fn(
         async () =>
+          javaScriptTypeScriptLanguageServerPlan ??
           ({
             command: null,
             initializeRequest: null,
             message: "JavaScript/TypeScript language server unavailable in test.",
             provider: "typeScriptLanguageServer" as const,
             status: "unavailable" as const,
-          }) satisfies LanguageServerPlan,
+          } satisfies LanguageServerPlan),
       ),
       planPhpLanguageServer: vi.fn(
         async () =>
@@ -2986,7 +3131,7 @@ function createControllerDependencies({
     javaScriptTypeScriptLanguageServerDocumentSyncGateway: documentSyncGateway,
     javaScriptTypeScriptLanguageServerRuntimeGateway: {
       getStatus: vi.fn(async () => ({ kind: "stopped" as const })),
-      start: vi.fn(async () => ({ kind: "stopped" as const })),
+      start: vi.fn(async () => javaScriptTypeScriptRuntimeStatus),
       stop: vi.fn(async () => ({ kind: "stopped" as const })),
       subscribeStatus: vi.fn(async () => () => undefined),
     },
@@ -3058,8 +3203,10 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     formatting: vi.fn(async () => []),
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
+    inlayHints: vi.fn(async () => []),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
+    resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
   };
 }

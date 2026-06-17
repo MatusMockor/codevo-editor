@@ -938,8 +938,10 @@ function languageServerFeaturesGateway() {
     formatting: vi.fn(async () => []),
     hover: vi.fn(),
     implementation: vi.fn(),
+    inlayHints: vi.fn(async () => []),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
+    resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
     signatureHelp: vi.fn(),
   };

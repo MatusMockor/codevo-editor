@@ -228,8 +228,11 @@ function methodCallContextAt(
   const lineStart = source.lastIndexOf("\n", identifier.start - 1) + 1;
   const lineEnd = source.indexOf("\n", identifier.end);
   const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+  const classNamePattern =
+    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+  const baseReceiverPattern = String.raw`(?:\$[A-Za-z_][A-Za-z0-9_]*|\$this|${classNamePattern}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
   const methodPattern = new RegExp(
-    `((?:\\$[A-Za-z_][A-Za-z0-9_]*|\\$this)(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
+    `(${baseReceiverPattern}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
     "g",
   );
 

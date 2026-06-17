@@ -112,6 +112,13 @@ pub struct TextDocumentFormatting {
     pub options: LanguageServerFormattingOptions,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextDocumentInlayHintRange {
+    pub path: String,
+    pub range: LanguageServerRange,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerFormattingOptions {
@@ -125,14 +132,23 @@ pub struct LanguageServerHover {
     pub contents: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerCompletionItem {
+    #[serde(default)]
+    pub additional_text_edits: Vec<LanguageServerTextEdit>,
+    #[serde(default)]
+    pub commit_characters: Vec<String>,
+    pub data: Option<Value>,
     pub label: String,
     pub detail: Option<String>,
     pub documentation: Option<String>,
+    pub filter_text: Option<String>,
     pub insert_text: Option<String>,
+    pub insert_text_format: Option<u32>,
     pub kind: Option<u32>,
+    pub sort_text: Option<String>,
+    pub text_edit: Option<LanguageServerTextEdit>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -142,9 +158,24 @@ pub struct LanguageServerCompletionList {
     pub items: Vec<LanguageServerCompletionItem>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerInlayHint {
+    pub kind: Option<u32>,
+    pub label: String,
+    pub padding_left: bool,
+    pub padding_right: bool,
+    pub position: LanguageServerPosition,
+    pub tooltip: Option<String>,
+}
+
 pub trait TextDocumentFeatureRequestFactory {
     fn hover(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn completion(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn resolve_completion_item(
+        &self,
+        item: &LanguageServerCompletionItem,
+    ) -> LanguageServerFeatureRequest;
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
@@ -155,6 +186,7 @@ pub trait TextDocumentFeatureRequestFactory {
         context: &LanguageServerCodeActionContext,
     ) -> LanguageServerFeatureRequest;
     fn formatting(&self, formatting: &TextDocumentFormatting) -> LanguageServerFeatureRequest;
+    fn inlay_hints(&self, range: &TextDocumentInlayHintRange) -> LanguageServerFeatureRequest;
     fn resolve_code_action(
         &self,
         action: &LanguageServerCodeAction,
@@ -174,6 +206,16 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
 
     fn completion(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
         request("textDocument/completion", position)
+    }
+
+    fn resolve_completion_item(
+        &self,
+        item: &LanguageServerCompletionItem,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "completionItem/resolve".to_string(),
+            params: json!(item),
+        }
     }
 
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
@@ -232,6 +274,18 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                     "uri": file_uri(Path::new(&formatting.path)),
                 },
                 "options": formatting.options,
+            }),
+        }
+    }
+
+    fn inlay_hints(&self, range: &TextDocumentInlayHintRange) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/inlayHint".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(&range.path)),
+                },
+                "range": range.range,
             }),
         }
     }
@@ -311,6 +365,18 @@ pub fn parse_definition_result(value: &Value) -> Result<Vec<LanguageServerLocati
     }
 
     parse_definition_item(value).map(|location| vec![location])
+}
+
+pub fn parse_inlay_hints_result(value: &Value) -> Result<Vec<LanguageServerInlayHint>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned a malformed inlay hints response.".to_string());
+    };
+
+    items.iter().map(parse_inlay_hint_item).collect()
 }
 
 pub fn parse_workspace_edit_result(
@@ -417,17 +483,57 @@ fn parse_completion_items(items: &[Value]) -> Vec<LanguageServerCompletionItem> 
 
 fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> {
     let label = value.get("label").and_then(Value::as_str)?.to_string();
+    let additional_text_edits = value
+        .get("additionalTextEdits")
+        .and_then(Value::as_array)
+        .map(|items| parse_text_edits(items).unwrap_or_default())
+        .unwrap_or_default();
+    let commit_characters = value
+        .get("commitCharacters")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
 
     Some(LanguageServerCompletionItem {
+        additional_text_edits,
+        commit_characters,
+        data: value.get("data").cloned(),
         label,
         detail: optional_string(value.get("detail")),
         documentation: value.get("documentation").and_then(markup_to_string),
+        filter_text: optional_string(value.get("filterText")),
         insert_text: optional_string(value.get("insertText")),
+        insert_text_format: value
+            .get("insertTextFormat")
+            .and_then(Value::as_u64)
+            .map(|format| format as u32),
         kind: value
             .get("kind")
             .and_then(Value::as_u64)
             .map(|kind| kind as u32),
+        sort_text: optional_string(value.get("sortText")),
+        text_edit: value.get("textEdit").and_then(parse_completion_text_edit),
     })
+}
+
+fn parse_completion_text_edit(value: &Value) -> Option<LanguageServerTextEdit> {
+    if let Ok(edit) = serde_json::from_value::<LanguageServerTextEdit>(value.clone()) {
+        return Some(edit);
+    }
+
+    let new_text = value.get("newText").and_then(Value::as_str)?.to_string();
+    let range = value
+        .get("replace")
+        .or_else(|| value.get("insert"))
+        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok())?;
+
+    Some(LanguageServerTextEdit { range, new_text })
 }
 
 fn optional_string(value: Option<&Value>) -> Option<String> {
@@ -452,6 +558,56 @@ fn parse_definition_item(value: &Value) -> Result<LanguageServerLocation, String
     }
 
     Err("Language server returned a malformed definition response.".to_string())
+}
+
+fn parse_inlay_hint_item(value: &Value) -> Result<LanguageServerInlayHint, String> {
+    let position = value
+        .get("position")
+        .and_then(|position| {
+            serde_json::from_value::<LanguageServerPosition>(position.clone()).ok()
+        })
+        .ok_or_else(|| "Language server returned a malformed inlay hint position.".to_string())?;
+    let label = value
+        .get("label")
+        .and_then(inlay_hint_label_to_string)
+        .ok_or_else(|| "Language server returned a malformed inlay hint label.".to_string())?;
+
+    Ok(LanguageServerInlayHint {
+        kind: value
+            .get("kind")
+            .and_then(Value::as_u64)
+            .map(|kind| kind as u32),
+        label,
+        padding_left: value
+            .get("paddingLeft")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        padding_right: value
+            .get("paddingRight")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        position,
+        tooltip: value.get("tooltip").and_then(markup_to_string),
+    })
+}
+
+fn inlay_hint_label_to_string(value: &Value) -> Option<String> {
+    if let Some(label) = value.as_str() {
+        return Some(label.to_string());
+    }
+
+    let items = value.as_array()?;
+    let labels: Vec<String> = items
+        .iter()
+        .filter_map(|item| item.get("value").and_then(Value::as_str))
+        .map(ToString::to_string)
+        .collect();
+
+    if labels.is_empty() {
+        return None;
+    }
+
+    Some(labels.join(""))
 }
 
 fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, String> {
@@ -558,13 +714,14 @@ struct LanguageServerLocationLink {
 mod tests {
     use super::{
         parse_code_action_result, parse_completion_result, parse_definition_result,
-        parse_formatting_result, parse_hover_result, parse_optional_workspace_edit_result,
-        parse_workspace_edit_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-        LanguageServerCodeActionContext, LanguageServerCompletionItem,
-        LanguageServerCompletionList, LanguageServerFormattingOptions, LanguageServerHover,
-        LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
-        LanguageServerTextEdit, LspTextDocumentFeatureRequestFactory,
-        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentPosition,
+        parse_formatting_result, parse_hover_result, parse_inlay_hints_result,
+        parse_optional_workspace_edit_result, parse_workspace_edit_result,
+        LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
+        LanguageServerCompletionItem, LanguageServerCompletionList,
+        LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
+        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
+        TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition,
         TextDocumentRange, TextDocumentRename,
     };
     use serde_json::json;
@@ -665,6 +822,23 @@ mod tests {
     }
 
     #[test]
+    fn inlay_hint_request_contains_range_and_document_uri() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let range = range(2, 0, 8, 20);
+        let request = factory.inlay_hints(&TextDocumentInlayHintRange {
+            path: "/tmp/User.ts".to_string(),
+            range: range.clone(),
+        });
+
+        assert_eq!(request.method, "textDocument/inlayHint");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["range"], json!(range));
+    }
+
+    #[test]
     fn code_action_resolve_and_execute_command_requests_are_serialized() {
         let factory = LspTextDocumentFeatureRequestFactory;
         let action = code_action();
@@ -728,8 +902,29 @@ mod tests {
                         "label": "User",
                         "detail": "class",
                         "documentation": { "kind": "markdown", "value": "A user" },
+                        "filterText": "User",
                         "insertText": "User",
+                        "insertTextFormat": 2,
                         "kind": 7,
+                        "sortText": "11",
+                        "data": { "entryNames": ["User"] },
+                        "commitCharacters": ["."],
+                        "additionalTextEdits": [
+                            {
+                                "range": {
+                                    "start": { "line": 0, "character": 0 },
+                                    "end": { "line": 0, "character": 0 }
+                                },
+                                "newText": "import { User } from './user';\n"
+                            }
+                        ],
+                        "textEdit": {
+                            "range": {
+                                "start": { "line": 2, "character": 4 },
+                                "end": { "line": 2, "character": 8 }
+                            },
+                            "newText": "User"
+                        }
                     },
                     { "detail": "missing label" },
                 ],
@@ -738,11 +933,42 @@ mod tests {
             LanguageServerCompletionList {
                 is_incomplete: true,
                 items: vec![LanguageServerCompletionItem {
+                    additional_text_edits: vec![LanguageServerTextEdit {
+                        range: LanguageServerRange {
+                            start: LanguageServerPosition {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: LanguageServerPosition {
+                                line: 0,
+                                character: 0,
+                            },
+                        },
+                        new_text: "import { User } from './user';\n".to_string(),
+                    }],
+                    commit_characters: vec![".".to_string()],
+                    data: Some(json!({ "entryNames": ["User"] })),
                     label: "User".to_string(),
                     detail: Some("class".to_string()),
                     documentation: Some("A user".to_string()),
+                    filter_text: Some("User".to_string()),
                     insert_text: Some("User".to_string()),
+                    insert_text_format: Some(2),
                     kind: Some(7),
+                    sort_text: Some("11".to_string()),
+                    text_edit: Some(LanguageServerTextEdit {
+                        range: LanguageServerRange {
+                            start: LanguageServerPosition {
+                                line: 2,
+                                character: 4,
+                            },
+                            end: LanguageServerPosition {
+                                line: 2,
+                                character: 8,
+                            },
+                        },
+                        new_text: "User".to_string(),
+                    }),
                 }],
             }
         );
@@ -753,6 +979,30 @@ mod tests {
                 .label,
             "Repository"
         );
+    }
+
+    #[test]
+    fn completion_item_resolve_request_serializes_item_data() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let item = LanguageServerCompletionItem {
+            additional_text_edits: Vec::new(),
+            commit_characters: Vec::new(),
+            data: Some(json!({ "entryNames": ["User"] })),
+            label: "User".to_string(),
+            detail: None,
+            documentation: None,
+            filter_text: None,
+            insert_text: Some("User".to_string()),
+            insert_text_format: None,
+            kind: Some(7),
+            sort_text: None,
+            text_edit: None,
+        };
+        let request = factory.resolve_completion_item(&item);
+
+        assert_eq!(request.method, "completionItem/resolve");
+        assert_eq!(request.params["label"], "User");
+        assert_eq!(request.params["data"]["entryNames"], json!(["User"]));
     }
 
     #[test]
@@ -1014,6 +1264,39 @@ mod tests {
             }]
         );
         assert_eq!(parse_formatting_result(&json!(null)).expect("null"), []);
+    }
+
+    #[test]
+    fn parses_inlay_hints_with_string_and_part_labels() {
+        let hints = parse_inlay_hints_result(&json!([
+            {
+                "position": { "line": 2, "character": 10 },
+                "label": ": User",
+                "kind": 1,
+                "paddingLeft": true,
+                "tooltip": { "kind": "markdown", "value": "Inferred type" }
+            },
+            {
+                "position": { "line": 3, "character": 6 },
+                "label": [
+                    { "value": "name" },
+                    { "value": ":" }
+                ],
+                "kind": 2,
+                "paddingRight": true
+            }
+        ]))
+        .expect("inlay hints");
+
+        assert_eq!(hints.len(), 2);
+        assert_eq!(hints[0].label, ": User");
+        assert_eq!(hints[0].kind, Some(1));
+        assert!(hints[0].padding_left);
+        assert_eq!(hints[0].tooltip.as_deref(), Some("Inferred type"));
+        assert_eq!(hints[1].label, "name:");
+        assert_eq!(hints[1].kind, Some(2));
+        assert!(hints[1].padding_right);
+        assert_eq!(parse_inlay_hints_result(&json!(null)).expect("null"), []);
     }
 
     fn position() -> TextDocumentPosition {

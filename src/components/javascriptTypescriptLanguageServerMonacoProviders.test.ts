@@ -31,10 +31,11 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(
       monaco.languages.registerDocumentFormattingEditProvider,
     ).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(2);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(17);
+    expect(monaco.dispose).toHaveBeenCalledTimes(19);
   });
 
   it("maps references, rename edits, code actions, commands and formatting through the gateway", async () => {
@@ -68,6 +69,19 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         {
           newText: "  ",
           range: range(2, 0, 2, 4),
+        },
+      ],
+      inlayHints: [
+        {
+          kind: 1,
+          label: ": Account",
+          paddingLeft: true,
+          paddingRight: false,
+          position: {
+            character: 10,
+            line: 0,
+          },
+          tooltip: "Inferred type",
         },
       ],
       references: [
@@ -268,9 +282,243 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         text: "  ",
       },
     ]);
+
+    const inlayHintsProvider = (monaco.languages.registerInlayHintsProvider as any)
+      .mock.calls[0][1];
+    const hints = await inlayHintsProvider.provideInlayHints(
+      model,
+      new monaco.Range(1, 1, 1, 20),
+    );
+
+    expect(gateway.inlayHints).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      range(0, 0, 0, 19),
+    );
+    expect(hints).toEqual({
+      dispose: expect.any(Function),
+      hints: [
+        {
+          kind: monaco.languages.InlayHintKind.Type,
+          label: ": Account",
+          paddingLeft: true,
+          paddingRight: false,
+          position: {
+            column: 11,
+            lineNumber: 1,
+          },
+          tooltip: "Inferred type",
+        },
+      ],
+    });
     expect(context.flushPendingDocumentChange).toHaveBeenCalledWith(
       "/project/src/user.ts",
     );
+  });
+
+  it("preserves VS Code-like TypeScript completion metadata", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            additionalTextEdits: [
+              {
+                newText: "import { loadUser } from './users';\n",
+                range: range(0, 0, 0, 0),
+              },
+            ],
+            commitCharacters: ["."],
+            detail: "function loadUser(id: string): Promise<User>",
+            documentation: "Loads a user.",
+            filterText: "loadUser",
+            insertText: "loadUser(${1:id})",
+            insertTextFormat: 2,
+            kind: 3,
+            label: "loadUser",
+            sortText: "11",
+            textEdit: {
+              newText: "loadUser(${1:id})",
+              range: range(1, 2, 1, 5),
+            },
+          },
+        ],
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+    const position = { column: 4, lineNumber: 2 };
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      model,
+      position,
+    );
+
+    expect(gateway.completion).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        additionalTextEdits: [
+          {
+            range: expect.objectContaining({
+              endColumn: 1,
+              endLineNumber: 1,
+              startColumn: 1,
+              startLineNumber: 1,
+            }),
+            text: "import { loadUser } from './users';\n",
+          },
+        ],
+        commitCharacters: ["."],
+        detail: "function loadUser(id: string): Promise<User>",
+        documentation: "Loads a user.",
+        filterText: "loadUser",
+        insertText: "loadUser(${1:id})",
+        insertTextRules: 4,
+        kind: 3,
+        label: "loadUser",
+        range: expect.objectContaining({
+          endColumn: 6,
+          endLineNumber: 2,
+          startColumn: 3,
+          startLineNumber: 2,
+        }),
+        sortText: "11",
+      }),
+    );
+  });
+
+  it("resolves TypeScript completion items through the language server", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            data: { entryNames: ["loadUser"] },
+            detail: "function",
+            documentation: null,
+            insertText: "loadUser",
+            kind: 3,
+            label: "loadUser",
+          },
+        ],
+      },
+      resolvedCompletionItem: {
+        additionalTextEdits: [
+          {
+            newText: "import { loadUser } from './users';\n",
+            range: range(0, 0, 0, 0),
+          },
+        ],
+        data: { entryNames: ["loadUser"] },
+        detail: "function loadUser(id: string): Promise<User>",
+        documentation: "Resolved docs",
+        insertText: "loadUser(${1:id})",
+        insertTextFormat: 2,
+        kind: 3,
+        label: "loadUser",
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const completion = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    const resolved = await completionProvider.resolveCompletionItem(
+      completion.suggestions[0],
+    );
+
+    expect(gateway.resolveCompletionItem).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({
+        data: { entryNames: ["loadUser"] },
+        label: "loadUser",
+      }),
+    );
+    expect(resolved).toEqual(
+      expect.objectContaining({
+        additionalTextEdits: [
+          {
+            range: expect.objectContaining({
+              startColumn: 1,
+              startLineNumber: 1,
+            }),
+            text: "import { loadUser } from './users';\n",
+          },
+        ],
+        detail: "function loadUser(id: string): Promise<User>",
+        documentation: "Resolved docs",
+        insertText: "loadUser(${1:id})",
+        insertTextRules: 4,
+      }),
+    );
+  });
+
+  it("applies server-initiated workspace edits for the active workspace only", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const unsubscribe = vi.fn();
+    const workspaceEditGateway = {
+      subscribeWorkspaceEdits: vi.fn(async (listener) => {
+        listener({
+          edit: workspaceEdit("file:///project/src/user.ts", "Applied"),
+          label: "Organize imports",
+          rootPath: "/project",
+          sessionId: 1,
+        });
+        listener({
+          edit: workspaceEdit("file:///other/src/user.ts", "Ignored"),
+          label: "Other project",
+          rootPath: "/other",
+          sessionId: 1,
+        });
+        return unsubscribe;
+      }),
+    };
+    monaco.editor.getModels.mockReturnValue([model]);
+
+    const disposable = registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ workspaceEditGateway }),
+    );
+    await Promise.resolve();
+
+    expect(model.pushEditOperations).toHaveBeenCalledTimes(1);
+    expect(model.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 6,
+            endLineNumber: 1,
+            startColumn: 2,
+            startLineNumber: 1,
+          }),
+          text: "Applied",
+        },
+      ],
+      expect.any(Function),
+    );
+
+    disposable.dispose();
+
+    expect(unsubscribe).toHaveBeenCalled();
   });
 });
 
@@ -285,36 +533,49 @@ function providerContext(
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runningStatus()),
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     reportError: overrides.reportError ?? vi.fn(),
+    workspaceEditGateway: overrides.workspaceEditGateway,
   };
 }
 
 function featuresGateway(
   responses: Partial<{
     codeActions: Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>;
+    completion: Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>;
     executeCommandEdit: Awaited<
       ReturnType<LanguageServerFeaturesGateway["executeCommand"]>
     >;
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
+    inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     references: Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
     >;
+    resolvedCompletionItem: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["resolveCompletionItem"]>
+    >;
   }> = {},
 ): LanguageServerFeaturesGateway {
   return {
     codeActions: vi.fn(async () => responses.codeActions ?? []),
-    completion: vi.fn(async () => ({
-      isIncomplete: false,
-      items: [],
-    })),
+    completion: vi.fn(
+      async () =>
+        responses.completion ?? {
+          isIncomplete: false,
+          items: [],
+        },
+    ),
     definition: vi.fn(async () => []),
     executeCommand: vi.fn(async () => responses.executeCommandEdit ?? null),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
+    inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
+    resolveCompletionItem: vi.fn(
+      async (_rootPath, item) => responses.resolvedCompletionItem ?? item,
+    ),
     resolveCodeAction: vi.fn(
       async (_rootPath, action) => responses.resolvedCodeAction ?? action,
     ),
@@ -332,6 +593,7 @@ function runningStatus(
       formatting: true,
       hover: true,
       implementation: true,
+      inlayHint: true,
       references: true,
       rename: true,
       ...capabilities,
@@ -447,12 +709,17 @@ function createMonaco() {
         Value: 12,
         Variable: 6,
       },
+      InlayHintKind: {
+        Parameter: 2,
+        Type: 1,
+      },
       registerCodeActionProvider: vi.fn(() => disposable()),
       registerCompletionItemProvider: vi.fn(() => disposable()),
       registerDefinitionProvider: vi.fn(() => disposable()),
       registerDocumentFormattingEditProvider: vi.fn(() => disposable()),
       registerHoverProvider: vi.fn(() => disposable()),
       registerImplementationProvider: vi.fn(() => disposable()),
+      registerInlayHintsProvider: vi.fn(() => disposable()),
       registerReferenceProvider: vi.fn(() => disposable()),
       registerRenameProvider: vi.fn(() => disposable()),
     },

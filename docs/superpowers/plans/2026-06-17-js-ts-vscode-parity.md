@@ -67,7 +67,10 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - Resolved code actions can turn into real Monaco workspace edits.
 - Executed language-server commands can apply returned workspace edits to open Monaco models.
 - TypeScript `source.organizeImports` and direct-edit quick fixes now flow through the same executable path as VS Code-style actions.
-- The next remaining parity gap is client-side handling of server-initiated `workspace/applyEdit` requests. Some TypeScript command paths use that request instead of returning an edit directly.
+- Server-initiated `workspace/applyEdit` requests now emit Tauri workspace-edit events and are applied to open Monaco models, which covers TypeScript command paths that do not return edits directly.
+- Completion items now preserve richer LSP metadata (`textEdit`, `additionalTextEdits`, `sortText`, `filterText`, `commitCharacters`, snippet format) so auto imports and exact replacement ranges are not dropped.
+- `completionItem/resolve` is wired through the JS/TS language-server gateway and Monaco provider, matching the VS Code pattern of lazily resolving documentation and import edits for focused suggestions.
+- `textDocument/inlayHint` is wired through the managed JS/TS language server and Monaco provider, giving light mode VS Code-style inline type/parameter hints when the server advertises support.
 
 ## Full VS Code-Like Target
 
@@ -117,7 +120,7 @@ Basic mode must support:
 - quick fixes
 - organize imports
 - formatting
-- inlay hints
+- inlay hints. Implemented through LSP-backed Monaco provider.
 - JS/TS version status
 
 ### Isolation
@@ -170,5 +173,5 @@ Add settings:
 2. JS/TS project detector and settings.
 3. Managed tsserver/LSP runtime. Done for `typescript-language-server`.
 4. Document sync and diagnostics routing. Done for managed JS/TS LSP.
-5. Navigation, references, rename, quick fixes, organize imports. Mostly done; command-only LSP actions now resolve and execute. Server-initiated `workspace/applyEdit` still needs a frontend event bridge for full VS Code parity.
-6. Framework-specific plugins and inlay hints.
+5. Navigation, references, rename, quick fixes, organize imports. Mostly done; command-only LSP actions now resolve and execute, and server-initiated `workspace/applyEdit` now applies to open Monaco models.
+6. Framework-specific plugins and deeper project setting parity.

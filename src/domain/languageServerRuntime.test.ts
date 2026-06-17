@@ -51,6 +51,7 @@ describe("languageServerCapabilities", () => {
       formatting: true,
       hover: true,
       implementation: true,
+      inlayHint: true,
       references: true,
       rename: true,
     });
@@ -68,6 +69,7 @@ describe("languageServerCapabilities", () => {
       "completion",
       "definition",
       "implementation",
+      "inlay hints",
       "references",
       "rename",
       "code actions",
@@ -92,6 +94,7 @@ function status(
           formatting: true,
           hover: true,
           implementation: true,
+          inlayHint: true,
           references: true,
           rename: true,
         },

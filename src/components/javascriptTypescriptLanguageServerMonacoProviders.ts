@@ -6,12 +6,16 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerCompletionItem,
   type LanguageServerFeaturesGateway,
   type LanguageServerFormattingOptions,
+  type LanguageServerInlayHint,
   type LanguageServerLocation,
   type LanguageServerRange,
   type LanguageServerTextEdit,
   type LanguageServerWorkspaceEdit,
+  type LanguageServerWorkspaceEditEvent,
+  type LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
@@ -31,6 +35,13 @@ interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __workspaceRoot?: string;
 }
 
+interface LanguageServerBackedCompletionItem
+  extends Monaco.languages.CompletionItem {
+  __completionRange?: Monaco.IRange | Monaco.languages.CompletionItemRanges;
+  __languageServerItem?: LanguageServerCompletionItem;
+  __workspaceRoot?: string;
+}
+
 interface ExecuteCommandPayload {
   command: LanguageServerCodeActionCommand;
   rootPath: string;
@@ -46,6 +57,7 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
   reportError(error: unknown): void;
+  workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
 }
 
 export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
@@ -55,6 +67,33 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   const languages = ["javascript", "typescript"];
   const registry = monaco.languages as Partial<typeof monaco.languages>;
   const disposables: Disposable[] = [];
+  let workspaceEditUnsubscribe: (() => void) | null = null;
+  let workspaceEditSubscriptionDisposed = false;
+  const workspaceEditSubscriptionDisposable = {
+    dispose: () => {
+      workspaceEditSubscriptionDisposed = true;
+      workspaceEditUnsubscribe?.();
+      workspaceEditUnsubscribe = null;
+    },
+  };
+
+  if (context.workspaceEditGateway) {
+    disposables.push(workspaceEditSubscriptionDisposable);
+    context.workspaceEditGateway
+      .subscribeWorkspaceEdits((event) => {
+        applyWorkspaceEditEvent(monaco, context, event);
+      })
+      .then((unsubscribe) => {
+        if (workspaceEditSubscriptionDisposed) {
+          unsubscribe();
+          return;
+        }
+
+        workspaceEditUnsubscribe = unsubscribe;
+      })
+      .catch((error) => context.reportError(error));
+  }
+
   const commandDisposable = monaco.editor.addCommand({
     id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
     run: async (_accessor, payload: ExecuteCommandPayload | undefined) => {
@@ -94,6 +133,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           triggerCharacters: [".", "'", "\"", "/", "@", "<"],
           provideCompletionItems: (model, position) =>
             provideCompletionItems(monaco, context, model, position),
+          resolveCompletionItem: (item) =>
+            resolveCompletionItem(monaco, context, item),
         }),
       );
     }
@@ -165,6 +206,15 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         }),
       );
     }
+
+    if (registry.registerInlayHintsProvider) {
+      disposables.push(
+        registry.registerInlayHintsProvider(language, {
+          provideInlayHints: (model, range) =>
+            provideInlayHints(monaco, context, model, range),
+        }),
+      );
+    }
   });
 
   return {
@@ -228,27 +278,51 @@ async function provideCompletionItems(
 
     return {
       suggestions: completion.items.map((item, index) => {
-        const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
-        const insert = completionInsert(monaco, item, kind);
-
-        return {
-          detail: item.detail || undefined,
-          documentation: item.documentation || undefined,
-          insertText: insert.insertText,
-          ...(insert.command ? { command: insert.command } : {}),
-          ...(insert.insertTextRules
-            ? { insertTextRules: insert.insertTextRules }
-            : {}),
-          kind,
-          label: item.label,
+        return toMonacoCompletionItem(
+          monaco,
+          item,
+          request.rootPath,
           range,
-          sortText: `0_${String(index).padStart(4, "0")}`,
-        };
+          `0_${String(index).padStart(4, "0")}`,
+        );
       }),
     };
   } catch (error) {
     context.reportError(error);
     return { suggestions: [] };
+  }
+}
+
+async function resolveCompletionItem(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  item: Monaco.languages.CompletionItem,
+): Promise<Monaco.languages.CompletionItem> {
+  const backedItem = item as LanguageServerBackedCompletionItem;
+
+  if (!backedItem.__languageServerItem || !backedItem.__workspaceRoot) {
+    return item;
+  }
+
+  try {
+    const resolved = await context.featuresGateway.resolveCompletionItem(
+      backedItem.__workspaceRoot,
+      backedItem.__languageServerItem,
+    );
+
+    return {
+      ...item,
+      ...toMonacoCompletionItem(
+        monaco,
+        resolved,
+        backedItem.__workspaceRoot,
+        backedItem.__completionRange ?? item.range,
+        item.sortText,
+      ),
+    };
+  } catch (error) {
+    context.reportError(error);
+    return item;
   }
 }
 
@@ -470,6 +544,36 @@ async function provideDocumentFormattingEdits(
   }
 }
 
+async function provideInlayHints(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+): Promise<Monaco.languages.InlayHintList> {
+  const request = documentRequestContext(context, model, "inlayHint");
+
+  if (!request) {
+    return emptyInlayHintList();
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const hints = await context.featuresGateway.inlayHints(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
+    );
+
+    return {
+      hints: hints.map((hint) => toMonacoInlayHint(monaco, hint)),
+      dispose: () => undefined,
+    };
+  } catch (error) {
+    context.reportError(error);
+    return emptyInlayHintList();
+  }
+}
+
 function featureRequestContext(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
@@ -516,7 +620,7 @@ function featureRequestContext(
 function documentRequestContext(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
-  feature: "codeAction" | "formatting",
+  feature: "codeAction" | "formatting" | "inlayHint",
 ) {
   const status = context.getRuntimeStatus();
 
@@ -738,6 +842,45 @@ function emptyCodeActionList(): Monaco.languages.CodeActionList {
   };
 }
 
+function emptyInlayHintList(): Monaco.languages.InlayHintList {
+  return {
+    hints: [],
+    dispose: () => undefined,
+  };
+}
+
+function toMonacoInlayHint(
+  monaco: MonacoApi,
+  hint: LanguageServerInlayHint,
+): Monaco.languages.InlayHint {
+  return {
+    kind: monacoInlayHintKindFromLspKind(monaco, hint.kind),
+    label: hint.label,
+    paddingLeft: hint.paddingLeft,
+    paddingRight: hint.paddingRight,
+    position: {
+      column: hint.position.character + 1,
+      lineNumber: hint.position.line + 1,
+    },
+    tooltip: hint.tooltip || undefined,
+  };
+}
+
+function monacoInlayHintKindFromLspKind(
+  monaco: MonacoApi,
+  kind: number | null,
+): Monaco.languages.InlayHintKind {
+  if (kind === 1) {
+    return monaco.languages.InlayHintKind.Type;
+  }
+
+  if (kind === 2) {
+    return monaco.languages.InlayHintKind.Parameter;
+  }
+
+  return monaco.languages.InlayHintKind.Type;
+}
+
 function toLanguageServerFormattingOptions(
   options: Monaco.languages.FormattingOptions,
 ): LanguageServerFormattingOptions {
@@ -782,13 +925,64 @@ function applyWorkspaceEditToOpenModels(
   });
 }
 
+function applyWorkspaceEditEvent(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  event: LanguageServerWorkspaceEditEvent,
+): void {
+  const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
+
+  if (event.rootPath && workspaceRoot && event.rootPath !== workspaceRoot) {
+    return;
+  }
+
+  applyWorkspaceEditToOpenModels(monaco, event.edit);
+}
+
+function toMonacoCompletionItem(
+  monaco: MonacoApi,
+  item: LanguageServerCompletionItem,
+  rootPath: string,
+  fallbackRange: Monaco.IRange | Monaco.languages.CompletionItemRanges,
+  fallbackSortText?: string,
+): LanguageServerBackedCompletionItem {
+  const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
+  const insert = completionInsert(monaco, item, kind);
+  const additionalTextEdits =
+    item.additionalTextEdits && item.additionalTextEdits.length > 0
+      ? item.additionalTextEdits.map((edit) => toMonacoTextEdit(monaco, edit))
+      : undefined;
+
+  return {
+    __completionRange: fallbackRange,
+    __languageServerItem: item,
+    __workspaceRoot: rootPath,
+    ...(additionalTextEdits ? { additionalTextEdits } : {}),
+    ...(item.commitCharacters && item.commitCharacters.length > 0
+      ? { commitCharacters: item.commitCharacters }
+      : {}),
+    detail: item.detail || undefined,
+    documentation: item.documentation || undefined,
+    filterText: item.filterText || undefined,
+    insertText: insert.insertText,
+    ...(insert.command ? { command: insert.command } : {}),
+    ...(insert.insertTextRules ? { insertTextRules: insert.insertTextRules } : {}),
+    kind,
+    label: item.label,
+    range: item.textEdit ? toMonacoRange(monaco, item.textEdit.range) : fallbackRange,
+    sortText: item.sortText ?? fallbackSortText,
+  };
+}
+
 function completionInsert(
   monaco: MonacoApi,
   item: {
     detail: string | null;
     insertText: string | null;
+    insertTextFormat?: number | null;
     kind: number | null;
     label: string;
+    textEdit?: LanguageServerTextEdit | null;
   },
   kind: Monaco.languages.CompletionItemKind,
 ): {
@@ -796,9 +990,9 @@ function completionInsert(
   insertText: string;
   insertTextRules?: Monaco.languages.CompletionItemInsertTextRule;
 } {
-  const insertText = item.insertText || item.label;
+  const insertText = item.textEdit?.newText || item.insertText || item.label;
 
-  if (/\$(?:\d+|\{)/.test(insertText)) {
+  if (item.insertTextFormat === 2 || /\$(?:\d+|\{)/.test(insertText)) {
     return {
       insertText,
       insertTextRules:

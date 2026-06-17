@@ -20,8 +20,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       isIncomplete: false,
       items: [],
     });
+    await expect(
+      gateway.resolveCompletionItem("/project", completionItem()),
+    ).resolves.toEqual(completionItem());
     await expect(gateway.definition("/project", position())).resolves.toEqual([]);
     await expect(gateway.implementation("/project", position())).resolves.toEqual([]);
+    await expect(
+      gateway.inlayHints("/project", "/project/src/User.php", range()),
+    ).resolves.toEqual([]);
     await expect(gateway.references("/project", position())).resolves.toEqual([]);
     await expect(gateway.rename("/project", position(), "Account")).resolves.toBeNull();
     await expect(
@@ -51,11 +57,17 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       isIncomplete: false,
       items: [
         {
+          additionalTextEdits: [],
+          commitCharacters: [],
           detail: null,
           documentation: null,
+          filterText: null,
           insertText: null,
+          insertTextFormat: null,
           kind: 7,
           label: "User",
+          sortText: null,
+          textEdit: null,
         },
       ],
     };
@@ -100,6 +112,16 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         },
       },
     ];
+    const inlayHints = [
+      {
+        kind: 1,
+        label: ": User",
+        paddingLeft: true,
+        paddingRight: false,
+        position: { character: 8, line: 10 },
+        tooltip: "Inferred type",
+      },
+    ];
     const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
       if (command === "text_document_hover") {
         return hover;
@@ -107,6 +129,13 @@ describe("TauriLanguageServerFeaturesGateway", () => {
 
       if (command === "text_document_completion") {
         return completion;
+      }
+
+      if (command === "text_document_completion_resolve") {
+        return {
+          ...completion.items[0],
+          documentation: "Resolved docs",
+        };
       }
 
       if (command === "text_document_rename") {
@@ -129,6 +158,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return formatting;
       }
 
+      if (command === "text_document_inlay_hints") {
+        return inlayHints;
+      }
+
       return definition;
     });
     const gateway = new TauriLanguageServerFeaturesGateway(
@@ -139,6 +172,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
 
     await expect(gateway.hover("/project", requestPosition)).resolves.toEqual(hover);
     await expect(gateway.completion("/project", requestPosition)).resolves.toEqual(completion);
+    await expect(
+      gateway.resolveCompletionItem("/project", completionItem()),
+    ).resolves.toEqual({
+      ...completion.items[0],
+      documentation: "Resolved docs",
+    });
     await expect(gateway.definition("/project", requestPosition)).resolves.toEqual(definition);
     await expect(gateway.implementation("/project", requestPosition)).resolves.toEqual(
       definition,
@@ -167,12 +206,19 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         tabSize: 2,
       }),
     ).resolves.toEqual(formatting);
+    await expect(
+      gateway.inlayHints("/project", "/project/src/User.php", range()),
+    ).resolves.toEqual(inlayHints);
     expect(invokeCommand).toHaveBeenCalledWith("text_document_hover", {
       position: requestPosition,
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_completion", {
       position: requestPosition,
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_completion_resolve", {
+      item: completionItem(),
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_definition", {
@@ -217,6 +263,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       path: "/project/src/User.php",
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_inlay_hints", {
+      path: "/project/src/User.php",
+      range: range(),
+      rootPath: "/project",
+    });
   });
 });
 
@@ -251,5 +302,15 @@ function command() {
     arguments: [{ tsActionId: "unusedIdentifier" }],
     command: "_typescript.applyFixAllCodeAction",
     title: "Fix all",
+  };
+}
+
+function completionItem() {
+  return {
+    detail: null,
+    documentation: null,
+    insertText: null,
+    kind: 7,
+    label: "User",
   };
 }

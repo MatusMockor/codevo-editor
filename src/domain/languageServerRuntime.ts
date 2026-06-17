@@ -5,6 +5,7 @@ export interface LanguageServerCapabilities {
   definition: boolean;
   formatting: boolean;
   implementation: boolean;
+  inlayHint: boolean;
   references: boolean;
   rename: boolean;
 }
@@ -106,6 +107,10 @@ export function languageServerCapabilityLabels(
     labels.push("implementation");
   }
 
+  if (capabilities.inlayHint) {
+    labels.push("inlay hints");
+  }
+
   if (capabilities.references) {
     labels.push("references");
   }
@@ -133,6 +138,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     formatting: false,
     hover: false,
     implementation: false,
+    inlayHint: false,
     references: false,
     rename: false,
   };

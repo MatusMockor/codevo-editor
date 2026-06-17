@@ -45,6 +45,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         formatting: true,
         hover: true,
         implementation: true,
+        inlayHint: true,
         references: true,
         rename: true,
       },

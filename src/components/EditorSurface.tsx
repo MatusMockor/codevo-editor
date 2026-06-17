@@ -11,6 +11,7 @@ import type {
   EditorPosition,
   EditorRevealTarget,
   LanguageServerFeaturesGateway,
+  LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import {
   parseShortcut,
@@ -54,6 +55,7 @@ interface EditorSurfaceProps {
   flushPendingLanguageServerDocument(path: string): Promise<void>;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus?: LanguageServerRuntimeStatus | null;
+  javaScriptTypeScriptLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
@@ -96,6 +98,7 @@ export function EditorSurface({
   languageServerRuntimeStatus,
   javaScriptTypeScriptLanguageServerFeaturesGateway = languageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerRuntimeStatus = null,
+  javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
   keymap,
   monacoTheme,
   workspaceRoot = null,
@@ -238,11 +241,18 @@ export function EditorSurface({
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
         getWorkspaceRoot: () => workspaceRoot,
         reportError: (error) => errorReporterRef.current(error),
+        workspaceEditGateway:
+          javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
       },
     );
 
     return () => disposable.dispose();
-  }, [javaScriptTypeScriptLanguageServerFeaturesGateway, monacoApi, workspaceRoot]);
+  }, [
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
+    monacoApi,
+    workspaceRoot,
+  ]);
 
   const handleMount: OnMount = (_editor, monaco) => {
     setEditorApi(_editor);

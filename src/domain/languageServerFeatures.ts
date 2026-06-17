@@ -23,11 +23,18 @@ export interface LanguageServerHover {
 }
 
 export interface LanguageServerCompletionItem {
+  additionalTextEdits?: LanguageServerTextEdit[];
+  commitCharacters?: string[];
+  data?: unknown;
   label: string;
   detail: string | null;
   documentation: string | null;
+  filterText?: string | null;
   insertText: string | null;
+  insertTextFormat?: number | null;
   kind: number | null;
+  sortText?: string | null;
+  textEdit?: LanguageServerTextEdit | null;
 }
 
 export interface LanguageServerCompletionList {
@@ -55,8 +62,32 @@ export interface LanguageServerTextEdit {
   newText: string;
 }
 
+export interface LanguageServerInlayHint {
+  kind: number | null;
+  label: string;
+  paddingLeft: boolean;
+  paddingRight: boolean;
+  position: LanguageServerPosition;
+  tooltip: string | null;
+}
+
 export interface LanguageServerWorkspaceEdit {
   changes: Record<string, LanguageServerTextEdit[]>;
+}
+
+export interface LanguageServerWorkspaceEditEvent {
+  edit: LanguageServerWorkspaceEdit;
+  label: string | null;
+  rootPath?: string;
+  sessionId: number;
+}
+
+export type LanguageServerWorkspaceEditUnsubscribeFn = () => void;
+
+export interface LanguageServerWorkspaceEditGateway {
+  subscribeWorkspaceEdits(
+    listener: (event: LanguageServerWorkspaceEditEvent) => void,
+  ): Promise<LanguageServerWorkspaceEditUnsubscribeFn>;
 }
 
 export interface LanguageServerCodeActionCommand {
@@ -101,6 +132,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerCompletionList>;
+  resolveCompletionItem(
+    rootPath: string,
+    item: LanguageServerCompletionItem,
+  ): Promise<LanguageServerCompletionItem>;
   definition(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -109,6 +144,11 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
+  inlayHints(
+    rootPath: string,
+    path: string,
+    range: LanguageServerRange,
+  ): Promise<LanguageServerInlayHint[]>;
   references(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

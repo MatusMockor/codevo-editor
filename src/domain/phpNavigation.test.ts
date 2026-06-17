@@ -41,6 +41,42 @@ class CommentController
     });
   });
 
+  it("detects chained method calls under the cursor", () => {
+    const source = `<?php
+class AlbumController
+{
+    public function index(): void
+    {
+        $query->whereNull('parent_id')->first();
+        Album::query()->whereNull('parent_id')->firstOrFail();
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(source, {
+        column: 43,
+        lineNumber: 6,
+      }),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "first",
+      receiverExpression: "$query->whereNull('parent_id')",
+      variableName: "",
+    });
+    expect(
+      phpIdentifierContextAt(source, {
+        column: 52,
+        lineNumber: 7,
+      }),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "firstOrFail",
+      receiverExpression: "Album::query()->whereNull('parent_id')",
+      variableName: "",
+    });
+  });
+
   it("detects Laravel route action strings as controller methods", () => {
     const routeSource = `<?php
 use App\\Http\\Controllers\\communication\\CommentController;

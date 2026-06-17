@@ -65,6 +65,10 @@ import {
   JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
   TauriLanguageServerRuntimeGateway,
 } from "./infrastructure/tauriLanguageServerRuntimeGateway";
+import {
+  JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT,
+  TauriLanguageServerWorkspaceEditGateway,
+} from "./infrastructure/tauriLanguageServerWorkspaceEditGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
@@ -125,6 +129,12 @@ const javaScriptTypeScriptLanguageServerFeaturesGateway =
     undefined,
     undefined,
     JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+  );
+const javaScriptTypeScriptLanguageServerWorkspaceEditGateway =
+  new TauriLanguageServerWorkspaceEditGateway(
+    undefined,
+    undefined,
+    JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT,
   );
 const terminalGateway = new TauriTerminalGateway();
 const settingsGateway = new BrowserSettingsGateway();
@@ -582,6 +592,9 @@ function App() {
             }
             javaScriptTypeScriptLanguageServerRuntimeStatus={
               workbench.javaScriptTypeScriptLanguageServerRuntimeStatus
+            }
+            javaScriptTypeScriptLanguageServerWorkspaceEditGateway={
+              javaScriptTypeScriptLanguageServerWorkspaceEditGateway
             }
             languageServerFeaturesGateway={languageServerFeaturesGateway}
             languageServerDiagnosticsByPath={

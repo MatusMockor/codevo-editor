@@ -761,6 +761,7 @@ function featuresGateway(
     definition: LanguageServerLocation[];
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     hover: LanguageServerHover | null;
+    inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     references: LanguageServerLocation[];
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
   }> = {},
@@ -778,8 +779,10 @@ function featuresGateway(
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => responses.hover ?? null),
     implementation: vi.fn(async () => []),
+    inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
+    resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
   };
 }
@@ -795,6 +798,7 @@ function runningStatus(
       formatting: true,
       hover: true,
       implementation: true,
+      inlayHint: true,
       references: true,
       rename: true,
       ...capabilities,

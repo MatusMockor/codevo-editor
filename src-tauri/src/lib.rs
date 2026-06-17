@@ -54,18 +54,19 @@ use lsp_document::{
 };
 use lsp_features::{
     parse_code_action_result, parse_completion_result, parse_definition_result,
-    parse_formatting_result, parse_hover_result, parse_optional_workspace_edit_result,
-    parse_workspace_edit_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-    LanguageServerCodeActionContext, LanguageServerCompletionList, LanguageServerFormattingOptions,
-    LanguageServerHover, LanguageServerLocation, LanguageServerRange, LanguageServerTextEdit,
+    parse_formatting_result, parse_hover_result, parse_inlay_hints_result,
+    parse_optional_workspace_edit_result, parse_workspace_edit_result, LanguageServerCodeAction,
+    LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCompletionItem,
+    LanguageServerCompletionList, LanguageServerFormattingOptions, LanguageServerHover,
+    LanguageServerInlayHint, LanguageServerLocation, LanguageServerRange, LanguageServerTextEdit,
     LanguageServerWorkspaceEdit, LspTextDocumentFeatureRequestFactory,
-    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentPosition,
-    TextDocumentRange, TextDocumentRename,
+    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+    TextDocumentPosition, TextDocumentRange, TextDocumentRename,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
     JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRuntimeStatus,
-    PhpLanguageServerRegistry, StatusSink,
+    PhpLanguageServerRegistry, StatusSink, WorkspaceEditSink,
 };
 use php_file_outline::{
     build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
@@ -687,15 +688,17 @@ fn start_php_language_server(
 
     let event_sink = Arc::new(AppHandleEventSink::for_workspace(app, root_path.clone()));
     let status_sink: Arc<dyn StatusSink> = event_sink.clone();
-    let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink;
+    let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
+    let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink;
 
-    registry.start(
+    registry.start_with_workspace_edit_sink(
         &root_path,
         &command,
         &initialize_request,
         &ChildServerProcessSpawner,
         status_sink,
         diagnostics_sink,
+        workspace_edit_sink,
     )
 }
 
@@ -722,15 +725,17 @@ fn start_javascript_typescript_language_server(
         root_path.clone(),
     ));
     let status_sink: Arc<dyn StatusSink> = event_sink.clone();
-    let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink;
+    let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
+    let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink;
 
-    registry.start(
+    registry.start_with_workspace_edit_sink(
         &root_path,
         &command,
         &initialize_request,
         &ChildServerProcessSpawner,
         status_sink,
         diagnostics_sink,
+        workspace_edit_sink,
     )
 }
 
@@ -982,6 +987,38 @@ fn javascript_typescript_text_document_completion(
     };
 
     parse_completion_result(&result)
+}
+
+#[tauri::command]
+fn text_document_completion_resolve(
+    root_path: String,
+    item: LanguageServerCompletionItem,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<LanguageServerCompletionItem, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.resolve_completion_item(&item);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(item);
+    };
+
+    serde_json::from_value::<LanguageServerCompletionItem>(result)
+        .map_err(|error| format!("Language server returned a malformed completion item: {error}"))
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_completion_resolve(
+    root_path: String,
+    item: LanguageServerCompletionItem,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<LanguageServerCompletionItem, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.resolve_completion_item(&item);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(item);
+    };
+
+    serde_json::from_value::<LanguageServerCompletionItem>(result)
+        .map_err(|error| format!("Language server returned a malformed completion item: {error}"))
 }
 
 #[tauri::command]
@@ -1247,6 +1284,38 @@ fn javascript_typescript_text_document_formatting(
 }
 
 #[tauri::command]
+fn text_document_inlay_hints(
+    root_path: String,
+    path: String,
+    range: LanguageServerRange,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerInlayHint>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.inlay_hints(&TextDocumentInlayHintRange { path, range });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_inlay_hints_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_inlay_hints(
+    root_path: String,
+    path: String,
+    range: LanguageServerRange,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerInlayHint>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.inlay_hints(&TextDocumentInlayHintRange { path, range });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_inlay_hints_result(&result)
+}
+
+#[tauri::command]
 fn write_text_file(path: String, content: String) -> Result<(), String> {
     let repository = LocalWorkspaceFileRepository;
     repository
@@ -1446,16 +1515,19 @@ pub fn run() {
             javascript_typescript_text_document_code_action_resolve,
             javascript_typescript_text_document_code_actions,
             javascript_typescript_text_document_completion,
+            javascript_typescript_text_document_completion_resolve,
             javascript_typescript_text_document_definition,
             javascript_typescript_text_document_formatting,
             javascript_typescript_text_document_hover,
             javascript_typescript_text_document_implementation,
+            javascript_typescript_text_document_inlay_hints,
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
             language_server_execute_command,
             text_document_code_action_resolve,
             text_document_code_actions,
             text_document_completion,
+            text_document_completion_resolve,
             text_document_definition,
             text_document_did_change,
             text_document_did_close,
@@ -1464,6 +1536,7 @@ pub fn run() {
             text_document_formatting,
             text_document_hover,
             text_document_implementation,
+            text_document_inlay_hints,
             text_document_references,
             text_document_rename,
             upsert_workspace_index_file,
