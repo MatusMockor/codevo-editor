@@ -72,6 +72,7 @@ use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
     ffi::OsString,
     path::{Component, Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
 };
 use tauri::{
@@ -110,7 +111,62 @@ fn create_directory(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn quit_application(app: AppHandle) {
+    shutdown_runtime_processes(&app);
     app.exit(0);
+}
+
+fn shutdown_runtime_processes(app: &AppHandle) {
+    if let Some(supervisor) = app.try_state::<LanguageServerSupervisor>() {
+        let _ = supervisor.stop();
+    }
+
+    if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
+        supervisor.stop_all();
+    }
+}
+
+#[cfg(unix)]
+fn cleanup_orphaned_managed_phpactor_processes(command: &LanguageServerCommand) {
+    if !is_managed_phpactor_command(command) {
+        return;
+    }
+
+    let executable_pattern = regex_escape_literal(&command.executable);
+    let workspace_pattern = regex_escape_literal(&command.working_directory);
+
+    let _ = Command::new("pkill")
+        .args(["-f", &format!("{executable_pattern} language-server")])
+        .status();
+    let _ = Command::new("pkill")
+        .args([
+            "-f",
+            &format!("find {workspace_pattern} -mindepth 1 -newercc .*amp-fs-watch"),
+        ])
+        .status();
+}
+
+#[cfg(unix)]
+fn is_managed_phpactor_command(command: &LanguageServerCommand) -> bool {
+    command.executable.contains("Mockor Editor/tools/phpactor")
+        && command.args.iter().any(|arg| arg == "language-server")
+}
+
+#[cfg(unix)]
+fn regex_escape_literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+
+    for character in value.chars() {
+        if matches!(
+            character,
+            '.' | '+' | '*' | '?' | '^' | '$' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\'
+        ) {
+            escaped.push('\\');
+        }
+
+        escaped.push(character);
+    }
+
+    escaped
 }
 
 #[tauri::command]
@@ -619,6 +675,14 @@ fn start_php_language_server(
     let initialize_request: JsonRpcRequest = plan
         .initialize_request
         .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
+    #[cfg(unix)]
+    if !matches!(
+        supervisor.status(),
+        LanguageServerRuntimeStatus::Starting { .. } | LanguageServerRuntimeStatus::Running { .. }
+    ) {
+        cleanup_orphaned_managed_phpactor_processes(&command);
+    }
+
     let event_sink = Arc::new(AppHandleEventSink::new(app));
     let status_sink: Arc<dyn StatusSink> = event_sink.clone();
     let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink;
@@ -915,7 +979,10 @@ pub fn run() {
             CLOSE_ACTIVE_TAB_MENU_ID => {
                 let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
             }
-            QUIT_APPLICATION_MENU_ID => app.exit(0),
+            QUIT_APPLICATION_MENU_ID => {
+                shutdown_runtime_processes(app);
+                app.exit(0);
+            }
             _ => {}
         })
         .manage(Mutex::new(SmartModeService::new()))

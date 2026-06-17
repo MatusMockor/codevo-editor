@@ -2191,6 +2191,7 @@ name = "mockor-editor"
 version = "0.1.0"
 dependencies = [
  "ignore",
+ "libc",
  "notify",
  "portable-pty",
  "rusqlite",

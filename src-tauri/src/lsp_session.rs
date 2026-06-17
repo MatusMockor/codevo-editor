@@ -12,6 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_EVENT: &str = "language-server://status";
@@ -99,13 +102,22 @@ pub struct ChildServerProcessSpawner;
 
 impl ServerProcessSpawner for ChildServerProcessSpawner {
     fn spawn(&self, command: &LanguageServerCommand) -> io::Result<SpawnedServer> {
-        let mut child = Command::new(&command.executable)
+        let mut command_builder = Command::new(&command.executable);
+        command_builder
             .args(&command.args)
             .current_dir(&command.working_directory)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
+            .stderr(Stdio::null());
+
+        #[cfg(unix)]
+        {
+            command_builder.process_group(0);
+        }
+
+        let mut child = command_builder.spawn()?;
+        #[cfg(unix)]
+        let process_group_id = child.id() as i32;
 
         let stdin = child
             .stdin
@@ -119,23 +131,44 @@ impl ServerProcessSpawner for ChildServerProcessSpawner {
         Ok(SpawnedServer {
             stdin: Box::new(stdin),
             stdout: Box::new(stdout),
-            killer: Box::new(ChildKiller { child }),
+            killer: Box::new(ChildKiller {
+                child,
+                #[cfg(unix)]
+                process_group_id,
+            }),
         })
     }
 }
 
 struct ChildKiller {
     child: Child,
+    #[cfg(unix)]
+    process_group_id: i32,
 }
 
 impl ProcessKiller for ChildKiller {
     fn terminate(&mut self) -> io::Result<()> {
         if self.child.try_wait()?.is_some() {
+            #[cfg(unix)]
+            let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
             return Ok(());
+        }
+
+        #[cfg(unix)]
+        {
+            let _ = signal_process_group(self.process_group_id, libc::SIGTERM);
+            std::thread::sleep(Duration::from_millis(150));
+
+            if self.child.try_wait()?.is_none() {
+                let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
+            }
         }
 
         let kill_error = self.child.kill().err();
         let wait_result = self.child.wait().map(|_| ());
+
+        #[cfg(unix)]
+        let _ = signal_process_group(self.process_group_id, libc::SIGKILL);
 
         if let Some(error) = kill_error {
             if error.kind() != io::ErrorKind::InvalidInput {
@@ -145,6 +178,23 @@ impl ProcessKiller for ChildKiller {
 
         wait_result
     }
+}
+
+#[cfg(unix)]
+fn signal_process_group(process_group_id: i32, signal: i32) -> io::Result<()> {
+    let result = unsafe { libc::kill(-process_group_id, signal) };
+
+    if result == 0 {
+        return Ok(());
+    }
+
+    let error = io::Error::last_os_error();
+
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(());
+    }
+
+    Err(error)
 }
 
 enum HandshakeOutcome {
@@ -309,7 +359,7 @@ impl LanguageServerSupervisor {
             Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => {
                 let was_stopped = stop_requested.load(Ordering::SeqCst);
                 self.terminate_matching_session(&stop_requested);
-                if was_stopped {
+                if was_stopped || matches!(self.status(), LanguageServerRuntimeStatus::Stopped) {
                     return Ok(LanguageServerRuntimeStatus::Stopped);
                 }
 

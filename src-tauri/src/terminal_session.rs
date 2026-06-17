@@ -283,6 +283,20 @@ impl TerminalSupervisor {
         Ok(status)
     }
 
+    pub fn stop_all(&self) {
+        let sessions = match self.sessions.lock() {
+            Ok(mut sessions) => sessions
+                .drain()
+                .map(|(_, session)| session)
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        };
+
+        for session in sessions {
+            terminate_session(session);
+        }
+    }
+
     fn insert_session(
         &self,
         session_id: u64,
@@ -314,17 +328,7 @@ impl Default for TerminalSupervisor {
 
 impl Drop for TerminalSupervisor {
     fn drop(&mut self) {
-        let sessions = match self.sessions.lock() {
-            Ok(mut sessions) => sessions
-                .drain()
-                .map(|(_, session)| session)
-                .collect::<Vec<_>>(),
-            Err(_) => Vec::new(),
-        };
-
-        for session in sessions {
-            terminate_session(session);
-        }
+        self.stop_all();
     }
 }
 
