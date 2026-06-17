@@ -695,11 +695,11 @@ button {
 
 .monaco-editor .editor-change-glyph::before {
   position: absolute;
-  top: 3px;
+  top: 0;
   left: 4px;
   width: 4px;
-  height: 14px;
-  border-radius: 999px;
+  height: 20px;
+  border-radius: 2px;
   content: "";
 }
 
@@ -775,17 +775,16 @@ button {
 
 .editor-change-popover {
   position: absolute;
-  top: 18px;
-  left: 66px;
   z-index: 45;
   display: grid;
+  box-sizing: border-box;
   width: min(620px, calc(100% - 92px));
   max-height: min(360px, calc(100% - 42px));
   overflow: hidden;
   border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-elevated);
-  box-shadow: var(--shadow-panel);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-panel-deep) 88%, #000);
+  box-shadow: var(--shadow-pop), 0 0 0 1px rgba(0, 0, 0, 0.38);
   color: var(--color-text);
 }
 
@@ -794,9 +793,11 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-height: 34px;
   min-width: 0;
   border-bottom: 1px solid var(--color-border);
-  padding: 8px 10px;
+  background: color-mix(in srgb, var(--color-panel-deep) 82%, #000);
+  padding: 5px 8px 5px 10px;
 }
 
 .editor-change-popover-kind {
@@ -839,10 +840,12 @@ button {
 .editor-change-popover-icon-button {
   display: grid;
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   place-items: center;
   border-radius: var(--radius-sm);
+  line-height: 0;
+  margin-left: auto;
 }
 
 .editor-change-popover-section-label {
@@ -859,7 +862,7 @@ button {
   max-height: 210px;
   margin: 0;
   overflow: auto;
-  background: var(--color-editor);
+  background: color-mix(in srgb, var(--color-panel-deep) 72%, #000);
   color: var(--color-text);
   font-family: "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas,
     monospace;

@@ -20,8 +20,11 @@ interface FakeEditor {
   addAction: ReturnType<typeof vi.fn>;
   deltaDecorations: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
+  getLayoutInfo: ReturnType<typeof vi.fn>;
   getModel: ReturnType<typeof vi.fn>;
   getPosition: ReturnType<typeof vi.fn>;
+  getScrollTop: ReturnType<typeof vi.fn>;
+  getTopForLineNumber: ReturnType<typeof vi.fn>;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
   onMouseDown: ReturnType<typeof vi.fn>;
@@ -450,6 +453,9 @@ interface ParserFactory
 
     expect(host.textContent).toContain("Modified lines");
     expect(host.textContent).toContain("$comment = 'old';");
+    const popover = queryRequired<HTMLElement>(host, ".editor-change-popover");
+    expect(popover.style.left).toBe("92px");
+    expect(popover.style.top).toBe("56px");
 
     act(() => {
       queryRequired<HTMLButtonElement>(
@@ -469,11 +475,18 @@ function createEditor(model: FakeModel): FakeEditor {
       decorations.map((_, index) => `implementation-gutter-${index}`),
     ),
     focus: vi.fn(),
+    getLayoutInfo: vi.fn(() => ({
+      contentLeft: 80,
+      height: 480,
+      width: 900,
+    })),
     getModel: vi.fn(() => model),
     getPosition: vi.fn(() => ({
       column: 1,
       lineNumber: 1,
     })),
+    getScrollTop: vi.fn(() => 10),
+    getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
     mouseDownHandler: null,
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
     onMouseDown: vi.fn((handler: (event: FakeMouseDownEvent) => void) => {

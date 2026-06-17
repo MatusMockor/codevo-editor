@@ -1,7 +1,7 @@
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { RotateCcw, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type * as Monaco from "monaco-editor";
 import type {
   EditorChangeHunk,
@@ -617,6 +617,11 @@ export function EditorSurface({
     );
   }
 
+  const changePreviewStyle =
+    changePreviewHunk && editorApi
+      ? editorChangePopoverStyle(editorApi, changePreviewHunk)
+      : undefined;
+
   return (
     <div
       aria-labelledby={getTabId(activeDocument.path)}
@@ -654,6 +659,7 @@ export function EditorSurface({
           aria-label="Local change preview"
           className="editor-change-popover"
           role="dialog"
+          style={changePreviewStyle}
         >
           <div className="editor-change-popover-header">
             <span
@@ -693,6 +699,44 @@ export function EditorSurface({
       ) : null}
     </div>
   );
+}
+
+function editorChangePopoverStyle(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  hunk: EditorChangeHunk,
+): CSSProperties {
+  const layout = editor.getLayoutInfo();
+  const lineTop =
+    editor.getTopForLineNumber(hunk.startLineNumber) - editor.getScrollTop();
+  const nextLineTop =
+    editor.getTopForLineNumber(hunk.endLineNumber + 1) - editor.getScrollTop();
+  const hunkHeight = Math.max(20, nextLineTop - lineTop);
+  const estimatedHeight = 170;
+  const minimumEdgeGap = 12;
+  const left = Math.max(
+    54,
+    Math.min(layout.contentLeft + 12, layout.width - 320),
+  );
+  const belowTop = lineTop + hunkHeight + 6;
+  const aboveTop = lineTop - estimatedHeight - 6;
+  const maxTop = Math.max(
+    minimumEdgeGap,
+    layout.height - estimatedHeight - minimumEdgeGap,
+  );
+  const preferredTop =
+    belowTop <= maxTop ? belowTop : Math.max(minimumEdgeGap, aboveTop);
+  const top = clampNumber(preferredTop, minimumEdgeGap, maxTop);
+
+  return {
+    left: `${Math.round(left)}px`,
+    maxHeight: `min(360px, calc(100% - ${Math.round(top + minimumEdgeGap)}px))`,
+    top: `${Math.round(top)}px`,
+    width: `min(620px, calc(100% - ${Math.round(left + minimumEdgeGap)}px))`,
+  };
+}
+
+function clampNumber(value: number, minimum: number, maximum: number): number {
+  return Math.min(Math.max(value, minimum), maximum);
 }
 
 function toEditorChangeDecoration(
