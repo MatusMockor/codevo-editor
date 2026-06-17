@@ -1,5 +1,10 @@
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 
+export interface PhpTraitHostMethodDiagnosticContext {
+  methodName: string;
+  traitName: string;
+}
+
 const laravelEloquentBuilderMethods = new Set([
   "chunk",
   "count",
@@ -76,6 +81,8 @@ export function filterPhpLanguageServerDiagnostics(
   source: string,
   diagnostics: LanguageServerDiagnostic[],
   options: {
+    allowDependencyTraitFallback?: boolean;
+    contextualTraitHostMethods?: ReadonlySet<string>;
     path?: string | null;
   } = {},
 ): LanguageServerDiagnostic[] {
@@ -84,9 +91,11 @@ export function filterPhpLanguageServerDiagnostics(
       !isIgnoredPhpactorDocblockDiagnostic(diagnostic) &&
       !isPhpactorKeywordMethodDiagnostic(source, diagnostic) &&
       !isPhpactorStaleReturnParseDiagnostic(source, diagnostic) &&
-      !isPhpactorDependencyTraitHostMethodDiagnostic(
+      !isPhpactorTraitHostMethodDiagnostic(
         source,
         diagnostic,
+        Boolean(options.allowDependencyTraitFallback),
+        options.contextualTraitHostMethods,
         options.path,
       ) &&
       !isLaravelEloquentStaticBuilderDiagnostic(source, diagnostic),
@@ -182,43 +191,74 @@ function isPhpactorStaleReturnParseDiagnostic(
   );
 }
 
-function isPhpactorDependencyTraitHostMethodDiagnostic(
+function isPhpactorTraitHostMethodDiagnostic(
   source: string,
   diagnostic: LanguageServerDiagnostic,
+  allowDependencyTraitFallback: boolean,
+  contextualTraitHostMethods: ReadonlySet<string> | undefined,
   path: string | null | undefined,
 ): boolean {
-  if (!isDependencyPath(path)) {
+  const context = phpTraitHostMethodDiagnosticContext(source, diagnostic);
+
+  if (!context) {
     return false;
   }
 
+  if (
+    contextualTraitHostMethods?.has(
+      phpTraitHostMethodDiagnosticKey(context.traitName, context.methodName),
+    )
+  ) {
+    return true;
+  }
+
+  return allowDependencyTraitFallback && isDependencyPath(path);
+}
+
+export function phpTraitHostMethodDiagnosticContext(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): PhpTraitHostMethodDiagnosticContext | null {
   if (diagnostic.source?.toLowerCase() !== "phpactor") {
-    return false;
+    return null;
   }
 
-  const methodName = methodMissingOnTraitName(diagnostic.message);
+  const match =
+    /\bmethod\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s+does not exist on trait\s+["']?([^"']+)["']?/i.exec(
+      diagnostic.message,
+    );
+  const methodName = match?.[1]?.trim() ?? "";
+  const traitName = match?.[2]?.trim().replace(/^\\+/, "") ?? "";
 
-  if (!methodName) {
-    return false;
+  if (!methodName || !traitName) {
+    return null;
   }
 
   const line = lineAt(source, diagnostic.line);
 
-  return Boolean(
-    line &&
-      new RegExp(
-        String.raw`\$this\s*->\s*${escapeRegExp(methodName)}\s*\(`,
-        "i",
-      ).test(line),
-  );
+  if (
+    !line ||
+    !new RegExp(
+      String.raw`\$this\s*->\s*${escapeRegExp(methodName)}\s*\(`,
+      "i",
+    ).test(line)
+  ) {
+    return null;
+  }
+
+  return {
+    methodName,
+    traitName,
+  };
 }
 
-function methodMissingOnTraitName(message: string): string | null {
-  const match =
-    /\bmethod\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s+does not exist on trait\b/i.exec(
-      message,
-    );
-
-  return match?.[1] ?? null;
+export function phpTraitHostMethodDiagnosticKey(
+  traitName: string,
+  methodName: string,
+): string {
+  return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#${methodName
+    .trim()
+    .toLowerCase()}`;
 }
 
 function isDependencyPath(path: string | null | undefined): boolean {

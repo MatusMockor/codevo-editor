@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { filterPhpLanguageServerDiagnostics } from "./phpLanguageServerDiagnosticFilters";
+import {
+  filterPhpLanguageServerDiagnostics,
+  phpTraitHostMethodDiagnosticKey,
+} from "./phpLanguageServerDiagnosticFilters";
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 
 describe("filterPhpLanguageServerDiagnostics", () => {
@@ -173,7 +176,7 @@ return (new CommentResource($comment))->response()->setStatusCode(200);
     ]);
   });
 
-  it("suppresses PHPactor trait host-method diagnostics in dependencies", () => {
+  it("suppresses PHPactor trait host-method diagnostics with confirmed host context", () => {
     const source = `<?php
 namespace Illuminate\\Database\\Eloquent;
 
@@ -187,19 +190,24 @@ trait SoftDeletes
     }
 }
 `;
+    const unresolved = diagnostic({
+      character: 20,
+      line: 7,
+      message:
+        'Method "fireModelEvent" does not exist on trait "Illuminate\\Database\\Eloquent\\SoftDeletes"',
+    });
 
     expect(
       filterPhpLanguageServerDiagnostics(
         source,
-        [
-          diagnostic({
-            character: 20,
-            line: 7,
-            message:
-              'Method "fireModelEvent" does not exist on trait "Illuminate\\Database\\Eloquent\\SoftDeletes"',
-          }),
-        ],
+        [unresolved],
         {
+          contextualTraitHostMethods: new Set([
+            phpTraitHostMethodDiagnosticKey(
+              "Illuminate\\Database\\Eloquent\\SoftDeletes",
+              "fireModelEvent",
+            ),
+          ]),
           path:
             "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
         },
@@ -226,6 +234,30 @@ trait BrokenTrait
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
         path: "/workspace/app/BrokenTrait.php",
+      }),
+    ).toEqual([unresolved]);
+  });
+
+  it("keeps dependency trait diagnostics when host context is not confirmed", () => {
+    const source = `<?php
+trait SoftDeletes
+{
+    public function forceDelete()
+    {
+        $this->fireModelEvent('forceDeleting');
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 15,
+      line: 4,
+      message:
+        'Method "fireModelEvent" does not exist on trait "Illuminate\\Database\\Eloquent\\SoftDeletes"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        path: "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
       }),
     ).toEqual([unresolved]);
   });

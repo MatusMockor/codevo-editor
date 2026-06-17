@@ -16,8 +16,14 @@ import type {
   LanguageServerGateway,
   LanguageServerPlan,
 } from "../domain/languageServer";
-import type { LanguageServerDiagnosticsGateway } from "../domain/languageServerDiagnostics";
-import type { LanguageServerDocumentSyncGateway } from "../domain/languageServerDocumentSync";
+import type {
+  LanguageServerDiagnosticEvent,
+  LanguageServerDiagnosticsGateway,
+} from "../domain/languageServerDiagnostics";
+import {
+  fileUriFromPath,
+  type LanguageServerDocumentSyncGateway,
+} from "../domain/languageServerDocumentSync";
 import type {
   EditorPosition,
   LanguageServerFeaturesGateway,
@@ -40,6 +46,7 @@ import type {
   FileEntry,
   FileSearchResult,
   PhpProjectDescriptor,
+  TextSearchResult,
   WorkspaceDescriptor,
 } from "../domain/workspace";
 
@@ -1542,6 +1549,148 @@ trait SoftDeletes
     });
   });
 
+  it("suppresses trait host-method diagnostics when an indexed host provides the method", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const commentPath =
+      "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const modelPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Model.php";
+    const softDeletesPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php";
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 9,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: {
+        command: {
+          args: ["language-server"],
+          executable: "phpactor",
+          workingDirectory: "/workspace",
+        },
+        initializeRequest: null,
+        message: "PHPactor ready",
+        provider: "phpactor",
+        status: "ready",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\SoftDeletes;
+
+class Comment extends Model
+{
+    use SoftDeletes;
+}
+`;
+        }
+
+        if (path === modelPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Model
+{
+    protected function fireModelEvent(string $event)
+    {
+    }
+}
+`;
+        }
+
+        if (path === softDeletesPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+trait SoftDeletes
+{
+    public function forceDelete()
+    {
+        if ($this->fireModelEvent('forceDeleting') === false) {
+            return false;
+        }
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchFiles: vi.fn(async (_root, query) =>
+        query === "Comment.php"
+          ? [
+              {
+                name: "Comment.php",
+                path: commentPath,
+                relativePath:
+                  "app/Kontentino/src/Communication/Models/Comment.php",
+              },
+            ]
+          : [],
+      ),
+      searchText: vi.fn(async () => [
+        {
+          column: 5,
+          lineNumber: 9,
+          lineText: "    use SoftDeletes;",
+          path: commentPath,
+          relativePath:
+            "app/Kontentino/src/Communication/Models/Comment.php",
+        },
+      ]),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(runningStatus);
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 20,
+            line: 7,
+            message:
+              'Method "fireModelEvent" does not exist on trait "Illuminate\\Database\\Eloquent\\SoftDeletes"',
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(softDeletesPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toEqual(
+      [],
+    );
+  });
+
   it("keeps Laravel Eloquent builder generics through fluent chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumPath = "/workspace/app/Models/Album.php";
@@ -2341,17 +2490,20 @@ final class FacebookAdapterService extends BaseAdapter
     appSettings = defaultAppSettings(),
     gitGateway,
     languageServerPlan,
+    languageServerDiagnosticsGateway,
     languageServerFeaturesGateway,
     projectSymbols = [],
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
     searchFiles = vi.fn(async () => []),
+    searchText,
     workspaceDescriptor,
     workspaceSettings = defaultWorkspaceSettings(),
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
     languageServerPlan?: LanguageServerPlan;
+    languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     projectSymbols?: ProjectSymbolSearchResult[];
     readTextFile?: (path: string) => Promise<string>;
@@ -2361,6 +2513,11 @@ final class FacebookAdapterService extends BaseAdapter
       query: string,
       limit: number,
     ) => Promise<FileSearchResult[]>;
+    searchText?: (
+      root: string,
+      query: string,
+      limit: number,
+    ) => Promise<TextSearchResult[]>;
     workspaceDescriptor?: WorkspaceDescriptor;
     workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
   } = {}) {
@@ -2369,11 +2526,13 @@ final class FacebookAdapterService extends BaseAdapter
       appSettings,
       gitGateway,
       languageServerPlan,
+      languageServerDiagnosticsGateway,
       languageServerFeaturesGateway,
       projectSymbols,
       readTextFile,
       runtimeStatus,
       searchFiles,
+      searchText,
       workspaceDescriptor,
       workspaceSettings,
     });
@@ -2436,16 +2595,19 @@ function createControllerDependencies({
   gitGateway,
   languageServerPlan,
   languageServerFeaturesGateway,
+  languageServerDiagnosticsGateway,
   projectSymbols,
   readTextFile,
   runtimeStatus,
   searchFiles,
+  searchText,
   workspaceDescriptor,
   workspaceSettings,
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   gitGateway?: GitGateway;
   languageServerPlan?: LanguageServerPlan;
+  languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   projectSymbols: ProjectSymbolSearchResult[];
   readTextFile(path: string): Promise<string>;
@@ -2455,6 +2617,11 @@ function createControllerDependencies({
     query: string,
     limit: number,
   ): Promise<FileSearchResult[]>;
+  searchText?(
+    root: string,
+    query: string,
+    limit: number,
+  ): Promise<TextSearchResult[]>;
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
 }): ControllerDependencies {
@@ -2493,7 +2660,7 @@ function createControllerDependencies({
       searchProjectSymbols: vi.fn(async () => projectSymbols),
     },
     textSearch: {
-      searchText: vi.fn(async () => []),
+      searchText: vi.fn(searchText ?? (async () => [])),
     },
   };
 
@@ -2526,9 +2693,10 @@ function createControllerDependencies({
       })),
       subscribeMetadataScanCompletion: vi.fn(async () => () => undefined),
     },
-    languageServerDiagnosticsGateway: {
-      subscribeDiagnostics: vi.fn(async () => () => undefined),
-    },
+    languageServerDiagnosticsGateway:
+      languageServerDiagnosticsGateway ?? {
+        subscribeDiagnostics: vi.fn(async () => () => undefined),
+      },
     languageServerDocumentSyncGateway: documentSyncGateway,
     languageServerFeaturesGateway:
       languageServerFeaturesGateway ?? featuresGateway(),

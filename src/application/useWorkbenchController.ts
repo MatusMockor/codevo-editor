@@ -49,6 +49,11 @@ import {
   type LanguageServerDiagnosticsGateway,
 } from "../domain/languageServerDiagnostics";
 import {
+  filterPhpLanguageServerDiagnostics,
+  phpTraitHostMethodDiagnosticContext,
+  phpTraitHostMethodDiagnosticKey,
+} from "../domain/phpLanguageServerDiagnosticFilters";
+import {
   createLanguageServerTextDocument,
   fileUriFromPath,
   isLanguageServerDocument,
@@ -379,6 +384,12 @@ export function useWorkbenchController(
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
   const lastPhpFileOutlineRefreshKeyRef = useRef<string | null>(null);
+  const contextualDiagnosticsFilterRef = useRef(
+    async (
+      _path: string,
+      diagnostics: LanguageServerDiagnostic[],
+    ): Promise<LanguageServerDiagnostic[]> => diagnostics,
+  );
 
   const activeDocument = activePath ? documents[activePath] || null : null;
   const openDocumentPaths = useMemo(
@@ -518,27 +529,48 @@ export function useWorkbenchController(
 
       const groupKey = languageServerDiagnosticNoticeGroup(event.uri);
       const diagnosticPath = pathFromLanguageServerUri(event.uri);
-      const diagnosticNotices = event.diagnostics.map((diagnostic) =>
-        createWorkbenchNotice(
-          languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-          diagnostic.source || "Language Server",
-          languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
-          groupKey,
-        ),
-      );
 
-      setNotices((current) =>
-        replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
-      );
+      void (async () => {
+        const diagnostics = diagnosticPath
+          ? await contextualDiagnosticsFilterRef.current(
+              diagnosticPath,
+              event.diagnostics,
+            )
+          : event.diagnostics;
+        const latestVersion = documentVersionsByUriRef.current[event.uri];
 
-      if (diagnosticPath) {
-        setLanguageServerDiagnosticsByPath((current) => ({
-          ...current,
-          [diagnosticPath]: event.diagnostics,
-        }));
-      }
+        if (
+          !shouldApplyLanguageServerDiagnostics(
+            event,
+            currentSessionId,
+            latestVersion,
+          )
+        ) {
+          return;
+        }
+
+        const diagnosticNotices = diagnostics.map((diagnostic) =>
+          createWorkbenchNotice(
+            languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+            diagnostic.source || "Language Server",
+            languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
+            groupKey,
+          ),
+        );
+
+        setNotices((current) =>
+          replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+        );
+
+        if (diagnosticPath) {
+          setLanguageServerDiagnosticsByPath((current) => ({
+            ...current,
+            [diagnosticPath]: diagnostics,
+          }));
+        }
+      })().catch(reportLanguageServerError);
     },
-    [languageServerRuntimeStatus],
+    [languageServerRuntimeStatus, reportLanguageServerError],
   );
 
   const refreshLanguageServerPlan = useCallback(
@@ -2628,6 +2660,216 @@ export function useWorkbenchController(
       workspaceRoot,
     ],
   );
+
+  const phpClassHierarchyHasMethod = useCallback(
+    async (
+      className: string,
+      methodName: string,
+      visitedClassNames = new Set<string>(),
+    ): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+      const visitedKey = normalizedClassName.toLowerCase();
+
+      if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+        return false;
+      }
+
+      visitedClassNames.add(visitedKey);
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        try {
+          const content = await readNavigationFileContent(path);
+
+          if (phpMethodPositionOrNull(content, methodName)) {
+            return true;
+          }
+
+          for (const traitName of phpTraitClassNames(content)) {
+            const resolvedTraitName = resolvePhpClassReference(
+              content,
+              traitName,
+            );
+
+            if (
+              resolvedTraitName &&
+              (await phpClassHierarchyHasMethod(
+                resolvedTraitName,
+                methodName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+
+          const parentClassName = phpExtendsClassName(content);
+          const resolvedParentClassName = parentClassName
+            ? resolvePhpClassReference(content, parentClassName)
+            : null;
+
+          if (
+            resolvedParentClassName &&
+            (await phpClassHierarchyHasMethod(
+              resolvedParentClassName,
+              methodName,
+              visitedClassNames,
+            ))
+          ) {
+            return true;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  const phpTraitHostMethodExists = useCallback(
+    async (traitClassName: string, methodName: string): Promise<boolean> => {
+      if (!workspaceRoot) {
+        return false;
+      }
+
+      const normalizedTraitClassName = traitClassName
+        .trim()
+        .replace(/^\\+/, "");
+
+      if (!normalizedTraitClassName || !methodName.trim()) {
+        return false;
+      }
+
+      const results = await textSearch.searchText(
+        workspaceRoot,
+        shortPhpName(normalizedTraitClassName),
+        200,
+      );
+      const visitedPaths = new Set<string>();
+
+      for (const result of results) {
+        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+          continue;
+        }
+
+        visitedPaths.add(result.path);
+
+        try {
+          const content = await readNavigationFileContent(result.path);
+          const hostClassName = phpCurrentClassName(content);
+
+          if (!hostClassName) {
+            continue;
+          }
+
+          const usesTrait = phpTraitClassNames(content).some((traitName) => {
+            const resolvedTraitName = resolvePhpClassReference(
+              content,
+              traitName,
+            );
+
+            return (
+              resolvedTraitName?.toLowerCase() ===
+              normalizedTraitClassName.toLowerCase()
+            );
+          });
+
+          if (!usesTrait) {
+            continue;
+          }
+
+          if (await phpClassHierarchyHasMethod(hostClassName, methodName)) {
+            return true;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      phpClassHierarchyHasMethod,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      textSearch,
+      workspaceRoot,
+    ],
+  );
+
+  const filterPhpDiagnosticsWithContext = useCallback(
+    async (
+      path: string,
+      diagnostics: LanguageServerDiagnostic[],
+    ): Promise<LanguageServerDiagnostic[]> => {
+      if (!isPhpPath(path)) {
+        return diagnostics;
+      }
+
+      let source = "";
+
+      try {
+        source = await readNavigationFileContent(path);
+      } catch {
+        return diagnostics;
+      }
+
+      const contextualTraitHostMethods = new Set<string>();
+
+      for (const diagnostic of diagnostics) {
+        const context = phpTraitHostMethodDiagnosticContext(source, diagnostic);
+
+        if (!context) {
+          continue;
+        }
+
+        const normalizedTraitName = context.traitName.replace(/^\\+/, "");
+        const traitClassName = normalizedTraitName.includes("\\")
+          ? normalizedTraitName
+          : (resolvePhpClassReference(source, context.traitName) ??
+            normalizedTraitName);
+
+        if (
+          await phpTraitHostMethodExists(
+            traitClassName,
+            context.methodName,
+          )
+        ) {
+          contextualTraitHostMethods.add(
+            phpTraitHostMethodDiagnosticKey(
+              traitClassName,
+              context.methodName,
+            ),
+          );
+        }
+      }
+
+      return filterPhpLanguageServerDiagnostics(source, diagnostics, {
+        contextualTraitHostMethods,
+        path,
+      });
+    },
+    [
+      phpTraitHostMethodExists,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+    ],
+  );
+
+  useEffect(() => {
+    contextualDiagnosticsFilterRef.current = filterPhpDiagnosticsWithContext;
+  }, [filterPhpDiagnosticsWithContext]);
 
   const resolvePhpMethodReturnType = useCallback(
     async (
