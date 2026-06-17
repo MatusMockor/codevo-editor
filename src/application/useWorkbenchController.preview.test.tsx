@@ -1347,6 +1347,128 @@ class Comment
     ]);
   });
 
+  it("keeps Laravel Eloquent builder generics through fluent chains", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        $album = Album::query()->whereNull('parent_id')->first();
+        $album->get
+
+        $query = Album::query();
+        $query->whereNull('parent_id')->ord
+
+        /** @var \\Illuminate\\Database\\Eloquent\\Builder<Album> $typedQuery */
+        $typedQuery = Album::query();
+        $typed = $typedQuery->first();
+        $typed->get
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+class Album
+{
+    public string $title;
+
+    public function getTitle(): string {}
+}
+`;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    /** @return static */
+    public function whereNull($columns, $boolean = 'and', $not = false) {}
+
+    /** @return static */
+    public function orderBy($column, $direction = 'asc') {}
+
+    /** @return TModel|null */
+    public function first($columns = ['*']) {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$album->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->whereNull('parent_id')->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$typed->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("falls back to verified PHP filename lookup before the index is warm", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

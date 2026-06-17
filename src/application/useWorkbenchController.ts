@@ -133,6 +133,8 @@ import {
   phpNewExpressionClassName,
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
+  phpDeclaredGenericTypeCandidates,
+  phpDocRawTypeForVariableBefore,
 } from "../domain/phpSemanticEngine";
 import {
   phpClassPathCandidates,
@@ -2791,6 +2793,84 @@ export function useWorkbenchController(
     ],
   );
 
+  const resolvePhpEloquentBuilderModelType = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+      expression: string,
+      depth = 0,
+    ): Promise<string | null> => {
+      if (depth > 5) {
+        return null;
+      }
+
+      const normalizedExpression = expression.trim();
+      const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
+        normalizedExpression,
+      );
+
+      if (variableMatch?.[1]) {
+        const phpDocType = phpDocRawTypeForVariableBefore(
+          source,
+          position,
+          variableMatch[1],
+        );
+        const phpDocGenericModelType = phpDocType
+          ? phpDeclaredGenericTypeCandidates(phpDocType)
+              .map((candidate) => resolvePhpClassReference(source, candidate))
+              .find((candidate): candidate is string => Boolean(candidate))
+          : null;
+
+        if (phpDocGenericModelType) {
+          return phpDocGenericModelType;
+        }
+
+        const assignmentExpression = phpAssignmentExpressionForVariableBefore(
+          source,
+          position,
+          variableMatch[1],
+        );
+
+        if (assignmentExpression) {
+          return resolvePhpEloquentBuilderModelType(
+            source,
+            position,
+            assignmentExpression,
+            depth + 1,
+          );
+        }
+      }
+
+      const methodCall = phpMethodCallExpression(normalizedExpression);
+
+      if (
+        methodCall &&
+        (isLaravelEloquentBuilderFluentMethod(methodCall.methodName) ||
+          isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName))
+      ) {
+        return resolvePhpEloquentBuilderModelType(
+          source,
+          position,
+          methodCall.receiverExpression,
+          depth + 1,
+        );
+      }
+
+      const staticCall = phpStaticCallExpression(normalizedExpression);
+
+      if (
+        staticCall &&
+        (isLaravelEloquentStaticBuilderMethod(staticCall.methodName) ||
+          isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName))
+      ) {
+        return resolvePhpClassReference(source, staticCall.className);
+      }
+
+      return null;
+    },
+    [resolvePhpClassReference],
+  );
+
   const resolvePhpExpressionType = useCallback(
     async (
       source: string,
@@ -2847,6 +2927,32 @@ export function useWorkbenchController(
       const methodCall = phpMethodCallExpression(expression);
 
       if (methodCall) {
+        if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
+          const modelType = await resolvePhpEloquentBuilderModelType(
+            source,
+            position,
+            methodCall.receiverExpression,
+            depth + 1,
+          );
+
+          if (modelType) {
+            return modelType;
+          }
+        }
+
+        if (isLaravelEloquentBuilderFluentMethod(methodCall.methodName)) {
+          const modelType = await resolvePhpEloquentBuilderModelType(
+            source,
+            position,
+            methodCall.receiverExpression,
+            depth + 1,
+          );
+
+          if (modelType) {
+            return "Illuminate\\Database\\Eloquent\\Builder";
+          }
+        }
+
         const receiverType = await resolvePhpExpressionType(
           source,
           position,
@@ -2864,6 +2970,17 @@ export function useWorkbenchController(
       if (staticCall) {
         const className = resolvePhpClassReference(source, staticCall.className);
 
+        if (
+          className &&
+          isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName)
+        ) {
+          return className;
+        }
+
+        if (className && isLaravelEloquentStaticBuilderMethod(staticCall.methodName)) {
+          return "Illuminate\\Database\\Eloquent\\Builder";
+        }
+
         return className
           ? resolvePhpMethodReturnType(className, staticCall.methodName)
           : null;
@@ -2872,6 +2989,7 @@ export function useWorkbenchController(
       return null;
     },
     [
+      resolvePhpEloquentBuilderModelType,
       resolvePhpClassReference,
       resolvePhpMethodReturnType,
     ],
@@ -5326,6 +5444,69 @@ function laravelFacadeTargetClassName(className: string): string | null {
   };
 
   return targets[normalizedClassName] ?? null;
+}
+
+const laravelEloquentStaticBuilderMethods = new Set([
+  "doesnthave",
+  "has",
+  "latest",
+  "oldest",
+  "orderby",
+  "query",
+  "where",
+  "wherebelongsto",
+  "wheredoesnthave",
+  "wherehas",
+  "wherein",
+  "wherenotin",
+  "wherenotnull",
+  "wherenull",
+  "with",
+]);
+
+const laravelEloquentBuilderFluentMethods = new Set([
+  "doesnthave",
+  "has",
+  "latest",
+  "limit",
+  "offset",
+  "oldest",
+  "orderby",
+  "select",
+  "take",
+  "where",
+  "wherebelongsto",
+  "wheredoesnthave",
+  "wherehas",
+  "wherein",
+  "wherenotin",
+  "wherenotnull",
+  "wherenull",
+  "with",
+]);
+
+const laravelEloquentBuilderTerminalModelMethods = new Set([
+  "create",
+  "find",
+  "findorfail",
+  "first",
+  "firstor",
+  "firstorcreate",
+  "firstorfail",
+  "sole",
+  "updateorcreate",
+]);
+
+function isLaravelEloquentStaticBuilderMethod(methodName: string): boolean {
+  return laravelEloquentStaticBuilderMethods.has(methodName.toLowerCase());
+}
+
+function isLaravelEloquentBuilderFluentMethod(methodName: string): boolean {
+  return laravelEloquentBuilderFluentMethods.has(methodName.toLowerCase());
+}
+
+function isLaravelEloquentBuilderTerminalModelMethod(methodName: string): boolean {
+  return laravelEloquentBuilderTerminalModelMethods.has(methodName.toLowerCase());
 }
 
 function indexProgressNoticeGroup(rootPath: string): string {

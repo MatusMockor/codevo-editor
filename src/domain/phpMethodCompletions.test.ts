@@ -55,6 +55,29 @@ class Controller
     });
   });
 
+  it("detects member access completion after fluent calls with arguments", () => {
+    const source = `<?php
+class Controller
+{
+    public function index(): void
+    {
+        $query->whereNull('parent_id')->ord
+    }
+}
+`;
+
+    expect(
+      phpMemberAccessCompletionContextAt(source, {
+        column: 44,
+        lineNumber: 6,
+      }),
+    ).toEqual({
+      prefix: "ord",
+      receiverExpression: "$query->whereNull('parent_id')",
+      variableName: null,
+    });
+  });
+
   it("detects static access completion context", () => {
     expect(
       phpStaticAccessCompletionContextAt("<?php\nCommentFactory::ma", {
@@ -140,6 +163,37 @@ class Request
         name: "make",
         parameters: "",
         returnType: "Comment",
+      },
+    ]);
+  });
+
+  it("extracts PHPDoc magic methods for framework-style OOP APIs", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+/**
+ * @method static \\Illuminate\\Database\\Eloquent\\Builder<static> whereNull(string $column, string $boolean = 'and')
+ * @method \\App\\Models\\Album publish(bool $quietly = false)
+ */
+class Album
+{
+}
+`,
+        "App\\Models\\Album",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "whereNull",
+        parameters: "string $column, string $boolean = 'and'",
+        returnType: "\\Illuminate\\Database\\Eloquent\\Builder<static>",
+      },
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "publish",
+        parameters: "bool $quietly = false",
+        returnType: "\\App\\Models\\Album",
       },
     ]);
   });

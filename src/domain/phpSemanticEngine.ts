@@ -131,8 +131,14 @@ export function phpLaravelContainerExpressionClassName(
 export function phpMethodCallExpression(
   expression: string,
 ): PhpMethodCallExpression | null {
+  const classNamePattern =
+    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+  const baseReceiverPattern =
+    String.raw`(?:new\s+${classNamePattern}\s*\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$this|${classNamePattern}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
   const match =
-    /^((?:new\s+(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*\s*\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(
+    new RegExp(
+      `^(${baseReceiverPattern}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
+    ).exec(
       expression.trim(),
     );
 
@@ -207,6 +213,20 @@ export function phpDocTypeForVariableBefore(
   position: EditorPosition,
   variableName: string,
 ): string | null {
+  const rawTypeName = phpDocRawTypeForVariableBefore(
+    source,
+    position,
+    variableName,
+  );
+
+  return rawTypeName ? phpDeclaredTypeCandidate(rawTypeName) : null;
+}
+
+export function phpDocRawTypeForVariableBefore(
+  source: string,
+  position: EditorPosition,
+  variableName: string,
+): string | null {
   const offset = offsetAtPosition(source, position);
   const before = source.slice(0, offset);
   const pattern = new RegExp(
@@ -218,7 +238,7 @@ export function phpDocTypeForVariableBefore(
   let typeName: string | null = null;
 
   for (const match of before.matchAll(pattern)) {
-    typeName = phpDeclaredTypeCandidate(match[1] ?? "");
+    typeName = match[1]?.trim() || null;
   }
 
   return typeName;
@@ -232,12 +252,19 @@ export function phpDeclaredTypeCandidate(typeName: string): string | null {
     .replace(/^\?/, "")
     .replace(/\[\]$/, "")
     .replace(/^\\+/, "");
-  const candidate = normalized
-    .split(/[|&]/)
-    .map((part) => part.trim().replace(/^\\+/, ""))
+  const candidate = splitPhpTypeUnion(normalized)
+    .map((part) => part.trim().replace(/^\?/, "").replace(/^\\+/, ""))
+    .map((part) => phpTypeBaseCandidate(part) ?? phpTypeGenericCandidate(part))
     .find((part) => part && !isPhpBuiltinType(part));
 
   return candidate ?? null;
+}
+
+export function phpDeclaredGenericTypeCandidates(typeName: string): string[] {
+  return splitPhpTypeUnion(typeName)
+    .flatMap((part) => phpGenericArguments(part))
+    .map((part) => phpDeclaredTypeCandidate(part))
+    .filter((part): part is string => Boolean(part));
 }
 
 function phpPromotedPropertyType(
@@ -519,8 +546,10 @@ function matchingPairOffset(
 }
 
 function isPhpBuiltinType(typeName: string | undefined): boolean {
+  const normalized = typeName?.replace(/^\\+/, "").toLowerCase();
+
   return (
-    !typeName ||
+    !normalized ||
     [
       "array",
       "bool",
@@ -536,8 +565,120 @@ function isPhpBuiltinType(typeName: string | undefined): boolean {
       "string",
       "true",
       "void",
-    ].includes(typeName.toLowerCase())
+    ].includes(normalized)
   );
+}
+
+function splitPhpTypeUnion(typeName: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+
+  for (let index = 0; index < typeName.length; index += 1) {
+    const character = typeName[index] || "";
+
+    if (character === "<" || character === "(" || character === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ">" || character === ")" || character === "]") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if ((character === "|" || character === "&") && depth === 0) {
+      parts.push(typeName.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  parts.push(typeName.slice(start).trim());
+  return parts.filter(Boolean);
+}
+
+function phpTypeBaseCandidate(typeName: string): string | null {
+  const normalized = typeName
+    .trim()
+    .replace(/\[\]$/, "")
+    .replace(/^\\+/, "");
+  const genericStart = normalized.indexOf("<");
+  const base = genericStart >= 0 ? normalized.slice(0, genericStart) : normalized;
+
+  if (!base || isPhpBuiltinType(base)) {
+    return null;
+  }
+
+  return base;
+}
+
+function phpTypeGenericCandidate(typeName: string): string | null {
+  return phpGenericArguments(typeName)
+    .map((argument) => phpDeclaredTypeCandidate(argument))
+    .find((argument): argument is string => Boolean(argument)) ?? null;
+}
+
+function phpGenericArguments(typeName: string): string[] {
+  const start = typeName.indexOf("<");
+
+  if (start < 0) {
+    return [];
+  }
+
+  let depth = 0;
+
+  for (let index = start; index < typeName.length; index += 1) {
+    const character = typeName[index] || "";
+
+    if (character === "<") {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== ">") {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth !== 0) {
+      continue;
+    }
+
+    return splitPhpTypeList(typeName.slice(start + 1, index));
+  }
+
+  return [];
+}
+
+function splitPhpTypeList(typeList: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+
+  for (let index = 0; index < typeList.length; index += 1) {
+    const character = typeList[index] || "";
+
+    if (character === "<" || character === "(" || character === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ">" || character === ")" || character === "]") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character !== "," || depth > 0) {
+      continue;
+    }
+
+    parts.push(typeList.slice(start, index).trim());
+    start = index + 1;
+  }
+
+  parts.push(typeList.slice(start).trim());
+  return parts.filter(Boolean);
 }
 
 function offsetAtPosition(source: string, position: EditorPosition): number {

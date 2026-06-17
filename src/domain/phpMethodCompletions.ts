@@ -50,7 +50,7 @@ export function phpMemberAccessCompletionContextAt(
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
   const match =
-    /((?:\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
+    /((?:\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
       lineUntilCursor,
     );
 
@@ -97,7 +97,7 @@ export function phpMethodSignatureContextAt(
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
   const memberMatch =
-    /((?:\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)$/.exec(
+    /((?:\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)$/.exec(
       lineUntilCursor,
     );
 
@@ -155,12 +155,13 @@ export function phpMethodCompletionsFromSource(
 
     const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
     const docBlock = phpDocBlockBefore(source, functionOffset);
+    const parameters = phpFunctionParametersAt(source, functionOffset) ?? match[3] ?? "";
 
     members.push({
       declaringClassName,
       name,
       parameters: enrichParametersFromPhpDoc(
-        normalizeWhitespace(match[3] ?? ""),
+        normalizeWhitespace(parameters),
         docBlock,
       ),
       returnType:
@@ -170,9 +171,37 @@ export function phpMethodCompletionsFromSource(
     });
   }
 
+  members.push(...phpDocMethodCompletionsFromSource(source, declaringClassName));
   members.push(...phpPropertyCompletionsFromSource(source, declaringClassName));
 
   return dedupePhpMembers(members);
+}
+
+function phpDocMethodCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+): PhpMethodCompletion[] {
+  const members: PhpMethodCompletion[] = [];
+
+  for (const match of source.matchAll(
+    /@method\s+(static\s+)?([^\s(]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/g,
+  )) {
+    const name = match[3];
+
+    if (!name) {
+      continue;
+    }
+
+    members.push({
+      declaringClassName,
+      ...(match[1] ? { isStatic: true } : {}),
+      name,
+      parameters: normalizeWhitespace(match[4] ?? ""),
+      returnType: normalizeReturnType(match[2] ?? null),
+    });
+  }
+
+  return members;
 }
 
 function phpPropertyCompletionsFromSource(
@@ -232,6 +261,25 @@ function phpPropertyCompletionsFromSource(
   }
 
   return members;
+}
+
+function phpFunctionParametersAt(
+  source: string,
+  functionOffset: number,
+): string | null {
+  const openOffset = source.indexOf("(", functionOffset);
+
+  if (openOffset < 0) {
+    return null;
+  }
+
+  const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+  if (closeOffset === null) {
+    return null;
+  }
+
+  return source.slice(openOffset + 1, closeOffset);
 }
 
 function dedupePhpMembers(members: PhpMethodCompletion[]): PhpMethodCompletion[] {

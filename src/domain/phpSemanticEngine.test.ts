@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   phpAssignmentExpressionForVariableBefore,
   phpCurrentClassName,
+  phpDeclaredGenericTypeCandidates,
+  phpDeclaredTypeCandidate,
   phpLaravelContainerExpressionClassName,
   phpMethodCallExpression,
   phpMethodReturnExpressions,
@@ -105,10 +107,32 @@ class CommentController
         receiverExpression: "new UserAccountModel()",
       },
     );
+    expect(
+      phpMethodCallExpression("Album::query()->whereNull('parent_id')->first()"),
+    ).toEqual({
+      methodName: "first",
+      receiverExpression: "Album::query()->whereNull('parent_id')",
+    });
     expect(phpStaticCallExpression("CommentFactory::make()")).toEqual({
       className: "CommentFactory",
       methodName: "make",
     });
+  });
+
+  it("normalizes generic PHPDoc type candidates", () => {
+    expect(
+      phpDeclaredTypeCandidate(
+        "\\Illuminate\\Database\\Eloquent\\Builder<\\App\\Models\\Album>",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder");
+    expect(
+      phpDeclaredGenericTypeCandidates(
+        "\\Illuminate\\Database\\Eloquent\\Builder<\\App\\Models\\Album>",
+      ),
+    ).toEqual(["App\\Models\\Album"]);
+    expect(phpDeclaredTypeCandidate("array<int, \\App\\Models\\Album>")).toBe(
+      "App\\Models\\Album",
+    );
   });
 
   it("extracts method return expressions from concrete method bodies", () => {
