@@ -182,8 +182,30 @@ describe("editor preview interactions", () => {
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
   });
 
+  it("does not scroll back to the active file when directories are toggled", () => {
+    const file = fileEntry("/workspace/src/User.php", "User.php", "file");
+
+    renderFileTree({
+      activePath: file.path,
+      file,
+      revealActivePath: true,
+      revealActivePathSignal: 0,
+    });
+    scrollIntoView.mockClear();
+    renderFileTree({
+      activePath: file.path,
+      expandedDirectories: new Set(["/workspace/vendor"]),
+      file,
+      revealActivePath: true,
+      revealActivePathSignal: 0,
+    });
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
   function renderFileTree({
     activePath = null,
+    expandedDirectories = new Set<string>(),
     file,
     onOpenFile = vi.fn(),
     onPreviewFile = vi.fn(),
@@ -192,6 +214,7 @@ describe("editor preview interactions", () => {
     revealActivePathSignal = 0,
   }: {
     activePath?: string | null;
+    expandedDirectories?: Set<string>;
     file: FileEntry;
     onOpenFile?: (entry: FileEntry) => void;
     onPreviewFile?: (entry: FileEntry) => void;
@@ -204,7 +227,7 @@ describe("editor preview interactions", () => {
         <FileTree
           activePath={activePath}
           entriesByDirectory={{ "/workspace": [file] }}
-          expandedDirectories={new Set()}
+          expandedDirectories={expandedDirectories}
           expandedPhpFilePaths={new Set()}
           loadingDirectories={new Set()}
           loadingPhpFileOutlinePaths={new Set()}

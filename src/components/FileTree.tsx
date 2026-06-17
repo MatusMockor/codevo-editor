@@ -49,16 +49,27 @@ export function FileTree({
   onTogglePhpFileOutlineNode,
 }: FileTreeProps) {
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
+  const pendingRevealKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!revealActivePath) {
+    if (!revealActivePath || !activePath) {
+      pendingRevealKeyRef.current = null;
       return;
     }
 
-    activeRowRef.current?.scrollIntoView({
+    pendingRevealKeyRef.current = `${activePath}:${revealActivePathSignal}`;
+  }, [activePath, revealActivePath, revealActivePathSignal]);
+
+  useEffect(() => {
+    if (!pendingRevealKeyRef.current || !activeRowRef.current) {
+      return;
+    }
+
+    activeRowRef.current.scrollIntoView({
       block: "nearest",
     });
-  }, [activePath, expandedDirectories, revealActivePath, revealActivePathSignal]);
+    pendingRevealKeyRef.current = null;
+  });
 
   if (!rootPath) {
     return (
