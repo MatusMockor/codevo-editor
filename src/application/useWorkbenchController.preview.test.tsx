@@ -12,7 +12,10 @@ import {
 } from "./useWorkbenchController";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import type { SmartModeGateway } from "../domain/intelligence";
-import type { LanguageServerGateway } from "../domain/languageServer";
+import type {
+  LanguageServerGateway,
+  LanguageServerPlan,
+} from "../domain/languageServer";
 import type { LanguageServerDiagnosticsGateway } from "../domain/languageServerDiagnostics";
 import type { LanguageServerDocumentSyncGateway } from "../domain/languageServerDocumentSync";
 import type {
@@ -377,6 +380,49 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.indexProgressGateway.startInitialMetadataScan,
     ).toHaveBeenCalledWith("/workspace");
+  });
+
+  it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
+    const languageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["language-server"],
+        executable: "phpactor",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "PHPactor is ready.",
+      provider: "phpactor",
+      status: "ready",
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerPlan,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().intelligenceMode).toBe("fullSmart");
+    expect(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(
+      dependencies.languageServerGateway.planPhpLanguageServer,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledWith(
+      "/workspace",
+    );
   });
 
   it("detects PHP workspace metadata before restoring startup tabs", async () => {
@@ -2145,6 +2191,7 @@ final class FacebookAdapterService extends BaseAdapter
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
+    languageServerPlan,
     languageServerFeaturesGateway,
     projectSymbols = [],
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
@@ -2155,6 +2202,7 @@ final class FacebookAdapterService extends BaseAdapter
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
+    languageServerPlan?: LanguageServerPlan;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     projectSymbols?: ProjectSymbolSearchResult[];
     readTextFile?: (path: string) => Promise<string>;
@@ -2171,6 +2219,7 @@ final class FacebookAdapterService extends BaseAdapter
     const dependencies = createControllerDependencies({
       appSettings,
       gitGateway,
+      languageServerPlan,
       languageServerFeaturesGateway,
       projectSymbols,
       readTextFile,
@@ -2236,6 +2285,7 @@ function WorkbenchHarness({
 function createControllerDependencies({
   appSettings,
   gitGateway,
+  languageServerPlan,
   languageServerFeaturesGateway,
   projectSymbols,
   readTextFile,
@@ -2246,6 +2296,7 @@ function createControllerDependencies({
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   gitGateway?: GitGateway;
+  languageServerPlan?: LanguageServerPlan;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   projectSymbols: ProjectSymbolSearchResult[];
   readTextFile(path: string): Promise<string>;
@@ -2333,13 +2384,16 @@ function createControllerDependencies({
     languageServerFeaturesGateway:
       languageServerFeaturesGateway ?? featuresGateway(),
     languageServerGateway: {
-      planPhpLanguageServer: vi.fn(async () => ({
-        command: null,
-        initializeRequest: null,
-        message: "Language server unavailable in test.",
-        provider: "phpactor" as const,
-        status: "unavailable" as const,
-      })),
+      planPhpLanguageServer: vi.fn(
+        async () =>
+          languageServerPlan ?? {
+            command: null,
+            initializeRequest: null,
+            message: "Language server unavailable in test.",
+            provider: "phpactor" as const,
+            status: "unavailable" as const,
+          },
+      ),
     },
     languageServerRuntimeGateway: {
       getStatus: vi.fn(async () => runtimeStatus),
