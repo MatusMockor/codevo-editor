@@ -106,6 +106,76 @@ describe("contrastRatio", () => {
   });
 });
 
+describe("calm design tokens", () => {
+  const appCss = readFileSync("src/App.css", "utf8");
+
+  it("declares the shared radius, motion and accent tokens in :root", () => {
+    const root = cssBlock(appCss, ":root");
+    for (const token of [
+      "--radius-sm:",
+      "--radius-md:",
+      "--radius-lg:",
+      "--radius-pill:",
+      "--motion-fast:",
+      "--motion-base:",
+      "--ease-standard:",
+      "--shadow-pop:",
+      "--color-accent-soft:",
+      "--focus-ring:",
+    ]) {
+      expect(root).toContain(token);
+    }
+  });
+
+  it("honors reduced motion", () => {
+    expect(appCss).toContain("prefers-reduced-motion: reduce");
+  });
+
+  it("keeps text readable on the rendered accent-soft active tint", () => {
+    const themeSelectors: Array<[string, string]> = [
+      ["dark", ":root"],
+      ["light", '.app-shell[data-theme="light"]'],
+      ["system", '.app-shell[data-theme="system"]'],
+      ["ayuMirage", '.app-shell[data-theme="ayuMirage"]'],
+      ["materialDeepOcean", '.app-shell[data-theme="materialDeepOcean"]'],
+    ];
+
+    for (const [name, selector] of themeSelectors) {
+      const accent = cssVariable(appCss, selector, "--color-accent");
+      const panel = cssVariable(appCss, selector, "--color-panel");
+      // --color-accent-soft: color-mix(in srgb, var(--color-accent) 14%, var(--color-panel))
+      const accentSoft = mixHex(accent, panel, 0.14);
+
+      for (const textKey of ["--color-active-text", "--color-text-strong"]) {
+        const text = cssVariable(appCss, selector, textKey);
+        expect(
+          contrastRatio(text, accentSoft),
+          `${name}: ${textKey} on accent-soft ${accentSoft}`,
+        ).toBeGreaterThanOrEqual(minimumTextContrast);
+      }
+    }
+  });
+});
+
+function mixHex(foreground: string, background: string, weight: number): string {
+  const a = hexChannels(foreground);
+  const b = hexChannels(background);
+  const channel = (index: number) =>
+    Math.round(weight * a[index] + (1 - weight) * b[index]);
+
+  return `#${[channel(0), channel(1), channel(2)]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function hexChannels(value: string): [number, number, number] {
+  return [
+    Number.parseInt(value.slice(1, 3), 16),
+    Number.parseInt(value.slice(3, 5), 16),
+    Number.parseInt(value.slice(5, 7), 16),
+  ];
+}
+
 function expectTerminalThemeContrast(theme: TerminalTheme) {
   for (const key of terminalTextColorKeys) {
     expect(

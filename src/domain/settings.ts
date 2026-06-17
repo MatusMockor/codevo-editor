@@ -9,7 +9,13 @@ export const appThemeOptions = [
 ] as const;
 
 export type AppTheme = (typeof appThemeOptions)[number]["id"];
-export type MonacoAppTheme = "vs" | "vs-dark" | "mockor-ayu-mirage" | "mockor-material-deep-ocean";
+export type MonacoAppTheme =
+  | "vs"
+  | "vs-dark"
+  | "mockor-calm-dark"
+  | "mockor-calm-light"
+  | "mockor-ayu-mirage"
+  | "mockor-material-deep-ocean";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
@@ -219,10 +225,10 @@ export function monacoThemeForAppTheme(
   }
 
   if (resolveAppTheme(theme, prefersLight) === "light") {
-    return "vs";
+    return "mockor-calm-light";
   }
 
-  return "vs-dark";
+  return "mockor-calm-dark";
 }
 
 export function terminalThemeForAppTheme(

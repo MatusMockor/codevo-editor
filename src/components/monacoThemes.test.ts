@@ -19,5 +19,20 @@ describe("registerMonacoAppThemes", () => {
       "mockor-material-deep-ocean",
       expect.objectContaining({ base: "vs-dark" }),
     );
+    expect(defineTheme).toHaveBeenCalledWith(
+      "mockor-calm-dark",
+      expect.objectContaining({
+        base: "vs-dark",
+        colors: expect.objectContaining({
+          "editorSuggestWidget.background": expect.any(String),
+          "editorSuggestWidget.selectedBackground": expect.any(String),
+          "editorSuggestWidget.highlightForeground": expect.any(String),
+        }),
+      }),
+    );
+    expect(defineTheme).toHaveBeenCalledWith(
+      "mockor-calm-light",
+      expect.objectContaining({ base: "vs" }),
+    );
   });
 });

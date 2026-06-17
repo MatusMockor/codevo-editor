@@ -400,13 +400,10 @@ function App() {
             onClick={workbench.toggleSmartMode}
             type="button"
           >
+            <span>IDE Mode</span>
             <span className="switch-track" aria-hidden="true">
               <span className="switch-thumb" />
             </span>
-            <span>IDE Mode</span>
-            <strong>
-              {workbench.intelligenceMode === "fullSmart" ? "On" : "Off"}
-            </strong>
           </button>
           <span className="toolbar-status">
             {smartModeSummary(
@@ -444,10 +441,10 @@ function App() {
             }
             type="button"
           >
-            Auto Save
-            <strong>
-              {workbench.workspaceSettings.autoSave ? "On" : "Off"}
-            </strong>
+            <span>Auto Save</span>
+            <span className="switch-track" aria-hidden="true">
+              <span className="switch-thumb" />
+            </span>
           </button>
         </header>
         <EditorTabs

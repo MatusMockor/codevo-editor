@@ -187,10 +187,10 @@ describe("settings ignore pattern text", () => {
 
 describe("monacoThemeForAppTheme", () => {
   it("maps light theme to Monaco light and keeps dark themes dark", () => {
-    expect(monacoThemeForAppTheme("light")).toBe("vs");
-    expect(monacoThemeForAppTheme("dark")).toBe("vs-dark");
-    expect(monacoThemeForAppTheme("system")).toBe("vs-dark");
-    expect(monacoThemeForAppTheme("system", true)).toBe("vs");
+    expect(monacoThemeForAppTheme("light")).toBe("mockor-calm-light");
+    expect(monacoThemeForAppTheme("dark")).toBe("mockor-calm-dark");
+    expect(monacoThemeForAppTheme("system")).toBe("mockor-calm-dark");
+    expect(monacoThemeForAppTheme("system", true)).toBe("mockor-calm-light");
     expect(monacoThemeForAppTheme("ayuMirage")).toBe("mockor-ayu-mirage");
     expect(monacoThemeForAppTheme("materialDeepOcean")).toBe(
       "mockor-material-deep-ocean",

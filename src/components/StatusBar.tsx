@@ -30,7 +30,7 @@ export function StatusBar({
       {indexLabel ? <span>{indexLabel}</span> : null}
       {languageServerLabel ? <span>{languageServerLabel}</span> : null}
       {workspaceTrustLabel ? <span>{workspaceTrustLabel}</span> : null}
-      <span>{formatMode(intelligenceMode)}</span>
+      <span className="status-mode">{formatMode(intelligenceMode)}</span>
       {activeLanguage ? <span>{activeLanguage}</span> : null}
       {dirtyCount > 0 ? <span>{dirtyCount} unsaved</span> : null}
       {message ? <span className="status-message">{message}</span> : null}
