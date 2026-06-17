@@ -190,7 +190,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activePath).toBe(file.path);
   });
 
-  it("switches between persisted project tabs and stops the active language server", async () => {
+  it("switches between persisted project tabs without stopping another project runtime", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -211,7 +211,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalled();
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalled();
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().workspaceTabs).toEqual([
       "/workspace-a",
@@ -241,6 +241,9 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
     expect(getWorkbench().workspaceTabs).toEqual(["/workspace-a"]);
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-b",
+    );
     expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
       expect.objectContaining({
         recentWorkspacePath: "/workspace-a",
@@ -264,7 +267,9 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalled();
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace",
+    );
     expect(getWorkbench().workspaceRoot).toBeNull();
     expect(getWorkbench().workspaceTabs).toEqual([]);
     expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
@@ -399,23 +404,24 @@ describe("useWorkbenchController preview tabs", () => {
       sessionId: 1,
     };
     const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
       runtimeStatus: runningStatus,
     });
     const previewFile = fileEntry("/workspace/src/Preview.php", "Preview.php");
 
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushAsyncTurns();
     await act(async () => {
       await getWorkbench().previewFile(previewFile);
     });
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flushAsyncTurns();
 
     expect(
       dependencies.documentSyncGateway.didOpen,
     ).toHaveBeenCalledWith(
+      "/workspace",
       expect.objectContaining({ path: previewFile.path }),
     );
   });
@@ -575,7 +581,9 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.indexProgressGateway.startInitialMetadataScan,
     ).toHaveBeenCalledWith("/workspace");
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalled();
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace",
+    );
     expect(
       dependencies.indexProgressGateway.clearWorkspaceIndex,
     ).toHaveBeenCalledWith("/workspace");
@@ -2397,7 +2405,7 @@ interface SearchRepository
       });
     });
 
-    expect(implementation).toHaveBeenCalledWith({
+    expect(implementation).toHaveBeenCalledWith("/workspace", {
       character: 20,
       line: 4,
       path: interfacePath,

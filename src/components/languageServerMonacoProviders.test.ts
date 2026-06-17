@@ -72,11 +72,14 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(flushPendingDocumentChange).toHaveBeenCalledWith(
       "/project/src/User.php",
     );
-    expect(gateway.hover).toHaveBeenCalledWith({
-      character: 4,
-      line: 10,
-      path: "/project/src/User.php",
-    });
+    expect(gateway.hover).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 4,
+        line: 10,
+        path: "/project/src/User.php",
+      },
+    );
   });
 
   it("maps completion responses to Monaco suggestions", async () => {
@@ -131,11 +134,14 @@ describe("registerLanguageServerMonacoProviders", () => {
         },
       ],
     });
-    expect(gateway.completion).toHaveBeenCalledWith({
-      character: 4,
-      line: 10,
-      path: "/project/src/User.php",
-    });
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 4,
+        line: 10,
+        path: "/project/src/User.php",
+      },
+    );
   });
 
   it("inserts parentheses and parameter cursor for LSP method completions with parameters", async () => {
@@ -739,6 +745,7 @@ function providerContext(
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: () => activeDocument,
     getRuntimeStatus: () => runtimeStatus,
+    getWorkspaceRoot: () => "/project",
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
     reportError: vi.fn(),

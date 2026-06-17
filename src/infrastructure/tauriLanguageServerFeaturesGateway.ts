@@ -47,31 +47,39 @@ export class TauriLanguageServerFeaturesGateway
   ) {}
 
   hover(
+    rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerHover | null> {
-    return this.invokeWhenAvailable(this.commands.hover, { position }, null);
+    return this.invokeWhenAvailable(this.commands.hover, { position, rootPath }, null);
   }
 
   completion(
+    rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerCompletionList> {
     return this.invokeWhenAvailable(
       this.commands.completion,
-      { position },
+      { position, rootPath },
       emptyLanguageServerCompletionList(),
     );
   }
 
   definition(
+    rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(this.commands.definition, { position }, []);
+    return this.invokeWhenAvailable(this.commands.definition, { position, rootPath }, []);
   }
 
   implementation(
+    rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(this.commands.implementation, { position }, []);
+    return this.invokeWhenAvailable(
+      this.commands.implementation,
+      { position, rootPath },
+      [],
+    );
   }
 
   private async invokeWhenAvailable<T>(

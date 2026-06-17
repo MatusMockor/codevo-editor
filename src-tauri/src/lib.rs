@@ -58,8 +58,8 @@ use lsp_features::{
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
-    JavaScriptTypeScriptLanguageServerSupervisor, LanguageServerRuntimeStatus,
-    PhpLanguageServerSupervisor, StatusSink,
+    JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRuntimeStatus,
+    PhpLanguageServerRegistry, StatusSink,
 };
 use php_file_outline::{
     build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
@@ -121,12 +121,12 @@ fn quit_application(app: AppHandle) {
 }
 
 fn shutdown_runtime_processes(app: &AppHandle) {
-    if let Some(supervisor) = app.try_state::<PhpLanguageServerSupervisor>() {
-        let _ = supervisor.stop();
+    if let Some(registry) = app.try_state::<PhpLanguageServerRegistry>() {
+        let _ = registry.stop_all();
     }
 
-    if let Some(supervisor) = app.try_state::<JavaScriptTypeScriptLanguageServerSupervisor>() {
-        let _ = supervisor.stop();
+    if let Some(registry) = app.try_state::<JavaScriptTypeScriptLanguageServerRegistry>() {
+        let _ = registry.stop_all();
     }
 
     if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
@@ -678,16 +678,18 @@ fn set_workspace_trust(
 
 #[tauri::command]
 fn get_php_language_server_status(
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    root_path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
-    Ok(supervisor.status())
+    Ok(registry.status(&root_path))
 }
 
 #[tauri::command]
 fn get_javascript_typescript_language_server_status(
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    root_path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
-    Ok(supervisor.status())
+    Ok(registry.status(&root_path))
 }
 
 #[tauri::command]
@@ -695,7 +697,7 @@ fn start_php_language_server(
     root_path: String,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     let plan = build_php_language_server_plan(&root_path, &trust)?;
 
@@ -711,17 +713,18 @@ fn start_php_language_server(
         .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
     #[cfg(unix)]
     if !matches!(
-        supervisor.status(),
+        registry.status(&root_path),
         LanguageServerRuntimeStatus::Starting { .. } | LanguageServerRuntimeStatus::Running { .. }
     ) {
         cleanup_orphaned_managed_phpactor_processes(&command);
     }
 
-    let event_sink = Arc::new(AppHandleEventSink::new(app));
+    let event_sink = Arc::new(AppHandleEventSink::for_workspace(app, root_path.clone()));
     let status_sink: Arc<dyn StatusSink> = event_sink.clone();
     let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink;
 
-    supervisor.start(
+    registry.start(
+        &root_path,
         &command,
         &initialize_request,
         &ChildServerProcessSpawner,
@@ -734,7 +737,7 @@ fn start_php_language_server(
 fn start_javascript_typescript_language_server(
     root_path: String,
     app: AppHandle,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     let plan = build_javascript_typescript_language_server_plan(&root_path)?;
 
@@ -748,11 +751,15 @@ fn start_javascript_typescript_language_server(
     let initialize_request: JsonRpcRequest = plan
         .initialize_request
         .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
-    let event_sink = Arc::new(AppHandleEventSink::javascript_typescript(app));
+    let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
+        app,
+        root_path.clone(),
+    ));
     let status_sink: Arc<dyn StatusSink> = event_sink.clone();
     let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink;
 
-    supervisor.start(
+    registry.start(
+        &root_path,
         &command,
         &initialize_request,
         &ChildServerProcessSpawner,
@@ -763,16 +770,32 @@ fn start_javascript_typescript_language_server(
 
 #[tauri::command]
 fn stop_php_language_server(
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    root_path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
-    Ok(supervisor.stop())
+    Ok(registry.stop(&root_path))
 }
 
 #[tauri::command]
 fn stop_javascript_typescript_language_server(
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    root_path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
-    Ok(supervisor.stop())
+    Ok(registry.stop(&root_path))
+}
+
+#[tauri::command]
+fn stop_all_php_language_servers(
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<LanguageServerRuntimeStatus, String> {
+    Ok(registry.stop_all())
+}
+
+#[tauri::command]
+fn stop_all_javascript_typescript_language_servers(
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<LanguageServerRuntimeStatus, String> {
+    Ok(registry.stop_all())
 }
 
 #[tauri::command]
@@ -835,85 +858,109 @@ fn stop_terminal_session(
 }
 
 #[tauri::command]
+fn stop_terminal_sessions_for_root(
+    root_path: String,
+    supervisor: State<'_, TerminalSupervisor>,
+) -> Result<(), String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    supervisor.stop_root(&root)
+}
+
+#[tauri::command]
+fn stop_all_terminal_sessions(supervisor: State<'_, TerminalSupervisor>) -> Result<(), String> {
+    supervisor.stop_all();
+    Ok(())
+}
+
+#[tauri::command]
 fn text_document_did_open(
+    root_path: String,
     document: TextDocumentContent,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
-    supervisor.send_notification(&factory.did_open(&document))
+    registry.send_notification(&root_path, &factory.did_open(&document))
 }
 
 #[tauri::command]
 fn text_document_did_change(
+    root_path: String,
     document: TextDocumentContent,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
-    supervisor.send_notification(&factory.did_change(&document))
+    registry.send_notification(&root_path, &factory.did_change(&document))
 }
 
 #[tauri::command]
 fn text_document_did_save(
+    root_path: String,
     document: TextDocumentContent,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
-    supervisor.send_notification(&factory.did_save(&document))
+    registry.send_notification(&root_path, &factory.did_save(&document))
 }
 
 #[tauri::command]
 fn text_document_did_close(
+    root_path: String,
     document: TextDocumentPath,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
-    supervisor.send_notification(&factory.did_close(&document))
+    registry.send_notification(&root_path, &factory.did_close(&document))
 }
 
 #[tauri::command]
 fn javascript_typescript_document_did_open(
+    root_path: String,
     document: TextDocumentContent,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
-    supervisor.send_notification(&factory.did_open(&document))
+    registry.send_notification(&root_path, &factory.did_open(&document))
 }
 
 #[tauri::command]
 fn javascript_typescript_document_did_change(
+    root_path: String,
     document: TextDocumentContent,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
-    supervisor.send_notification(&factory.did_change(&document))
+    registry.send_notification(&root_path, &factory.did_change(&document))
 }
 
 #[tauri::command]
 fn javascript_typescript_document_did_save(
+    root_path: String,
     document: TextDocumentContent,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
-    supervisor.send_notification(&factory.did_save(&document))
+    registry.send_notification(&root_path, &factory.did_save(&document))
 }
 
 #[tauri::command]
 fn javascript_typescript_document_did_close(
+    root_path: String,
     document: TextDocumentPath,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentSyncNotificationFactory;
-    supervisor.send_notification(&factory.did_close(&document))
+    registry.send_notification(&root_path, &factory.did_close(&document))
 }
 
 #[tauri::command]
 fn text_document_hover(
+    root_path: String,
     position: TextDocumentPosition,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerHover>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
-    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(None);
     };
 
@@ -922,12 +969,13 @@ fn text_document_hover(
 
 #[tauri::command]
 fn javascript_typescript_text_document_hover(
+    root_path: String,
     position: TextDocumentPosition,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerHover>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
-    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(None);
     };
 
@@ -936,12 +984,13 @@ fn javascript_typescript_text_document_hover(
 
 #[tauri::command]
 fn text_document_completion(
+    root_path: String,
     position: TextDocumentPosition,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionList, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&position);
-    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(LanguageServerCompletionList {
             is_incomplete: false,
             items: Vec::new(),
@@ -953,12 +1002,13 @@ fn text_document_completion(
 
 #[tauri::command]
 fn javascript_typescript_text_document_completion(
+    root_path: String,
     position: TextDocumentPosition,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionList, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&position);
-    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(LanguageServerCompletionList {
             is_incomplete: false,
             items: Vec::new(),
@@ -970,12 +1020,13 @@ fn javascript_typescript_text_document_completion(
 
 #[tauri::command]
 fn text_document_definition(
+    root_path: String,
     position: TextDocumentPosition,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
-    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(Vec::new());
     };
 
@@ -984,12 +1035,13 @@ fn text_document_definition(
 
 #[tauri::command]
 fn javascript_typescript_text_document_definition(
+    root_path: String,
     position: TextDocumentPosition,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
-    let Some(result) = supervisor.send_request(&request.method, request.params)? else {
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(Vec::new());
     };
 
@@ -998,12 +1050,13 @@ fn javascript_typescript_text_document_definition(
 
 #[tauri::command]
 fn text_document_implementation(
+    root_path: String,
     position: TextDocumentPosition,
-    supervisor: State<'_, PhpLanguageServerSupervisor>,
+    registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.implementation(&position);
-    let result = match supervisor.send_request(&request.method, request.params)? {
+    let result = match registry.send_request(&root_path, &request.method, request.params)? {
         Some(result) => result,
         None => return Ok(Vec::new()),
     };
@@ -1013,12 +1066,13 @@ fn text_document_implementation(
 
 #[tauri::command]
 fn javascript_typescript_text_document_implementation(
+    root_path: String,
     position: TextDocumentPosition,
-    supervisor: State<'_, JavaScriptTypeScriptLanguageServerSupervisor>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.implementation(&position);
-    let result = match supervisor.send_request(&request.method, request.params)? {
+    let result = match registry.send_request(&root_path, &request.method, request.params)? {
         Some(result) => result,
         None => return Ok(Vec::new()),
     };
@@ -1162,8 +1216,8 @@ pub fn run() {
             _ => {}
         })
         .manage(Mutex::new(SmartModeService::new()))
-        .manage(PhpLanguageServerSupervisor::new())
-        .manage(JavaScriptTypeScriptLanguageServerSupervisor::new())
+        .manage(PhpLanguageServerRegistry::new())
+        .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
         .manage(TerminalSupervisor::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -1210,9 +1264,13 @@ pub fn run() {
             start_workspace_reindex,
             start_php_language_server,
             start_terminal_session,
+            stop_all_javascript_typescript_language_servers,
+            stop_all_php_language_servers,
+            stop_all_terminal_sessions,
             stop_javascript_typescript_language_server,
             stop_php_language_server,
             stop_terminal_session,
+            stop_terminal_sessions_for_root,
             javascript_typescript_document_did_change,
             javascript_typescript_document_did_close,
             javascript_typescript_document_did_open,

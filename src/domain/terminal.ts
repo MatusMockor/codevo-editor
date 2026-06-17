@@ -38,6 +38,8 @@ export interface TerminalGateway {
     profileId?: string,
   ): Promise<TerminalRuntimeStatus>;
   stop(sessionId: number): Promise<TerminalRuntimeStatus>;
+  stopRoot(rootPath: string): Promise<void>;
+  stopAll(): Promise<void>;
   subscribeOutput(
     listener: (event: TerminalOutputEvent) => void,
   ): Promise<TerminalUnsubscribeFn>;

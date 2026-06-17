@@ -120,6 +120,8 @@ function terminalHarness(overrides: Partial<{ rootPath: string | null }> = {}) {
       kind: "stopped" as const,
       sessionId,
     })),
+    stopAll: vi.fn(async () => undefined),
+    stopRoot: vi.fn(async () => undefined),
     subscribeOutput: vi.fn(async (listener) => {
       outputListener = listener;
       return unsubscribeOutput;

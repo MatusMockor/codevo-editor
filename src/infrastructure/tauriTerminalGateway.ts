@@ -93,6 +93,24 @@ export class TauriTerminalGateway implements TerminalGateway {
     }) as Promise<TerminalRuntimeStatus>;
   }
 
+  stopRoot(rootPath: string): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve();
+    }
+
+    return this.invokeCommand("stop_terminal_sessions_for_root", {
+      rootPath,
+    }) as Promise<void>;
+  }
+
+  stopAll(): Promise<void> {
+    if (!this.isRuntimeAvailable()) {
+      return Promise.resolve();
+    }
+
+    return this.invokeCommand("stop_all_terminal_sessions") as Promise<void>;
+  }
+
   subscribeOutput(
     listener: (event: TerminalOutputEvent) => void,
   ): Promise<TerminalUnsubscribeFn> {

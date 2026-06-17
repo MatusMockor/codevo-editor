@@ -611,6 +611,7 @@ function App() {
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
             providePhpMethodSignature={workbench.providePhpMethodSignature}
+            workspaceRoot={workbench.workspaceRoot}
           />
         )}
         {workbench.bottomPanelVisible ? (

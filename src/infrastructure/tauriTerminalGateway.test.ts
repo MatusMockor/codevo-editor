@@ -30,6 +30,8 @@ describe("TauriTerminalGateway", () => {
       kind: "stopped",
       sessionId: 1,
     });
+    await expect(gateway.stopRoot("/workspace")).resolves.toBeUndefined();
+    await expect(gateway.stopAll()).resolves.toBeUndefined();
 
     const unsubscribe = await gateway.subscribeOutput(vi.fn());
     unsubscribe();
@@ -61,7 +63,9 @@ describe("TauriTerminalGateway", () => {
 
       if (
         command === "write_terminal_input" ||
-        command === "resize_terminal_session"
+        command === "resize_terminal_session" ||
+        command === "stop_terminal_sessions_for_root" ||
+        command === "stop_all_terminal_sessions"
       ) {
         return undefined;
       }
@@ -88,6 +92,8 @@ describe("TauriTerminalGateway", () => {
       gateway.resize(7, { cols: 120, rows: 40 }),
     ).resolves.toBeUndefined();
     await expect(gateway.stop(7)).resolves.toEqual(running);
+    await expect(gateway.stopRoot("/workspace")).resolves.toBeUndefined();
+    await expect(gateway.stopAll()).resolves.toBeUndefined();
     await gateway.subscribeOutput(listener);
 
     expect(invokeCommand).toHaveBeenCalledWith("list_terminal_profiles");
@@ -107,6 +113,13 @@ describe("TauriTerminalGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith("stop_terminal_session", {
       sessionId: 7,
     });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "stop_terminal_sessions_for_root",
+      {
+        rootPath: "/workspace",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith("stop_all_terminal_sessions");
     expect(listenToEvent).toHaveBeenCalledWith(
       "terminal://output",
       expect.any(Function),

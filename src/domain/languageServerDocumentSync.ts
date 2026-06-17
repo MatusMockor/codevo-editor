@@ -8,10 +8,10 @@ export interface LanguageServerTextDocument {
 }
 
 export interface LanguageServerDocumentSyncGateway {
-  didOpen(document: LanguageServerTextDocument): Promise<void>;
-  didChange(document: LanguageServerTextDocument): Promise<void>;
-  didSave(document: LanguageServerTextDocument): Promise<void>;
-  didClose(path: string): Promise<void>;
+  didOpen(rootPath: string, document: LanguageServerTextDocument): Promise<void>;
+  didChange(rootPath: string, document: LanguageServerTextDocument): Promise<void>;
+  didSave(rootPath: string, document: LanguageServerTextDocument): Promise<void>;
+  didClose(rootPath: string, path: string): Promise<void>;
 }
 
 export function isLanguageServerDocument(document: EditorDocument): boolean {

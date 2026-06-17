@@ -15,13 +15,13 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       () => false,
     );
 
-    await expect(gateway.hover(position())).resolves.toBeNull();
-    await expect(gateway.completion(position())).resolves.toEqual({
+    await expect(gateway.hover("/project", position())).resolves.toBeNull();
+    await expect(gateway.completion("/project", position())).resolves.toEqual({
       isIncomplete: false,
       items: [],
     });
-    await expect(gateway.definition(position())).resolves.toEqual([]);
-    await expect(gateway.implementation(position())).resolves.toEqual([]);
+    await expect(gateway.definition("/project", position())).resolves.toEqual([]);
+    await expect(gateway.implementation("/project", position())).resolves.toEqual([]);
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
@@ -65,23 +65,27 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     );
     const requestPosition = position();
 
-    await expect(gateway.hover(requestPosition)).resolves.toEqual(hover);
-    await expect(gateway.completion(requestPosition)).resolves.toEqual(completion);
-    await expect(gateway.definition(requestPosition)).resolves.toEqual(definition);
-    await expect(gateway.implementation(requestPosition)).resolves.toEqual(
+    await expect(gateway.hover("/project", requestPosition)).resolves.toEqual(hover);
+    await expect(gateway.completion("/project", requestPosition)).resolves.toEqual(completion);
+    await expect(gateway.definition("/project", requestPosition)).resolves.toEqual(definition);
+    await expect(gateway.implementation("/project", requestPosition)).resolves.toEqual(
       definition,
     );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_hover", {
       position: requestPosition,
+      rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_completion", {
       position: requestPosition,
+      rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_definition", {
       position: requestPosition,
+      rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_implementation", {
       position: requestPosition,
+      rootPath: "/project",
     });
   });
 });

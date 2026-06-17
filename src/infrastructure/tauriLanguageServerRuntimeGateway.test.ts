@@ -18,8 +18,10 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       () => false,
     );
 
-    await expect(gateway.getStatus()).resolves.toEqual({ kind: "stopped" });
-    await expect(gateway.stop()).resolves.toEqual({ kind: "stopped" });
+    await expect(gateway.getStatus("/workspace")).resolves.toEqual({
+      kind: "stopped",
+    });
+    await expect(gateway.stop("/workspace")).resolves.toEqual({ kind: "stopped" });
     await expect(gateway.start("/workspace")).resolves.toEqual({
       kind: "crashed",
       message: "Language server requires the Tauri desktop runtime.",
@@ -55,16 +57,20 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       () => true,
     );
 
-    await expect(gateway.getStatus()).resolves.toEqual(running);
+    await expect(gateway.getStatus("/workspace")).resolves.toEqual(running);
     await expect(gateway.start("/workspace")).resolves.toEqual(running);
-    await expect(gateway.stop()).resolves.toEqual(running);
+    await expect(gateway.stop("/workspace")).resolves.toEqual(running);
     await gateway.subscribeStatus(listener);
 
-    expect(invokeCommand).toHaveBeenCalledWith("get_php_language_server_status");
+    expect(invokeCommand).toHaveBeenCalledWith("get_php_language_server_status", {
+      rootPath: "/workspace",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("start_php_language_server", {
       rootPath: "/workspace",
     });
-    expect(invokeCommand).toHaveBeenCalledWith("stop_php_language_server");
+    expect(invokeCommand).toHaveBeenCalledWith("stop_php_language_server", {
+      rootPath: "/workspace",
+    });
     expect(listenToEvent).toHaveBeenCalledWith(
       "language-server://status",
       expect.any(Function),

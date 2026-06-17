@@ -154,6 +154,8 @@ function terminalGateway(): TerminalGateway {
       kind: "stopped" as const,
       sessionId,
     })),
+    stopAll: vi.fn(async () => undefined),
+    stopRoot: vi.fn(async () => undefined),
     subscribeOutput: vi.fn(async () => () => undefined),
     writeInput: vi.fn(async () => undefined),
   };

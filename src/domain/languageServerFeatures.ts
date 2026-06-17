@@ -52,15 +52,19 @@ export interface LanguageServerLocation {
 
 export interface LanguageServerFeaturesGateway {
   hover(
+    rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerHover | null>;
   completion(
+    rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerCompletionList>;
   definition(
+    rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
   implementation(
+    rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
 }

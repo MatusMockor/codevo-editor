@@ -59,6 +59,7 @@ interface EditorSurfaceProps {
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
+  workspaceRoot?: string | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
   onGoBack(): void;
@@ -97,6 +98,7 @@ export function EditorSurface({
   javaScriptTypeScriptLanguageServerRuntimeStatus = null,
   keymap,
   monacoTheme,
+  workspaceRoot = null,
   onCloseActiveTab,
   onCursorPositionChange,
   onGoBack,
@@ -210,6 +212,7 @@ export function EditorSurface({
       flushPendingDocumentChange: (path) => flushPendingRef.current(path),
       getActiveDocument: () => activeDocumentRef.current,
       getRuntimeStatus: () => runtimeStatusRef.current,
+      getWorkspaceRoot: () => workspaceRoot,
       providePhpMethodCompletions: (source, position) =>
         phpMethodCompletionsRef.current(source, position),
       providePhpMethodSignature: (source, position) =>
@@ -218,7 +221,7 @@ export function EditorSurface({
     });
 
     return () => disposable.dispose();
-  }, [languageServerFeaturesGateway, monacoApi]);
+  }, [languageServerFeaturesGateway, monacoApi, workspaceRoot]);
 
   useEffect(() => {
     if (!monacoApi) {
@@ -233,12 +236,13 @@ export function EditorSurface({
           flushPendingJavaScriptTypeScriptRef.current(path),
         getActiveDocument: () => activeDocumentRef.current,
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
+        getWorkspaceRoot: () => workspaceRoot,
         reportError: (error) => errorReporterRef.current(error),
       },
     );
 
     return () => disposable.dispose();
-  }, [javaScriptTypeScriptLanguageServerFeaturesGateway, monacoApi]);
+  }, [javaScriptTypeScriptLanguageServerFeaturesGateway, monacoApi, workspaceRoot]);
 
   const handleMount: OnMount = (_editor, monaco) => {
     setEditorApi(_editor);

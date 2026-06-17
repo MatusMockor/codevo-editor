@@ -6,21 +6,22 @@ export interface LanguageServerCapabilities {
 }
 
 export type LanguageServerRuntimeStatus =
-  | { kind: "starting"; sessionId: number }
+  | { kind: "starting"; rootPath?: string; sessionId: number }
   | {
       kind: "running";
+      rootPath?: string;
       sessionId: number;
       capabilities: LanguageServerCapabilities;
     }
-  | { kind: "stopped" }
-  | { kind: "crashed"; message: string };
+  | { kind: "stopped"; rootPath?: string }
+  | { kind: "crashed"; message: string; rootPath?: string };
 
 export type UnsubscribeFn = () => void;
 
 export interface LanguageServerRuntimeGateway {
-  getStatus(): Promise<LanguageServerRuntimeStatus>;
+  getStatus(rootPath: string): Promise<LanguageServerRuntimeStatus>;
   start(rootPath: string): Promise<LanguageServerRuntimeStatus>;
-  stop(): Promise<LanguageServerRuntimeStatus>;
+  stop(rootPath: string): Promise<LanguageServerRuntimeStatus>;
   subscribeStatus(
     listener: (status: LanguageServerRuntimeStatus) => void,
   ): Promise<UnsubscribeFn>;

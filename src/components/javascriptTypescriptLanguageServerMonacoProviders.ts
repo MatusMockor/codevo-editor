@@ -19,6 +19,7 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+  getWorkspaceRoot?(): string | null;
   reportError(error: unknown): void;
 }
 
@@ -90,7 +91,10 @@ async function provideHover(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const hover = await context.featuresGateway.hover(request.position);
+    const hover = await context.featuresGateway.hover(
+      request.rootPath,
+      request.position,
+    );
 
     return hover ? { contents: [{ value: hover.contents }] } : null;
   } catch (error) {
@@ -113,7 +117,10 @@ async function provideCompletionItems(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const completion = await context.featuresGateway.completion(request.position);
+    const completion = await context.featuresGateway.completion(
+      request.rootPath,
+      request.position,
+    );
     const word = model.getWordUntilPosition(position);
     const range = {
       endColumn: word.endColumn,
@@ -162,7 +169,10 @@ async function provideDefinition(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const locations = await context.featuresGateway.definition(request.position);
+    const locations = await context.featuresGateway.definition(
+      request.rootPath,
+      request.position,
+    );
 
     return toMonacoLocations(monaco, locations);
   } catch (error) {
@@ -191,6 +201,7 @@ async function provideImplementation(
   try {
     await context.flushPendingDocumentChange(request.path);
     const locations = await context.featuresGateway.implementation(
+      request.rootPath,
       request.position,
     );
 
@@ -217,8 +228,10 @@ function featureRequestContext(
   }
 
   const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
 
   if (
+    !rootPath ||
     !activeDocument ||
     !isJavaScriptTypeScriptDocument(activeDocument) ||
     modelPath(model) !== activeDocument.path
@@ -232,6 +245,7 @@ function featureRequestContext(
       column: position.column,
       lineNumber: position.lineNumber,
     }),
+    rootPath,
   };
 }
 
