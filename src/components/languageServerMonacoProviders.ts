@@ -237,15 +237,24 @@ async function provideCompletionItems(
   try {
     await context.flushPendingDocumentChange(request.path);
     const completion = await context.featuresGateway.completion(request.position);
-    const lspSuggestions = completion.items.map((item, index) => ({
-      detail: item.detail || undefined,
-      documentation: item.documentation || undefined,
-      insertText: item.insertText || item.label,
-      kind: monacoCompletionKindFromLspKind(monaco, item.kind),
-      label: item.label,
-      range,
-      sortText: `1_${String(index).padStart(4, "0")}`,
-    }));
+    const lspSuggestions = completion.items.map((item, index) => {
+      const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
+      const insert = lspCompletionInsert(monaco, item, kind);
+
+      return {
+        detail: item.detail || undefined,
+        documentation: item.documentation || undefined,
+        insertText: insert.insertText,
+        ...(insert.command ? { command: insert.command } : {}),
+        ...(insert.insertTextRules
+          ? { insertTextRules: insert.insertTextRules }
+          : {}),
+        kind,
+        label: item.label,
+        range,
+        sortText: `1_${String(index).padStart(4, "0")}`,
+      };
+    });
 
     return {
       suggestions: dedupeCompletionItems([...suggestions, ...lspSuggestions]),
@@ -416,6 +425,119 @@ function phpParameterLabel(parameter: PhpMethodParameter): string {
     parameter.defaultValue !== null ? ` = ${parameter.defaultValue}` : "";
 
   return `${type}${parameter.name}${defaultValue}`;
+}
+
+function lspCompletionInsert(
+  monaco: MonacoApi,
+  item: {
+    detail: string | null;
+    documentation: string | null;
+    insertText: string | null;
+    label: string;
+  },
+  kind: Monaco.languages.CompletionItemKind,
+): {
+  command?: Monaco.languages.Command;
+  insertText: string;
+  insertTextRules?: Monaco.languages.CompletionItemInsertTextRule;
+} {
+  const insertText = item.insertText || item.label;
+
+  if (containsSnippetPlaceholder(insertText)) {
+    return {
+      insertText,
+      insertTextRules:
+        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    };
+  }
+
+  if (!isCallableCompletionKind(monaco, kind)) {
+    return { insertText };
+  }
+
+  const name =
+    phpCallableCompletionName(item.label) ?? phpCallableCompletionName(insertText);
+
+  if (!name) {
+    return { insertText };
+  }
+
+  const parameterState = lspCompletionParameterState(item, name);
+  const hasParameters = parameterState !== "none";
+
+  return {
+    command: hasParameters
+      ? {
+          id: "editor.action.triggerParameterHints",
+          title: "Trigger parameter hints",
+        }
+      : undefined,
+    insertText: hasParameters ? `${name}($0)` : `${name}()$0`,
+    insertTextRules:
+      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+  };
+}
+
+function containsSnippetPlaceholder(insertText: string): boolean {
+  return /\$(?:\d+|\{)/.test(insertText);
+}
+
+function isCallableCompletionKind(
+  monaco: MonacoApi,
+  kind: Monaco.languages.CompletionItemKind,
+): boolean {
+  return (
+    kind === monaco.languages.CompletionItemKind.Method ||
+    kind === monaco.languages.CompletionItemKind.Function
+  );
+}
+
+function phpCallableCompletionName(value: string): string | null {
+  return /^[A-Za-z_][A-Za-z0-9_]*/.exec(value.trim())?.[0] ?? null;
+}
+
+function lspCompletionParameterState(
+  item: {
+    detail: string | null;
+    documentation: string | null;
+    insertText: string | null;
+    label: string;
+  },
+  name: string,
+): "hasParameters" | "none" | "unknown" {
+  const candidates = [
+    item.label,
+    item.insertText ?? "",
+    item.detail ?? "",
+    item.documentation ?? "",
+  ];
+
+  for (const candidate of candidates) {
+    const state = callableParameterState(candidate, name);
+
+    if (state !== "unknown") {
+      return state;
+    }
+  }
+
+  return "unknown";
+}
+
+function callableParameterState(
+  value: string,
+  name: string,
+): "hasParameters" | "none" | "unknown" {
+  const match = new RegExp(`${escapeRegExp(name)}\\s*\\(([^)]*)\\)`).exec(value);
+
+  if (!match) {
+    return "unknown";
+  }
+
+  return match[1].trim() ? "hasParameters" : "none";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function activePhpDocumentContext(

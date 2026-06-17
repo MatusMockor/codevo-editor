@@ -138,6 +138,117 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("inserts parentheses and parameter cursor for LSP method completions with parameters", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail:
+              "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
+            documentation: null,
+            insertText: "forceDestroy",
+            kind: 2,
+            label: "forceDestroy",
+          },
+        ],
+      },
+    });
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->forceD\n}\n",
+      },
+      featuresGateway: gateway,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    $comment->forceD",
+        word: {
+          endColumn: 21,
+          startColumn: 15,
+        },
+      }),
+      {
+        column: 21,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          command: {
+            id: "editor.action.triggerParameterHints",
+            title: "Trigger parameter hints",
+          },
+          insertText: "forceDestroy($0)",
+          insertTextRules: 4,
+          kind: 2,
+          label: "forceDestroy",
+        }),
+      ]),
+    );
+  });
+
+  it("places the cursor after parentheses for LSP method completions without parameters", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "App\\Models\\Comment::refresh(): App\\Models\\Comment",
+            documentation: null,
+            insertText: "refresh",
+            kind: 2,
+            label: "refresh",
+          },
+        ],
+      },
+    });
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->ref\n}\n",
+      },
+      featuresGateway: gateway,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    $comment->ref",
+        word: {
+          endColumn: 18,
+          startColumn: 15,
+        },
+      }),
+      {
+        column: 18,
+        lineNumber: 4,
+      },
+    );
+    const suggestion = result.suggestions.find(
+      (item: { label: string }) => item.label === "refresh",
+    );
+
+    expect(suggestion).toEqual(
+      expect.objectContaining({
+        insertText: "refresh()$0",
+        insertTextRules: 4,
+        kind: 2,
+        label: "refresh",
+      }),
+    );
+    expect(suggestion).not.toHaveProperty("command");
+  });
+
   it("prioritizes typed PHP receiver method completions for member access", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
