@@ -1,8 +1,10 @@
-# Mockor Editor
+# Codevo Editor
 
-A lightweight Fleet-like desktop code editor built with Tauri, React, TypeScript, Rust, and Monaco.
+Codevo Editor is a lightweight PHP-focused desktop IDE built with Tauri,
+React, TypeScript, Rust, and Monaco.
 
-The project is designed around three intelligence layers:
+The project keeps the basic editing loop fast while layering in deeper project
+intelligence when a workspace needs it:
 
 - Editor Mode: local editing without project index or language-server services.
 - Smart Index: workspace indexing, PHP tree, and indexed symbol navigation.
