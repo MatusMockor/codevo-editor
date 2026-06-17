@@ -21,6 +21,10 @@ export type MonacoAppTheme =
   | "mockor-calm-light"
   | "mockor-ayu-mirage"
   | "mockor-material-deep-ocean";
+export type BackgroundRuntimePolicy =
+  | "keepAlive"
+  | "singleActive"
+  | "suspendOnBackground";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
@@ -28,6 +32,7 @@ export type WorkspaceSessionSidebarView = "files" | "git" | "php";
 export interface AppSettings {
   keymap: KeymapSettings;
   recentWorkspacePath: string | null;
+  runtimePolicy: BackgroundRuntimePolicy;
   theme: AppTheme;
   workspaceTabs: string[];
 }
@@ -79,6 +84,7 @@ export function defaultAppSettings(): AppSettings {
   return {
     keymap: defaultKeymapSettings(),
     recentWorkspacePath: null,
+    runtimePolicy: "keepAlive",
     theme: "dark",
     workspaceTabs: [],
   };
@@ -135,6 +141,9 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     defaults.recentWorkspacePath,
   );
   const keymap = normalizeKeymapSettings(value.keymap);
+  const runtimePolicy = isBackgroundRuntimePolicy(value.runtimePolicy)
+    ? value.runtimePolicy
+    : defaults.runtimePolicy;
   const theme = isAppTheme(value.theme) ? value.theme : defaults.theme;
   const workspaceTabs = normalizeWorkspaceTabs(
     value.workspaceTabs,
@@ -144,6 +153,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   return {
     keymap,
     recentWorkspacePath,
+    runtimePolicy,
     theme,
     workspaceTabs,
   };
@@ -422,6 +432,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isAppTheme(value: unknown): value is AppTheme {
   return appThemeOptions.some((option) => option.id === value);
+}
+
+function isBackgroundRuntimePolicy(
+  value: unknown,
+): value is BackgroundRuntimePolicy {
+  return (
+    value === "keepAlive" ||
+    value === "singleActive" ||
+    value === "suspendOnBackground"
+  );
 }
 
 function isIntelligenceMode(value: unknown): value is IntelligenceMode {

@@ -41,6 +41,7 @@ import {
   defaultWorkspaceSettings,
   type SettingsGateway,
 } from "../domain/settings";
+import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type {
   FileEntry,
@@ -69,6 +70,7 @@ interface ControllerDependencies {
   prompter: WorkbenchPrompter;
   settingsGateway: SettingsGateway;
   smartModeGateway: SmartModeGateway;
+  terminalGateway: TerminalGateway;
   workspaceGateways: WorkbenchWorkspaceGateways;
   workspaceTrustGateway: WorkspaceTrustGateway;
 }
@@ -212,6 +214,10 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.terminalGateway.stopRoot).not.toHaveBeenCalled();
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().workspaceTabs).toEqual([
       "/workspace-a",
@@ -222,6 +228,139 @@ describe("useWorkbenchController preview tabs", () => {
         recentWorkspacePath: "/workspace-b",
         workspaceTabs: ["/workspace-a", "/workspace-b"],
       }),
+    );
+  });
+
+  it("suspends the previous project runtimes when background engines are disabled", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        runtimePolicy: "suspendOnBackground",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+  });
+
+  it("stops every inactive project runtime when only the active project may run IDE services", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        runtimePolicy: "singleActive",
+        workspaceTabs: ["/workspace-a", "/workspace-b", "/workspace-c"],
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-c",
+    );
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace-c",
+    );
+  });
+
+  it("restores cached editor state when switching back to an open project tab", async () => {
+    const readTextFile = vi.fn(async (path: string) => `content:${path}`);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+    });
+    const firstFile = fileEntry("/workspace-a/src/First.php", "First.php");
+    const secondFile = fileEntry("/workspace-b/src/Second.php", "Second.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(firstFile);
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(secondFile);
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().activePath).toBe(firstFile.path);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      firstFile.path,
+    ]);
+    expect(
+      readTextFile.mock.calls.filter(([path]) => path === firstFile.path),
+    ).toHaveLength(1);
+  });
+
+  it("asks before closing an inactive project tab with cached dirty documents", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    const firstFile = fileEntry("/workspace-a/src/Dirty.php", "Dirty.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(firstFile);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("dirty content");
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(false);
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-a");
+    });
+
+    expect(dependencies.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(getWorkbench().workspaceTabs).toEqual([
+      "/workspace-a",
+      "/workspace-b",
+    ]);
+    expect(dependencies.terminalGateway.stopRoot).not.toHaveBeenCalledWith(
+      "/workspace-a",
     );
   });
 
@@ -242,6 +381,12 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
     expect(getWorkbench().workspaceTabs).toEqual(["/workspace-a"]);
     expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-b",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-b");
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
       "/workspace-b",
     );
     expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
@@ -268,6 +413,12 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
       "/workspace",
     );
     expect(getWorkbench().workspaceRoot).toBeNull();
@@ -2678,6 +2829,7 @@ function WorkbenchHarness({
     dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway,
     dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway,
     dependencies.javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+    dependencies.terminalGateway,
     dependencies.settingsGateway,
     dependencies.prompter,
   );
@@ -2865,6 +3017,19 @@ function createControllerDependencies({
         mode,
         status: "ready" as const,
       })),
+    },
+    terminalGateway: {
+      listProfiles: vi.fn(async () => []),
+      resize: vi.fn(async () => undefined),
+      start: vi.fn(async () => ({ kind: "stopped" as const, sessionId: 1 })),
+      stop: vi.fn(async (sessionId) => ({
+        kind: "stopped" as const,
+        sessionId,
+      })),
+      stopAll: vi.fn(async () => undefined),
+      stopRoot: vi.fn(async () => undefined),
+      subscribeOutput: vi.fn(async () => () => undefined),
+      writeInput: vi.fn(async () => undefined),
     },
     workspaceGateways,
     workspaceTrustGateway: {

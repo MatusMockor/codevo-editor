@@ -149,6 +149,7 @@ function App() {
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptLanguageServerDocumentSyncGateway,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+    terminalGateway,
     settingsGateway,
     workbenchPrompter,
   );

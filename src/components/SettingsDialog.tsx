@@ -11,6 +11,7 @@ import {
   settingsIgnorePatternsText,
   type AppSettings,
   type AppTheme,
+  type BackgroundRuntimePolicy,
   type PhpBackendPreference,
   type StatusBarItemVisibility,
   type WorkspaceSettings,
@@ -186,8 +187,15 @@ export function SettingsDialog({
             >
               {activeSection === "general" ? (
                 <GeneralSettings
+                  appSettings={draftAppSettings}
                   draftTrusted={draftTrusted}
                   hasWorkspace={hasWorkspace}
+                  onChangeRuntimePolicy={(runtimePolicy) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      runtimePolicy,
+                    })
+                  }
                   onChangeIntelligenceMode={(intelligenceMode) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -298,6 +306,7 @@ export function SettingsDialog({
 }
 
 interface GeneralSettingsProps {
+  appSettings: AppSettings;
   draftTrusted: boolean;
   hasWorkspace: boolean;
   workspaceRoot: string | null;
@@ -305,6 +314,7 @@ interface GeneralSettingsProps {
   onChangeAutoSave(autoSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeRevealActiveFileInTree(enabled: boolean): void;
+  onChangeRuntimePolicy(policy: BackgroundRuntimePolicy): void;
   onChangeStatusBarVisibility(
     key: keyof StatusBarItemVisibility,
     visible: boolean,
@@ -313,11 +323,13 @@ interface GeneralSettingsProps {
 }
 
 function GeneralSettings({
+  appSettings,
   draftTrusted,
   hasWorkspace,
   onChangeAutoSave,
   onChangeIntelligenceMode,
   onChangeRevealActiveFileInTree,
+  onChangeRuntimePolicy,
   onChangeStatusBarVisibility,
   onChangeTrusted,
   workspaceRoot,
@@ -344,6 +356,22 @@ function GeneralSettings({
           <option value="basic">Editor Mode</option>
           <option value="lightSmart">Smart Index</option>
           <option value="fullSmart">IDE Mode</option>
+        </select>
+      </label>
+
+      <label className="settings-field">
+        <span>Background IDE engines</span>
+        <select
+          onChange={(event) =>
+            onChangeRuntimePolicy(
+              event.currentTarget.value as BackgroundRuntimePolicy,
+            )
+          }
+          value={appSettings.runtimePolicy}
+        >
+          <option value="keepAlive">Keep project engines alive</option>
+          <option value="suspendOnBackground">Suspend background projects</option>
+          <option value="singleActive">Only active project runs IDE</option>
         </select>
       </label>
 
