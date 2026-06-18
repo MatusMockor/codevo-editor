@@ -11,6 +11,7 @@ import {
   phpFunctionReturnsClassStringArgument,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
+  phpLaravelQueryCallbackContextForVariable,
   phpMethodCallExpression,
   phpMethodReturnExpressions,
   phpNewExpressionClassName,
@@ -20,6 +21,23 @@ import {
   phpThisPropertyType,
   phpVariableTypeInSource,
 } from "./phpSemanticEngine";
+
+function positionAfter(source: string, needle: string) {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing test needle: ${needle}`);
+  }
+
+  const before = source.slice(0, offset + needle.length);
+  const lines = before.split("\n");
+  const lastLine = lines[lines.length - 1] ?? "";
+
+  return {
+    column: lastLine.length + 1,
+    lineNumber: lines.length,
+  };
+}
 
 describe("phpSemanticEngine", () => {
   const source = `<?php
@@ -212,6 +230,45 @@ function service(string $className): object {}
         "service",
       ),
     ).toBe(false);
+  });
+
+  it("detects Laravel query callback context for closure variables", () => {
+    const source = `<?php
+use App\\Models\\Album;
+
+Album::query()->whereHas('tracks', function ($query): void {
+    $query->ord
+});
+
+Album::whereHas(relation: 'artist', callback: function ($builder): void {
+    $builder->ord
+});
+`;
+
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$query->ord"),
+        "query",
+      ),
+    ).toEqual({
+      methodName: "whereHas",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: "tracks",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$builder->ord"),
+        "builder",
+      ),
+    ).toEqual({
+      methodName: "whereHas",
+      modelClassName: "Album",
+      receiverExpression: null,
+      relationName: "artist",
+    });
   });
 
   it("extracts Laravel container bindings from service providers", () => {

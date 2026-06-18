@@ -5,6 +5,7 @@ import {
   phpDocClassStringReturnTemplate,
 } from "./phpDocTemplates";
 import {
+  PHP_CLASS_NAME_PATTERN,
   PHP_CLASS_NAME_CAPTURE_PATTERN,
   PHP_EXPRESSION_RECEIVER_PATTERN,
   phpNormalizeReceiverExpression,
@@ -53,6 +54,16 @@ export interface PhpDocGenericInheritance {
   className: string;
   genericTypes: string[];
 }
+
+export interface PhpLaravelQueryCallbackContext {
+  methodName: string;
+  modelClassName: string | null;
+  receiverExpression: string | null;
+  relationName: string | null;
+}
+
+const laravelQueryCallbackMethods =
+  "where|orWhere|whereHas|orWhereHas|withWhereHas|whereDoesntHave|orWhereDoesntHave|with";
 
 export function phpCurrentClassName(source: string): string | null {
   const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
@@ -114,6 +125,66 @@ export function phpVariableTypeInSource(
       phpAssignmentExpressionForVariableBefore(source, position, variableName) ?? "",
     )
   );
+}
+
+export function phpLaravelQueryCallbackContextForVariable(
+  source: string,
+  position: EditorPosition,
+  variableName: string,
+): PhpLaravelQueryCallbackContext | null {
+  const callback = phpClosureCallbackForVariable(source, position, variableName);
+
+  if (!callback) {
+    return null;
+  }
+
+  const methodCallPattern = new RegExp(
+    String.raw`(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*)\s*->\s*(` +
+      laravelQueryCallbackMethods +
+      String.raw`)\s*\(`,
+    "g",
+  );
+  const staticCallPattern = new RegExp(
+    String.raw`(` +
+      PHP_CLASS_NAME_PATTERN +
+      String.raw`)\s*::\s*(` +
+      laravelQueryCallbackMethods +
+      String.raw`)\s*\(`,
+    "g",
+  );
+  const methodCallContext = phpCallbackMethodCallContext(
+    source,
+    callback.startOffset,
+    methodCallPattern,
+  );
+
+  if (methodCallContext) {
+    return {
+      methodName: methodCallContext.methodName,
+      modelClassName: null,
+      receiverExpression: phpNormalizeReceiverExpression(
+        methodCallContext.receiverOrClassName,
+      ),
+      relationName: methodCallContext.relationName,
+    };
+  }
+
+  const staticCallContext = phpCallbackMethodCallContext(
+    source,
+    callback.startOffset,
+    staticCallPattern,
+  );
+
+  if (staticCallContext) {
+    return {
+      methodName: staticCallContext.methodName,
+      modelClassName: staticCallContext.receiverOrClassName.replace(/^\\+/, ""),
+      receiverExpression: null,
+      relationName: staticCallContext.relationName,
+    };
+  }
+
+  return null;
 }
 
 export function phpThisPropertyType(
@@ -717,6 +788,226 @@ function isTopLevelKeywordOffset(source: string, offset: number): boolean {
   }
 
   return depth === 0;
+}
+
+function phpClosureCallbackForVariable(
+  source: string,
+  position: EditorPosition,
+  variableName: string,
+): { startOffset: number } | null {
+  const offset = offsetAtPosition(source, position);
+  const callbackPattern =
+    /\bfunction\s*\(([^)]*)\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{]+)?\{/g;
+
+  for (const match of source.matchAll(callbackPattern)) {
+    const startOffset = match.index ?? 0;
+
+    if (startOffset > offset) {
+      break;
+    }
+
+    if (!phpParameterListHasVariable(match[1] ?? "", variableName)) {
+      continue;
+    }
+
+    const bodyStart = startOffset + (match[0]?.lastIndexOf("{") ?? -1);
+
+    if (bodyStart < startOffset) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
+
+    if (bodyEnd === null || offset <= bodyStart || offset > bodyEnd) {
+      continue;
+    }
+
+    return { startOffset };
+  }
+
+  return null;
+}
+
+function phpParameterListHasVariable(
+  parametersSource: string,
+  variableName: string,
+): boolean {
+  return new RegExp(String.raw`(?:^|[,\s&])\$${escapeRegExp(variableName)}\b`).test(
+    parametersSource,
+  );
+}
+
+function phpCallbackMethodCallContext(
+  source: string,
+  callbackStartOffset: number,
+  pattern: RegExp,
+): {
+  methodName: string;
+  receiverOrClassName: string;
+  relationName: string | null;
+} | null {
+  let context: {
+    methodName: string;
+    receiverOrClassName: string;
+    relationName: string | null;
+    startOffset: number;
+  } | null = null;
+
+  for (const match of source.matchAll(pattern)) {
+    const startOffset = match.index ?? 0;
+
+    if (startOffset > callbackStartOffset) {
+      break;
+    }
+
+    const openOffset = startOffset + (match[0]?.lastIndexOf("(") ?? -1);
+
+    if (openOffset < startOffset) {
+      continue;
+    }
+
+    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+    if (
+      closeOffset === null ||
+      callbackStartOffset <= openOffset ||
+      callbackStartOffset >= closeOffset
+    ) {
+      continue;
+    }
+
+    const receiverOrClassName = match[1]?.trim() ?? "";
+    const methodName = match[2] ?? "";
+
+    if (!receiverOrClassName || !methodName) {
+      continue;
+    }
+
+    context = {
+      methodName,
+      receiverOrClassName,
+      relationName: phpRelationNameBeforeCallbackArgument(
+        source,
+        openOffset + 1,
+        closeOffset,
+        callbackStartOffset,
+      ),
+      startOffset,
+    };
+  }
+
+  return context
+    ? {
+        methodName: context.methodName,
+        receiverOrClassName: context.receiverOrClassName,
+        relationName: context.relationName,
+      }
+    : null;
+}
+
+function phpRelationNameBeforeCallbackArgument(
+  source: string,
+  argumentsStartOffset: number,
+  argumentsEndOffset: number,
+  callbackStartOffset: number,
+): string | null {
+  const argumentsSource = source.slice(argumentsStartOffset, argumentsEndOffset);
+  const callbackRelativeOffset = callbackStartOffset - argumentsStartOffset;
+  const argumentsList = splitPhpArgumentsWithOffsets(argumentsSource);
+  const callbackArgumentIndex = argumentsList.findIndex(
+    (argument) =>
+      argument.start <= callbackRelativeOffset &&
+      callbackRelativeOffset <= argument.end,
+  );
+
+  if (callbackArgumentIndex < 0) {
+    return null;
+  }
+
+  for (let index = callbackArgumentIndex - 1; index >= 0; index -= 1) {
+    const value = phpNamedArgumentValue(argumentsList[index]?.value ?? "");
+    const relationName = phpStringLiteralValue(value);
+
+    if (relationName) {
+      return relationName.split(".")[0]?.trim() || null;
+    }
+  }
+
+  return null;
+}
+
+function splitPhpArgumentsWithOffsets(
+  argumentsSource: string,
+): Array<{ end: number; start: number; value: string }> {
+  const argumentsList: Array<{ end: number; start: number; value: string }> = [];
+  let start = 0;
+  let quote: string | null = null;
+  let depth = 0;
+
+  for (let index = 0; index < argumentsSource.length; index += 1) {
+    const character = argumentsSource[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character !== "," || depth > 0) {
+      continue;
+    }
+
+    argumentsList.push({
+      end: index,
+      start,
+      value: argumentsSource.slice(start, index).trim(),
+    });
+    start = index + 1;
+  }
+
+  argumentsList.push({
+    end: argumentsSource.length,
+    start,
+    value: argumentsSource.slice(start).trim(),
+  });
+
+  return argumentsList.filter((argument) => argument.value.length > 0);
+}
+
+function phpNamedArgumentValue(argument: string): string {
+  const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!:)\s*([\s\S]+)$/.exec(
+    argument.trim(),
+  );
+
+  return match?.[2]?.trim() ?? argument.trim();
+}
+
+function phpStringLiteralValue(expression: string): string | null {
+  const match = /^(['"])([\s\S]*?)\1$/.exec(expression.trim());
+
+  return match?.[2] ?? null;
 }
 
 function matchingPairOffset(

@@ -5697,6 +5697,162 @@ class Builder
     ]);
   });
 
+  it("infers Laravel relation query callback builders", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const trackPath = "/workspace/app/Models/Track.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::query()->whereHas('tracks', function ($query): void {
+            $query->pub
+            $query->published()->ord
+            $track = $query->first();
+            $track->get
+        });
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Album",
+          kind: "class",
+          lineNumber: 7,
+          name: "Album",
+          path: albumPath,
+          relativePath: "app/Models/Album.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Track",
+          kind: "class",
+          lineNumber: 7,
+          name: "Track",
+          path: trackPath,
+          relativePath: "app/Models/Track.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Album
+{
+    public function tracks(): HasMany
+    {
+        return $this->hasMany(Track::class);
+    }
+}
+`;
+        }
+
+        if (path === trackPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Track
+{
+    public function getTitle(): string {}
+
+    public function scopePublished(Builder $query): Builder {}
+}
+`;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    /** @return static */
+    public function orderBy($column, $direction = 'asc') {}
+
+    /** @return TModel|null */
+    public function first($columns = ['*']) {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Track",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$track->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Track",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("opens Laravel fluent builder methods from chained calls", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const builderPath =

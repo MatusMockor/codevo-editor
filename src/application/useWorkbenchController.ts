@@ -179,6 +179,7 @@ import {
   phpStaticCallExpression,
   phpFunctionReturnsClassStringArgument,
   phpLaravelContainerBindingsFromSource,
+  phpLaravelQueryCallbackContextForVariable,
 } from "../domain/phpSemanticEngine";
 import {
   phpClassPathCandidates,
@@ -5483,6 +5484,37 @@ export function useWorkbenchController(
       );
 
       if (variableMatch?.[1]) {
+        const callbackContext = phpLaravelQueryCallbackContextForVariable(
+          source,
+          position,
+          variableMatch[1],
+        );
+
+        if (callbackContext) {
+          const callbackHostModelType = callbackContext.modelClassName
+            ? resolvePhpClassReference(source, callbackContext.modelClassName)
+            : callbackContext.receiverExpression
+              ? await resolvePhpEloquentBuilderModelType(
+                  source,
+                  position,
+                  callbackContext.receiverExpression,
+                  depth + 1,
+                )
+              : null;
+          const callbackRelationModelType =
+            callbackHostModelType && callbackContext.relationName
+              ? await resolvePhpClassPropertyOrRelationType(
+                  callbackHostModelType,
+                  callbackContext.relationName,
+                  true,
+                )
+              : null;
+
+          if (callbackRelationModelType || callbackHostModelType) {
+            return callbackRelationModelType ?? callbackHostModelType;
+          }
+        }
+
         const phpDocType = phpDocRawTypeForVariableBefore(
           source,
           position,
@@ -5587,6 +5619,7 @@ export function useWorkbenchController(
     [
       phpClassHasLaravelLocalScope,
       resolvePhpClassReference,
+      resolvePhpClassPropertyOrRelationType,
       resolvePhpMethodReturnType,
     ],
   );
@@ -5755,6 +5788,26 @@ export function useWorkbenchController(
 
         if (assignmentType) {
           return assignmentType;
+        }
+      }
+
+      if (
+        variableMatch?.[1] &&
+        phpLaravelQueryCallbackContextForVariable(
+          source,
+          position,
+          variableMatch[1],
+        )
+      ) {
+        const callbackBuilderModelType = await resolvePhpEloquentBuilderModelType(
+          source,
+          position,
+          expression,
+          depth + 1,
+        );
+
+        if (callbackBuilderModelType) {
+          return "Illuminate\\Database\\Eloquent\\Builder";
         }
       }
 
