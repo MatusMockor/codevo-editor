@@ -9,6 +9,7 @@ import {
   phpTraitClassNames,
 } from "./phpMethodCompletions";
 import {
+  phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
@@ -385,6 +386,56 @@ class Comment
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
       },
     ]);
+  });
+
+  it("locates Laravel dynamic where source attributes", () => {
+    const source = `<?php
+class Comment
+{
+    protected $fillable = [
+        'content',
+    ];
+
+    protected $attributes = [
+        'parent_id' => null,
+    ];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+    ];
+}
+`;
+
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereContent"),
+    ).toEqual({
+      attributeName: "content",
+      position: {
+        column: 10,
+        lineNumber: 5,
+      },
+    });
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereParentId"),
+    ).toEqual({
+      attributeName: "parent_id",
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereIsPinned"),
+    ).toEqual({
+      attributeName: "is_pinned",
+      position: {
+        column: 10,
+        lineNumber: 13,
+      },
+    });
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereMissing"),
+    ).toBeNull();
   });
 
   it("uses PHPDoc return types when methods do not declare one", () => {

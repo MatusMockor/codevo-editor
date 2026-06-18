@@ -5826,6 +5826,51 @@ class Builder
       },
     ]);
 
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Comment::whereContent"),
+      );
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(commentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentPath,
+      position: {
+        column: 10,
+        lineNumber: 7,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$query->whereIsPinned"),
+      );
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(commentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentPath,
+      position: {
+        column: 10,
+        lineNumber: 11,
+      },
+    });
+
     expect(diagnosticsListener).not.toBeNull();
 
     act(() => {

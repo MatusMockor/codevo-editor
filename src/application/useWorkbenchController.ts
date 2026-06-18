@@ -157,6 +157,7 @@ import {
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentModelFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
+  phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelRelationTargetClassNameFromExpression,
@@ -6685,6 +6686,51 @@ export function useWorkbenchController(
     ],
   );
 
+  const openPhpLaravelDynamicWhereTarget = useCallback(
+    async (className: string, methodName: string): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+      if (!normalizedClassName) {
+        return false;
+      }
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        try {
+          const content = await readNavigationFileContent(path);
+          const target = phpLaravelDynamicWhereAttributeTargetFromSource(
+            content,
+            methodName,
+          );
+
+          if (!target) {
+            continue;
+          }
+
+          return openNavigationTarget(
+            path,
+            target.position,
+            target.attributeName,
+          );
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      openNavigationTarget,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpMethodCallDefinition = useCallback(
     async (
       context: Extract<PhpIdentifierContext, { kind: "methodCall" }>,
@@ -6732,6 +6778,27 @@ export function useWorkbenchController(
         }
       }
 
+      const builderReceiverExpression =
+        context.receiverExpression ||
+        (context.variableName ? `$${context.variableName}` : null);
+      const builderModelType = builderReceiverExpression
+        ? await resolvePhpEloquentBuilderModelType(
+            activeDocument.content,
+            position,
+            builderReceiverExpression,
+          )
+        : null;
+
+      if (
+        builderModelType &&
+        (await openPhpLaravelDynamicWhereTarget(
+          builderModelType,
+          context.methodName,
+        ))
+      ) {
+        return true;
+      }
+
       setMessage(
         `No typed target found for ${context.receiverExpression}->${context.methodName}().`,
       );
@@ -6740,7 +6807,9 @@ export function useWorkbenchController(
     [
       activeDocument,
       openDirectPhpMethodTarget,
+      openPhpLaravelDynamicWhereTarget,
       openPhpMethodHintTarget,
+      resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
     ],
   );
@@ -6775,6 +6844,10 @@ export function useWorkbenchController(
         return true;
       }
 
+      if (await openPhpLaravelDynamicWhereTarget(className, context.methodName)) {
+        return true;
+      }
+
       if (
         isLaravelEloquentBuilderMethodName(context.methodName) &&
         (await openDirectPhpMethodTarget(
@@ -6790,7 +6863,7 @@ export function useWorkbenchController(
       );
       return false;
     },
-    [activeDocument, openDirectPhpMethodTarget],
+    [activeDocument, openDirectPhpMethodTarget, openPhpLaravelDynamicWhereTarget],
   );
 
   const goToPhpClassIdentifierDefinition = useCallback(

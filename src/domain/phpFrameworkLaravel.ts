@@ -1,4 +1,5 @@
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
+import type { EditorPosition } from "./languageServerFeatures";
 import { firstPhpDocTypeToken } from "./phpDocTemplates";
 import {
   phpDeclaredGenericTypeCandidates,
@@ -309,6 +310,11 @@ const laravelEloquentSingularRelationTypes = new Set([
   "morphto",
 ]);
 
+export interface PhpLaravelDynamicWhereAttributeTarget {
+  attributeName: string;
+  position: EditorPosition;
+}
+
 export function isLaravelEloquentStaticBuilderMethod(methodName: string): boolean {
   return laravelEloquentStaticBuilderMethods.has(methodName.toLowerCase());
 }
@@ -467,6 +473,32 @@ export function phpLaravelDynamicWhereCompletionsFromSource(
   );
 }
 
+export function phpLaravelDynamicWhereAttributeTargetFromSource(
+  source: string,
+  methodName: string,
+): PhpLaravelDynamicWhereAttributeTarget | null {
+  const methodLookup = methodName.trim().toLowerCase();
+
+  if (!methodLookup.startsWith("where")) {
+    return null;
+  }
+
+  for (const occurrence of phpLaravelDynamicWhereAttributeOccurrences(source)) {
+    const suffix = phpLaravelDynamicWhereSuffix(occurrence.attributeName);
+
+    if (!suffix || `where${suffix}`.toLowerCase() !== methodLookup) {
+      continue;
+    }
+
+    return {
+      attributeName: occurrence.attributeName,
+      position: editorPositionAtOffset(source, occurrence.attributeOffset),
+    };
+  }
+
+  return null;
+}
+
 export function phpLaravelModelAttributeCompletionsFromSource(
   source: string,
   declaringClassName: string,
@@ -572,6 +604,11 @@ function laravelLocalScopeName(methodName: string): string | null {
   return `${scopeName[0]?.toLowerCase() ?? ""}${scopeName.slice(1)}`;
 }
 
+interface PhpLaravelDynamicWhereAttributeOccurrence {
+  attributeName: string;
+  attributeOffset: number;
+}
+
 function phpLaravelDynamicWhereSuffix(attribute: string): string | null {
   const parts = attribute
     .trim()
@@ -585,6 +622,28 @@ function phpLaravelDynamicWhereSuffix(attribute: string): string | null {
   return parts
     .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
     .join("");
+}
+
+function phpLaravelDynamicWhereAttributeOccurrences(
+  source: string,
+): PhpLaravelDynamicWhereAttributeOccurrence[] {
+  const occurrences: PhpLaravelDynamicWhereAttributeOccurrence[] = [
+    ...phpArrayStringValueOccurrences(source, "fillable"),
+    ...phpArrayKeyOccurrences(source, "attributes"),
+    ...phpArrayKeyOccurrences(source, "casts"),
+  ];
+  const seen = new Set<string>();
+
+  return occurrences.filter((occurrence) => {
+    const key = occurrence.attributeName.toLowerCase();
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizedLaravelClassName(className: string): string {
@@ -722,12 +781,24 @@ function phpLaravelAccessorAttributes(
 }
 
 function phpArrayAssignmentBodies(source: string, propertyName: string): string[] {
+  return phpArrayAssignmentRanges(source, propertyName).map((range) => range.body);
+}
+
+interface PhpArrayAssignmentRange {
+  body: string;
+  bodyOffset: number;
+}
+
+function phpArrayAssignmentRanges(
+  source: string,
+  propertyName: string,
+): PhpArrayAssignmentRange[] {
   const masked = maskPhpStringsAndComments(source);
   const pattern = new RegExp(
     `\\$${propertyName}\\s*=\\s*(?:\\[|array\\s*\\()`,
     "g",
   );
-  const bodies: string[] = [];
+  const ranges: PhpArrayAssignmentRange[] = [];
 
   for (const match of masked.matchAll(pattern)) {
     const matched = match[0] ?? "";
@@ -747,10 +818,63 @@ function phpArrayAssignmentBodies(source: string, propertyName: string): string[
       continue;
     }
 
-    bodies.push(source.slice(openOffset + 1, closeOffset));
+    ranges.push({
+      body: source.slice(openOffset + 1, closeOffset),
+      bodyOffset: openOffset + 1,
+    });
   }
 
-  return bodies;
+  return ranges;
+}
+
+function phpArrayStringValueOccurrences(
+  source: string,
+  propertyName: string,
+): PhpLaravelDynamicWhereAttributeOccurrence[] {
+  return phpArrayAssignmentRanges(source, propertyName).flatMap((range) => {
+    const occurrences: PhpLaravelDynamicWhereAttributeOccurrence[] = [];
+    const pattern = /(['"])([A-Za-z_][A-Za-z0-9_]*)\1/g;
+
+    for (const match of range.body.matchAll(pattern)) {
+      const attributeName = match[2] ?? "";
+
+      if (!isPhpAttributeName(attributeName)) {
+        continue;
+      }
+
+      occurrences.push({
+        attributeName,
+        attributeOffset: range.bodyOffset + (match.index ?? 0) + 1,
+      });
+    }
+
+    return occurrences;
+  });
+}
+
+function phpArrayKeyOccurrences(
+  source: string,
+  propertyName: string,
+): PhpLaravelDynamicWhereAttributeOccurrence[] {
+  return phpArrayAssignmentRanges(source, propertyName).flatMap((range) => {
+    const occurrences: PhpLaravelDynamicWhereAttributeOccurrence[] = [];
+    const pattern = /(['"])([A-Za-z_][A-Za-z0-9_]*)\1\s*=>/g;
+
+    for (const match of range.body.matchAll(pattern)) {
+      const attributeName = match[2] ?? "";
+
+      if (!isPhpAttributeName(attributeName)) {
+        continue;
+      }
+
+      occurrences.push({
+        attributeName,
+        attributeOffset: range.bodyOffset + (match.index ?? 0) + 1,
+      });
+    }
+
+    return occurrences;
+  });
 }
 
 function phpArrayExpressionBody(expression: string): string | null {
@@ -1474,4 +1598,27 @@ function dedupePhpMembers(members: PhpMethodCompletion[]): PhpMethodCompletion[]
   }
 
   return unique;
+}
+
+function editorPositionAtOffset(
+  source: string,
+  targetOffset: number,
+): EditorPosition {
+  const offset = Math.max(0, Math.min(source.length, targetOffset));
+  let lineNumber = 1;
+  let lineStart = 0;
+
+  for (let index = 0; index < offset; index += 1) {
+    if (source[index] !== "\n") {
+      continue;
+    }
+
+    lineNumber += 1;
+    lineStart = index + 1;
+  }
+
+  return {
+    column: offset - lineStart + 1,
+    lineNumber,
+  };
 }
