@@ -9,6 +9,7 @@ import {
   phpTraitClassNames,
 } from "./phpMethodCompletions";
 import {
+  phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
@@ -308,6 +309,80 @@ class Comment
         name: "withRelations",
         parameters: "",
         returnType: "Builder",
+      },
+    ]);
+  });
+
+  it("maps Laravel column-like model attributes to dynamic where completions", () => {
+    const source = `<?php
+use App\\Enums\\CommentType;
+
+class Comment
+{
+    protected $fillable = [
+        'content',
+        'parent_id',
+    ];
+
+    protected $attributes = [
+        'is_visible' => true,
+    ];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+        'type' => CommentType::class,
+    ];
+
+    protected $appends = [
+        'display_name',
+    ];
+
+    public function getFullNameAttribute(): string
+    {
+        return '';
+    }
+}
+`;
+
+    expect(
+      phpLaravelDynamicWhereCompletionsFromSource(source, "Comment", {
+        isStatic: true,
+      }),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereContent",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereParentId",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereIsVisible",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereIsPinned",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "whereType",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
       },
     ]);
   });

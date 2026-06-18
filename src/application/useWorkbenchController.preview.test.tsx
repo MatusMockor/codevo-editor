@@ -5646,6 +5646,225 @@ class Album
     ]);
   });
 
+  it("exposes Laravel dynamic where helpers from model attributes", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function index(): void
+    {
+        Comment::whereCon
+        Comment::whereContent(
+
+        $foundComment = Comment::whereContent('hello')->first();
+        $foundComment->get
+
+        $query = Comment::query();
+        $query->whereIsP
+        $query->whereIsPinned(true)->ord
+
+        Comment::missingDynamic()->first();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 13,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    protected $fillable = [
+        'content',
+    ];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+    ];
+
+    public function getContent(): string {}
+}
+`;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    /** @return static */
+    public function orderBy($column, $direction = 'asc') {}
+
+    /** @return TModel|null */
+    public function first($columns = ['*']) {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Comment::whereCon"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        isStatic: true,
+        name: "whereContent",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        controllerSource,
+        positionAfter(controllerSource, "Comment::whereContent("),
+      ),
+    ).resolves.toEqual({
+      argumentIndex: 0,
+      method: {
+        declaringClassName: "App\\Models\\Comment",
+        isStatic: true,
+        name: "whereContent",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      parameters: [
+        {
+          defaultValue: null,
+          name: "$value",
+          optional: false,
+          raw: "$value",
+          type: null,
+        },
+      ],
+    });
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->whereIsP"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "whereIsPinned",
+        parameters: "$value",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$foundComment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->whereIsPinned(true)->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 24,
+            line: 10,
+            message: "Method App\\Models\\Comment::whereContent() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            character: 24,
+            line: 18,
+            message:
+              "Method App\\Models\\Comment::missingDynamic() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        character: 24,
+        line: 18,
+        message: "Method App\\Models\\Comment::missingDynamic() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("keeps Laravel Eloquent builder generics through fluent chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumCollectionPath = "/workspace/app/Collections/AlbumCollection.php";

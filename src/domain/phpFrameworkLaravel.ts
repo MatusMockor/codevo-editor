@@ -427,6 +427,46 @@ export function phpLaravelStaticLocalScopeCompletionsFromMethods(
   }));
 }
 
+export function phpLaravelDynamicWhereCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+  options: { isStatic?: boolean } = {},
+): PhpMethodCompletion[] {
+  const attributes = new Set<string>();
+
+  for (const attribute of phpLaravelFillableAttributes(source)) {
+    attributes.add(attribute);
+  }
+
+  for (const [attribute] of phpLaravelDefaultAttributes(source)) {
+    attributes.add(attribute);
+  }
+
+  for (const [attribute] of phpLaravelCastAttributes(source)) {
+    attributes.add(attribute);
+  }
+
+  return dedupePhpMembers(
+    Array.from(attributes).flatMap((attribute) => {
+      const suffix = phpLaravelDynamicWhereSuffix(attribute);
+
+      if (!suffix) {
+        return [];
+      }
+
+      return [
+        {
+          declaringClassName,
+          ...(options.isStatic ? { isStatic: true } : {}),
+          name: `where${suffix}`,
+          parameters: "$value",
+          returnType: "Illuminate\\Database\\Eloquent\\Builder",
+        },
+      ];
+    }),
+  );
+}
+
 export function phpLaravelModelAttributeCompletionsFromSource(
   source: string,
   declaringClassName: string,
@@ -530,6 +570,21 @@ function laravelLocalScopeName(methodName: string): string | null {
   }
 
   return `${scopeName[0]?.toLowerCase() ?? ""}${scopeName.slice(1)}`;
+}
+
+function phpLaravelDynamicWhereSuffix(attribute: string): string | null {
+  const parts = attribute
+    .trim()
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean);
+
+  if (!parts.length) {
+    return null;
+  }
+
+  return parts
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join("");
 }
 
 function normalizedLaravelClassName(className: string): string {

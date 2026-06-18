@@ -157,6 +157,7 @@ import {
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentModelFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
+  phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelRelationTargetClassNameFromExpression,
   phpLaravelScopeMethodName,
@@ -4699,6 +4700,69 @@ export function useWorkbenchController(
     ],
   );
 
+  const collectPhpLaravelDynamicWhereMethodsForClass = useCallback(
+    async (
+      className: string,
+      options: { isStatic?: boolean } = {},
+    ): Promise<PhpMethodCompletion[]> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return [];
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+      if (!normalizedClassName) {
+        return [];
+      }
+
+      const completions = new Map<string, PhpMethodCompletion>();
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        try {
+          const { content } = await readPhpClassMembersFromPath(
+            path,
+            normalizedClassName,
+          );
+
+          for (const method of phpLaravelDynamicWhereCompletionsFromSource(
+            content,
+            normalizedClassName,
+            options,
+          )) {
+            const key = method.name.toLowerCase();
+
+            if (!completions.has(key)) {
+              completions.set(key, method);
+            }
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return Array.from(completions.values());
+    },
+    [
+      readPhpClassMembersFromPath,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  const phpClassHasLaravelDynamicWhere = useCallback(
+    async (className: string, methodName: string): Promise<boolean> => {
+      const methodLookup = methodName.toLowerCase();
+      const dynamicWhereCompletions =
+        await collectPhpLaravelDynamicWhereMethodsForClass(className);
+
+      return dynamicWhereCompletions.some(
+        (method) => method.name.toLowerCase() === methodLookup,
+      );
+    },
+    [collectPhpLaravelDynamicWhereMethodsForClass],
+  );
+
   const phpClassHierarchyHasMethod = useCallback(
     async (
       className: string,
@@ -4905,8 +4969,14 @@ export function useWorkbenchController(
                   scopeMethodName,
                 )
               : false;
+          const hasContextualDynamicWhereMethod = resolvedClassName
+            ? await phpClassHasLaravelDynamicWhere(
+                resolvedClassName,
+                staticMethodContext.methodName,
+              )
+            : false;
 
-          if (hasContextualScopeMethod) {
+          if (hasContextualScopeMethod || hasContextualDynamicWhereMethod) {
             contextualExistingMethods.add(
               phpMethodDiagnosticKey(
                 staticMethodContext.className,
@@ -4954,6 +5024,7 @@ export function useWorkbenchController(
     },
     [
       phpClassHierarchyHasMethod,
+      phpClassHasLaravelDynamicWhere,
       phpTraitHostMethodExists,
       readNavigationFileContent,
       resolvePhpClassReference,
@@ -5624,6 +5695,16 @@ export function useWorkbenchController(
         ) {
           return receiverModelType;
         }
+
+        if (
+          receiverModelType &&
+          (await phpClassHasLaravelDynamicWhere(
+            receiverModelType,
+            methodCall.methodName,
+          ))
+        ) {
+          return receiverModelType;
+        }
       }
 
       const staticCall = phpStaticCallExpression(normalizedExpression);
@@ -5644,6 +5725,17 @@ export function useWorkbenchController(
 
       if (
         staticCall &&
+        staticCallClassName &&
+        (await phpClassHasLaravelDynamicWhere(
+          staticCallClassName,
+          staticCall.methodName,
+        ))
+      ) {
+        return staticCallClassName;
+      }
+
+      if (
+        staticCall &&
         (isLaravelEloquentStaticBuilderMethod(staticCall.methodName) ||
           isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName))
       ) {
@@ -5654,6 +5746,7 @@ export function useWorkbenchController(
     },
     [
       phpClassHasLaravelLocalScope,
+      phpClassHasLaravelDynamicWhere,
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
       resolvePhpMethodReturnType,
@@ -6117,6 +6210,16 @@ export function useWorkbenchController(
           return "Illuminate\\Database\\Eloquent\\Builder";
         }
 
+        if (
+          localScopeModelType &&
+          (await phpClassHasLaravelDynamicWhere(
+            localScopeModelType,
+            methodCall.methodName,
+          ))
+        ) {
+          return "Illuminate\\Database\\Eloquent\\Builder";
+        }
+
         const receiverType = await resolvePhpExpressionType(
           source,
           position,
@@ -6170,6 +6273,13 @@ export function useWorkbenchController(
           return "Illuminate\\Database\\Eloquent\\Builder";
         }
 
+        if (
+          className &&
+          (await phpClassHasLaravelDynamicWhere(className, staticCall.methodName))
+        ) {
+          return "Illuminate\\Database\\Eloquent\\Builder";
+        }
+
         return className
           ? resolvePhpMethodReturnType(className, staticCall.methodName)
           : null;
@@ -6184,6 +6294,7 @@ export function useWorkbenchController(
       resolvePhpClassPropertyOrRelationType,
       phpClassMethodReturnsClassStringArgument,
       phpClassHasLaravelLocalScope,
+      phpClassHasLaravelDynamicWhere,
       resolvePhpMethodReturnType,
     ],
   );
@@ -6212,10 +6323,18 @@ export function useWorkbenchController(
             await collectPhpMethodsForClass(builderModelType),
           )
         : [];
+      const dynamicWhereMethods = builderModelType
+        ? await collectPhpLaravelDynamicWhereMethodsForClass(builderModelType)
+        : [];
 
-      return mergePhpMethodCompletions(receiverMethods, localScopeMethods);
+      return mergePhpMethodCompletions(
+        receiverMethods,
+        localScopeMethods,
+        dynamicWhereMethods,
+      );
     },
     [
+      collectPhpLaravelDynamicWhereMethodsForClass,
       collectPhpMethodsForClass,
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
@@ -6242,12 +6361,22 @@ export function useWorkbenchController(
         return methods;
       }
 
+      const dynamicWhereMethods =
+        await collectPhpLaravelDynamicWhereMethodsForClass(resolvedClassName, {
+          isStatic: true,
+        });
+
       return mergePhpMethodCompletions(
         methods.filter((method) => method.isStatic),
         phpLaravelStaticLocalScopeCompletionsFromMethods(methods),
+        dynamicWhereMethods,
       );
     },
-    [collectPhpMethodsForClass, resolvePhpClassReference],
+    [
+      collectPhpLaravelDynamicWhereMethodsForClass,
+      collectPhpMethodsForClass,
+      resolvePhpClassReference,
+    ],
   );
 
   const providePhpMethodCompletions = useCallback(
