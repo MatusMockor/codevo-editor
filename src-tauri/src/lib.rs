@@ -675,6 +675,50 @@ fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFileDiff
 }
 
 #[tauri::command]
+fn stage_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    CommandGitRepositoryGateway
+        .stage(&root, &changes)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn unstage_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    CommandGitRepositoryGateway
+        .unstage(&root, &changes)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn revert_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<GitStatus, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    CommandGitRepositoryGateway
+        .revert(&root, &changes)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn commit_git_changes(
+    root_path: String,
+    message: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    CommandGitRepositoryGateway
+        .commit(&root, &message, &changes)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    CommandGitRepositoryGateway
+        .push(&root)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn set_smart_mode(
     mode: IntelligenceMode,
     service: State<'_, Mutex<SmartModeService>>,
@@ -2319,6 +2363,7 @@ pub fn run() {
             create_text_file,
             delete_path,
             apply_workspace_edit,
+            commit_git_changes,
             install_managed_phpactor,
             detect_php_tools,
             detect_workspace,
@@ -2337,17 +2382,20 @@ pub fn run() {
             parse_php_syntax,
             plan_javascript_typescript_language_server,
             plan_php_language_server,
+            push_git_changes,
             quit_application,
             read_directory,
             read_text_file,
             remove_workspace_index_file,
             rename_path,
             resize_terminal_session,
+            revert_git_files,
             search_files,
             search_project_symbols,
             search_text,
             set_smart_mode,
             set_workspace_trust,
+            stage_git_files,
             start_initial_metadata_scan,
             start_javascript_typescript_language_server,
             start_workspace_reindex,
@@ -2360,6 +2408,7 @@ pub fn run() {
             stop_php_language_server,
             stop_terminal_session,
             stop_terminal_sessions_for_root,
+            unstage_git_files,
             javascript_typescript_document_did_change,
             javascript_typescript_document_did_close,
             javascript_typescript_document_did_open,

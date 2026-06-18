@@ -48,4 +48,72 @@ export class TauriGitGateway implements GitGateway {
       rootPath,
     }) as Promise<GitFileDiff>;
   }
+
+  async stageFiles(
+    rootPath: string,
+    changes: GitChangedFile[],
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("stage_git_files", {
+      changes,
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
+  async unstageFiles(
+    rootPath: string,
+    changes: GitChangedFile[],
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("unstage_git_files", {
+      changes,
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
+  async revertFiles(
+    rootPath: string,
+    changes: GitChangedFile[],
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("revert_git_files", {
+      changes,
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
+  async commit(
+    rootPath: string,
+    message: string,
+    changes: GitChangedFile[],
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("commit_git_changes", {
+      changes,
+      message,
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
+  async push(rootPath: string): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("push_git_changes", {
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
 }

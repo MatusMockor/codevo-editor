@@ -17,6 +17,7 @@ import {
 } from "../domain/intelligence";
 import {
   emptyGitStatus,
+  gitChangeKey,
   type GitChangedFile,
   type GitFileDiff,
   type GitGateway,
@@ -246,6 +247,10 @@ interface OpenFileOptions {
   recordNavigation?: boolean;
 }
 
+interface OpenGitChangeOptions {
+  pin?: boolean;
+}
+
 interface PhpClassMemberCacheEntry {
   members: PhpMethodCompletion[];
   sourceSignature: string;
@@ -348,6 +353,11 @@ export function useWorkbenchController(
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus());
   const [gitLoading, setGitLoading] = useState(false);
+  const [gitOperationLoading, setGitOperationLoading] = useState(false);
+  const [gitCommitMessage, setGitCommitMessage] = useState("");
+  const [includedGitChangePaths, setIncludedGitChangePaths] = useState<Set<string>>(
+    new Set(),
+  );
   const [gitDiffLoading, setGitDiffLoading] = useState(false);
   const [selectedGitChange, setSelectedGitChange] =
     useState<GitChangedFile | null>(null);
@@ -2318,9 +2328,69 @@ export function useWorkbenchController(
     await refreshDirectory(workspaceRoot);
   }, [refreshDirectory, workspaceRoot]);
 
+  const loadGitDiffDocument = useCallback(
+    (path: string, gitChange: GitChangedFile) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+        const requestedRoot = workspaceRoot;
+        const requestToken = gitDiffRequestTokenRef.current + 1;
+        gitDiffRequestTokenRef.current = requestToken;
+        recordCurrentNavigationLocation();
+        setSelectedGitChange(gitChange);
+        setGitDiffPreview(null);
+        setGitDiffLoading(true);
+        setActivePath(path);
+
+        void gitGateway
+          .getDiff(requestedRoot, gitChange)
+          .then((diff) => {
+            if (
+              currentWorkspaceRootRef.current !== requestedRoot ||
+              gitDiffRequestTokenRef.current !== requestToken
+            ) {
+              return;
+            }
+
+            setGitDiffPreview(diff);
+            setMessage(`Diff ${gitChange.relativePath}`);
+          })
+          .catch((error) => {
+            if (
+              currentWorkspaceRootRef.current !== requestedRoot ||
+              gitDiffRequestTokenRef.current !== requestToken
+            ) {
+              return;
+            }
+
+            setGitDiffPreview(null);
+            reportError("Git Diff", error);
+          })
+          .finally(() => {
+            if (
+              currentWorkspaceRootRef.current !== requestedRoot ||
+              gitDiffRequestTokenRef.current !== requestToken
+            ) {
+              return;
+            }
+
+            setGitDiffLoading(false);
+          });
+    },
+    [gitGateway, recordCurrentNavigationLocation, reportError, workspaceRoot],
+  );
+
   const activateDocument = useCallback(
     (path: string) => {
       if (activePath === path) {
+        return;
+      }
+
+      const gitChange = gitChangeForDiffDocumentPath(path, gitStatus.changes);
+
+      if (gitChange) {
+        loadGitDiffDocument(path, gitChange);
         return;
       }
 
@@ -2329,7 +2399,12 @@ export function useWorkbenchController(
       setGitDiffPreview(null);
       setActivePath(path);
     },
-    [activePath, recordCurrentNavigationLocation],
+    [
+      activePath,
+      gitStatus.changes,
+      loadGitDiffDocument,
+      recordCurrentNavigationLocation,
+    ],
   );
 
   const pinDocument = useCallback((path: string) => {
@@ -2680,13 +2755,14 @@ export function useWorkbenchController(
   }, [activeDocument?.path, activeDocument?.savedContent, gitGateway, workspaceRoot]);
 
   const previewGitChange = useCallback(
-    async (change: GitChangedFile) => {
+    async (change: GitChangedFile, options: OpenGitChangeOptions = {}) => {
       if (!workspaceRoot) {
         return;
       }
 
       const requestedRoot = workspaceRoot;
       const requestToken = gitDiffRequestTokenRef.current + 1;
+      const shouldPin = options.pin === true;
       gitDiffRequestTokenRef.current = requestToken;
       setSelectedGitChange(change);
       setGitDiffLoading(true);
@@ -2701,6 +2777,58 @@ export function useWorkbenchController(
           return;
         }
 
+        const documentPath = gitDiffDocumentPath(change);
+        const replacement = cleanReplacementDocument(
+          activeDocument,
+          documents,
+          openPaths,
+          previewPath,
+        );
+        const replacedPath =
+          replacement && replacement.path !== documentPath ? replacement.path : null;
+        const document: EditorDocument = {
+          path: documentPath,
+          name: gitDiffDocumentName(change),
+          content: "",
+          savedContent: "",
+          language: diff.language,
+        };
+
+        if (replacement && replacement.path !== documentPath) {
+          void syncClosedDocument(replacement);
+          void syncClosedJavaScriptTypeScriptDocument(replacement);
+        }
+
+        recordCurrentNavigationLocation();
+        setDocuments((current) => {
+          const next = { ...current, [documentPath]: document };
+
+          if (replacedPath) {
+            delete next[replacedPath];
+          }
+
+          return next;
+        });
+        setOpenPaths((current) => {
+          if (shouldPin && !replacedPath) {
+            return current.includes(documentPath)
+              ? current
+              : [...current, documentPath];
+          }
+
+          if (shouldPin && replacedPath) {
+            const mapped = current.map((openPath) =>
+              openPath === replacedPath ? documentPath : openPath,
+            );
+            return mapped.includes(documentPath)
+              ? mapped
+              : [...mapped, documentPath];
+          }
+
+          return current.filter((openPath) => openPath !== replacedPath);
+        });
+        setPreviewPath(shouldPin ? null : documentPath);
+        setActivePath(documentPath);
         setGitDiffPreview(diff);
         setMessage(`Diff ${change.relativePath}`);
       } catch (error) {
@@ -2724,16 +2852,291 @@ export function useWorkbenchController(
         setGitDiffLoading(false);
       }
     },
-    [gitGateway, reportError, workspaceRoot],
+    [
+      activeDocument,
+      documents,
+      gitGateway,
+      openPaths,
+      previewPath,
+      recordCurrentNavigationLocation,
+      reportError,
+      syncClosedDocument,
+      syncClosedJavaScriptTypeScriptDocument,
+      workspaceRoot,
+    ],
+  );
+
+  const openGitChange = useCallback(
+    async (change: GitChangedFile) => {
+      await previewGitChange(change, { pin: true });
+    },
+    [previewGitChange],
   );
 
   const closeGitDiffPreview = useCallback(() => {
     gitDiffRequestTokenRef.current += 1;
+    const documentPath = selectedGitChange
+      ? gitDiffDocumentPath(selectedGitChange)
+      : null;
     setGitDiffLoading(false);
     setSelectedGitChange(null);
     setGitDiffPreview(null);
+    if (documentPath) {
+      const nextActivePath = nextActiveEditorPathAfterClose(
+        documentPath,
+        openPaths,
+        previewPath,
+      );
+      setDocuments((current) => {
+        const next = { ...current };
+        delete next[documentPath];
+        return next;
+      });
+      setOpenPaths((current) => current.filter((path) => path !== documentPath));
+      setPreviewPath((current) => (current === documentPath ? null : current));
+      const nextGitChange = nextActivePath
+        ? gitChangeForDiffDocumentPath(nextActivePath, gitStatus.changes)
+        : null;
+
+      if (nextActivePath && nextGitChange) {
+        loadGitDiffDocument(nextActivePath, nextGitChange);
+      } else {
+        setActivePath((current) =>
+          current === documentPath ? nextActivePath : current,
+        );
+      }
+    }
     setMessage(null);
+  }, [
+    gitStatus.changes,
+    loadGitDiffDocument,
+    openPaths,
+    previewPath,
+    selectedGitChange,
+  ]);
+
+  const applyGitOperationStatus = useCallback(
+    (status: GitStatus) => {
+      setGitStatus(status);
+
+      if (
+        selectedGitChange &&
+        !status.changes.some(
+          (change) =>
+            gitDiffDocumentPath(change) === gitDiffDocumentPath(selectedGitChange) &&
+            (change.path === selectedGitChange.path ||
+              change.oldPath === selectedGitChange.path),
+        )
+      ) {
+        closeGitDiffPreview();
+      }
+    },
+    [closeGitDiffPreview, selectedGitChange],
+  );
+
+  const toggleGitChangeIncluded = useCallback((change: GitChangedFile) => {
+    setIncludedGitChangePaths((current) => {
+      const next = new Set(current);
+
+      const changeKey = gitChangeKey(change);
+
+      if (next.has(changeKey)) {
+        next.delete(changeKey);
+      } else {
+        next.add(changeKey);
+      }
+
+      return next;
+    });
   }, []);
+
+  const stageGitChanges = useCallback(
+    async (changes: GitChangedFile[]) => {
+      if (!workspaceRoot || changes.length === 0) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setGitOperationLoading(true);
+
+      try {
+        const status = await gitGateway.stageFiles(requestedRoot, changes);
+
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        applyGitOperationStatus(status);
+        setMessage(null);
+      } catch (error) {
+        if (currentWorkspaceRootRef.current === requestedRoot) {
+          reportError("Git", error);
+        }
+      } finally {
+        if (currentWorkspaceRootRef.current === requestedRoot) {
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
+  );
+
+  const unstageGitChanges = useCallback(
+    async (changes: GitChangedFile[]) => {
+      if (!workspaceRoot || changes.length === 0) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setGitOperationLoading(true);
+
+      try {
+        const status = await gitGateway.unstageFiles(requestedRoot, changes);
+
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        applyGitOperationStatus(status);
+        setMessage(null);
+      } catch (error) {
+        if (currentWorkspaceRootRef.current === requestedRoot) {
+          reportError("Git", error);
+        }
+      } finally {
+        if (currentWorkspaceRootRef.current === requestedRoot) {
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [applyGitOperationStatus, gitGateway, reportError, workspaceRoot],
+  );
+
+  const revertGitChanges = useCallback(
+    async (changes: GitChangedFile[]) => {
+      if (!workspaceRoot || changes.length === 0) {
+        return;
+      }
+
+      if (!prompter.confirm("Revert selected Git changes? This discards local changes.")) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setGitOperationLoading(true);
+
+      try {
+        const status = await gitGateway.revertFiles(requestedRoot, changes);
+
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        applyGitOperationStatus(status);
+        setMessage(null);
+      } catch (error) {
+        if (currentWorkspaceRootRef.current === requestedRoot) {
+          reportError("Git", error);
+        }
+      } finally {
+        if (currentWorkspaceRootRef.current === requestedRoot) {
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [applyGitOperationStatus, gitGateway, prompter, reportError, workspaceRoot],
+  );
+
+  const runGitCommit = useCallback(
+    async ({ pushAfterCommit }: { pushAfterCommit: boolean }) => {
+      if (!workspaceRoot) {
+        return;
+      }
+
+      const message = gitCommitMessage.trim();
+      const changesToCommit = gitStatus.changes.filter((change) =>
+        includedGitChangePaths.has(gitChangeKey(change)),
+      );
+
+      if (!message || changesToCommit.length === 0) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      setGitOperationLoading(true);
+
+      try {
+        if (changesToCommit.some((change) => !change.isStaged)) {
+          await gitGateway.stageFiles(requestedRoot, changesToCommit);
+
+          if (currentWorkspaceRootRef.current !== requestedRoot) {
+            return;
+          }
+        }
+
+        const commitStatus = await gitGateway.commit(
+          requestedRoot,
+          message,
+          changesToCommit,
+        );
+
+        if (currentWorkspaceRootRef.current !== requestedRoot) {
+          return;
+        }
+
+        applyGitOperationStatus(commitStatus);
+        setIncludedGitChangePaths(new Set());
+        setGitCommitMessage("");
+        setMessage(pushAfterCommit ? "Commit created. Pushing..." : null);
+
+        if (!pushAfterCommit) {
+          return;
+        }
+
+        try {
+          const pushStatus = await gitGateway.push(requestedRoot);
+
+          if (currentWorkspaceRootRef.current !== requestedRoot) {
+            return;
+          }
+
+          applyGitOperationStatus(pushStatus);
+          setMessage("Pushed current branch");
+        } catch (error) {
+          if (currentWorkspaceRootRef.current === requestedRoot) {
+            reportError("Git Push", error);
+          }
+        }
+      } catch (error) {
+        if (currentWorkspaceRootRef.current === requestedRoot) {
+          reportError("Git", error);
+        }
+      } finally {
+        if (currentWorkspaceRootRef.current === requestedRoot) {
+          setGitOperationLoading(false);
+        }
+      }
+    },
+    [
+      applyGitOperationStatus,
+      gitCommitMessage,
+      gitGateway,
+      gitStatus.changes,
+      includedGitChangePaths,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
+  const commitGitChanges = useCallback(
+    async () => runGitCommit({ pushAfterCommit: false }),
+    [runGitCommit],
+  );
+
+  const commitAndPushGitChanges = useCallback(
+    async () => runGitCommit({ pushAfterCommit: true }),
+    [runGitCommit],
+  );
 
   const refreshPhpTree = useCallback(async () => {
     if (!workspaceRoot) {
@@ -3514,28 +3917,44 @@ export function useWorkbenchController(
         void syncClosedJavaScriptTypeScriptDocument(document);
       }
 
+      if (gitChangeForDiffDocumentPath(path, gitStatus.changes)) {
+        gitDiffRequestTokenRef.current += 1;
+        setGitDiffLoading(false);
+        setSelectedGitChange(null);
+        setGitDiffPreview(null);
+        setMessage(null);
+      }
+
+      const nextActivePath =
+        activePath === path
+          ? nextActiveEditorPathAfterClose(path, openPaths, previewPath)
+          : null;
+      const nextGitChange = nextActivePath
+        ? gitChangeForDiffDocumentPath(nextActivePath, gitStatus.changes)
+        : null;
+
       setDocuments((current) => {
         const next = { ...current };
         delete next[path];
         return next;
       });
       setPreviewPath((current) => (current === path ? null : current));
+      setOpenPaths((current) => current.filter((item) => item !== path));
 
-      setOpenPaths((current) => {
-        const next = current.filter((item) => item !== path);
-
-        if (activePath === path) {
-          setActivePath(
-            nextActiveEditorPathAfterClose(path, current, previewPath),
-          );
+      if (activePath === path) {
+        if (nextActivePath && nextGitChange) {
+          loadGitDiffDocument(nextActivePath, nextGitChange);
+        } else {
+          setActivePath(nextActivePath);
         }
-
-        return next;
-      });
+      }
     },
     [
       activePath,
       documents,
+      gitStatus.changes,
+      loadGitDiffDocument,
+      openPaths,
       previewPath,
       prompter,
       syncClosedDocument,
@@ -7715,6 +8134,42 @@ export function useWorkbenchController(
   }, [refreshGitStatus, sidebarView, workspaceRoot]);
 
   useEffect(() => {
+    setIncludedGitChangePaths((current) => {
+      const validKeys = new Set(gitStatus.changes.map(gitChangeKey));
+      const next = new Set<string>();
+
+      gitStatus.changes.forEach((change) => {
+        const changeKey = gitChangeKey(change);
+
+        if (change.isStaged || current.has(changeKey)) {
+          next.add(changeKey);
+        }
+      });
+
+      current.forEach((changeKey) => {
+        if (validKeys.has(changeKey)) {
+          next.add(changeKey);
+        }
+      });
+
+      if (
+        next.size === current.size &&
+        [...next].every((path) => current.has(path))
+      ) {
+        return current;
+      }
+
+      return next;
+    });
+  }, [gitStatus.changes]);
+
+  useEffect(() => {
+    setGitOperationLoading(false);
+    setGitCommitMessage("");
+    setIncludedGitChangePaths(new Set());
+  }, [workspaceRoot]);
+
+  useEffect(() => {
     if (!workspaceRoot) {
       return;
     }
@@ -8581,6 +9036,8 @@ export function useWorkbenchController(
     closeDocument,
     closeGitDiffPreview,
     closeWorkspaceTab,
+    commitAndPushGitChanges,
+    commitGitChanges,
     commandContext,
     commands: commandRegistry.list(),
     dirtyCount,
@@ -8603,7 +9060,10 @@ export function useWorkbenchController(
     editorRevealTarget,
     gitDiffLoading,
     gitDiffPreview,
+    gitCommitMessage,
+    includedGitChangePaths,
     gitLoading,
+    gitOperationLoading,
     gitStatus,
     indexHealthLogs,
     indexProgress,
@@ -8621,6 +9081,7 @@ export function useWorkbenchController(
     message,
     openDocuments,
     openFile,
+    openGitChange,
     openFileStructure,
     openImplementationTarget,
     openPhpFileOutlineNode,
@@ -8652,6 +9113,7 @@ export function useWorkbenchController(
     previewGitChange,
     refreshPhpTree,
     refreshGitStatus,
+    revertGitChanges,
     revertActiveEditorChangeHunk,
     saveActiveDocument,
     saveWorkbenchSettings,
@@ -8660,6 +9122,7 @@ export function useWorkbenchController(
     showBottomPanelView,
     setPaletteOpen,
     setClassOpenOpen,
+    setGitCommitMessage,
     setClassOpenQuery,
     setQuickOpenOpen,
     setSidebarView,
@@ -8688,6 +9151,9 @@ export function useWorkbenchController(
     textSearchQuery,
     textSearchResults,
     toggleDirectory,
+    toggleGitChangeIncluded,
+    stageGitChanges,
+    unstageGitChanges,
     togglePhpFileOutline,
     togglePhpFileOutlineNode,
     togglePhpTreeNode,
@@ -9369,6 +9835,22 @@ function cleanReplacementDocument(
   }
 
   return previewDocument;
+}
+
+function gitDiffDocumentPath(change: GitChangedFile): string {
+  const side = change.isStaged ? "staged" : "worktree";
+  return `mockor-git-diff:${side}:${change.path}`;
+}
+
+function gitDiffDocumentName(change: GitChangedFile): string {
+  return `Diff: ${getFileName(change.relativePath)}`;
+}
+
+function gitChangeForDiffDocumentPath(
+  path: string,
+  changes: GitChangedFile[],
+): GitChangedFile | null {
+  return changes.find((change) => gitDiffDocumentPath(change) === path) ?? null;
 }
 
 function currentWorkspaceSession(

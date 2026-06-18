@@ -499,16 +499,7 @@ function App() {
               PHP
             </button>
           </div>
-          {workbench.sidebarView === "git" ? (
-            <button
-              disabled={!workbench.workspaceRoot || workbench.gitLoading}
-              onClick={workbench.refreshGitStatus}
-              title="Refresh Git changes"
-              type="button"
-            >
-              <RefreshCw aria-hidden="true" size={14} />
-            </button>
-          ) : workbench.sidebarView === "php" ? (
+          {workbench.sidebarView === "php" ? (
             <button
               disabled={!workbench.workspaceRoot || workbench.phpTreeLoading}
               onClick={workbench.refreshPhpTree}
@@ -517,17 +508,29 @@ function App() {
             >
               <RefreshCw aria-hidden="true" size={14} />
             </button>
-          ) : (
+          ) : workbench.sidebarView === "files" ? (
             <button onClick={workbench.openWorkspace} type="button">
               Open
             </button>
-          )}
+          ) : null}
         </header>
         {workbench.sidebarView === "git" ? (
           <GitChangesPanel
             activeChange={workbench.selectedGitChange}
+            commitMessage={workbench.gitCommitMessage}
+            gitOperationLoading={workbench.gitOperationLoading}
+            includedChangePaths={workbench.includedGitChangePaths}
             isLoading={workbench.gitLoading}
-            onOpenChange={workbench.previewGitChange}
+            onCommit={workbench.commitGitChanges}
+            onCommitAndPush={workbench.commitAndPushGitChanges}
+            onCommitMessageChange={workbench.setGitCommitMessage}
+            onOpenChange={workbench.openGitChange}
+            onPreviewChange={workbench.previewGitChange}
+            onRefresh={workbench.refreshGitStatus}
+            onRevertChanges={workbench.revertGitChanges}
+            onStageChanges={workbench.stageGitChanges}
+            onToggleChangeIncluded={workbench.toggleGitChangeIncluded}
+            onUnstageChanges={workbench.unstageGitChanges}
             rootPath={workbench.workspaceRoot}
             status={workbench.gitStatus}
           />
