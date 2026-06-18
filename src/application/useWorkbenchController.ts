@@ -247,6 +247,7 @@ interface CachedWorkspaceWorkbenchState {
   documents: Record<string, EditorDocument>;
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
+  manuallyCollapsedDirectories: Set<string>;
   navigationHistory: NavigationHistory;
   openPaths: string[];
   previewPath: string | null;
@@ -378,6 +379,8 @@ export function useWorkbenchController(
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
     new Set(),
   );
+  const [manuallyCollapsedDirectories, setManuallyCollapsedDirectories] =
+    useState<Set<string>>(new Set());
   const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(
     new Set(),
   );
@@ -584,6 +587,7 @@ export function useWorkbenchController(
         documents,
         entriesByDirectory,
         expandedDirectories: new Set(expandedDirectories),
+        manuallyCollapsedDirectories: new Set(manuallyCollapsedDirectories),
         navigationHistory,
         openPaths,
         previewPath,
@@ -596,6 +600,7 @@ export function useWorkbenchController(
       bottomPanelVisible,
       documents,
       entriesByDirectory,
+      manuallyCollapsedDirectories,
       expandedDirectories,
       navigationHistory,
       openPaths,
@@ -608,6 +613,9 @@ export function useWorkbenchController(
     (cached: CachedWorkspaceWorkbenchState) => {
       setEntriesByDirectory(cached.entriesByDirectory);
       setExpandedDirectories(new Set(cached.expandedDirectories));
+      setManuallyCollapsedDirectories(
+        new Set(cached.manuallyCollapsedDirectories),
+      );
       setDocuments(cached.documents);
       setOpenPaths(cached.openPaths);
       setActivePath(cached.activePath);
@@ -1363,6 +1371,7 @@ export function useWorkbenchController(
     setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
     setEntriesByDirectory({});
     setExpandedDirectories(new Set());
+    setManuallyCollapsedDirectories(new Set());
     setDocuments({});
     setOpenPaths([]);
     setActivePath(null);
@@ -1892,6 +1901,7 @@ export function useWorkbenchController(
       } else {
         setEntriesByDirectory({});
         setExpandedDirectories(new Set([path]));
+        setManuallyCollapsedDirectories(new Set());
         setDocuments({});
         setOpenPaths([]);
         setActivePath(null);
@@ -2252,6 +2262,18 @@ export function useWorkbenchController(
         return next;
       });
 
+      setManuallyCollapsedDirectories((current) => {
+        const next = new Set(current);
+
+      if (isExpanded) {
+        next.add(path);
+        return next;
+      }
+
+        next.delete(path);
+        return next;
+      });
+
       if (isExpanded || entriesByDirectory[path]) {
         return;
       }
@@ -2281,6 +2303,10 @@ export function useWorkbenchController(
       let changed = false;
 
       for (const directory of directories) {
+        if (manuallyCollapsedDirectories.has(directory)) {
+          continue;
+        }
+
         if (next.has(directory)) {
           continue;
         }
@@ -2293,7 +2319,11 @@ export function useWorkbenchController(
     });
 
     for (const directory of directories) {
-      if (entriesByDirectory[directory] || loadingDirectories.has(directory)) {
+      if (
+        manuallyCollapsedDirectories.has(directory) ||
+        entriesByDirectory[directory] ||
+        loadingDirectories.has(directory)
+      ) {
         continue;
       }
 
@@ -2301,9 +2331,9 @@ export function useWorkbenchController(
     }
   }, [
     activePath,
-    entriesByDirectory,
-    loadDirectory,
+    manuallyCollapsedDirectories,
     loadingDirectories,
+    loadDirectory,
     workspaceRoot,
     workspaceSettings.revealActiveFileInTree,
   ]);

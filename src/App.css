@@ -421,8 +421,13 @@ button {
 .file-tree,
 .git-changes,
 .php-tree {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+}
+
+.git-changes,
+.php-tree {
   padding: 6px 0 10px;
 }
 
@@ -448,7 +453,7 @@ button {
   display: grid;
   width: calc(100% - 16px);
   min-height: 30px;
-  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;
   margin: 1px 8px;
@@ -477,6 +482,28 @@ button {
   color: var(--color-active-text);
 }
 
+.tree-virtual-content {
+  position: relative;
+  box-sizing: border-box;
+  display: block;
+  min-width: 100%;
+  min-height: 100%;
+  overflow: visible;
+  padding: 6px 0 10px;
+}
+
+.tree-row-virtual {
+  margin: 0;
+  width: calc(100% - 16px);
+}
+
+.tree-virtual-window {
+  position: absolute;
+  top: 6px;
+  right: 0;
+  left: 0;
+}
+
 .tree-row span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -485,6 +512,51 @@ button {
 
 .tree-row small {
   color: var(--color-text-subtle);
+}
+
+.tree-row-status {
+  display: inline-grid;
+  width: 0;
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  align-items: center;
+  justify-items: center;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.tree-row-meta {
+  color: var(--color-text-subtle);
+}
+
+.tree-row-status-added,
+.tree-row-status-renamed {
+  color: var(--color-success);
+  width: 18px;
+  min-width: 18px;
+  opacity: 1;
+}
+
+.tree-row-status-modified {
+  color: var(--color-warning);
+  width: 18px;
+  min-width: 18px;
+  opacity: 1;
+}
+
+.tree-row-status-untracked,
+.tree-row-status-deleted,
+.tree-row-status-conflicted {
+  color: var(--color-error);
+  width: 18px;
+  min-width: 18px;
+  opacity: 1;
 }
 
 .php-file-outline-row small,
@@ -1566,7 +1638,7 @@ button {
   box-shadow: inset 0 -2px 0 var(--color-accent);
 }
 
-.editor-tab.changed .tab-main span {
+.editor-tab.changed .tab-main .tab-name {
   color: var(--color-text-strong);
   font-weight: 800;
 }
@@ -1601,6 +1673,37 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.editor-tab-status {
+  display: inline-grid;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  min-width: 18px;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0;
+  flex: 0 0 auto;
+  pointer-events: none;
+  user-select: none;
+}
+
+.editor-tab-status-added,
+.editor-tab-status-renamed {
+  color: var(--color-success);
+}
+
+.editor-tab-status-modified {
+  color: var(--color-warning);
+}
+
+.editor-tab-status-untracked,
+.editor-tab-status-deleted,
+.editor-tab-status-conflicted {
+  color: var(--color-error);
 }
 
 .dirty-dot {
