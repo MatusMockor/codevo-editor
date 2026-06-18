@@ -174,15 +174,17 @@ export function FileTree({
       return;
     }
 
+    setViewportHeight(measureTreeViewportHeight(treeContainerRef.current));
+  });
+
+  useLayoutEffect(() => {
+    if (!treeContainerRef.current) {
+      return;
+    }
+
     const container = treeContainerRef.current;
     const updateViewportHeight = () => {
-      const nextViewportHeight = Math.max(
-        container.clientHeight,
-        container.offsetHeight,
-        container.getBoundingClientRect().height,
-      );
-
-      setViewportHeight(nextViewportHeight);
+      setViewportHeight(measureTreeViewportHeight(container));
     };
 
     updateViewportHeight();
@@ -205,7 +207,10 @@ export function FileTree({
   }, []);
 
   const handleScroll = (event: UIEvent<HTMLElement>) => {
-    setScrollTop(event.currentTarget.scrollTop);
+    const container = event.currentTarget;
+
+    setScrollTop(container.scrollTop);
+    setViewportHeight(measureTreeViewportHeight(container));
   };
 
   if (!rootPath) {
@@ -225,11 +230,16 @@ export function FileTree({
     >
       <div
         className="tree-virtual-content"
-        style={{ height: `${virtualContentHeight}px` }}
+        style={{
+          height: `${virtualContentHeight}px`,
+          overflow: "hidden",
+        }}
       >
         <div
           className="tree-virtual-window"
           style={{
+            bottom: `${TREE_PADDING_BOTTOM}px`,
+            top: `${TREE_PADDING_TOP}px`,
             transform: `translateY(${renderedWindowOffset}px)`,
           }}
         >
@@ -253,6 +263,14 @@ export function FileTree({
         </div>
       </div>
     </nav>
+  );
+}
+
+function measureTreeViewportHeight(container: HTMLElement): number {
+  return Math.max(
+    container.clientHeight,
+    container.offsetHeight,
+    container.getBoundingClientRect().height,
   );
 }
 

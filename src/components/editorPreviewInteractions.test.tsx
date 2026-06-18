@@ -249,8 +249,60 @@ describe("editor preview interactions", () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it("keeps the virtual row window stretched through the scrollable tree area", () => {
+    const file = fileEntry("/workspace/src/User.php", "User.php", "file");
+
+    renderFileTree({
+      file,
+    });
+
+    const window = queryRequired<HTMLElement>(host, ".tree-virtual-window");
+
+    expect(window.style.top).toBe("6px");
+    expect(window.style.bottom).toBe("10px");
+  });
+
+  it("clips translated virtual rows to the measured tree scroll range", () => {
+    const file = fileEntry("/workspace/src/User.php", "User.php", "file");
+
+    renderFileTree({
+      file,
+    });
+
+    const content = queryRequired<HTMLElement>(host, ".tree-virtual-content");
+
+    expect(content.style.overflow).toBe("hidden");
+  });
+
+  it("renders enough virtual rows after the tree reports its real viewport height", () => {
+    const files = Array.from({ length: 80 }, (_value, index) =>
+      fileEntry(
+        `/workspace/src/File${index}.php`,
+        `File${index}.php`,
+        "file",
+      ),
+    );
+
+    renderFileTree({
+      entriesByDirectory: { "/workspace": files },
+    });
+
+    const tree = queryRequired<HTMLElement>(host, ".file-tree");
+    Object.defineProperty(tree, "clientHeight", {
+      configurable: true,
+      value: 960,
+    });
+
+    act(() => {
+      tree.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    expect(host.querySelectorAll(".tree-row")).toHaveLength(46);
+  });
+
   function renderFileTree({
     activePath = null,
+    entriesByDirectory,
     expandedDirectories = new Set<string>(),
     file,
     onOpenFile = vi.fn(),
@@ -260,8 +312,9 @@ describe("editor preview interactions", () => {
     revealActivePathSignal = 0,
   }: {
     activePath?: string | null;
+    entriesByDirectory?: Record<string, FileEntry[]>;
     expandedDirectories?: Set<string>;
-    file: FileEntry;
+    file?: FileEntry;
     onOpenFile?: (entry: FileEntry) => void;
     onPreviewFile?: (entry: FileEntry) => void;
     onToggleDirectory?: (path: string) => void;
@@ -272,7 +325,9 @@ describe("editor preview interactions", () => {
       root.render(
         <FileTree
           activePath={activePath}
-          entriesByDirectory={{ "/workspace": [file] }}
+          entriesByDirectory={
+            entriesByDirectory ?? { "/workspace": file ? [file] : [] }
+          }
           expandedDirectories={expandedDirectories}
           loadingDirectories={new Set()}
           onOpenFile={onOpenFile}
