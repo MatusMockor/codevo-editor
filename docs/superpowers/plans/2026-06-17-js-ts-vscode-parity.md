@@ -110,6 +110,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript lazy completion, document-link, code-action, CodeLens and command resolves now check the active workspace root before calling the managed service. Workspace edits applied to open Monaco models are also filtered to the event/command root, preventing delayed provider work from leaking into another project tab.
 - TypeScript/JavaScript document sync state is now keyed by workspace root plus document path/URI. Open/change/save/close queues, pending debounce timers, and diagnostic version checks cannot be reused across project tabs.
 - TypeScript/JavaScript runtime status is now cached per workspace root. Status events from a kept-alive background project are retained without changing the active tab, then restored immediately when that project tab is activated.
+- The backend language-server registry now has regression coverage proving root-keyed notifications are written only to the requested workspace process, reducing the risk of JS/TS project tab cross-talk.
 
 ## Full VS Code-Like Target
 
