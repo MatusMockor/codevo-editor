@@ -893,9 +893,66 @@ describe("useWorkbenchController preview tabs", () => {
     expect(gitGateway.commit).toHaveBeenCalledWith(
       "/workspace",
       "feat: update git panel",
+      [change],
     );
     expect(getWorkbench().gitCommitMessage).toBe("");
     expect(getWorkbench().gitStatus.changes).toEqual([]);
+  });
+
+  it("does not commit a staged file that was excluded from the commit selection", async () => {
+    const included = gitChangedFile("src/User.php", true);
+    const excluded = gitChangedFile("test.txt", true);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [excluded],
+        isRepository: true,
+        rootPath,
+      })),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [included, excluded],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().toggleGitChangeIncluded(excluded);
+      getWorkbench().setGitCommitMessage("feat: selected only");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().commitGitChanges();
+    });
+
+    expect(gitGateway.commit).toHaveBeenCalledWith(
+      "/workspace",
+      "feat: selected only",
+      [included],
+    );
   });
 
   it("stages included unversioned files before committing them", async () => {
@@ -963,7 +1020,11 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(gitGateway.stageFiles).toHaveBeenCalledWith("/workspace", [unversioned]);
-    expect(gitGateway.commit).toHaveBeenCalledWith("/workspace", "docs: add note");
+    expect(gitGateway.commit).toHaveBeenCalledWith(
+      "/workspace",
+      "docs: add note",
+      [unversioned],
+    );
     expect(getWorkbench().gitCommitMessage).toBe("");
   });
 
@@ -1021,9 +1082,72 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(gitGateway.stageFiles).toHaveBeenCalledWith("/workspace", [change]);
-    expect(gitGateway.commit).toHaveBeenCalledWith("/workspace", "feat: push flow");
+    expect(gitGateway.commit).toHaveBeenCalledWith(
+      "/workspace",
+      "feat: push flow",
+      [change],
+    );
     expect(gitGateway.push).toHaveBeenCalledWith("/workspace");
     expect(getWorkbench().gitCommitMessage).toBe("");
+  });
+
+  it("keeps post-commit status visible and reports when push fails", async () => {
+    const change = gitChangedFile("src/User.php", true);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [],
+        isRepository: true,
+        rootPath,
+      })),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+      push: vi.fn(async () => {
+        throw new Error("no upstream configured");
+      }),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().setGitCommitMessage("feat: push feedback");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().commitAndPushGitChanges();
+    });
+
+    expect(getWorkbench().gitStatus.changes).toEqual([]);
+    expect(getWorkbench().gitCommitMessage).toBe("");
+    expect(getWorkbench().notices[0]).toEqual(
+      expect.objectContaining({
+        message: "Error: no upstream configured",
+        source: "Git Push",
+      }),
+    );
   });
 
   it("reuses a clean preview tab for search result opens", async () => {

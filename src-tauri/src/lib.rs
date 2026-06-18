@@ -699,10 +699,14 @@ fn revert_git_files(root_path: String, changes: Vec<GitChangedFile>) -> Result<G
 }
 
 #[tauri::command]
-fn commit_git_changes(root_path: String, message: String) -> Result<GitStatus, String> {
+fn commit_git_changes(
+    root_path: String,
+    message: String,
+    changes: Vec<GitChangedFile>,
+) -> Result<GitStatus, String> {
     let root = canonicalize_workspace_root(&root_path)?;
     CommandGitRepositoryGateway
-        .commit(&root, &message)
+        .commit(&root, &message, &changes)
         .map_err(|error| error.to_string())
 }
 

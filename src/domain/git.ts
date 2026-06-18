@@ -37,7 +37,11 @@ export interface GitFileDiff {
 }
 
 export interface GitGateway {
-  commit(rootPath: string, message: string): Promise<GitStatus>;
+  commit(
+    rootPath: string,
+    message: string,
+    changes: GitChangedFile[],
+  ): Promise<GitStatus>;
   getStatus(rootPath: string): Promise<GitStatus>;
   getDiff(rootPath: string, change: GitChangedFile): Promise<GitFileDiff>;
   push(rootPath: string): Promise<GitStatus>;

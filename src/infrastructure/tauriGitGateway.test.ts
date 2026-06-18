@@ -76,7 +76,7 @@ describe("TauriGitGateway", () => {
     await gateway.stageFiles("/workspace", [change]);
     await gateway.unstageFiles("/workspace", [change]);
     await gateway.revertFiles("/workspace", [change]);
-    await gateway.commit("/workspace", "feat: update user");
+    await gateway.commit("/workspace", "feat: update user", [change]);
     await gateway.push("/workspace");
 
     expect(invoke).toHaveBeenCalledWith("stage_git_files", {
@@ -92,6 +92,7 @@ describe("TauriGitGateway", () => {
       rootPath: "/workspace",
     });
     expect(invoke).toHaveBeenCalledWith("commit_git_changes", {
+      changes: [change],
       message: "feat: update user",
       rootPath: "/workspace",
     });
@@ -130,7 +131,7 @@ describe("TauriGitGateway", () => {
       isRepository: false,
       rootPath: "/workspace",
     });
-    await expect(gateway.commit("/workspace", "message")).resolves.toEqual({
+    await expect(gateway.commit("/workspace", "message", [change])).resolves.toEqual({
       branch: null,
       changes: [],
       isRepository: false,

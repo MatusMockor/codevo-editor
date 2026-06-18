@@ -91,12 +91,17 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<GitStatus>;
   }
 
-  async commit(rootPath: string, message: string): Promise<GitStatus> {
+  async commit(
+    rootPath: string,
+    message: string,
+    changes: GitChangedFile[],
+  ): Promise<GitStatus> {
     if (!this.isRuntimeAvailable()) {
       return emptyGitStatus(rootPath);
     }
 
     return this.invokeCommand("commit_git_changes", {
+      changes,
       message,
       rootPath,
     }) as Promise<GitStatus>;

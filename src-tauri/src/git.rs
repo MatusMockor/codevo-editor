@@ -47,7 +47,8 @@ pub struct GitFileDiff {
 }
 
 pub trait GitRepositoryGateway {
-    fn commit(&self, root: &Path, message: &str) -> io::Result<GitStatus>;
+    fn commit(&self, root: &Path, message: &str, changes: &[GitChangedFile])
+        -> io::Result<GitStatus>;
     fn diff(&self, root: &Path, change: &GitChangedFile) -> io::Result<GitFileDiff>;
     fn push(&self, root: &Path) -> io::Result<GitStatus>;
     fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
@@ -59,7 +60,12 @@ pub trait GitRepositoryGateway {
 pub struct CommandGitRepositoryGateway;
 
 impl GitRepositoryGateway for CommandGitRepositoryGateway {
-    fn commit(&self, root: &Path, message: &str) -> io::Result<GitStatus> {
+    fn commit(
+        &self,
+        root: &Path,
+        message: &str,
+        changes: &[GitChangedFile],
+    ) -> io::Result<GitStatus> {
         let root = root.canonicalize()?;
         let message = message.trim();
 
@@ -70,7 +76,21 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             ));
         }
 
-        run_git(&root, ["commit", "-m", message])?;
+        if changes.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "At least one file is required for commit.",
+            ));
+        }
+
+        let mut args = vec!["commit", "-m", message, "--"];
+
+        for change in changes {
+            safe_relative_path(&change.relative_path)?;
+            args.push(change.relative_path.as_str());
+        }
+
+        run_git_vec(&root, args)?;
         self.status(&root)
     }
 
@@ -307,6 +327,10 @@ fn git_change_status(status: &str) -> GitChangeStatus {
 }
 
 fn run_git<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
+    run_git_vec(root, args.to_vec())
+}
+
+fn run_git_vec(root: &Path, args: Vec<&str>) -> io::Result<()> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)

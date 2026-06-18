@@ -2864,24 +2864,39 @@ export function useWorkbenchController(
           }
         }
 
-        const commitStatus = await gitGateway.commit(requestedRoot, message);
+        const commitStatus = await gitGateway.commit(
+          requestedRoot,
+          message,
+          changesToCommit,
+        );
 
         if (currentWorkspaceRootRef.current !== requestedRoot) {
           return;
         }
 
-        const nextStatus = pushAfterCommit
-          ? await gitGateway.push(requestedRoot)
-          : commitStatus;
-
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
-          return;
-        }
-
-        applyGitOperationStatus(nextStatus);
+        applyGitOperationStatus(commitStatus);
         setIncludedGitChangePaths(new Set());
         setGitCommitMessage("");
-        setMessage(null);
+        setMessage(pushAfterCommit ? "Commit created. Pushing..." : null);
+
+        if (!pushAfterCommit) {
+          return;
+        }
+
+        try {
+          const pushStatus = await gitGateway.push(requestedRoot);
+
+          if (currentWorkspaceRootRef.current !== requestedRoot) {
+            return;
+          }
+
+          applyGitOperationStatus(pushStatus);
+          setMessage("Pushed current branch");
+        } catch (error) {
+          if (currentWorkspaceRootRef.current === requestedRoot) {
+            reportError("Git Push", error);
+          }
+        }
       } catch (error) {
         if (currentWorkspaceRootRef.current === requestedRoot) {
           reportError("Git", error);
