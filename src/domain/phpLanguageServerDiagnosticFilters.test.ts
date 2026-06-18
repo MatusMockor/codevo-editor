@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   filterPhpLanguageServerDiagnostics,
+  phpMemberMethodDiagnosticKey,
   phpMethodDiagnosticKey,
   phpTraitHostMethodDiagnosticKey,
+  phpUnresolvedMemberMethodDiagnosticContext,
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "./phpLanguageServerDiagnosticFilters";
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
@@ -69,6 +71,59 @@ $album = Album::published()->first();
         ]),
       }),
     ).toEqual([]);
+  });
+
+  it("suppresses unresolved member method diagnostics only when semantic context confirms the receiver", () => {
+    const source = `<?php
+
+$album = Album::query()->withRelations()->first();
+$album = Album::query()->missingMagic()->first();
+`;
+    const confirmed = diagnostic({
+      character: 27,
+      line: 2,
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+    });
+    const unknown = diagnostic({
+      character: 27,
+      line: 3,
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::missingMagic() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
+    ).toEqual([confirmed, unknown]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        contextualMemberMethods: new Set([
+          phpMemberMethodDiagnosticKey("Album::query()", "withRelations"),
+        ]),
+      }),
+    ).toEqual([unknown]);
+  });
+
+  it("extracts member method diagnostic contexts from unresolved PHPactor messages", () => {
+    const source = `<?php
+
+$album = Album::query()->withRelations()->first();
+`;
+
+    expect(
+      phpUnresolvedMemberMethodDiagnosticContext(
+        source,
+        diagnostic({
+          character: 27,
+          line: 2,
+          message:
+            "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+        }),
+      ),
+    ).toEqual({
+      methodName: "withRelations",
+      receiverExpression: "Album::query()",
+    });
   });
 
   it("extracts static method diagnostic contexts from unresolved PHPactor messages", () => {

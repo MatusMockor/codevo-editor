@@ -16,6 +16,8 @@ export interface LanguageServerDiagnostic {
   tags?: number[];
   line: number;
   character: number;
+  endLine?: number;
+  endCharacter?: number;
 }
 
 export interface LanguageServerDiagnosticEvent {

@@ -53,9 +53,11 @@ import {
 } from "../domain/languageServerDiagnostics";
 import {
   filterPhpLanguageServerDiagnostics,
+  phpMemberMethodDiagnosticKey,
   phpMethodDiagnosticKey,
   phpTraitHostMethodDiagnosticContext,
   phpTraitHostMethodDiagnosticKey,
+  phpUnresolvedMemberMethodDiagnosticContext,
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "../domain/phpLanguageServerDiagnosticFilters";
 import {
@@ -547,6 +549,13 @@ export function useWorkbenchController(
       _path: string,
       diagnostics: LanguageServerDiagnostic[],
     ): Promise<LanguageServerDiagnostic[]> => diagnostics,
+  );
+  const resolvePhpEloquentBuilderModelTypeRef = useRef(
+    async (
+      _source: string,
+      _position: EditorPosition,
+      _expression: string,
+    ): Promise<string | null> => null,
   );
 
   const activeDocument = activePath ? documents[activePath] || null : null;
@@ -5232,6 +5241,7 @@ export function useWorkbenchController(
 
       const contextualTraitHostMethods = new Set<string>();
       const contextualExistingMethods = new Set<string>();
+      const contextualMemberMethods = new Set<string>();
 
       for (const diagnostic of diagnostics) {
         const staticMethodContext = phpUnresolvedStaticMethodDiagnosticContext(
@@ -5271,6 +5281,48 @@ export function useWorkbenchController(
           }
         }
 
+        const memberMethodContext = phpUnresolvedMemberMethodDiagnosticContext(
+          source,
+          diagnostic,
+        );
+
+        if (memberMethodContext) {
+          const diagnosticPosition = {
+            column: diagnostic.character + 1,
+            lineNumber: diagnostic.line + 1,
+          };
+          const builderModelType = await resolvePhpEloquentBuilderModelTypeRef.current(
+            source,
+            diagnosticPosition,
+            memberMethodContext.receiverExpression,
+          );
+          const scopeMethodName = phpLaravelScopeMethodName(
+            memberMethodContext.methodName,
+          );
+          const hasContextualScopeMethod =
+            builderModelType && scopeMethodName
+              ? await phpClassHierarchyHasMethod(
+                  builderModelType,
+                  scopeMethodName,
+                )
+              : false;
+          const hasContextualDynamicWhereMethod = builderModelType
+            ? await phpClassHasLaravelDynamicWhere(
+                builderModelType,
+                memberMethodContext.methodName,
+              )
+            : false;
+
+          if (hasContextualScopeMethod || hasContextualDynamicWhereMethod) {
+            contextualMemberMethods.add(
+              phpMemberMethodDiagnosticKey(
+                memberMethodContext.receiverExpression,
+                memberMethodContext.methodName,
+              ),
+            );
+          }
+        }
+
         const traitContext = phpTraitHostMethodDiagnosticContext(
           source,
           diagnostic,
@@ -5303,6 +5355,7 @@ export function useWorkbenchController(
 
       return filterPhpLanguageServerDiagnostics(source, diagnostics, {
         contextualExistingMethods,
+        contextualMemberMethods,
         contextualTraitHostMethods,
         path,
       });
@@ -6071,6 +6124,11 @@ export function useWorkbenchController(
       resolvePhpMethodReturnType,
     ],
   );
+
+  useEffect(() => {
+    resolvePhpEloquentBuilderModelTypeRef.current =
+      resolvePhpEloquentBuilderModelType;
+  }, [resolvePhpEloquentBuilderModelType]);
 
   const resolvePhpLaravelCollectionModelType = useCallback(
     async (

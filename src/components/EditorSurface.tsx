@@ -1563,14 +1563,16 @@ function toMonacoDiagnosticMarker(
   monaco: typeof Monaco,
   diagnostic: LanguageServerDiagnostic,
 ): Monaco.editor.IMarkerData {
+  const range = diagnosticRange(diagnostic);
+
   return {
-    endColumn: diagnostic.character + 2,
-    endLineNumber: diagnostic.line + 1,
+    endColumn: range.endCharacter + 1,
+    endLineNumber: range.endLine + 1,
     message: diagnostic.message,
     severity: diagnosticSeverity(monaco, diagnostic),
     source: diagnostic.source || "Language Server",
-    startColumn: diagnostic.character + 1,
-    startLineNumber: diagnostic.line + 1,
+    startColumn: range.character + 1,
+    startLineNumber: range.line + 1,
     tags: diagnosticTags(monaco, diagnostic.tags ?? []),
   };
 }
@@ -1579,6 +1581,8 @@ function toDiagnosticOverviewDecoration(
   monaco: typeof Monaco,
   diagnostic: LanguageServerDiagnostic,
 ): Monaco.editor.IModelDeltaDecoration {
+  const range = diagnosticRange(diagnostic);
+
   return {
     options: {
       hoverMessage: {
@@ -1595,11 +1599,25 @@ function toDiagnosticOverviewDecoration(
         monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
     },
     range: new monaco.Range(
-      diagnostic.line + 1,
-      diagnostic.character + 1,
-      diagnostic.line + 1,
-      diagnostic.character + 2,
+      range.line + 1,
+      range.character + 1,
+      range.endLine + 1,
+      range.endCharacter + 1,
     ),
+  };
+}
+
+function diagnosticRange(diagnostic: LanguageServerDiagnostic): {
+  character: number;
+  endCharacter: number;
+  endLine: number;
+  line: number;
+} {
+  return {
+    character: diagnostic.character,
+    endCharacter: diagnostic.endCharacter ?? diagnostic.character + 1,
+    endLine: diagnostic.endLine ?? diagnostic.line,
+    line: diagnostic.line,
   };
 }
 

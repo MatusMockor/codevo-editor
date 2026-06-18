@@ -1,9 +1,18 @@
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 import { isLaravelEloquentBuilderMethodName } from "./phpFrameworkLaravel";
+import {
+  PHP_EXPRESSION_RECEIVER_PATTERN,
+  phpNormalizeReceiverExpression,
+} from "./phpReceiverExpressions";
 
 export interface PhpTraitHostMethodDiagnosticContext {
   methodName: string;
   traitName: string;
+}
+
+export interface PhpMemberMethodDiagnosticContext {
+  methodName: string;
+  receiverExpression: string;
 }
 
 export interface PhpStaticMethodDiagnosticContext {
@@ -20,6 +29,12 @@ const unresolvedMethodDiagnosticPattern =
   /\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b.*\bmethod\b|\bmethod\b.*\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b/i;
 const staticMethodCallPattern =
   /\b((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+const memberMethodCallPattern = new RegExp(
+  String.raw`(` +
+    PHP_EXPRESSION_RECEIVER_PATTERN +
+    String.raw`(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*?)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(`,
+  "g",
+);
 
 export function filterPhpLanguageServerDiagnostics(
   source: string,
@@ -27,6 +42,7 @@ export function filterPhpLanguageServerDiagnostics(
   options: {
     allowDependencyTraitFallback?: boolean;
     contextualExistingMethods?: ReadonlySet<string>;
+    contextualMemberMethods?: ReadonlySet<string>;
     contextualTraitHostMethods?: ReadonlySet<string>;
     path?: string | null;
   } = {},
@@ -40,6 +56,11 @@ export function filterPhpLanguageServerDiagnostics(
         source,
         diagnostic,
         options.contextualExistingMethods,
+      ) &&
+      !isContextualExistingMemberMethodDiagnostic(
+        source,
+        diagnostic,
+        options.contextualMemberMethods,
       ) &&
       !isPhpactorTraitHostMethodDiagnostic(
         source,
@@ -76,6 +97,26 @@ function isLaravelEloquentStaticBuilderDiagnostic(
 
   return Boolean(
     context && isLaravelEloquentBuilderMethodName(context.methodName),
+  );
+}
+
+function isContextualExistingMemberMethodDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  contextualMemberMethods: ReadonlySet<string> | undefined,
+): boolean {
+  if (!contextualMemberMethods?.size) {
+    return false;
+  }
+
+  const context = phpUnresolvedMemberMethodDiagnosticContext(source, diagnostic);
+
+  if (!context) {
+    return false;
+  }
+
+  return contextualMemberMethods.has(
+    phpMemberMethodDiagnosticKey(context.receiverExpression, context.methodName),
   );
 }
 
@@ -227,6 +268,43 @@ function traitHostMethodDiagnosticContextFromMessage(
   return methodName && traitName ? { methodName, traitName } : null;
 }
 
+export function phpUnresolvedMemberMethodDiagnosticContext(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): PhpMemberMethodDiagnosticContext | null {
+  if (!unresolvedMethodDiagnosticPattern.test(diagnostic.message)) {
+    return null;
+  }
+
+  const line = lineAt(source, diagnostic.line);
+
+  if (!line) {
+    return null;
+  }
+
+  for (const call of line.matchAll(memberMethodCallPattern)) {
+    const receiverExpression = call[1] ?? "";
+    const methodName = call[2] ?? "";
+
+    if (!receiverExpression || !methodName) {
+      continue;
+    }
+
+    const callStart = call.index ?? 0;
+    const methodStart = callStart + call[0].lastIndexOf(methodName);
+    const methodEnd = methodStart + methodName.length;
+
+    if (diagnosticTouchesMethod(diagnostic, methodName, methodStart, methodEnd)) {
+      return {
+        methodName,
+        receiverExpression: phpNormalizeReceiverExpression(receiverExpression),
+      };
+    }
+  }
+
+  return null;
+}
+
 export function phpUnresolvedStaticMethodDiagnosticContext(
   source: string,
   diagnostic: LanguageServerDiagnostic,
@@ -278,6 +356,15 @@ export function phpMethodDiagnosticKey(
   methodName: string,
 ): string {
   return `${className.trim().replace(/^\\+/, "").toLowerCase()}#${methodName
+    .trim()
+    .toLowerCase()}`;
+}
+
+export function phpMemberMethodDiagnosticKey(
+  receiverExpression: string,
+  methodName: string,
+): string {
+  return `${phpNormalizeReceiverExpression(receiverExpression).toLowerCase()}#${methodName
     .trim()
     .toLowerCase()}`;
 }

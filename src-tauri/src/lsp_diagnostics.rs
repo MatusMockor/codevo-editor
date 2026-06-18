@@ -20,6 +20,8 @@ pub struct LanguageServerDiagnostic {
     pub tags: Vec<u64>,
     pub line: u64,
     pub character: u64,
+    pub end_line: u64,
+    pub end_character: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -64,10 +66,10 @@ pub fn parse_publish_diagnostics(
 }
 
 fn parse_diagnostic(value: &Value) -> LanguageServerDiagnostic {
-    let start = value
-        .get("range")
-        .and_then(|range| range.get("start"))
-        .unwrap_or(&Value::Null);
+    let range = value.get("range").unwrap_or(&Value::Null);
+    let (line, character) = parse_position(range.get("start")).unwrap_or((0, 0));
+    let (end_line, end_character) =
+        parse_position(range.get("end")).unwrap_or((line, character.saturating_add(1)));
 
     LanguageServerDiagnostic {
         code: parse_code(value.get("code")),
@@ -82,9 +84,20 @@ fn parse_diagnostic(value: &Value) -> LanguageServerDiagnostic {
             .and_then(Value::as_str)
             .map(str::to_string),
         tags: parse_tags(value.get("tags")),
-        line: start.get("line").and_then(Value::as_u64).unwrap_or(0),
-        character: start.get("character").and_then(Value::as_u64).unwrap_or(0),
+        line,
+        character,
+        end_line,
+        end_character,
     }
+}
+
+fn parse_position(value: Option<&Value>) -> Option<(u64, u64)> {
+    let value = value?;
+
+    Some((
+        value.get("line").and_then(Value::as_u64)?,
+        value.get("character").and_then(Value::as_u64)?,
+    ))
 }
 
 fn parse_tags(value: Option<&Value>) -> Vec<u64> {
@@ -178,8 +191,39 @@ mod tests {
         );
         assert_eq!(event.diagnostics[0].line, 2);
         assert_eq!(event.diagnostics[0].character, 4);
+        assert_eq!(event.diagnostics[0].end_line, 2);
+        assert_eq!(event.diagnostics[0].end_character, 8);
         assert_eq!(event.diagnostics[0].tags, vec![1, 2]);
         assert_eq!(event.diagnostics[0].message, "Unexpected token");
+    }
+
+    #[test]
+    fn falls_back_to_one_character_range_when_end_position_is_malformed() {
+        let event = parse_publish_diagnostics(
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/publishDiagnostics",
+                "params": {
+                    "uri": "file:///tmp/User.ts",
+                    "diagnostics": [
+                        {
+                            "range": {
+                                "start": { "line": 3, "character": 12 },
+                                "end": { "line": 3 }
+                            },
+                            "message": "Unexpected token",
+                        }
+                    ]
+                }
+            }),
+            42,
+        )
+        .expect("diagnostics event");
+
+        assert_eq!(event.diagnostics[0].line, 3);
+        assert_eq!(event.diagnostics[0].character, 12);
+        assert_eq!(event.diagnostics[0].end_line, 3);
+        assert_eq!(event.diagnostics[0].end_character, 13);
     }
 
     #[test]

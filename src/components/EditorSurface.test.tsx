@@ -205,13 +205,13 @@ interface ParserFactory
     });
   });
 
-  it("preserves language-server diagnostic tags on Monaco markers", async () => {
+  it("preserves language-server diagnostic ranges and tags on Monaco markers", async () => {
     const activeDocument: EditorDocument = {
-      content: "const unused = deprecatedValue;\n",
+      content: "const unused =\n  deprecatedValue;\n",
       language: "typescript",
       name: "user.ts",
       path: "/workspace/src/user.ts",
-      savedContent: "const unused = deprecatedValue;\n",
+      savedContent: "const unused =\n  deprecatedValue;\n",
     };
     const model: FakeModel = {
       uri: {
@@ -235,6 +235,8 @@ interface ParserFactory
             [activeDocument.path]: [
               {
                 character: 6,
+                endCharacter: 17,
+                endLine: 1,
                 line: 0,
                 message: "'unused' is declared but its value is never read.",
                 severity: "hint",
@@ -274,11 +276,34 @@ interface ParserFactory
       "php-language-server",
       [
         expect.objectContaining({
+          endColumn: 18,
+          endLineNumber: 2,
           message: "'unused' is declared but its value is never read.",
+          startColumn: 7,
+          startLineNumber: 1,
           tags: [monaco.MarkerTag.Unnecessary, monaco.MarkerTag.Deprecated],
         }),
       ],
     );
+
+    const diagnosticDecorationCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.overviewRuler?.position ===
+            monaco.editor.OverviewRulerLane.Right,
+        ),
+    );
+    expect(diagnosticDecorationCall?.[1]).toEqual([
+      expect.objectContaining({
+        range: expect.objectContaining({
+          endColumn: 18,
+          endLineNumber: 2,
+          startColumn: 7,
+          startLineNumber: 1,
+        }),
+      }),
+    ]);
   });
 
   it("registers guarded Option+Enter quick fix/context actions", async () => {
