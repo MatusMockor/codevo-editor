@@ -119,6 +119,13 @@ pub struct TextDocumentInlayHintRange {
     pub range: LanguageServerRange,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextDocumentSelectionRange {
+    pub path: String,
+    pub positions: Vec<LanguageServerPosition>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerFormattingOptions {
@@ -183,6 +190,20 @@ pub struct LanguageServerDocumentSymbol {
     pub selection_range: LanguageServerRange,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerDocumentHighlight {
+    pub kind: Option<u32>,
+    pub range: LanguageServerRange,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerSelectionRange {
+    pub range: LanguageServerRange,
+    pub parent: Option<Box<LanguageServerSelectionRange>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerWorkspaceSymbol {
@@ -223,10 +244,12 @@ pub trait TextDocumentFeatureRequestFactory {
         item: &LanguageServerCompletionItem,
     ) -> LanguageServerFeatureRequest;
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn document_highlights(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest;
     fn workspace_symbols(&self, query: &str) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn selection_ranges(&self, range: &TextDocumentSelectionRange) -> LanguageServerFeatureRequest;
     fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn rename(&self, rename: &TextDocumentRename) -> LanguageServerFeatureRequest;
     fn code_actions(
@@ -271,6 +294,10 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         request("textDocument/definition", position)
     }
 
+    fn document_highlights(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
+        request("textDocument/documentHighlight", position)
+    }
+
     fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest {
         LanguageServerFeatureRequest {
             method: "textDocument/documentSymbol".to_string(),
@@ -299,6 +326,18 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         let mut request = request("textDocument/references", position);
         request.params["context"] = json!({ "includeDeclaration": true });
         request
+    }
+
+    fn selection_ranges(&self, range: &TextDocumentSelectionRange) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/selectionRange".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(&range.path)),
+                },
+                "positions": range.positions,
+            }),
+        }
     }
 
     fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
@@ -467,6 +506,41 @@ pub fn parse_document_symbols_result(
         .iter()
         .filter_map(parse_document_symbol_item)
         .collect())
+}
+
+pub fn parse_document_highlights_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerDocumentHighlight>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed document highlights.".to_string());
+    };
+
+    items
+        .iter()
+        .map(|item| {
+            serde_json::from_value::<LanguageServerDocumentHighlight>(item.clone()).map_err(
+                |error| format!("Language server returned a malformed document highlight: {error}"),
+            )
+        })
+        .collect()
+}
+
+pub fn parse_selection_ranges_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerSelectionRange>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed selection ranges.".to_string());
+    };
+
+    items.iter().map(parse_selection_range_item).collect()
 }
 
 pub fn parse_workspace_symbols_result(
@@ -832,6 +906,21 @@ fn parse_workspace_symbol_location(value: &Value) -> Option<LanguageServerLocati
     serde_json::from_value(value.clone()).ok()
 }
 
+fn parse_selection_range_item(value: &Value) -> Result<LanguageServerSelectionRange, String> {
+    let range = value
+        .get("range")
+        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok())
+        .ok_or_else(|| "Language server returned a malformed selection range.".to_string())?;
+    let parent = value
+        .get("parent")
+        .filter(|parent| !parent.is_null())
+        .map(parse_selection_range_item)
+        .transpose()?
+        .map(Box::new);
+
+    Ok(LanguageServerSelectionRange { parent, range })
+}
+
 fn parse_signature_information(value: &Value) -> Option<LanguageServerSignature> {
     let label = value.get("label").and_then(Value::as_str)?.to_string();
     let parameters = value
@@ -1007,16 +1096,16 @@ struct LanguageServerLocationLink {
 mod tests {
     use super::{
         parse_code_action_result, parse_completion_result, parse_definition_result,
-        parse_document_symbols_result, parse_formatting_result, parse_hover_result,
-        parse_inlay_hints_result, parse_optional_workspace_edit_result,
-        parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
-        LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-        LanguageServerCompletionItem, LanguageServerCompletionList,
-        LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
-        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
-        LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-        TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition,
-        TextDocumentRange, TextDocumentRename,
+        parse_document_highlights_result, parse_document_symbols_result, parse_formatting_result,
+        parse_hover_result, parse_inlay_hints_result, parse_optional_workspace_edit_result,
+        parse_selection_ranges_result, parse_signature_help_result, parse_workspace_edit_result,
+        parse_workspace_symbols_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+        LanguageServerCodeActionContext, LanguageServerCompletionItem,
+        LanguageServerCompletionList, LanguageServerFormattingOptions, LanguageServerHover,
+        LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
+        LanguageServerTextEdit, LspTextDocumentFeatureRequestFactory,
+        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+        TextDocumentPosition, TextDocumentRange, TextDocumentRename, TextDocumentSelectionRange,
     };
     use serde_json::json;
 
@@ -1049,6 +1138,20 @@ mod tests {
     }
 
     #[test]
+    fn document_highlight_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.document_highlights(&position());
+
+        assert_eq!(request.method, "textDocument/documentHighlight");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
     fn references_request_includes_declarations() {
         let factory = LspTextDocumentFeatureRequestFactory;
         let request = factory.references(&position());
@@ -1057,6 +1160,37 @@ mod tests {
         assert_eq!(request.params["context"]["includeDeclaration"], true);
         assert_eq!(request.params["position"]["line"], 10);
         assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn selection_range_request_contains_document_uri_and_positions() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.selection_ranges(&TextDocumentSelectionRange {
+            path: "/tmp/User.ts".to_string(),
+            positions: vec![
+                LanguageServerPosition {
+                    line: 2,
+                    character: 8,
+                },
+                LanguageServerPosition {
+                    line: 4,
+                    character: 12,
+                },
+            ],
+        });
+
+        assert_eq!(request.method, "textDocument/selectionRange");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(
+            request.params["positions"],
+            json!([
+                { "line": 2, "character": 8 },
+                { "line": 4, "character": 12 }
+            ])
+        );
     }
 
     #[test]
@@ -1776,6 +1910,62 @@ mod tests {
         assert!(symbols[1].location.is_none());
         assert_eq!(
             parse_workspace_symbols_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn parses_document_highlights() {
+        let highlights = parse_document_highlights_result(&json!([
+            {
+                "range": {
+                    "start": { "line": 2, "character": 4 },
+                    "end": { "line": 2, "character": 8 }
+                },
+                "kind": 2
+            },
+            {
+                "range": {
+                    "start": { "line": 5, "character": 1 },
+                    "end": { "line": 5, "character": 5 }
+                }
+            }
+        ]))
+        .expect("highlights");
+
+        assert_eq!(highlights.len(), 2);
+        assert_eq!(highlights[0].kind, Some(2));
+        assert_eq!(highlights[0].range.start.line, 2);
+        assert_eq!(highlights[1].kind, None);
+        assert_eq!(
+            parse_document_highlights_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn parses_selection_ranges_with_parents() {
+        let ranges = parse_selection_ranges_result(&json!([
+            {
+                "range": {
+                    "start": { "line": 2, "character": 8 },
+                    "end": { "line": 2, "character": 16 }
+                },
+                "parent": {
+                    "range": {
+                        "start": { "line": 2, "character": 2 },
+                        "end": { "line": 4, "character": 3 }
+                    }
+                }
+            }
+        ]))
+        .expect("selection ranges");
+
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].range.start.character, 8);
+        assert_eq!(ranges[0].parent.as_ref().expect("parent").range.end.line, 4);
+        assert_eq!(
+            parse_selection_ranges_result(&json!(null)).expect("null"),
             Vec::new()
         );
     }

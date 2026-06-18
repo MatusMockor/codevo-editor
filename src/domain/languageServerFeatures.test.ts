@@ -14,6 +14,7 @@ describe("canUseLanguageServerFeature", () => {
       codeAction: false,
       completion: false,
       definition: true,
+      documentHighlight: false,
       documentSymbol: false,
       formatting: false,
       hover: true,
@@ -21,6 +22,7 @@ describe("canUseLanguageServerFeature", () => {
       inlayHint: false,
       references: false,
       rename: false,
+      selectionRange: false,
       signatureHelp: false,
       workspaceSymbol: false,
     };

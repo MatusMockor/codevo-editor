@@ -27,6 +27,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.documentSymbols("/project", "/project/src/User.php"),
     ).resolves.toEqual([]);
+    await expect(gateway.documentHighlights("/project", position())).resolves.toEqual(
+      [],
+    );
     await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
       [],
     );
@@ -38,6 +41,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.signatureHelp("/project", position()),
     ).resolves.toBeNull();
     await expect(gateway.references("/project", position())).resolves.toEqual([]);
+    await expect(
+      gateway.selectionRanges("/project", "/project/src/User.php", [
+        { character: 4, line: 10 },
+      ]),
+    ).resolves.toEqual([]);
     await expect(gateway.rename("/project", position(), "Account")).resolves.toBeNull();
     await expect(
       gateway.codeActions("/project", "/project/src/User.php", range(), {
@@ -158,6 +166,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         selectionRange: range(),
       },
     ];
+    const documentHighlights = [
+      {
+        kind: 2,
+        range: range(),
+      },
+    ];
     const workspaceSymbols = [
       {
         containerName: "App",
@@ -167,6 +181,18 @@ describe("TauriLanguageServerFeaturesGateway", () => {
           uri: "file:///project/src/User.php",
         },
         name: "User",
+      },
+    ];
+    const selectionRanges = [
+      {
+        parent: {
+          parent: null,
+          range: {
+            end: { character: 20, line: 10 },
+            start: { character: 0, line: 10 },
+          },
+        },
+        range: range(),
       },
     ];
     const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
@@ -213,8 +239,16 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return documentSymbols;
       }
 
+      if (command === "text_document_document_highlights") {
+        return documentHighlights;
+      }
+
       if (command === "workspace_symbols") {
         return workspaceSymbols;
+      }
+
+      if (command === "text_document_selection_ranges") {
+        return selectionRanges;
       }
 
       if (command === "text_document_signature_help") {
@@ -241,6 +275,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.documentSymbols("/project", "/project/src/User.php"),
     ).resolves.toEqual(documentSymbols);
+    await expect(
+      gateway.documentHighlights("/project", requestPosition),
+    ).resolves.toEqual(documentHighlights);
     await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
       workspaceSymbols,
     );
@@ -250,6 +287,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(gateway.references("/project", requestPosition)).resolves.toEqual(
       definition,
     );
+    await expect(
+      gateway.selectionRanges("/project", "/project/src/User.php", [
+        { character: 4, line: 10 },
+      ]),
+    ).resolves.toEqual(selectionRanges);
     await expect(gateway.rename("/project", requestPosition, "Account")).resolves.toEqual(
       rename,
     );
@@ -297,6 +339,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       path: "/project/src/User.php",
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_document_highlights", {
+      position: requestPosition,
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("workspace_symbols", {
       query: "User",
       rootPath: "/project",
@@ -307,6 +353,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_references", {
       position: requestPosition,
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_selection_ranges", {
+      path: "/project/src/User.php",
+      positions: [{ character: 4, line: 10 }],
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_rename", {

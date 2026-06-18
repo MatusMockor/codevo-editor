@@ -33,10 +33,108 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       monaco.languages.registerDocumentFormattingEditProvider,
     ).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(2);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(21);
+    expect(monaco.dispose).toHaveBeenCalledTimes(25);
+  });
+
+  it("maps TypeScript document highlights and smart selection ranges", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(0, 6, 0, 10),
+        },
+        {
+          kind: 3,
+          range: range(2, 2, 2, 6),
+        },
+      ],
+      selectionRanges: [
+        {
+          parent: {
+            parent: null,
+            range: range(3, 2, 5, 3),
+          },
+          range: range(3, 8, 3, 20),
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+
+    const highlightProvider = (
+      monaco.languages.registerDocumentHighlightProvider as any
+    ).mock.calls[0][1];
+    const highlights = await highlightProvider.provideDocumentHighlights(model, {
+      column: 9,
+      lineNumber: 4,
+    });
+
+    expect(gateway.documentHighlights).toHaveBeenCalledWith("/project", {
+      character: 8,
+      line: 3,
+      path: "/project/src/user.ts",
+    });
+    expect(highlights).toEqual([
+      {
+        kind: monaco.languages.DocumentHighlightKind.Read,
+        range: expect.objectContaining({
+          endColumn: 11,
+          endLineNumber: 1,
+          startColumn: 7,
+          startLineNumber: 1,
+        }),
+      },
+      {
+        kind: monaco.languages.DocumentHighlightKind.Write,
+        range: expect.objectContaining({
+          endColumn: 7,
+          endLineNumber: 3,
+          startColumn: 3,
+          startLineNumber: 3,
+        }),
+      },
+    ]);
+
+    const selectionRangeProvider = (
+      monaco.languages.registerSelectionRangeProvider as any
+    ).mock.calls[0][1];
+    const selectionRanges = await selectionRangeProvider.provideSelectionRanges(
+      model,
+      [{ column: 12, lineNumber: 4 }],
+    );
+
+    expect(gateway.selectionRanges).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      [{ character: 11, line: 3 }],
+    );
+    expect(selectionRanges).toEqual([
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 21,
+            endLineNumber: 4,
+            startColumn: 9,
+            startLineNumber: 4,
+          }),
+        },
+        {
+          range: expect.objectContaining({
+            endColumn: 4,
+            endLineNumber: 6,
+            startColumn: 3,
+            startLineNumber: 4,
+          }),
+        },
+      ],
+    ]);
   });
 
   it("maps references, rename edits, code actions, commands and formatting through the gateway", async () => {
@@ -601,6 +699,9 @@ function featuresGateway(
   responses: Partial<{
     codeActions: Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>;
     completion: Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>;
+    documentHighlights: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>
+    >;
     documentSymbols: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
     >;
@@ -611,6 +712,9 @@ function featuresGateway(
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     references: Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
+    selectionRanges: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>
+    >;
     signatureHelp: Awaited<
       ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
     >;
@@ -635,6 +739,9 @@ function featuresGateway(
         },
     ),
     definition: vi.fn(async () => []),
+    documentHighlights: vi.fn(
+      async () => responses.documentHighlights ?? [],
+    ),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => responses.executeCommandEdit ?? null),
     formatting: vi.fn(async () => responses.formatting ?? []),
@@ -643,6 +750,7 @@ function featuresGateway(
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
+    selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
     signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(
@@ -662,6 +770,7 @@ function runningStatus(
       codeAction: true,
       completion: true,
       definition: true,
+      documentHighlight: true,
       documentSymbol: true,
       formatting: true,
       hover: true,
@@ -669,6 +778,7 @@ function runningStatus(
       inlayHint: true,
       references: true,
       rename: true,
+      selectionRange: true,
       signatureHelp: true,
       workspaceSymbol: true,
       ...capabilities,
@@ -784,6 +894,11 @@ function createMonaco() {
         Value: 12,
         Variable: 6,
       },
+      DocumentHighlightKind: {
+        Read: 1,
+        Text: 0,
+        Write: 2,
+      },
       InlayHintKind: {
         Parameter: 2,
         Type: 1,
@@ -791,12 +906,14 @@ function createMonaco() {
       registerCodeActionProvider: vi.fn(() => disposable()),
       registerCompletionItemProvider: vi.fn(() => disposable()),
       registerDefinitionProvider: vi.fn(() => disposable()),
+      registerDocumentHighlightProvider: vi.fn(() => disposable()),
       registerDocumentFormattingEditProvider: vi.fn(() => disposable()),
       registerHoverProvider: vi.fn(() => disposable()),
       registerImplementationProvider: vi.fn(() => disposable()),
       registerInlayHintsProvider: vi.fn(() => disposable()),
       registerReferenceProvider: vi.fn(() => disposable()),
       registerRenameProvider: vi.fn(() => disposable()),
+      registerSelectionRangeProvider: vi.fn(() => disposable()),
       registerSignatureHelpProvider: vi.fn(() => disposable()),
     },
     MarkerSeverity: {

@@ -84,6 +84,8 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - Settings now include a per-workspace Restart JavaScript/TypeScript service action, so users can refresh the managed TS runtime after dependency or TypeScript-version changes without restarting the whole editor.
 - Workspace detection now includes a JavaScript/TypeScript project descriptor for `package.json`, `tsconfig.json`, `jsconfig.json`, package manager and common framework markers. The status bar can show this JS/TS project context in Basic mode when editing JS/TS files.
 - The managed LSP supervisor now answers TypeScript/JavaScript `workspace/configuration` requests with the runtime preferences derived from initialize settings, keeping tsserver-wrapper behavior aligned with service settings instead of returning empty configuration.
+- TypeScript/JavaScript document highlights are now served by the managed language server in Basic mode, so symbol reads/writes under the cursor can be highlighted like VS Code.
+- TypeScript/JavaScript selection ranges are now served by the managed language server in Basic mode, giving smart expand-selection data from tsserver instead of only word-based selection.
 
 ## Full VS Code-Like Target
 
@@ -137,6 +139,8 @@ Basic mode must support:
 - formatting
 - inlay hints. Implemented through LSP-backed Monaco provider.
 - signature help. Implemented through LSP-backed Monaco provider.
+- document highlights. Implemented through LSP-backed Monaco provider.
+- selection ranges / smart selection. Implemented through LSP-backed Monaco provider.
 - document symbols / file structure. Implemented for JS/TS through managed LSP-backed `Cmd+R`.
 - workspace symbols. Implemented for JS/TS-backed `Cmd+O` type search.
 - JS/TS version status

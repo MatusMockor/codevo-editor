@@ -55,16 +55,18 @@ use lsp_document::{
 };
 use lsp_features::{
     parse_code_action_result, parse_completion_result, parse_definition_result,
-    parse_document_symbols_result, parse_formatting_result, parse_hover_result,
-    parse_inlay_hints_result, parse_optional_workspace_edit_result, parse_signature_help_result,
-    parse_workspace_edit_result, parse_workspace_symbols_result, LanguageServerCodeAction,
-    LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCompletionItem,
-    LanguageServerCompletionList, LanguageServerDocumentSymbol, LanguageServerFormattingOptions,
-    LanguageServerHover, LanguageServerInlayHint, LanguageServerLocation, LanguageServerRange,
-    LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
-    LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory,
-    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-    TextDocumentPosition, TextDocumentRange, TextDocumentRename,
+    parse_document_highlights_result, parse_document_symbols_result, parse_formatting_result,
+    parse_hover_result, parse_inlay_hints_result, parse_optional_workspace_edit_result,
+    parse_selection_ranges_result, parse_signature_help_result, parse_workspace_edit_result,
+    parse_workspace_symbols_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+    LanguageServerCodeActionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
+    LanguageServerDocumentHighlight, LanguageServerDocumentSymbol, LanguageServerFormattingOptions,
+    LanguageServerHover, LanguageServerInlayHint, LanguageServerLocation, LanguageServerPosition,
+    LanguageServerRange, LanguageServerSelectionRange, LanguageServerSignatureHelp,
+    LanguageServerTextEdit, LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
+    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
+    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
+    TextDocumentRename, TextDocumentSelectionRange,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1384,6 +1386,36 @@ fn javascript_typescript_text_document_document_symbols(
 }
 
 #[tauri::command]
+fn text_document_document_highlights(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerDocumentHighlight>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.document_highlights(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_document_highlights_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_document_highlights(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerDocumentHighlight>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.document_highlights(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_document_highlights_result(&result)
+}
+
+#[tauri::command]
 fn workspace_symbols(
     root_path: String,
     query: String,
@@ -1411,6 +1443,38 @@ fn javascript_typescript_workspace_symbols(
     };
 
     parse_workspace_symbols_result(&result)
+}
+
+#[tauri::command]
+fn text_document_selection_ranges(
+    root_path: String,
+    path: String,
+    positions: Vec<LanguageServerPosition>,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerSelectionRange>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.selection_ranges(&TextDocumentSelectionRange { path, positions });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_selection_ranges_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_selection_ranges(
+    root_path: String,
+    path: String,
+    positions: Vec<LanguageServerPosition>,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerSelectionRange>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.selection_ranges(&TextDocumentSelectionRange { path, positions });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_selection_ranges_result(&result)
 }
 
 #[tauri::command]
@@ -1645,6 +1709,7 @@ pub fn run() {
             javascript_typescript_text_document_completion,
             javascript_typescript_text_document_completion_resolve,
             javascript_typescript_text_document_definition,
+            javascript_typescript_text_document_document_highlights,
             javascript_typescript_text_document_document_symbols,
             javascript_typescript_text_document_formatting,
             javascript_typescript_text_document_hover,
@@ -1652,6 +1717,7 @@ pub fn run() {
             javascript_typescript_text_document_inlay_hints,
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
+            javascript_typescript_text_document_selection_ranges,
             javascript_typescript_text_document_signature_help,
             javascript_typescript_workspace_symbols,
             language_server_execute_command,
@@ -1660,6 +1726,7 @@ pub fn run() {
             text_document_completion,
             text_document_completion_resolve,
             text_document_definition,
+            text_document_document_highlights,
             text_document_document_symbols,
             text_document_did_change,
             text_document_did_close,
@@ -1671,6 +1738,7 @@ pub fn run() {
             text_document_inlay_hints,
             text_document_references,
             text_document_rename,
+            text_document_selection_ranges,
             text_document_signature_help,
             upsert_workspace_index_file,
             workspace_symbols,

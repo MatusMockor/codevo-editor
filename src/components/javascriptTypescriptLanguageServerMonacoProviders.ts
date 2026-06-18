@@ -7,11 +7,13 @@ import {
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionItem,
+  type LanguageServerDocumentHighlight,
   type LanguageServerFeaturesGateway,
   type LanguageServerFormattingOptions,
   type LanguageServerInlayHint,
   type LanguageServerLocation,
   type LanguageServerRange,
+  type LanguageServerSelectionRange,
   type LanguageServerSignature,
   type LanguageServerSignatureHelp,
   type LanguageServerSignatureParameter,
@@ -226,6 +228,24 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerInlayHintsProvider(language, {
           provideInlayHints: (model, range) =>
             provideInlayHints(monaco, context, model, range),
+        }),
+      );
+    }
+
+    if (registry.registerDocumentHighlightProvider) {
+      disposables.push(
+        registry.registerDocumentHighlightProvider(language, {
+          provideDocumentHighlights: (model, position) =>
+            provideDocumentHighlights(monaco, context, model, position),
+        }),
+      );
+    }
+
+    if (registry.registerSelectionRangeProvider) {
+      disposables.push(
+        registry.registerSelectionRangeProvider(language, {
+          provideSelectionRanges: (model, positions) =>
+            provideSelectionRanges(monaco, context, model, positions),
         }),
       );
     }
@@ -450,6 +470,39 @@ async function provideReferences(
   }
 }
 
+async function provideDocumentHighlights(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.DocumentHighlight[] | null> {
+  const request = featureRequestContext(
+    context,
+    model,
+    position,
+    "documentHighlight",
+  );
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const highlights = await context.featuresGateway.documentHighlights(
+      request.rootPath,
+      request.position,
+    );
+
+    return highlights.map((highlight) =>
+      toMonacoDocumentHighlight(monaco, highlight),
+    );
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
 async function provideRenameEdits(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -474,6 +527,38 @@ async function provideRenameEdits(
     return edit
       ? toMonacoWorkspaceEdit(monaco, workspaceEditContext(model), edit)
       : null;
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
+async function provideSelectionRanges(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  positions: MonacoPosition[],
+): Promise<Monaco.languages.SelectionRange[][] | null> {
+  const request = documentRequestContext(context, model, "selectionRange");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const selectionRanges = await context.featuresGateway.selectionRanges(
+      request.rootPath,
+      request.path,
+      positions.map((position) => ({
+        character: Math.max(0, position.column - 1),
+        line: Math.max(0, position.lineNumber - 1),
+      })),
+    );
+
+    return selectionRanges.map((selectionRange) =>
+      flattenSelectionRange(monaco, selectionRange),
+    );
   } catch (error) {
     context.reportError(error);
     return null;
@@ -622,6 +707,7 @@ function featureRequestContext(
   feature:
     | "completion"
     | "definition"
+    | "documentHighlight"
     | "hover"
     | "implementation"
     | "references"
@@ -662,7 +748,7 @@ function featureRequestContext(
 function documentRequestContext(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
-  feature: "codeAction" | "formatting" | "inlayHint",
+  feature: "codeAction" | "formatting" | "inlayHint" | "selectionRange",
 ) {
   const status = context.getRuntimeStatus();
 
@@ -689,6 +775,46 @@ function documentRequestContext(
     path: activeDocument.path,
     rootPath,
   };
+}
+
+function toMonacoDocumentHighlight(
+  monaco: MonacoApi,
+  highlight: LanguageServerDocumentHighlight,
+): Monaco.languages.DocumentHighlight {
+  return {
+    kind: toMonacoDocumentHighlightKind(monaco, highlight.kind),
+    range: toMonacoRange(monaco, highlight.range),
+  };
+}
+
+function toMonacoDocumentHighlightKind(
+  monaco: MonacoApi,
+  kind: number | null,
+): Monaco.languages.DocumentHighlightKind {
+  if (kind === 2) {
+    return monaco.languages.DocumentHighlightKind.Read;
+  }
+
+  if (kind === 3) {
+    return monaco.languages.DocumentHighlightKind.Write;
+  }
+
+  return monaco.languages.DocumentHighlightKind.Text;
+}
+
+function flattenSelectionRange(
+  monaco: MonacoApi,
+  selectionRange: LanguageServerSelectionRange,
+): Monaco.languages.SelectionRange[] {
+  const ranges: Monaco.languages.SelectionRange[] = [];
+  let current: LanguageServerSelectionRange | null = selectionRange;
+
+  while (current) {
+    ranges.push({ range: toMonacoRange(monaco, current.range) });
+    current = current.parent;
+  }
+
+  return ranges;
 }
 
 function toMonacoLocations(

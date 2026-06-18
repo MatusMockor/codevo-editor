@@ -5,12 +5,14 @@ export interface LanguageServerCapabilities {
   hover: boolean;
   completion: boolean;
   definition: boolean;
+  documentHighlight: boolean;
   documentSymbol: boolean;
   formatting: boolean;
   implementation: boolean;
   inlayHint: boolean;
   references: boolean;
   rename: boolean;
+  selectionRange: boolean;
   signatureHelp: boolean;
   workspaceSymbol: boolean;
 }
@@ -121,6 +123,10 @@ export function languageServerCapabilityLabels(
     labels.push("document symbols");
   }
 
+  if (capabilities.documentHighlight) {
+    labels.push("document highlights");
+  }
+
   if (capabilities.implementation) {
     labels.push("implementation");
   }
@@ -135,6 +141,10 @@ export function languageServerCapabilityLabels(
 
   if (capabilities.rename) {
     labels.push("rename");
+  }
+
+  if (capabilities.selectionRange) {
+    labels.push("smart selection");
   }
 
   if (capabilities.signatureHelp) {
@@ -161,6 +171,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     codeAction: false,
     completion: false,
     definition: false,
+    documentHighlight: false,
     documentSymbol: false,
     formatting: false,
     hover: false,
@@ -168,6 +179,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     inlayHint: false,
     references: false,
     rename: false,
+    selectionRange: false,
     signatureHelp: false,
     workspaceSymbol: false,
   };

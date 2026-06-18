@@ -82,6 +82,16 @@ export interface LanguageServerDocumentSymbol {
   selectionRange: LanguageServerRange;
 }
 
+export interface LanguageServerDocumentHighlight {
+  kind: number | null;
+  range: LanguageServerRange;
+}
+
+export interface LanguageServerSelectionRange {
+  parent: LanguageServerSelectionRange | null;
+  range: LanguageServerRange;
+}
+
 export interface LanguageServerWorkspaceSymbol {
   containerName: string | null;
   kind: number;
@@ -188,6 +198,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     path: string,
   ): Promise<LanguageServerDocumentSymbol[]>;
+  documentHighlights(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerDocumentHighlight[]>;
   workspaceSymbols(
     rootPath: string,
     query: string,
@@ -196,6 +210,11 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
+  selectionRanges(
+    rootPath: string,
+    path: string,
+    positions: LanguageServerPosition[],
+  ): Promise<LanguageServerSelectionRange[]>;
   signatureHelp(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

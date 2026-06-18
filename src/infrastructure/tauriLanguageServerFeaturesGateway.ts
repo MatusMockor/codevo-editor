@@ -6,13 +6,16 @@ import {
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionItem,
   type LanguageServerCompletionList,
+  type LanguageServerDocumentHighlight,
   type LanguageServerDocumentSymbol,
   type LanguageServerFormattingOptions,
   type LanguageServerFeaturesGateway,
   type LanguageServerHover,
   type LanguageServerInlayHint,
   type LanguageServerLocation,
+  type LanguageServerPosition,
   type LanguageServerRange,
+  type LanguageServerSelectionRange,
   type LanguageServerSignatureHelp,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
@@ -33,6 +36,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   completion: "text_document_completion",
   completionResolve: "text_document_completion_resolve",
   definition: "text_document_definition",
+  documentHighlights: "text_document_document_highlights",
   documentSymbols: "text_document_document_symbols",
   executeCommand: "language_server_execute_command",
   formatting: "text_document_formatting",
@@ -41,6 +45,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   inlayHints: "text_document_inlay_hints",
   references: "text_document_references",
   rename: "text_document_rename",
+  selectionRanges: "text_document_selection_ranges",
   signatureHelp: "text_document_signature_help",
   workspaceSymbols: "workspace_symbols",
 };
@@ -51,6 +56,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   completion: "javascript_typescript_text_document_completion",
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   definition: "javascript_typescript_text_document_definition",
+  documentHighlights: "javascript_typescript_text_document_document_highlights",
   documentSymbols: "javascript_typescript_text_document_document_symbols",
   executeCommand: "javascript_typescript_language_server_execute_command",
   formatting: "javascript_typescript_text_document_formatting",
@@ -59,6 +65,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   inlayHints: "javascript_typescript_text_document_inlay_hints",
   references: "javascript_typescript_text_document_references",
   rename: "javascript_typescript_text_document_rename",
+  selectionRanges: "javascript_typescript_text_document_selection_ranges",
   signatureHelp: "javascript_typescript_text_document_signature_help",
   workspaceSymbols: "javascript_typescript_workspace_symbols",
 };
@@ -69,6 +76,7 @@ export interface TauriLanguageServerFeatureCommands {
   completion: string;
   completionResolve: string;
   definition: string;
+  documentHighlights: string;
   documentSymbols: string;
   executeCommand: string;
   formatting: string;
@@ -77,6 +85,7 @@ export interface TauriLanguageServerFeatureCommands {
   inlayHints: string;
   references: string;
   rename: string;
+  selectionRanges: string;
   signatureHelp: string;
   workspaceSymbols: string;
 }
@@ -161,6 +170,17 @@ export class TauriLanguageServerFeaturesGateway
     );
   }
 
+  documentHighlights(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerDocumentHighlight[]> {
+    return this.invokeWhenAvailable(
+      this.commands.documentHighlights,
+      { position, rootPath },
+      [],
+    );
+  }
+
   workspaceSymbols(
     rootPath: string,
     query: string,
@@ -179,6 +199,18 @@ export class TauriLanguageServerFeaturesGateway
     return this.invokeWhenAvailable(
       this.commands.references,
       { position, rootPath },
+      [],
+    );
+  }
+
+  selectionRanges(
+    rootPath: string,
+    path: string,
+    positions: LanguageServerPosition[],
+  ): Promise<LanguageServerSelectionRange[]> {
+    return this.invokeWhenAvailable(
+      this.commands.selectionRanges,
+      { path, positions, rootPath },
       [],
     );
   }

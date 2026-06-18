@@ -385,6 +385,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             }
                         },
                         "definition": { "dynamicRegistration": false },
+                        "documentHighlight": { "dynamicRegistration": false },
                         "documentSymbol": { "dynamicRegistration": false },
                         "formatting": { "dynamicRegistration": false },
                         "hover": {
@@ -401,6 +402,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "dynamicRegistration": false,
                             "prepareSupport": true
                         },
+                        "selectionRange": { "dynamicRegistration": false },
                         "synchronization": {
                             "didSave": true,
                             "dynamicRegistration": false,
@@ -652,6 +654,15 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]["includePackageJsonAutoImports"],
             "auto"
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["documentHighlight"]
+                ["dynamicRegistration"],
+            false
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["selectionRange"]["dynamicRegistration"],
+            false
         );
         fs::remove_dir_all(root).expect("cleanup");
     }
