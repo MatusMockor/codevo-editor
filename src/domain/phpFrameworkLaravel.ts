@@ -5,6 +5,7 @@ import {
   phpDeclaredTypeCandidate,
   phpMethodReturnExpressions,
 } from "./phpSemanticEngine";
+import { phpExtendsClassName, resolvePhpClassName } from "./phpNavigation";
 
 const laravelEloquentStaticBuilderMethods = new Set([
   "chunk",
@@ -473,10 +474,18 @@ export function phpLaravelRelationPropertyCompletionsFromSource(
     const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
     const returnType = bestPhpReturnType(declaredReturnType, documentedReturnType);
     const relationTargetType =
-      phpLaravelRelationModelTypeFromReturnType(returnType) ??
+      phpLaravelRelationTypeForDeclaringClass(
+        phpLaravelRelationModelTypeFromReturnType(returnType),
+        declaringClassName,
+        source,
+      ) ??
       phpMethodReturnExpressions(source, name)
         .map((expression) =>
-          phpLaravelRelationTargetClassNameFromExpression(expression, true),
+          phpLaravelRelationTypeForDeclaringClass(
+            phpLaravelRelationTargetClassNameFromExpression(expression, true),
+            declaringClassName,
+            source,
+          ),
         )
         .find((target): target is string => Boolean(target));
 
@@ -770,7 +779,7 @@ function phpLaravelRelationTargetClassNameFromArguments(
   argumentsSource: string,
 ): string | null {
   const classNamePattern =
-    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+    String.raw`(?:self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
   const classNameReferencePattern = new RegExp(
     String.raw`^(` + classNamePattern + String.raw`)\s*::\s*class\b`,
   );
@@ -812,6 +821,26 @@ function phpLaravelRelationModelTypeFromReturnType(
   return phpDeclaredGenericTypeCandidates(returnType ?? "").find(
     (candidate) => !isGenericLaravelRelationPlaceholder(candidate),
   ) ?? null;
+}
+
+function phpLaravelRelationTypeForDeclaringClass(
+  relationType: string | null,
+  declaringClassName: string,
+  source: string,
+): string | null {
+  const normalized = relationType?.trim().replace(/^\\+/, "").toLowerCase();
+
+  if (normalized === "self" || normalized === "static" || normalized === "$this") {
+    return declaringClassName;
+  }
+
+  if (normalized === "parent") {
+    const parentClassName = phpExtendsClassName(source);
+
+    return parentClassName ? resolvePhpClassName(source, parentClassName) : null;
+  }
+
+  return relationType;
 }
 
 function isLaravelEloquentRelationReturnType(

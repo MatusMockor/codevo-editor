@@ -5269,7 +5269,10 @@ export function useWorkbenchController(
                   includeCollectionRelations,
                 );
               const resolvedRelationTargetClassName = relationTargetClassName
-                ? resolvePhpClassReference(content, relationTargetClassName)
+                ? resolvePhpRelationTargetClassReference(
+                    content,
+                    relationTargetClassName,
+                  )
                 : null;
 
               if (resolvedRelationTargetClassName) {
@@ -9682,6 +9685,29 @@ function resolvePhpLaravelRelationModelType(
   );
 
   return relatedModelType ? resolvePhpClassName(source, relatedModelType) : null;
+}
+
+function resolvePhpRelationTargetClassReference(
+  source: string,
+  className: string,
+): string | null {
+  const normalizedClassName = className.trim().replace(/^\\+/, "").toLowerCase();
+
+  if (
+    normalizedClassName === "self" ||
+    normalizedClassName === "static" ||
+    normalizedClassName === "$this"
+  ) {
+    return phpCurrentClassName(source);
+  }
+
+  if (normalizedClassName === "parent") {
+    const parentClassName = phpExtendsClassName(source);
+
+    return parentClassName ? resolvePhpClassName(source, parentClassName) : null;
+  }
+
+  return resolvePhpClassName(source, className);
 }
 
 function phpCollectionGenericModelTypeCandidate(
