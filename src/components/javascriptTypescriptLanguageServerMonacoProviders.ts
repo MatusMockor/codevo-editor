@@ -180,6 +180,10 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           payload.command,
         );
 
+        if (!isStoredWorkspaceRootActive(context, payload.rootPath)) {
+          return;
+        }
+
         if (edit) {
           applyWorkspaceEditToOpenModels(monaco, edit, payload.rootPath);
         }

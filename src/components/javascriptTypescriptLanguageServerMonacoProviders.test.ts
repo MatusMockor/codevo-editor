@@ -1277,6 +1277,48 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight TypeScript command edits after switching project tabs", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    let activeRoot = "/project";
+    const commandEdit =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["executeCommand"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.executeCommand).mockImplementationOnce(
+      async () => commandEdit.promise,
+    );
+    monaco.editor.getModels.mockReturnValue([model]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+    const commandPromise = commandDescriptor.run(null, {
+      command: {
+        arguments: [{ scope: "file" }],
+        command: "_typescript.organizeImports",
+        title: "Organize Imports",
+      },
+      rootPath: "/project",
+    });
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    commandEdit.resolve(workspaceEdit("file:///project/src/user.ts", "Organized"));
+    await commandPromise;
+
+    expect(gateway.executeCommand).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({ command: "_typescript.organizeImports" }),
+    );
+    expect(model.pushEditOperations).not.toHaveBeenCalled();
+  });
+
   it("ignores stale TypeScript lazy resolves after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";

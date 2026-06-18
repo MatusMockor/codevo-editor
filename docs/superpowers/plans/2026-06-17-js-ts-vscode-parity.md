@@ -113,6 +113,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - The backend language-server registry now has regression coverage proving root-keyed notifications are written only to the requested workspace process, reducing the risk of JS/TS project tab cross-talk.
 - The backend language-server registry now also proves request/response routing is workspace-scoped, so hover/completion/navigation requests for one project cannot be written to another project's TypeScript service.
 - TypeScript/JavaScript lazy resolves for completions, document links, code actions, and CodeLens now re-check the active workspace after the server responds. If the user switches project tabs while a resolve is in flight, stale auto-import edits or resolved metadata are dropped instead of being applied to the new active project.
+- TypeScript/JavaScript command-backed edits now also re-check the active workspace after `workspace/executeCommand` returns, so slow organize-imports or fix-all commands cannot apply edits after the user has switched project tabs.
 
 ## Full VS Code-Like Target
 
