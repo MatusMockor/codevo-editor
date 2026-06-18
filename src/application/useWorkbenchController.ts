@@ -8971,7 +8971,9 @@ function phpCollectionGenericModelTypeCandidate(
 function phpClassDocGenericCollectionModelTypeCandidate(
   source: string,
 ): string | null {
-  for (const match of source.matchAll(/@(?:extends|implements)\s+([^\r\n*]+)/g)) {
+  for (const match of source.matchAll(
+    /@(?:(?:phpstan|psalm|template)-)?(?:extends|implements)\s+([^\r\n*]+)/g,
+  )) {
     const typeName = firstPhpDocTypeToken(match[1] ?? null);
     const candidate = phpCollectionGenericModelTypeCandidate(typeName);
 

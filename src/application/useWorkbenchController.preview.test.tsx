@@ -4384,7 +4384,7 @@ namespace App\\Collections;
 use App\\Models\\Album;
 use Illuminate\\Database\\Eloquent\\Collection;
 
-/** @extends Collection<int, Album> */
+/** @phpstan-extends Collection<int, Album> */
 class AlbumCollection extends Collection
 {
 }
