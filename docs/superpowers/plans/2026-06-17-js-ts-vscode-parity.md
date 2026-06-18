@@ -109,6 +109,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript diagnostics now preserve LSP diagnostic tags and map them to Monaco marker tags, so unused and deprecated diagnostics can render with VS Code-like unnecessary/deprecated styling.
 - TypeScript/JavaScript lazy completion, document-link, code-action, CodeLens and command resolves now check the active workspace root before calling the managed service. Workspace edits applied to open Monaco models are also filtered to the event/command root, preventing delayed provider work from leaking into another project tab.
 - TypeScript/JavaScript document sync state is now keyed by workspace root plus document path/URI. Open/change/save/close queues, pending debounce timers, and diagnostic version checks cannot be reused across project tabs.
+- TypeScript/JavaScript runtime status is now cached per workspace root. Status events from a kept-alive background project are retained without changing the active tab, then restored immediately when that project tab is activated.
 
 ## Full VS Code-Like Target
 

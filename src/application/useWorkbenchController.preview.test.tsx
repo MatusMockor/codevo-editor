@@ -233,6 +233,78 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("restores cached JavaScript and TypeScript runtime status when activating a kept-alive project tab", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const workspaceBStatus = createDeferred<LanguageServerRuntimeStatus>();
+    const runningWorkspaceBStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 88,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => {
+          if (rootPath === "/workspace-b") {
+            return workspaceBStatus.promise;
+          }
+
+          return { kind: "stopped" as const, rootPath };
+        }),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningWorkspaceBStatus),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningWorkspaceBStatus);
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({ kind: "stopped", rootPath: "/workspace-a" }),
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace-b",
+        sessionId: 88,
+      }),
+    );
+
+    workspaceBStatus.resolve(runningWorkspaceBStatus);
+    await flushAsyncTurns(24);
+  });
+
   it("closes synced JavaScript and TypeScript documents before switching project tabs with keep-alive runtimes", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),
@@ -5286,6 +5358,7 @@ final class FacebookAdapterService extends BaseAdapter
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerPlan,
+    javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptRuntimeStatus = { kind: "stopped" as const },
     languageServerPlan,
     languageServerDiagnosticsGateway,
@@ -5304,6 +5377,7 @@ final class FacebookAdapterService extends BaseAdapter
     javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
+    javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     javaScriptTypeScriptRuntimeStatus?: LanguageServerRuntimeStatus;
     languageServerPlan?: LanguageServerPlan;
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -5332,6 +5406,7 @@ final class FacebookAdapterService extends BaseAdapter
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
       javaScriptTypeScriptRuntimeStatus,
       languageServerPlan,
       languageServerDiagnosticsGateway,
@@ -5410,6 +5485,7 @@ function createControllerDependencies({
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
   javaScriptTypeScriptLanguageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerPlan,
+  javaScriptTypeScriptLanguageServerRuntimeGateway,
   javaScriptTypeScriptRuntimeStatus,
   languageServerPlan,
   languageServerFeaturesGateway,
@@ -5428,6 +5504,7 @@ function createControllerDependencies({
   javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
+  javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
   javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus;
   languageServerPlan?: LanguageServerPlan;
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -5564,13 +5641,14 @@ function createControllerDependencies({
     javaScriptTypeScriptLanguageServerDocumentSyncGateway: documentSyncGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway:
       javaScriptTypeScriptLanguageServerFeaturesGateway ?? featuresGateway(),
-    javaScriptTypeScriptLanguageServerRuntimeGateway: {
-      getStatus: vi.fn(async () => javaScriptTypeScriptInitialRuntimeStatus),
-      openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
-      start: vi.fn(async () => javaScriptTypeScriptRuntimeStatus),
-      stop: vi.fn(async () => ({ kind: "stopped" as const })),
-      subscribeStatus: vi.fn(async () => () => undefined),
-    },
+    javaScriptTypeScriptLanguageServerRuntimeGateway:
+      javaScriptTypeScriptLanguageServerRuntimeGateway ?? {
+        getStatus: vi.fn(async () => javaScriptTypeScriptInitialRuntimeStatus),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => javaScriptTypeScriptRuntimeStatus),
+        stop: vi.fn(async () => ({ kind: "stopped" as const })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
     phpFileOutlineGateway: {
       getPhpFileOutline: vi.fn(async () => ({ nodes: [] })),
       parsePhpFileOutline: vi.fn(async () => ({ nodes: [] })),

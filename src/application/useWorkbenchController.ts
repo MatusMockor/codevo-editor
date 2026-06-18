@@ -478,6 +478,9 @@ export function useWorkbenchController(
   const javaScriptTypeScriptDocumentSyncQueuesRef = useRef<
     Record<string, Promise<void>>
   >({});
+  const javaScriptTypeScriptRuntimeStatusByRootRef = useRef<
+    Record<string, LanguageServerRuntimeStatus>
+  >({});
   const phpClassSourcePathCacheRef = useRef<Record<string, string[]>>({});
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
@@ -872,6 +875,17 @@ export function useWorkbenchController(
     [languageServerGateway, reportError],
   );
 
+  const cacheJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
+    (rootPath: string, status: LanguageServerRuntimeStatus) => {
+      const rootedStatus = languageServerRuntimeStatusWithRoot(status, rootPath);
+      javaScriptTypeScriptRuntimeStatusByRootRef.current[rootPath] =
+        rootedStatus;
+
+      return rootedStatus;
+    },
+    [],
+  );
+
   const handleLanguageServerRuntimeStatus = useCallback(
     (status: LanguageServerRuntimeStatus) => {
       if (
@@ -903,6 +917,13 @@ export function useWorkbenchController(
     (status: LanguageServerRuntimeStatus) => {
       const statusRootPath = status.rootPath ?? currentWorkspaceRootRef.current;
 
+      const rootedStatus = statusRootPath
+        ? cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
+            statusRootPath,
+            status,
+          )
+        : status;
+
       if (
         statusRootPath &&
         currentWorkspaceRootRef.current &&
@@ -911,11 +932,7 @@ export function useWorkbenchController(
         return;
       }
 
-      setJavaScriptTypeScriptLanguageServerRuntimeStatus(
-        statusRootPath
-          ? languageServerRuntimeStatusWithRoot(status, statusRootPath)
-          : status,
-      );
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
         statusRootPath ?? null,
       );
@@ -931,7 +948,11 @@ export function useWorkbenchController(
 
       reportError("JavaScript/TypeScript", crash);
     },
-    [clearJavaScriptTypeScriptLanguageServerDiagnostics, reportError],
+    [
+      cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
+      clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      reportError,
+    ],
   );
 
   const handleMetadataScanCompletion = useCallback(
@@ -1206,11 +1227,14 @@ export function useWorkbenchController(
     try {
       const status =
         await javaScriptTypeScriptLanguageServerRuntimeGateway.stop(targetRootPath);
+      const rootedStatus =
+        cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
+          targetRootPath,
+          status,
+        );
 
       if (targetRootPath === currentWorkspaceRootRef.current) {
-        setJavaScriptTypeScriptLanguageServerRuntimeStatus(
-          languageServerRuntimeStatusWithRoot(status, targetRootPath),
-        );
+        setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
         setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(targetRootPath);
         clearJavaScriptTypeScriptLanguageServerDiagnostics();
         resetJavaScriptTypeScriptLanguageServerDocuments();
@@ -1222,6 +1246,7 @@ export function useWorkbenchController(
       return null;
     }
   }, [
+    cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     reportError,
@@ -1372,6 +1397,7 @@ export function useWorkbenchController(
     workspaceSessionRestoredRef.current = false;
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
+    javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -2172,6 +2198,7 @@ export function useWorkbenchController(
             : currentSettings.recentWorkspacePath;
 
         delete workspaceStateCacheRef.current[path];
+        delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
         await stopProjectRuntimes(path);
 
         try {
@@ -2200,6 +2227,7 @@ export function useWorkbenchController(
         null;
 
       delete workspaceStateCacheRef.current[path];
+      delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
       await stopProjectRuntimes(path);
 
       try {
@@ -7875,7 +7903,17 @@ export function useWorkbenchController(
     let unsubscribe: UnsubscribeFn | null = null;
 
     if (workspaceRoot) {
-      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
+      const cachedStatus =
+        javaScriptTypeScriptRuntimeStatusByRootRef.current[workspaceRoot] ?? null;
+
+      if (cachedStatus) {
+        setJavaScriptTypeScriptLanguageServerRuntimeStatus(cachedStatus);
+        setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
+      } else {
+        setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
+        setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
+      }
+
       javaScriptTypeScriptLanguageServerRuntimeGateway
         .getStatus(workspaceRoot)
         .then((status) => {
@@ -7883,9 +7921,13 @@ export function useWorkbenchController(
             return;
           }
 
-          setJavaScriptTypeScriptLanguageServerRuntimeStatus(
-            languageServerRuntimeStatusWithRoot(status, workspaceRoot),
-          );
+          const rootedStatus =
+            cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
+              workspaceRoot,
+              status,
+            );
+
+          setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
           setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
         })
         .catch((error) => {
@@ -7924,6 +7966,7 @@ export function useWorkbenchController(
       unsubscribe?.();
     };
   }, [
+    cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     reportError,
