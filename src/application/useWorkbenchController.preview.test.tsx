@@ -4031,6 +4031,19 @@ class Comment
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$this->commentRepository->find"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Support\\FindsModels",
+        name: "findOrFail",
+        parameters: "int $id",
+        returnType: "App\\Models\\Comment",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$comment->get"),
       ),
     ).resolves.toEqual([

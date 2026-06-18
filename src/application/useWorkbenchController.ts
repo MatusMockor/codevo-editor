@@ -4592,7 +4592,10 @@ export function useWorkbenchController(
 
       const completions = new Map<string, PhpMethodCompletion>();
       const visitedClassNames = new Set<string>();
-      const rememberMethods = (methods: PhpMethodCompletion[]) => {
+      const rememberMethods = (
+        methods: PhpMethodCompletion[],
+        templateTypes: ReadonlyMap<string, string> = new Map(),
+      ) => {
         for (const method of methods) {
           const key = `${method.kind ?? "method"}:${method.name.toLowerCase()}`;
 
@@ -4600,10 +4603,16 @@ export function useWorkbenchController(
             continue;
           }
 
-          completions.set(key, method);
+          completions.set(
+            key,
+            phpMethodCompletionWithTemplateReturnType(method, templateTypes),
+          );
         }
       };
-      const collectMethods = async (className: string): Promise<void> => {
+      const collectMethods = async (
+        className: string,
+        templateTypes: ReadonlyMap<string, string> = new Map(),
+      ): Promise<void> => {
         const normalizedClassName = className.trim().replace(/^\\+/, "");
         const visitedKey = normalizedClassName.toLowerCase();
 
@@ -4619,13 +4628,19 @@ export function useWorkbenchController(
               path,
               normalizedClassName,
             );
-            rememberMethods(members);
+            rememberMethods(members, templateTypes);
 
             for (const traitName of phpTraitClassNames(content)) {
               const resolvedTraitName = resolvePhpClassName(content, traitName);
 
               if (resolvedTraitName) {
-                await collectMethods(resolvedTraitName);
+                await collectMethods(
+                  resolvedTraitName,
+                  await resolvePhpGenericTemplateTypesForInheritedClass(
+                    content,
+                    resolvedTraitName,
+                  ),
+                );
               }
             }
 
@@ -4643,7 +4658,13 @@ export function useWorkbenchController(
               : null;
 
             if (resolvedParentClassName) {
-              await collectMethods(resolvedParentClassName);
+              await collectMethods(
+                resolvedParentClassName,
+                await resolvePhpGenericTemplateTypesForInheritedClass(
+                  content,
+                  resolvedParentClassName,
+                ),
+              );
             }
 
             return;
@@ -4667,6 +4688,7 @@ export function useWorkbenchController(
     [
       readPhpClassMembersFromPath,
       resolvePhpLaravelBoundConcrete,
+      resolvePhpGenericTemplateTypesForInheritedClass,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
@@ -9572,6 +9594,10 @@ function phpClassMemberCacheKey(path: string, className: string): string {
   return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}`;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function phpSourceSignature(source: string): string {
   let hash = 2166136261;
 
@@ -9595,6 +9621,29 @@ function phpReturnTypeIncludesLateStatic(typeName: string | null): boolean {
         return normalized === "static" || normalized === "$this";
       }),
   );
+}
+
+function phpMethodCompletionWithTemplateReturnType(
+  method: PhpMethodCompletion,
+  templateTypes: ReadonlyMap<string, string>,
+): PhpMethodCompletion {
+  if (!method.returnType || templateTypes.size === 0) {
+    return method;
+  }
+
+  let returnType = method.returnType;
+
+  for (const [templateName, resolvedType] of templateTypes) {
+    returnType = returnType.replace(
+      new RegExp(
+        `(^|[^A-Za-z0-9_\\\\])${escapeRegExp(templateName)}(?![A-Za-z0-9_])`,
+        "gi",
+      ),
+      `$1${resolvedType}`,
+    );
+  }
+
+  return returnType === method.returnType ? method : { ...method, returnType };
 }
 
 function laravelFacadeTargetClassName(className: string): string | null {
