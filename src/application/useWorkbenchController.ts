@@ -4796,7 +4796,15 @@ export function useWorkbenchController(
               phpLaravelRelationPropertyCompletionsFromSource(
                 content,
                 normalizedClassName,
-              ),
+              ).map((relation) => ({
+                ...relation,
+                returnType:
+                  phpLooksLikeQualifiedClassName(relation.returnType) ||
+                  phpIsBuiltinDeclaredType(relation.returnType)
+                    ? phpNormalizedDeclaredTypeName(relation.returnType)
+                    : resolvePhpDeclaredType(content, relation.returnType) ??
+                  relation.returnType,
+              })),
             );
 
             for (const traitName of phpTraitClassNames(content)) {
@@ -4837,6 +4845,7 @@ export function useWorkbenchController(
     },
     [
       readPhpClassMembersFromPath,
+      resolvePhpDeclaredType,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
@@ -10200,6 +10209,43 @@ function resolvePhpRelationTargetClassReference(
   }
 
   return resolvePhpClassName(source, className);
+}
+
+function phpLooksLikeQualifiedClassName(typeName: string | null): boolean {
+  return Boolean(phpNormalizedDeclaredTypeName(typeName)?.includes("\\"));
+}
+
+function phpNormalizedDeclaredTypeName(typeName: string | null): string | null {
+  return typeName?.trim().replace(/^\?/, "").replace(/^\\+/, "") || null;
+}
+
+function phpIsBuiltinDeclaredType(typeName: string | null): boolean {
+  const normalizedTypeName = phpNormalizedDeclaredTypeName(typeName)?.toLowerCase();
+
+  return Boolean(
+    normalizedTypeName &&
+      new Set([
+        "array",
+        "bool",
+        "boolean",
+        "callable",
+        "false",
+        "float",
+        "int",
+        "integer",
+        "iterable",
+        "mixed",
+        "never",
+        "null",
+        "object",
+        "resource",
+        "self",
+        "static",
+        "string",
+        "true",
+        "void",
+      ]).has(normalizedTypeName),
+  );
 }
 
 function phpCollectionGenericModelTypeCandidate(

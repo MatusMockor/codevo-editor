@@ -5412,6 +5412,7 @@ class CommentController
 
   it("completes Laravel relation strings from the owning model", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const attachmentPath = "/workspace/app/Models/Attachment.php";
     const commentPath = "/workspace/app/Models/Comment.php";
     const controllerSource = `<?php
 namespace App\\Http\\Controllers;
@@ -5424,6 +5425,7 @@ class CommentController
     {
         $comment->load('chi');
         $comment->load('children.pa');
+        $comment->load('attachments.own');
         Comment::with('par')->first();
         Comment::query()->whereHas('att', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_vis', true);
@@ -5458,6 +5460,19 @@ class Comment extends Model
     }
 }
 `;
+    const attachmentModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Attachment extends Model
+{
+    public function owner()
+    {
+        return $this->belongsTo(User::class);
+    }
+}
+`;
     const { getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -5470,6 +5485,10 @@ class Comment extends Model
 
         if (path === commentPath) {
           return commentModelSource;
+        }
+
+        if (path === attachmentPath) {
+          return attachmentModelSource;
         }
 
         return `<?php\n// ${path}\n`;
@@ -5495,6 +5514,20 @@ class Comment extends Model
         name: "children",
         parameters: "",
         returnType: "App\\Models\\Comment",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->load('attachments.own"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Attachment",
+        kind: "relation",
+        name: "owner",
+        parameters: "",
+        returnType: "App\\Models\\User",
       },
     ]);
     await expect(
@@ -5536,7 +5569,7 @@ class Comment extends Model
         kind: "relation",
         name: "attachments",
         parameters: "",
-        returnType: "Attachment",
+        returnType: "App\\Models\\Attachment",
       },
     ]);
     await expect(
