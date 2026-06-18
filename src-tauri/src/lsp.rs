@@ -477,12 +477,25 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                     "preferences": {
                         "allowIncompleteCompletions": true,
                         "allowRenameOfImportPath": true,
+                        "allowTextChangesInNewFiles": true,
+                        "displayPartsForJSDoc": true,
+                        "generateReturnInDocTemplate": true,
+                        "importModuleSpecifierEnding": "auto",
+                        "importModuleSpecifierPreference": "shortest",
                         "includeAutomaticOptionalChainCompletions": true,
                         "includeCompletionsForImportStatements": true,
                         "includeCompletionsForModuleExports": true,
                         "includeCompletionsWithClassMemberSnippets": true,
                         "includeCompletionsWithInsertText": true,
-                        "includePackageJsonAutoImports": "auto"
+                        "includeCompletionsWithObjectLiteralMethodSnippets": true,
+                        "includeCompletionsWithSnippetText": true,
+                        "includePackageJsonAutoImports": "auto",
+                        "jsxAttributeCompletionStyle": "auto",
+                        "maximumHoverLength": 500,
+                        "preferTypeOnlyAutoImports": false,
+                        "providePrefixAndSuffixTextForRename": true,
+                        "provideRefactorNotApplicableReason": true,
+                        "quotePreference": "auto"
                     }
                 },
                 "workspaceFolders": [
@@ -701,6 +714,21 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]
                 ["includeCompletionsForModuleExports"],
+            true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["includeCompletionsWithSnippetText"],
+            true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["includeCompletionsWithObjectLiteralMethodSnippets"],
+            true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["provideRefactorNotApplicableReason"],
             true
         );
         assert_eq!(

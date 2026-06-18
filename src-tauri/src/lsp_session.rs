@@ -1411,6 +1411,19 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
         .unwrap_or("literals");
 
     json!({
+        "formattingOptions": {
+            "insertSpaces": true,
+            "tabSize": 2,
+        },
+        "implicitProjectConfiguration": {
+            "checkJs": false,
+            "experimentalDecorators": false,
+            "module": 99,
+            "strict": true,
+            "strictFunctionTypes": true,
+            "strictNullChecks": true,
+            "target": 11,
+        },
         "preferences": preferences,
         "suggest": {
             "autoImports": auto_imports_enabled,
@@ -1469,6 +1482,10 @@ fn configuration_value_for_item(item: &Value, server_configuration: &Value) -> V
 }
 
 fn javascript_typescript_configuration_section(section: &str) -> Option<&str> {
+    if section == "formattingOptions" {
+        return Some("formattingOptions");
+    }
+
     if section == "typescript" || section == "javascript" {
         return Some("");
     }
@@ -2102,6 +2119,8 @@ mod tests {
                         { "section": "typescript.preferences" },
                         { "section": "javascript.suggest" },
                         { "section": "typescript.inlayHints" },
+                        { "section": "formattingOptions" },
+                        { "section": "typescript.implicitProjectConfiguration" },
                         { "section": "editor" }
                     ]
                 }
@@ -2117,7 +2136,12 @@ mod tests {
         assert_eq!(response["result"][1]["autoImports"], false);
         assert_eq!(response["result"][1]["completeFunctionCalls"], true);
         assert_eq!(response["result"][2]["parameterNames"]["enabled"], "none");
-        assert_eq!(response["result"][3], json!({}));
+        assert_eq!(response["result"][3]["tabSize"], 2);
+        assert_eq!(response["result"][3]["insertSpaces"], true);
+        assert_eq!(response["result"][4]["strict"], true);
+        assert_eq!(response["result"][4]["module"], 99);
+        assert_eq!(response["result"][4]["target"], 11);
+        assert_eq!(response["result"][5], json!({}));
     }
 
     #[test]
