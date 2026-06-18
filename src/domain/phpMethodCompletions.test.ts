@@ -957,6 +957,54 @@ class Comment extends Model
     ]);
   });
 
+  it("keeps Laravel attribute properties distinct from same-named methods", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'status',
+    ];
+
+    protected array $casts = [
+        'published_at' => 'datetime',
+    ];
+
+    public function status(): string
+    {
+        return '';
+    }
+}
+`,
+        "Comment",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "status",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "status",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "published_at",
+        parameters: "",
+        returnType: "\\Illuminate\\Support\\Carbon",
+      },
+    ]);
+  });
+
   it("extracts Laravel accessor and appended attributes as properties", () => {
     expect(
       phpMethodCompletionsFromSource(

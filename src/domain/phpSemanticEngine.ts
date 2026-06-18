@@ -10,6 +10,7 @@ import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
   phpNormalizeReceiverExpression,
 } from "./phpReceiverExpressions";
+import { phpLaravelModelAttributeClassTypeFromSource } from "./phpFrameworkLaravel";
 
 export interface PhpMethodCallExpression {
   methodName: string;
@@ -196,7 +197,8 @@ export function phpThisPropertyType(
   return (
     phpPromotedPropertyType(source, propertyName) ??
     phpDeclaredPropertyType(source, propertyName) ??
-    phpDocTypeForProperty(source, propertyName)
+    phpDocTypeForProperty(source, propertyName) ??
+    phpLaravelModelAttributeClassTypeFromSource(source, propertyName)
   );
 }
 

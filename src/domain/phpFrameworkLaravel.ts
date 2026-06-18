@@ -534,6 +534,25 @@ export function phpLaravelModelAttributeCompletionsFromSource(
   }));
 }
 
+export function phpLaravelModelAttributeClassTypeFromSource(
+  source: string,
+  attributeName: string,
+): string | null {
+  const attributeLookup = attributeName.trim().toLowerCase();
+
+  if (!attributeLookup) {
+    return null;
+  }
+
+  const attribute = phpLaravelModelAttributeCompletionsFromSource(source, "").find(
+    (completion) => completion.name.toLowerCase() === attributeLookup,
+  );
+
+  return attribute?.returnType
+    ? phpDeclaredTypeCandidate(attribute.returnType)
+    : null;
+}
+
 export function phpLaravelRelationPropertyCompletionsFromSource(
   source: string,
   declaringClassName: string,

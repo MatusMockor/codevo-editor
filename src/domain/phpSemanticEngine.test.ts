@@ -97,6 +97,45 @@ class CommentController
     ).toBe("CommentService");
   });
 
+  it("resolves Laravel model cast attributes as property receiver types", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use App\\Enums\\CommentType;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected function casts(): array
+    {
+        return [
+            'published_at' => 'datetime',
+            'type' => CommentType::class,
+            'metadata' => 'array',
+        ];
+    }
+
+    public function publish(): void
+    {
+        $this->published_at->format('c');
+    }
+}
+`;
+
+    expect(phpThisPropertyType(source, "published_at")).toBe(
+      "Illuminate\\Support\\Carbon",
+    );
+    expect(phpThisPropertyType(source, "type")).toBe("App\\Enums\\CommentType");
+    expect(phpThisPropertyType(source, "metadata")).toBeNull();
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$this->published_at"),
+        "$this->published_at",
+      ),
+    ).toBe("Illuminate\\Support\\Carbon");
+  });
+
   it("extracts assignment expressions and expression types", () => {
     expect(
       phpAssignmentExpressionForVariableBefore(
