@@ -111,6 +111,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript document sync state is now keyed by workspace root plus document path/URI. Open/change/save/close queues, pending debounce timers, and diagnostic version checks cannot be reused across project tabs.
 - TypeScript/JavaScript runtime status is now cached per workspace root. Status events from a kept-alive background project are retained without changing the active tab, then restored immediately when that project tab is activated.
 - The backend language-server registry now has regression coverage proving root-keyed notifications are written only to the requested workspace process, reducing the risk of JS/TS project tab cross-talk.
+- The backend language-server registry now also proves request/response routing is workspace-scoped, so hover/completion/navigation requests for one project cannot be written to another project's TypeScript service.
 
 ## Full VS Code-Like Target
 
