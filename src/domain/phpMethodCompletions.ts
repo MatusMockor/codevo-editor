@@ -368,7 +368,7 @@ export function phpTraitClassNames(source: string): string[] {
   const body = source.slice(bodyStart + 1, bodyEnd);
   const traits: string[] = [];
 
-  for (const match of body.matchAll(/^\s*use\s+([^;{]+);/gm)) {
+  for (const match of body.matchAll(/^\s*use\s+([^;{]+)\s*(?:;|\{)/gm)) {
     for (const trait of (match[1] ?? "").split(",")) {
       const normalized = trait.trim().replace(/^\\+/, "");
 

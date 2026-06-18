@@ -842,6 +842,24 @@ class Request
     ).toEqual(["Concerns\\InteractsWithInput", "Conditionable"]);
   });
 
+  it("extracts trait names from class-body adaptation blocks", () => {
+    expect(
+      phpTraitClassNames(`<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\SoftDeletes;
+
+class Comment
+{
+    use \\App\\Support\\TracksChanges, SoftDeletes {
+        TracksChanges::boot insteadof SoftDeletes;
+        SoftDeletes::restore as restoreModel;
+    }
+}
+`),
+    ).toEqual(["App\\Support\\TracksChanges", "SoftDeletes"]);
+  });
+
   it("extracts PHPDoc mixin class names for magic OOP APIs", () => {
     expect(
       phpMixinClassNames(`<?php
