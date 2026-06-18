@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   phpMemberAccessCompletionContextAt,
+  phpMixinClassNames,
   phpMethodCompletionsFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
@@ -663,5 +664,24 @@ class Request
 }
 `),
     ).toEqual(["Concerns\\InteractsWithInput", "Conditionable"]);
+  });
+
+  it("extracts PHPDoc mixin class names for magic OOP APIs", () => {
+    expect(
+      phpMixinClassNames(`<?php
+namespace App\\Models;
+
+/**
+ * @mixin \\Illuminate\\Database\\Eloquent\\Builder<static>
+ * @mixin IdeHelperComment
+ */
+class Comment
+{
+}
+`),
+    ).toEqual([
+      "Illuminate\\Database\\Eloquent\\Builder",
+      "IdeHelperComment",
+    ]);
   });
 });

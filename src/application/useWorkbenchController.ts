@@ -127,6 +127,7 @@ import {
 } from "../domain/phpTree";
 import {
   phpMemberAccessCompletionContextAt,
+  phpMixinClassNames,
   phpMethodCompletionsFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
@@ -3977,6 +3978,14 @@ export function useWorkbenchController(
               }
             }
 
+            for (const mixinName of phpMixinClassNames(content)) {
+              const resolvedMixinName = resolvePhpClassName(content, mixinName);
+
+              if (resolvedMixinName) {
+                await collectMethods(resolvedMixinName);
+              }
+            }
+
             const parentClassName = phpExtendsClassName(content);
             const resolvedParentClassName = parentClassName
               ? resolvePhpClassName(content, parentClassName)
@@ -4050,6 +4059,24 @@ export function useWorkbenchController(
               resolvedTraitName &&
               (await phpClassHierarchyHasMethod(
                 resolvedTraitName,
+                methodName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+
+          for (const mixinName of phpMixinClassNames(content)) {
+            const resolvedMixinName = resolvePhpClassReference(
+              content,
+              mixinName,
+            );
+
+            if (
+              resolvedMixinName &&
+              (await phpClassHierarchyHasMethod(
+                resolvedMixinName,
                 methodName,
                 visitedClassNames,
               ))
@@ -4374,6 +4401,21 @@ export function useWorkbenchController(
             }
           }
 
+          for (const mixinName of phpMixinClassNames(content)) {
+            const resolvedMixinName = resolvePhpClassReference(content, mixinName);
+            const mixinReturnType = resolvedMixinName
+              ? await resolvePhpMethodReturnType(
+                  resolvedMixinName,
+                  methodName,
+                  visitedClassNames,
+                )
+              : null;
+
+            if (mixinReturnType) {
+              return mixinReturnType;
+            }
+          }
+
           const parentClassName = phpExtendsClassName(content);
           const resolvedParentClassName = parentClassName
             ? resolvePhpClassReference(content, parentClassName)
@@ -4496,6 +4538,22 @@ export function useWorkbenchController(
 
             if (traitType) {
               return traitType;
+            }
+          }
+
+          for (const mixinName of phpMixinClassNames(content)) {
+            const resolvedMixinName = resolvePhpClassReference(content, mixinName);
+            const mixinType = resolvedMixinName
+              ? await resolvePhpClassPropertyOrRelationType(
+                  resolvedMixinName,
+                  propertyName,
+                  includeCollectionRelations,
+                  visitedClassNames,
+                )
+              : null;
+
+            if (mixinType) {
+              return mixinType;
             }
           }
 
@@ -5467,6 +5525,20 @@ export function useWorkbenchController(
               if (
                 resolvedTraitName &&
                 (await openMethodInClassHierarchy(resolvedTraitName))
+              ) {
+                return true;
+              }
+            }
+
+            for (const mixinName of phpMixinClassNames(content)) {
+              const resolvedMixinName = resolvePhpClassReference(
+                content,
+                mixinName,
+              );
+
+              if (
+                resolvedMixinName &&
+                (await openMethodInClassHierarchy(resolvedMixinName))
               ) {
                 return true;
               }

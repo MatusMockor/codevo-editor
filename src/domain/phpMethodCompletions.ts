@@ -374,6 +374,25 @@ export function phpTraitClassNames(source: string): string[] {
   return Array.from(new Set(traits));
 }
 
+export function phpMixinClassNames(source: string): string[] {
+  const mixins: string[] = [];
+
+  for (const match of source.matchAll(/@mixin\s+([^\r\n*]+)/g)) {
+    const typeName = firstPhpDocTypeToken(match[1] ?? "")
+      ?.split("<")[0]
+      ?.trim()
+      .replace(/^\\+/, "");
+
+    if (!typeName || !/^[A-Za-z_][A-Za-z0-9_\\]*$/.test(typeName)) {
+      continue;
+    }
+
+    mixins.push(typeName);
+  }
+
+  return Array.from(new Set(mixins));
+}
+
 function phpDocBlockBefore(source: string, functionOffset: number): string | null {
   const beforeFunction = source.slice(0, functionOffset);
   const docStart = beforeFunction.lastIndexOf("/**");
