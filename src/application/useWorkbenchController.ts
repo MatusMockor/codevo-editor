@@ -155,6 +155,7 @@ import {
   phpLaravelScopeMethodName,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
+import { firstPhpDocTypeToken } from "../domain/phpDocTemplates";
 import {
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
@@ -4746,6 +4747,73 @@ export function useWorkbenchController(
     [collectPhpMethodsForClass],
   );
 
+  const resolvePhpCollectionModelTypeFromClass = useCallback(
+    async (className: string): Promise<string | null> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return null;
+      }
+
+      const visitedClassNames = new Set<string>();
+
+      const resolveCollection = async (
+        candidateClassName: string,
+      ): Promise<string | null> => {
+        const normalizedClassName = candidateClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const visitedKey = normalizedClassName.toLowerCase();
+
+        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+          return null;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        for (const path of await resolvePhpClassSourcePaths(
+          normalizedClassName,
+        )) {
+          try {
+            const content = await readNavigationFileContent(path);
+            const genericModelType =
+              phpClassDocGenericCollectionModelTypeCandidate(content);
+            const resolvedGenericModelType = genericModelType
+              ? resolvePhpClassReference(content, genericModelType)
+              : null;
+
+            if (resolvedGenericModelType) {
+              return resolvedGenericModelType;
+            }
+
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassReference(content, parentClassName)
+              : null;
+            const parentModelType = resolvedParentClassName
+              ? await resolveCollection(resolvedParentClassName)
+              : null;
+
+            if (parentModelType) {
+              return parentModelType;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return null;
+      };
+
+      return resolveCollection(className);
+    },
+    [
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const resolvePhpEloquentBuilderModelType = useCallback(
     async (
       source: string,
@@ -4956,6 +5024,22 @@ export function useWorkbenchController(
       }
 
       const normalizedExpression = expression.trim();
+      const directCollectionType = phpReceiverExpressionTypeInSource(
+        source,
+        position,
+        normalizedExpression,
+      );
+      const resolvedDirectCollectionType = directCollectionType
+        ? resolvePhpClassReference(source, directCollectionType)
+        : null;
+      const directCollectionModelType = resolvedDirectCollectionType
+        ? await resolvePhpCollectionModelTypeFromClass(resolvedDirectCollectionType)
+        : null;
+
+      if (directCollectionModelType) {
+        return directCollectionModelType;
+      }
+
       const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
         normalizedExpression,
       );
@@ -5029,7 +5113,11 @@ export function useWorkbenchController(
 
       return null;
     },
-    [resolvePhpClassReference, resolvePhpEloquentBuilderModelType],
+    [
+      resolvePhpClassReference,
+      resolvePhpCollectionModelTypeFromClass,
+      resolvePhpEloquentBuilderModelType,
+    ],
   );
 
   const phpClassMethodReturnsClassStringArgument = useCallback(
@@ -8810,6 +8898,21 @@ function phpCollectionGenericModelTypeCandidate(
   return phpDeclaredGenericTypeCandidates(typeName).find(
     (candidate) => !isGenericPhpPlaceholder(candidate),
   ) ?? null;
+}
+
+function phpClassDocGenericCollectionModelTypeCandidate(
+  source: string,
+): string | null {
+  for (const match of source.matchAll(/@(?:extends|implements)\s+([^\r\n*]+)/g)) {
+    const typeName = firstPhpDocTypeToken(match[1] ?? null);
+    const candidate = phpCollectionGenericModelTypeCandidate(typeName);
+
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function mergePhpMethodCompletions(

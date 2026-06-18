@@ -4136,12 +4136,14 @@ class Album
 
   it("keeps Laravel Eloquent builder generics through fluent chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumCollectionPath = "/workspace/app/Collections/AlbumCollection.php";
     const albumPath = "/workspace/app/Models/Album.php";
     const builderPath =
       "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
     const controllerSource = `<?php
 namespace App\\Http\\Controllers;
 
+use App\\Collections\\AlbumCollection;
 use App\\Models\\Album;
 
 class AlbumController
@@ -4205,6 +4207,10 @@ class AlbumController
         /** @var \\Illuminate\\Database\\Eloquent\\Collection<int, Album> $documentedAlbums */
         $documentedAlbum = $documentedAlbums->first();
         $documentedAlbum->get
+
+        /** @var AlbumCollection $customAlbums */
+        $customAlbum = $customAlbums->first();
+        $customAlbum->get
     }
 }
 `;
@@ -4230,6 +4236,20 @@ class Album
 
     public function scopePublished($query, bool $strict = true): void {}
     public function scopeWithRelations(Builder $query): Builder {}
+}
+`;
+        }
+
+        if (path === albumCollectionPath) {
+          return `<?php
+namespace App\\Collections;
+
+use App\\Models\\Album;
+use Illuminate\\Database\\Eloquent\\Collection;
+
+/** @extends Collection<int, Album> */
+class AlbumCollection extends Collection
+{
 }
 `;
         }
@@ -4564,6 +4584,19 @@ class Builder
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$documentedAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$customAlbum->get"),
       ),
     ).resolves.toEqual([
       {
