@@ -87,6 +87,13 @@ export interface LanguageServerDocumentHighlight {
   range: LanguageServerRange;
 }
 
+export interface LanguageServerDocumentLink {
+  data?: unknown;
+  range: LanguageServerRange;
+  target: string | null;
+  tooltip: string | null;
+}
+
 export interface LanguageServerSelectionRange {
   parent: LanguageServerSelectionRange | null;
   range: LanguageServerRange;
@@ -202,6 +209,14 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerDocumentHighlight[]>;
+  documentLinks(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerDocumentLink[]>;
+  resolveDocumentLink(
+    rootPath: string,
+    link: LanguageServerDocumentLink,
+  ): Promise<LanguageServerDocumentLink>;
   workspaceSymbols(
     rootPath: string,
     query: string,

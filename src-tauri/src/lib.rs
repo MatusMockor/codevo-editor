@@ -55,12 +55,13 @@ use lsp_document::{
 };
 use lsp_features::{
     parse_code_action_result, parse_completion_result, parse_definition_result,
-    parse_document_highlights_result, parse_document_symbols_result, parse_formatting_result,
-    parse_hover_result, parse_inlay_hints_result, parse_optional_workspace_edit_result,
-    parse_selection_ranges_result, parse_signature_help_result, parse_workspace_edit_result,
-    parse_workspace_symbols_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-    LanguageServerCodeActionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
-    LanguageServerDocumentHighlight, LanguageServerDocumentSymbol, LanguageServerFormattingOptions,
+    parse_document_highlights_result, parse_document_links_result, parse_document_symbols_result,
+    parse_formatting_result, parse_hover_result, parse_inlay_hints_result,
+    parse_optional_workspace_edit_result, parse_selection_ranges_result,
+    parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
+    LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
+    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
+    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFormattingOptions,
     LanguageServerHover, LanguageServerInlayHint, LanguageServerLocation, LanguageServerPosition,
     LanguageServerRange, LanguageServerSelectionRange, LanguageServerSignatureHelp,
     LanguageServerTextEdit, LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
@@ -1458,6 +1459,68 @@ fn javascript_typescript_text_document_document_highlights(
 }
 
 #[tauri::command]
+fn text_document_document_links(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerDocumentLink>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.document_links(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_document_links_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_document_links(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerDocumentLink>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.document_links(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_document_links_result(&result)
+}
+
+#[tauri::command]
+fn text_document_document_link_resolve(
+    root_path: String,
+    link: LanguageServerDocumentLink,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<LanguageServerDocumentLink, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.resolve_document_link(&link);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(link);
+    };
+
+    serde_json::from_value::<LanguageServerDocumentLink>(result)
+        .map_err(|error| format!("Language server returned a malformed document link: {error}"))
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_document_link_resolve(
+    root_path: String,
+    link: LanguageServerDocumentLink,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<LanguageServerDocumentLink, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.resolve_document_link(&link);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(link);
+    };
+
+    serde_json::from_value::<LanguageServerDocumentLink>(result)
+        .map_err(|error| format!("Language server returned a malformed document link: {error}"))
+}
+
+#[tauri::command]
 fn workspace_symbols(
     root_path: String,
     query: String,
@@ -1752,6 +1815,8 @@ pub fn run() {
             javascript_typescript_text_document_completion_resolve,
             javascript_typescript_text_document_definition,
             javascript_typescript_text_document_document_highlights,
+            javascript_typescript_text_document_document_link_resolve,
+            javascript_typescript_text_document_document_links,
             javascript_typescript_text_document_document_symbols,
             javascript_typescript_text_document_formatting,
             javascript_typescript_text_document_hover,
@@ -1770,6 +1835,8 @@ pub fn run() {
             text_document_completion_resolve,
             text_document_definition,
             text_document_document_highlights,
+            text_document_document_link_resolve,
+            text_document_document_links,
             text_document_document_symbols,
             text_document_did_change,
             text_document_did_close,

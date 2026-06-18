@@ -7,6 +7,7 @@ import {
   type LanguageServerCompletionItem,
   type LanguageServerCompletionList,
   type LanguageServerDocumentHighlight,
+  type LanguageServerDocumentLink,
   type LanguageServerDocumentSymbol,
   type LanguageServerFormattingOptions,
   type LanguageServerFeaturesGateway,
@@ -37,6 +38,8 @@ const DEFAULT_FEATURE_COMMANDS = {
   completionResolve: "text_document_completion_resolve",
   definition: "text_document_definition",
   documentHighlights: "text_document_document_highlights",
+  documentLinkResolve: "text_document_document_link_resolve",
+  documentLinks: "text_document_document_links",
   documentSymbols: "text_document_document_symbols",
   executeCommand: "language_server_execute_command",
   formatting: "text_document_formatting",
@@ -58,6 +61,8 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   definition: "javascript_typescript_text_document_definition",
   documentHighlights: "javascript_typescript_text_document_document_highlights",
+  documentLinkResolve: "javascript_typescript_text_document_document_link_resolve",
+  documentLinks: "javascript_typescript_text_document_document_links",
   documentSymbols: "javascript_typescript_text_document_document_symbols",
   executeCommand: "javascript_typescript_language_server_execute_command",
   formatting: "javascript_typescript_text_document_formatting",
@@ -79,6 +84,8 @@ export interface TauriLanguageServerFeatureCommands {
   completionResolve: string;
   definition: string;
   documentHighlights: string;
+  documentLinkResolve: string;
+  documentLinks: string;
   documentSymbols: string;
   executeCommand: string;
   formatting: string;
@@ -181,6 +188,28 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.documentHighlights,
       { position, rootPath },
       [],
+    );
+  }
+
+  documentLinks(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerDocumentLink[]> {
+    return this.invokeWhenAvailable(
+      this.commands.documentLinks,
+      { path, rootPath },
+      [],
+    );
+  }
+
+  resolveDocumentLink(
+    rootPath: string,
+    link: LanguageServerDocumentLink,
+  ): Promise<LanguageServerDocumentLink> {
+    return this.invokeWhenAvailable(
+      this.commands.documentLinkResolve,
+      { link, rootPath },
+      link,
     );
   }
 

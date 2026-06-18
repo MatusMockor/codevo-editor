@@ -8,6 +8,7 @@ import {
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionItem,
   type LanguageServerDocumentHighlight,
+  type LanguageServerDocumentLink,
   type LanguageServerFeaturesGateway,
   type LanguageServerFormattingOptions,
   type LanguageServerInlayHint,
@@ -44,6 +45,11 @@ interface LanguageServerBackedCompletionItem
   extends Monaco.languages.CompletionItem {
   __completionRange?: Monaco.IRange | Monaco.languages.CompletionItemRanges;
   __languageServerItem?: LanguageServerCompletionItem;
+  __workspaceRoot?: string;
+}
+
+interface LanguageServerBackedLink extends Monaco.languages.ILink {
+  __languageServerLink?: LanguageServerDocumentLink;
   __workspaceRoot?: string;
 }
 
@@ -252,6 +258,15 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerDocumentHighlightProvider(language, {
           provideDocumentHighlights: (model, position) =>
             provideDocumentHighlights(monaco, context, model, position),
+        }),
+      );
+    }
+
+    if (registry.registerLinkProvider) {
+      disposables.push(
+        registry.registerLinkProvider(language, {
+          provideLinks: (model) => provideDocumentLinks(monaco, context, model),
+          resolveLink: (link) => resolveDocumentLink(monaco, context, link),
         }),
       );
     }
@@ -515,6 +530,63 @@ async function provideDocumentHighlights(
   } catch (error) {
     context.reportError(error);
     return null;
+  }
+}
+
+async function provideDocumentLinks(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+): Promise<Monaco.languages.ILinksList> {
+  const request = documentRequestContext(context, model, "documentLink");
+
+  if (!request) {
+    return emptyLinksList();
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const links = await context.featuresGateway.documentLinks(
+      request.rootPath,
+      request.path,
+    );
+
+    return {
+      dispose: () => undefined,
+      links: links.map((link) =>
+        toMonacoDocumentLink(monaco, request.rootPath, link),
+      ),
+    };
+  } catch (error) {
+    context.reportError(error);
+    return emptyLinksList();
+  }
+}
+
+async function resolveDocumentLink(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  link: Monaco.languages.ILink,
+): Promise<Monaco.languages.ILink> {
+  const backedLink = link as LanguageServerBackedLink;
+
+  if (!backedLink.__languageServerLink || !backedLink.__workspaceRoot) {
+    return link;
+  }
+
+  try {
+    const resolved = await context.featuresGateway.resolveDocumentLink(
+      backedLink.__workspaceRoot,
+      backedLink.__languageServerLink,
+    );
+
+    return {
+      ...link,
+      ...toMonacoDocumentLink(monaco, backedLink.__workspaceRoot, resolved),
+    };
+  } catch (error) {
+    context.reportError(error);
+    return link;
   }
 }
 
@@ -794,6 +866,7 @@ function documentRequestContext(
   model: MonacoModel,
   feature:
     | "codeAction"
+    | "documentLink"
     | "formatting"
     | "inlayHint"
     | "rangeFormatting"
@@ -823,6 +896,20 @@ function documentRequestContext(
   return {
     path: activeDocument.path,
     rootPath,
+  };
+}
+
+function toMonacoDocumentLink(
+  monaco: MonacoApi,
+  rootPath: string,
+  link: LanguageServerDocumentLink,
+): LanguageServerBackedLink {
+  return {
+    __languageServerLink: link,
+    __workspaceRoot: rootPath,
+    range: toMonacoRange(monaco, link.range),
+    ...(link.target ? { url: link.target } : {}),
+    ...(link.tooltip ? { tooltip: link.tooltip } : {}),
   };
 }
 
@@ -1063,6 +1150,13 @@ function emptyInlayHintList(): Monaco.languages.InlayHintList {
   return {
     hints: [],
     dispose: () => undefined,
+  };
+}
+
+function emptyLinksList(): Monaco.languages.ILinksList {
+  return {
+    dispose: () => undefined,
+    links: [],
   };
 }
 

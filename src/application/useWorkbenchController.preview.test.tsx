@@ -3902,6 +3902,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     })),
     definition: vi.fn(async () => []),
     documentHighlights: vi.fn(async () => []),
+    documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => []),
     executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => []),
@@ -3916,6 +3917,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     workspaceSymbols: vi.fn(async () => []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
+    resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
   };
 }
 

@@ -935,6 +935,7 @@ function languageServerFeaturesGateway() {
     completion: vi.fn(),
     definition: vi.fn(),
     documentHighlights: vi.fn(async () => []),
+    documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => []),
     executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => []),
@@ -947,6 +948,7 @@ function languageServerFeaturesGateway() {
     selectionRanges: vi.fn(async () => []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
+    resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
     signatureHelp: vi.fn(),
     workspaceSymbols: vi.fn(async () => []),
   };

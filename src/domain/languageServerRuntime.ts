@@ -6,6 +6,7 @@ export interface LanguageServerCapabilities {
   completion: boolean;
   definition: boolean;
   documentHighlight: boolean;
+  documentLink: boolean;
   documentSymbol: boolean;
   formatting: boolean;
   implementation: boolean;
@@ -128,6 +129,10 @@ export function languageServerCapabilityLabels(
     labels.push("document highlights");
   }
 
+  if (capabilities.documentLink) {
+    labels.push("document links");
+  }
+
   if (capabilities.implementation) {
     labels.push("implementation");
   }
@@ -177,6 +182,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     completion: false,
     definition: false,
     documentHighlight: false,
+    documentLink: false,
     documentSymbol: false,
     formatting: false,
     hover: false,

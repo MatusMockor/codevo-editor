@@ -30,6 +30,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(gateway.documentHighlights("/project", position())).resolves.toEqual(
       [],
     );
+    await expect(
+      gateway.documentLinks("/project", "/project/src/User.php"),
+    ).resolves.toEqual([]);
+    await expect(
+      gateway.resolveDocumentLink("/project", documentLink()),
+    ).resolves.toEqual(documentLink());
     await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
       [],
     );
@@ -187,6 +193,18 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         range: range(),
       },
     ];
+    const documentLinks = [
+      {
+        data: { file: "/project/src/User.php" },
+        range: range(),
+        target: null,
+        tooltip: "Open file",
+      },
+    ];
+    const resolvedDocumentLink = {
+      ...documentLinks[0],
+      target: "file:///project/src/User.php",
+    };
     const workspaceSymbols = [
       {
         containerName: "App",
@@ -262,6 +280,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return documentHighlights;
       }
 
+      if (command === "text_document_document_links") {
+        return documentLinks;
+      }
+
+      if (command === "text_document_document_link_resolve") {
+        return resolvedDocumentLink;
+      }
+
       if (command === "workspace_symbols") {
         return workspaceSymbols;
       }
@@ -297,6 +323,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.documentHighlights("/project", requestPosition),
     ).resolves.toEqual(documentHighlights);
+    await expect(
+      gateway.documentLinks("/project", "/project/src/User.php"),
+    ).resolves.toEqual(documentLinks);
+    await expect(
+      gateway.resolveDocumentLink("/project", documentLink()),
+    ).resolves.toEqual(resolvedDocumentLink);
     await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
       workspaceSymbols,
     );
@@ -368,6 +400,17 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       position: requestPosition,
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_document_links", {
+      path: "/project/src/User.php",
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "text_document_document_link_resolve",
+      {
+        link: documentLink(),
+        rootPath: "/project",
+      },
+    );
     expect(invokeCommand).toHaveBeenCalledWith("workspace_symbols", {
       query: "User",
       rootPath: "/project",
@@ -467,6 +510,15 @@ function command() {
     arguments: [{ tsActionId: "unusedIdentifier" }],
     command: "_typescript.applyFixAllCodeAction",
     title: "Fix all",
+  };
+}
+
+function documentLink() {
+  return {
+    data: { file: "/project/src/User.php" },
+    range: range(),
+    target: null,
+    tooltip: "Open file",
   };
 }
 

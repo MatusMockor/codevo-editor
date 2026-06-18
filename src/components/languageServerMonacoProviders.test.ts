@@ -785,6 +785,7 @@ function featuresGateway(
     ),
     definition: vi.fn(async () => responses.definition ?? []),
     documentHighlights: vi.fn(async () => []),
+    documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => null),
     formatting: vi.fn(async () => responses.formatting ?? []),
@@ -799,6 +800,7 @@ function featuresGateway(
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
+    resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
   };
 }
 
@@ -811,6 +813,7 @@ function runningStatus(
       completion: true,
       definition: true,
       documentHighlight: true,
+      documentLink: true,
       documentSymbol: true,
       formatting: true,
       hover: true,

@@ -37,11 +37,72 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(2);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(27);
+    expect(monaco.dispose).toHaveBeenCalledTimes(29);
+  });
+
+  it("maps TypeScript document links and lazy resolution", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentLinks: [
+        {
+          data: { file: "/project/src/user.ts" },
+          range: range(0, 15, 0, 23),
+          target: null,
+          tooltip: "Open user module",
+        },
+      ],
+      resolvedDocumentLink: {
+        data: { file: "/project/src/user.ts" },
+        range: range(0, 15, 0, 23),
+        target: "file:///project/src/user.ts",
+        tooltip: "Open user module",
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+
+    const linkProvider = (monaco.languages.registerLinkProvider as any).mock
+      .calls[0][1];
+    const links = await linkProvider.provideLinks(model);
+
+    expect(gateway.documentLinks).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+    );
+    expect(links.links[0]).toEqual(
+      expect.objectContaining({
+        range: expect.objectContaining({
+          endColumn: 24,
+          endLineNumber: 1,
+          startColumn: 16,
+          startLineNumber: 1,
+        }),
+        tooltip: "Open user module",
+      }),
+    );
+    expect(links.links[0].url).toBeUndefined();
+
+    const resolved = await linkProvider.resolveLink(links.links[0]);
+
+    expect(gateway.resolveDocumentLink).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({
+        data: { file: "/project/src/user.ts" },
+        target: null,
+      }),
+    );
+    expect(resolved).toEqual(
+      expect.objectContaining({
+        tooltip: "Open user module",
+        url: "file:///project/src/user.ts",
+      }),
+    );
   });
 
   it("maps TypeScript document highlights and smart selection ranges", async () => {
@@ -745,6 +806,7 @@ function featuresGateway(
     documentHighlights: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>
     >;
+    documentLinks: Awaited<ReturnType<LanguageServerFeaturesGateway["documentLinks"]>>;
     documentSymbols: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
     >;
@@ -773,6 +835,9 @@ function featuresGateway(
     resolvedCompletionItem: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCompletionItem"]>
     >;
+    resolvedDocumentLink: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["resolveDocumentLink"]>
+    >;
   }> = {},
 ): LanguageServerFeaturesGateway {
   return {
@@ -788,6 +853,7 @@ function featuresGateway(
     documentHighlights: vi.fn(
       async () => responses.documentHighlights ?? [],
     ),
+    documentLinks: vi.fn(async () => responses.documentLinks ?? []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => responses.executeCommandEdit ?? null),
     formatting: vi.fn(async () => responses.formatting ?? []),
@@ -806,6 +872,9 @@ function featuresGateway(
     resolveCodeAction: vi.fn(
       async (_rootPath, action) => responses.resolvedCodeAction ?? action,
     ),
+    resolveDocumentLink: vi.fn(
+      async (_rootPath, link) => responses.resolvedDocumentLink ?? link,
+    ),
   };
 }
 
@@ -818,6 +887,7 @@ function runningStatus(
       completion: true,
       definition: true,
       documentHighlight: true,
+      documentLink: true,
       documentSymbol: true,
       formatting: true,
       hover: true,
@@ -960,6 +1030,7 @@ function createMonaco() {
       registerHoverProvider: vi.fn(() => disposable()),
       registerImplementationProvider: vi.fn(() => disposable()),
       registerInlayHintsProvider: vi.fn(() => disposable()),
+      registerLinkProvider: vi.fn(() => disposable()),
       registerReferenceProvider: vi.fn(() => disposable()),
       registerRenameProvider: vi.fn(() => disposable()),
       registerSelectionRangeProvider: vi.fn(() => disposable()),

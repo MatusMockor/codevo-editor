@@ -386,6 +386,10 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         },
                         "definition": { "dynamicRegistration": false },
                         "documentHighlight": { "dynamicRegistration": false },
+                        "documentLink": {
+                            "dynamicRegistration": false,
+                            "tooltipSupport": true
+                        },
                         "documentSymbol": { "dynamicRegistration": false },
                         "formatting": { "dynamicRegistration": false },
                         "hover": {
@@ -660,6 +664,10 @@ mod tests {
             request.params["capabilities"]["textDocument"]["documentHighlight"]
                 ["dynamicRegistration"],
             false
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["documentLink"]["tooltipSupport"],
+            true
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["selectionRange"]["dynamicRegistration"],

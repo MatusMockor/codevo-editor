@@ -205,6 +205,15 @@ pub struct LanguageServerDocumentHighlight {
     pub range: LanguageServerRange,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerDocumentLink {
+    pub range: LanguageServerRange,
+    pub target: Option<String>,
+    pub tooltip: Option<String>,
+    pub data: Option<Value>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerSelectionRange {
@@ -253,6 +262,11 @@ pub trait TextDocumentFeatureRequestFactory {
     ) -> LanguageServerFeatureRequest;
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn document_highlights(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn document_links(&self, path: &str) -> LanguageServerFeatureRequest;
+    fn resolve_document_link(
+        &self,
+        link: &LanguageServerDocumentLink,
+    ) -> LanguageServerFeatureRequest;
     fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest;
     fn workspace_symbols(&self, query: &str) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
@@ -308,6 +322,27 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
 
     fn document_highlights(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
         request("textDocument/documentHighlight", position)
+    }
+
+    fn document_links(&self, path: &str) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/documentLink".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(path)),
+                },
+            }),
+        }
+    }
+
+    fn resolve_document_link(
+        &self,
+        link: &LanguageServerDocumentLink,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "documentLink/resolve".to_string(),
+            params: json!(link),
+        }
     }
 
     fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest {
@@ -553,6 +588,27 @@ pub fn parse_document_highlights_result(
             serde_json::from_value::<LanguageServerDocumentHighlight>(item.clone()).map_err(
                 |error| format!("Language server returned a malformed document highlight: {error}"),
             )
+        })
+        .collect()
+}
+
+pub fn parse_document_links_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerDocumentLink>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed document links.".to_string());
+    };
+
+    items
+        .iter()
+        .map(|item| {
+            serde_json::from_value::<LanguageServerDocumentLink>(item.clone()).map_err(|error| {
+                format!("Language server returned a malformed document link: {error}")
+            })
         })
         .collect()
 }
@@ -1124,13 +1180,14 @@ struct LanguageServerLocationLink {
 mod tests {
     use super::{
         parse_code_action_result, parse_completion_result, parse_definition_result,
-        parse_document_highlights_result, parse_document_symbols_result, parse_formatting_result,
-        parse_hover_result, parse_inlay_hints_result, parse_optional_workspace_edit_result,
+        parse_document_highlights_result, parse_document_links_result,
+        parse_document_symbols_result, parse_formatting_result, parse_hover_result,
+        parse_inlay_hints_result, parse_optional_workspace_edit_result,
         parse_selection_ranges_result, parse_signature_help_result, parse_workspace_edit_result,
         parse_workspace_symbols_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
         LanguageServerCodeActionContext, LanguageServerCompletionItem,
-        LanguageServerCompletionList, LanguageServerFormattingOptions, LanguageServerHover,
-        LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
+        LanguageServerCompletionList, LanguageServerDocumentLink, LanguageServerFormattingOptions,
+        LanguageServerHover, LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
         LanguageServerTextEdit, LspTextDocumentFeatureRequestFactory,
         TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
         TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
@@ -1178,6 +1235,34 @@ mod tests {
             .starts_with("file://"));
         assert_eq!(request.params["position"]["line"], 10);
         assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn document_link_request_contains_document_uri() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.document_links("/tmp/User.ts");
+
+        assert_eq!(request.method, "textDocument/documentLink");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+    }
+
+    #[test]
+    fn document_link_resolve_request_serializes_link_data() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let link = LanguageServerDocumentLink {
+            range: range(1, 2, 1, 18),
+            target: None,
+            tooltip: Some("Open user module".to_string()),
+            data: Some(json!({ "file": "/tmp/user.ts" })),
+        };
+        let request = factory.resolve_document_link(&link);
+
+        assert_eq!(request.method, "documentLink/resolve");
+        assert_eq!(request.params["tooltip"], "Open user module");
+        assert_eq!(request.params["data"]["file"], "/tmp/user.ts");
     }
 
     #[test]
@@ -1993,6 +2078,38 @@ mod tests {
             parse_document_highlights_result(&json!(null)).expect("null"),
             Vec::new()
         );
+    }
+
+    #[test]
+    fn parses_document_links() {
+        let links = parse_document_links_result(&json!([
+            {
+                "range": {
+                    "start": { "line": 1, "character": 7 },
+                    "end": { "line": 1, "character": 15 }
+                },
+                "target": "file:///tmp/user.ts",
+                "tooltip": "Open user module",
+                "data": { "source": "typescript" }
+            },
+            {
+                "range": {
+                    "start": { "line": 3, "character": 0 },
+                    "end": { "line": 3, "character": 10 }
+                }
+            }
+        ]))
+        .expect("links");
+
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target.as_deref(), Some("file:///tmp/user.ts"));
+        assert_eq!(links[0].tooltip.as_deref(), Some("Open user module"));
+        assert_eq!(
+            links[0].data.as_ref().expect("data")["source"],
+            "typescript"
+        );
+        assert_eq!(links[1].target, None);
+        assert_eq!(parse_document_links_result(&json!(null)).expect("null"), []);
     }
 
     #[test]
