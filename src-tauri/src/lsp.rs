@@ -353,10 +353,15 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                     "textDocument": {
                         "completion": {
                             "completionItem": {
+                                "commitCharactersSupport": true,
+                                "deprecatedSupport": true,
                                 "documentationFormat": ["markdown", "plaintext"],
+                                "insertReplaceSupport": true,
+                                "labelDetailsSupport": true,
+                                "preselectSupport": true,
                                 "snippetSupport": true,
                                 "resolveSupport": {
-                                    "properties": ["documentation", "detail", "additionalTextEdits"]
+                                    "properties": ["documentation", "detail", "additionalTextEdits", "labelDetails"]
                                 }
                             },
                             "contextSupport": true,
@@ -734,6 +739,21 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]["includePackageJsonAutoImports"],
             "auto"
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
+                ["labelDetailsSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
+                ["insertReplaceSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
+                ["commitCharactersSupport"],
+            true
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["documentHighlight"]

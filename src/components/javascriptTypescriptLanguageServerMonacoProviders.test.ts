@@ -700,11 +700,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             insertTextFormat: 2,
             kind: 3,
             label: "loadUser",
+            labelDetails: {
+              description: "Promise<User>",
+              detail: "(id: string)",
+            },
             preselect: true,
             sortText: "11",
             textEdit: {
+              insert: range(1, 2, 1, 5),
               newText: "loadUser(${1:id})",
-              range: range(1, 2, 1, 5),
+              replace: range(1, 2, 1, 8),
             },
           },
         ],
@@ -748,18 +753,88 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         insertText: "loadUser(${1:id})",
         insertTextRules: 4,
         kind: 3,
-        label: "loadUser",
+        label: {
+          description: "Promise<User>",
+          detail: "(id: string)",
+          label: "loadUser",
+        },
         preselect: true,
+        range: {
+          insert: expect.objectContaining({
+            endColumn: 6,
+            endLineNumber: 2,
+            startColumn: 3,
+            startLineNumber: 2,
+          }),
+          replace: expect.objectContaining({
+            endColumn: 9,
+            endLineNumber: 2,
+            startColumn: 3,
+            startLineNumber: 2,
+          }),
+        },
+        sortText: "11",
+      }),
+    );
+    expect(result.incomplete).toBe(true);
+  });
+
+  it("preserves plain TypeScript completion text edit ranges", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "function loadUser(id: string): Promise<User>",
+            documentation: "Loads a user.",
+            insertText: "loadUser(${1:id})",
+            insertTextFormat: 2,
+            kind: 3,
+            label: "loadUser",
+            textEdit: {
+              newText: "loadUser(${1:id})",
+              range: range(1, 2, 1, 5),
+            },
+          },
+        ],
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+    const position = { column: 4, lineNumber: 2 };
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      model,
+      position,
+    );
+
+    expect(gateway.completion).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        detail: "function loadUser(id: string): Promise<User>",
+        documentation: "Loads a user.",
+        insertText: "loadUser(${1:id})",
+        insertTextRules: 4,
+        kind: 3,
+        label: "loadUser",
         range: expect.objectContaining({
           endColumn: 6,
           endLineNumber: 2,
           startColumn: 3,
           startLineNumber: 2,
         }),
-        sortText: "11",
       }),
     );
-    expect(result.incomplete).toBe(true);
+    expect(result.incomplete).toBeUndefined();
   });
 
   it("resolves TypeScript completion items through the language server", async () => {

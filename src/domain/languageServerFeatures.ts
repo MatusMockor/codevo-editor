@@ -22,6 +22,18 @@ export interface LanguageServerHover {
   contents: string;
 }
 
+export interface LanguageServerCompletionTextEdit {
+  insert?: LanguageServerRange | null;
+  newText: string;
+  range?: LanguageServerRange | null;
+  replace?: LanguageServerRange | null;
+}
+
+export interface LanguageServerCompletionItemLabelDetails {
+  description: string | null;
+  detail: string | null;
+}
+
 export interface LanguageServerCompletionItem {
   additionalTextEdits?: LanguageServerTextEdit[];
   commitCharacters?: string[];
@@ -33,9 +45,10 @@ export interface LanguageServerCompletionItem {
   insertText: string | null;
   insertTextFormat?: number | null;
   kind: number | null;
+  labelDetails?: LanguageServerCompletionItemLabelDetails | null;
   preselect?: boolean;
   sortText?: string | null;
-  textEdit?: LanguageServerTextEdit | null;
+  textEdit?: LanguageServerCompletionTextEdit | null;
 }
 
 export interface LanguageServerCompletionList {

@@ -48,6 +48,25 @@ pub struct LanguageServerTextEdit {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LanguageServerCompletionTextEdit {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<LanguageServerRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insert: Option<LanguageServerRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replace: Option<LanguageServerRange>,
+    pub new_text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerCompletionItemLabelDetails {
+    pub detail: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LanguageServerWorkspaceEdit {
     pub changes: BTreeMap<String, Vec<LanguageServerTextEdit>>,
 }
@@ -162,10 +181,11 @@ pub struct LanguageServerCompletionItem {
     pub insert_text: Option<String>,
     pub insert_text_format: Option<u32>,
     pub kind: Option<u32>,
+    pub label_details: Option<LanguageServerCompletionItemLabelDetails>,
     #[serde(default)]
     pub preselect: bool,
     pub sort_text: Option<String>,
-    pub text_edit: Option<LanguageServerTextEdit>,
+    pub text_edit: Option<LanguageServerCompletionTextEdit>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -959,6 +979,9 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
             .get("kind")
             .and_then(Value::as_u64)
             .map(|kind| kind as u32),
+        label_details: value
+            .get("labelDetails")
+            .and_then(parse_completion_label_details),
         preselect: value
             .get("preselect")
             .and_then(Value::as_bool)
@@ -968,18 +991,37 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
     })
 }
 
-fn parse_completion_text_edit(value: &Value) -> Option<LanguageServerTextEdit> {
-    if let Ok(edit) = serde_json::from_value::<LanguageServerTextEdit>(value.clone()) {
-        return Some(edit);
-    }
+fn parse_completion_label_details(
+    value: &Value,
+) -> Option<LanguageServerCompletionItemLabelDetails> {
+    Some(LanguageServerCompletionItemLabelDetails {
+        detail: optional_string(value.get("detail")),
+        description: optional_string(value.get("description")),
+    })
+}
 
+fn parse_completion_text_edit(value: &Value) -> Option<LanguageServerCompletionTextEdit> {
     let new_text = value.get("newText").and_then(Value::as_str)?.to_string();
     let range = value
+        .get("range")
+        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
+    let insert = value
+        .get("insert")
+        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
+    let replace = value
         .get("replace")
-        .or_else(|| value.get("insert"))
-        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok())?;
+        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
 
-    Some(LanguageServerTextEdit { range, new_text })
+    if range.is_none() && insert.is_none() && replace.is_none() {
+        return None;
+    }
+
+    Some(LanguageServerCompletionTextEdit {
+        range,
+        insert,
+        replace,
+        new_text,
+    })
 }
 
 fn optional_string(value: Option<&Value>) -> Option<String> {
@@ -1334,7 +1376,8 @@ mod tests {
         parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
         parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
         LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-        LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentLink,
+        LanguageServerCompletionItem, LanguageServerCompletionItemLabelDetails,
+        LanguageServerCompletionList, LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
         LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
@@ -1693,6 +1736,10 @@ mod tests {
                         "insertText": "User",
                         "insertTextFormat": 2,
                         "kind": 7,
+                        "labelDetails": {
+                            "detail": "(id: string)",
+                            "description": "Promise<User>"
+                        },
                         "preselect": true,
                         "sortText": "11",
                         "data": { "entryNames": ["User"] },
@@ -1743,10 +1790,14 @@ mod tests {
                     insert_text: Some("User".to_string()),
                     insert_text_format: Some(2),
                     kind: Some(7),
+                    label_details: Some(LanguageServerCompletionItemLabelDetails {
+                        detail: Some("(id: string)".to_string()),
+                        description: Some("Promise<User>".to_string()),
+                    }),
                     preselect: true,
                     sort_text: Some("11".to_string()),
-                    text_edit: Some(LanguageServerTextEdit {
-                        range: LanguageServerRange {
+                    text_edit: Some(LanguageServerCompletionTextEdit {
+                        range: Some(LanguageServerRange {
                             start: LanguageServerPosition {
                                 line: 2,
                                 character: 4,
@@ -1755,7 +1806,9 @@ mod tests {
                                 line: 2,
                                 character: 8,
                             },
-                        },
+                        }),
+                        insert: None,
+                        replace: None,
                         new_text: "User".to_string(),
                     }),
                 }],
@@ -1784,6 +1837,10 @@ mod tests {
             insert_text: Some("User".to_string()),
             insert_text_format: None,
             kind: Some(7),
+            label_details: Some(LanguageServerCompletionItemLabelDetails {
+                detail: Some("(id: string)".to_string()),
+                description: Some("User".to_string()),
+            }),
             preselect: false,
             sort_text: None,
             text_edit: None,
@@ -1792,7 +1849,59 @@ mod tests {
 
         assert_eq!(request.method, "completionItem/resolve");
         assert_eq!(request.params["label"], "User");
+        assert_eq!(request.params["labelDetails"]["detail"], "(id: string)");
         assert_eq!(request.params["data"]["entryNames"], json!(["User"]));
+    }
+
+    #[test]
+    fn parses_completion_insert_replace_text_edit() {
+        let completion = parse_completion_result(&json!({
+            "items": [
+                {
+                    "label": "loadUser",
+                    "textEdit": {
+                        "insert": {
+                            "start": { "line": 4, "character": 10 },
+                            "end": { "line": 4, "character": 14 }
+                        },
+                        "replace": {
+                            "start": { "line": 4, "character": 10 },
+                            "end": { "line": 4, "character": 18 }
+                        },
+                        "newText": "loadUser"
+                    }
+                }
+            ]
+        }))
+        .expect("completion");
+
+        assert_eq!(
+            completion.items[0].text_edit,
+            Some(LanguageServerCompletionTextEdit {
+                range: None,
+                insert: Some(LanguageServerRange {
+                    start: LanguageServerPosition {
+                        line: 4,
+                        character: 10,
+                    },
+                    end: LanguageServerPosition {
+                        line: 4,
+                        character: 14,
+                    },
+                }),
+                replace: Some(LanguageServerRange {
+                    start: LanguageServerPosition {
+                        line: 4,
+                        character: 10,
+                    },
+                    end: LanguageServerPosition {
+                        line: 4,
+                        character: 18,
+                    },
+                }),
+                new_text: "loadUser".to_string(),
+            })
+        );
     }
 
     #[test]

@@ -94,6 +94,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript semantic tokens are now served by the managed language server in Basic mode and mapped into Monaco's document semantic token provider, giving VS Code-like symbol-aware highlighting beyond syntax colors when the server advertises support.
 - Workspace detection now reads installed workspace TypeScript versions from `node_modules/typescript/package.json` and TypeScript dependency constraints from `package.json`. The status bar can show Bundled vs Workspace TypeScript context while editing JavaScript/TypeScript files, closer to VS Code's TypeScript version status.
 - The managed TypeScript server configuration now sends VS Code-like completion/refactor preferences, inferred project defaults, and `formattingOptions` responses, so completion snippets, organize imports and file edits get the same client-side context that `typescript-language-server` expects from VS Code-style clients.
+- TypeScript/JavaScript completion now advertises and preserves VS Code-like label details, commit characters, preselect support and insert/replace completion ranges, so method/function suggestions keep richer signature context and more precise replacement behavior.
 
 ## Full VS Code-Like Target
 

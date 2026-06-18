@@ -7,6 +7,7 @@ import {
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
   type LanguageServerCompletionItem,
+  type LanguageServerCompletionTextEdit,
   type LanguageServerDocumentHighlight,
   type LanguageServerDocumentLink,
   type LanguageServerFeaturesGateway,
@@ -1511,11 +1512,48 @@ function toMonacoCompletionItem(
     ...(insert.command ? { command: insert.command } : {}),
     ...(insert.insertTextRules ? { insertTextRules: insert.insertTextRules } : {}),
     kind,
-    label: item.label,
+    label: completionLabel(item),
     ...(item.preselect ? { preselect: true } : {}),
-    range: item.textEdit ? toMonacoRange(monaco, item.textEdit.range) : fallbackRange,
+    range: item.textEdit
+      ? toMonacoCompletionRange(monaco, item.textEdit, fallbackRange)
+      : fallbackRange,
     sortText: item.sortText ?? fallbackSortText,
   };
+}
+
+function completionLabel(
+  item: LanguageServerCompletionItem,
+): string | Monaco.languages.CompletionItemLabel {
+  if (!item.labelDetails) {
+    return item.label;
+  }
+
+  return {
+    ...(item.labelDetails.description
+      ? { description: item.labelDetails.description }
+      : {}),
+    ...(item.labelDetails.detail ? { detail: item.labelDetails.detail } : {}),
+    label: item.label,
+  };
+}
+
+function toMonacoCompletionRange(
+  monaco: MonacoApi,
+  edit: LanguageServerCompletionTextEdit,
+  fallbackRange: Monaco.IRange | Monaco.languages.CompletionItemRanges,
+): Monaco.IRange | Monaco.languages.CompletionItemRanges {
+  if (edit.insert && edit.replace) {
+    return {
+      insert: toMonacoRange(monaco, edit.insert),
+      replace: toMonacoRange(monaco, edit.replace),
+    };
+  }
+
+  if (edit.range) {
+    return toMonacoRange(monaco, edit.range);
+  }
+
+  return fallbackRange;
 }
 
 function completionInsert(
@@ -1526,7 +1564,7 @@ function completionInsert(
     insertTextFormat?: number | null;
     kind: number | null;
     label: string;
-    textEdit?: LanguageServerTextEdit | null;
+    textEdit?: LanguageServerCompletionTextEdit | null;
   },
   kind: Monaco.languages.CompletionItemKind,
 ): {
