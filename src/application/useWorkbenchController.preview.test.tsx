@@ -2847,6 +2847,9 @@ class CommentController
     {
         $comment = $this->commentRepository->findOrFail($request->getCommentId());
         $comment->
+
+        $builderComment = $comment->newQuery()->first();
+        $builderComment->get
     }
 }
 `;
@@ -3063,6 +3066,19 @@ class Comment
         name: "user_id",
         parameters: "",
         returnType: "mixed",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$builderComment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
       },
     ]);
   });
@@ -3647,10 +3663,17 @@ use App\\Models\\Album;
 
 class AlbumController
 {
-    public function index(): void
+    public function index(Album $existingAlbum): void
     {
         $album = Album::query()->whereNull('parent_id')->first();
         $album->get
+
+        $factoryAlbum = $existingAlbum->newQuery()->whereNull('parent_id')->first();
+        $factoryAlbum->get
+
+        $factoryQuery = $existingAlbum->newModelQuery();
+        $factoryQuery->pub
+        $factoryQuery->published()->ord
 
         $trashedAlbum = Album::withTrashed()->whereNull('parent_id')->first();
         $trashedAlbum->get
@@ -3780,6 +3803,45 @@ class Builder
         name: "getTitle",
         parameters: "",
         returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$factoryAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$factoryQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$factoryQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
       },
     ]);
     await expect(

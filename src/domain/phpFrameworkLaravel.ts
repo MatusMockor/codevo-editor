@@ -16,6 +16,10 @@ const laravelEloquentStaticBuilderMethods = new Set([
   "latest",
   "leftjoin",
   "limit",
+  "newmodelquery",
+  "newquery",
+  "newquerywithoutrelationships",
+  "newquerywithoutscopes",
   "offset",
   "oldest",
   "onlytrashed",
@@ -30,6 +34,8 @@ const laravelEloquentStaticBuilderMethods = new Set([
   "orwherenotnull",
   "orwherenull",
   "orderby",
+  "on",
+  "onwriteconnection",
   "paginate",
   "pluck",
   "query",
@@ -83,6 +89,10 @@ const laravelEloquentBuilderFluentMethods = new Set([
   "latest",
   "leftjoin",
   "limit",
+  "newmodelquery",
+  "newquery",
+  "newquerywithoutrelationships",
+  "newquerywithoutscopes",
   "offset",
   "oldest",
   "onlytrashed",
@@ -97,6 +107,8 @@ const laravelEloquentBuilderFluentMethods = new Set([
   "orwherenotnull",
   "orwherenull",
   "orderby",
+  "on",
+  "onwriteconnection",
   "paginate",
   "pluck",
   "restore",
@@ -155,6 +167,16 @@ const laravelEloquentBuilderCollectionMethods = new Set([
   "get",
 ]);
 
+const laravelEloquentModelBuilderFactoryMethods = new Set([
+  "newmodelquery",
+  "newquery",
+  "newquerywithoutrelationships",
+  "newquerywithoutscopes",
+  "on",
+  "onwriteconnection",
+  "query",
+]);
+
 const laravelCollectionTerminalModelMethods = new Set([
   "find",
   "first",
@@ -205,6 +227,12 @@ export function isLaravelEloquentBuilderCollectionMethod(
   methodName: string,
 ): boolean {
   return laravelEloquentBuilderCollectionMethods.has(methodName.toLowerCase());
+}
+
+export function isLaravelEloquentModelBuilderFactoryMethod(
+  methodName: string,
+): boolean {
+  return laravelEloquentModelBuilderFactoryMethods.has(methodName.toLowerCase());
 }
 
 export function isLaravelCollectionTerminalModelMethod(

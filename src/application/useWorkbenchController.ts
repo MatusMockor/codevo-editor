@@ -141,6 +141,7 @@ import {
   isLaravelEloquentBuilderCollectionMethod,
   isLaravelEloquentBuilderFluentMethod,
   isLaravelEloquentBuilderTerminalModelMethod,
+  isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentStaticBuilderMethod,
   phpLaravelLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
@@ -4556,6 +4557,79 @@ export function useWorkbenchController(
       }
 
       const normalizedExpression = expression.trim();
+      const resolvePhpModelExpressionType = async (
+        expression: string,
+        modelDepth: number,
+      ): Promise<string | null> => {
+        if (modelDepth > 5) {
+          return null;
+        }
+
+        const normalizedModelExpression = expression.trim();
+        const directType = phpReceiverExpressionTypeInSource(
+          source,
+          position,
+          normalizedModelExpression,
+        );
+
+        if (directType) {
+          return resolvePhpClassReference(source, directType);
+        }
+
+        const modelVariableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
+          normalizedModelExpression,
+        );
+        const modelAssignmentExpression = modelVariableMatch?.[1]
+          ? phpAssignmentExpressionForVariableBefore(
+              source,
+              position,
+              modelVariableMatch[1],
+            )
+          : null;
+
+        if (modelAssignmentExpression) {
+          return resolvePhpModelExpressionType(
+            modelAssignmentExpression,
+            modelDepth + 1,
+          );
+        }
+
+        const constructedClassName =
+          phpNewExpressionClassName(normalizedModelExpression) ??
+          phpLaravelContainerExpressionClassName(normalizedModelExpression);
+
+        if (constructedClassName) {
+          return resolvePhpClassReference(source, constructedClassName);
+        }
+
+        const modelMethodCall = phpMethodCallExpression(normalizedModelExpression);
+
+        if (modelMethodCall) {
+          const receiverType = await resolvePhpModelExpressionType(
+            modelMethodCall.receiverExpression,
+            modelDepth + 1,
+          );
+
+          return receiverType
+            ? resolvePhpMethodReturnType(receiverType, modelMethodCall.methodName)
+            : null;
+        }
+
+        const modelStaticCall = phpStaticCallExpression(normalizedModelExpression);
+
+        if (modelStaticCall) {
+          const className = resolvePhpClassReference(
+            source,
+            modelStaticCall.className,
+          );
+
+          return className
+            ? resolvePhpMethodReturnType(className, modelStaticCall.methodName)
+            : null;
+        }
+
+        return null;
+      };
       const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
         normalizedExpression,
       );
@@ -4593,6 +4667,16 @@ export function useWorkbenchController(
       }
 
       const methodCall = phpMethodCallExpression(normalizedExpression);
+
+      if (
+        methodCall &&
+        isLaravelEloquentModelBuilderFactoryMethod(methodCall.methodName)
+      ) {
+        return resolvePhpModelExpressionType(
+          methodCall.receiverExpression,
+          depth + 1,
+        );
+      }
 
       if (
         methodCall &&
@@ -4638,7 +4722,11 @@ export function useWorkbenchController(
 
       return null;
     },
-    [phpClassHasLaravelLocalScope, resolvePhpClassReference],
+    [
+      phpClassHasLaravelLocalScope,
+      resolvePhpClassReference,
+      resolvePhpMethodReturnType,
+    ],
   );
 
   const resolvePhpLaravelCollectionModelType = useCallback(
@@ -4903,6 +4991,19 @@ export function useWorkbenchController(
 
           if (modelType) {
             return modelType;
+          }
+        }
+
+        if (isLaravelEloquentModelBuilderFactoryMethod(methodCall.methodName)) {
+          const modelType = await resolvePhpEloquentBuilderModelType(
+            source,
+            position,
+            expression,
+            depth + 1,
+          );
+
+          if (modelType) {
+            return "Illuminate\\Database\\Eloquent\\Builder";
           }
         }
 
