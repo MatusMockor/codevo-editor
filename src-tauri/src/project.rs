@@ -36,7 +36,9 @@ pub struct JavaScriptTypeScriptProjectDescriptor {
     pub package_name: Option<String>,
     pub package_manager: Option<String>,
     pub frameworks: Vec<String>,
+    pub type_script_dependency_version: Option<String>,
     pub uses_type_script: bool,
+    pub workspace_type_script_version: Option<String>,
 }
 
 pub trait WorkspaceDetector {
@@ -115,6 +117,10 @@ fn detect_javascript_typescript_project(
         .as_ref()
         .map(package_dependency_names)
         .unwrap_or_default();
+    let type_script_dependency_version = package_json
+        .as_ref()
+        .and_then(type_script_dependency_version);
+    let workspace_type_script_version = workspace_type_script_version(root);
     let package_name = package_json
         .as_ref()
         .and_then(|value| value.get("name"))
@@ -134,9 +140,13 @@ fn detect_javascript_typescript_project(
         package_name,
         package_manager,
         frameworks: detect_frameworks(&dependencies),
+        type_script_dependency_version: type_script_dependency_version.clone(),
         uses_type_script: has_tsconfig
+            || workspace_type_script_version.is_some()
+            || type_script_dependency_version.is_some()
             || dependencies.contains("typescript")
             || dependencies.iter().any(|name| name.starts_with("@types/")),
+        workspace_type_script_version,
     })
 }
 
@@ -159,6 +169,44 @@ fn package_dependency_names(package_json: &Value) -> BTreeSet<String> {
     }
 
     dependencies
+}
+
+fn type_script_dependency_version(package_json: &Value) -> Option<String> {
+    for key in [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+    ] {
+        let Some(section) = package_json.get(key).and_then(Value::as_object) else {
+            continue;
+        };
+        let Some(version) = section.get("typescript").and_then(Value::as_str) else {
+            continue;
+        };
+        let version = version.trim();
+
+        if !version.is_empty() {
+            return Some(version.to_string());
+        }
+    }
+
+    None
+}
+
+fn workspace_type_script_version(root: &Path) -> Option<String> {
+    let package_json_path = root
+        .join("node_modules")
+        .join("typescript")
+        .join("package.json");
+    let package_json = fs::read_to_string(package_json_path).ok()?;
+    let package_json = serde_json::from_str::<Value>(&package_json).ok()?;
+    package_json
+        .get("version")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string)
 }
 
 fn package_manager_name(value: &str) -> Option<String> {
@@ -307,6 +355,37 @@ mod tests {
         assert_eq!(js_ts.package_name.as_deref(), Some("example-web"));
         assert_eq!(js_ts.package_manager.as_deref(), Some("pnpm"));
         assert_eq!(js_ts.frameworks, vec!["React", "Vite"]);
+        assert_eq!(
+            js_ts.type_script_dependency_version.as_deref(),
+            Some("^5.9.0")
+        );
+        assert_eq!(js_ts.workspace_type_script_version, None);
+        assert!(js_ts.uses_type_script);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn detects_workspace_typescript_version_from_node_modules() {
+        let root = create_temp_dir("workspace-js-ts-version");
+        fs::write(root.join("package.json"), "{}").expect("write package");
+        fs::create_dir_all(root.join("node_modules").join("typescript"))
+            .expect("create typescript package");
+        fs::write(
+            root.join("node_modules")
+                .join("typescript")
+                .join("package.json"),
+            r#"{ "name": "typescript", "version": "5.9.2" }"#,
+        )
+        .expect("write typescript package");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+        let js_ts = descriptor.js_ts.expect("js ts descriptor");
+
+        assert_eq!(
+            js_ts.workspace_type_script_version.as_deref(),
+            Some("5.9.2")
+        );
         assert!(js_ts.uses_type_script);
         fs::remove_dir_all(root).expect("cleanup");
     }

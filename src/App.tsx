@@ -45,10 +45,8 @@ import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
 } from "./domain/settings";
-import type {
-  IntelligenceMode,
-  JavaScriptTypeScriptProjectDescriptor,
-} from "./domain/workspace";
+import { javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
+import type { IntelligenceMode } from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import {
@@ -189,11 +187,19 @@ function App() {
     const php = workbench.workspaceDescriptor?.php;
 
     if (jsTs && isJavaScriptTypeScriptLanguage(activeLanguage)) {
-      return javaScriptTypeScriptWorkspaceLabel(jsTs);
+      return javaScriptTypeScriptWorkspaceLabel(
+        jsTs,
+        workbench.workspaceSettings.javaScriptTypeScriptVersion,
+      );
     }
 
     if (!php) {
-      return jsTs ? javaScriptTypeScriptWorkspaceLabel(jsTs) : null;
+      return jsTs
+        ? javaScriptTypeScriptWorkspaceLabel(
+            jsTs,
+            workbench.workspaceSettings.javaScriptTypeScriptVersion,
+          )
+        : null;
     }
 
     const packageName = php.packageName || "PHP Composer";
@@ -220,6 +226,7 @@ function App() {
     activeLanguage,
     workbench.phpTools,
     workbench.workspaceDescriptor,
+    workbench.workspaceSettings.javaScriptTypeScriptVersion,
     workbench.workspaceSettings.phpVersionOverride,
   ]);
   const languageServerLabel = useMemo(() => {
@@ -968,29 +975,6 @@ function languageServerPlanReason(message: string): string {
 
 function isJavaScriptTypeScriptLanguage(language: string | null): boolean {
   return language === "javascript" || language === "typescript";
-}
-
-function javaScriptTypeScriptWorkspaceLabel(
-  descriptor: JavaScriptTypeScriptProjectDescriptor,
-): string {
-  const packageName = descriptor.packageName || "JavaScript/TypeScript";
-  const frameworkLabel =
-    descriptor.frameworks.length > 0
-      ? descriptor.frameworks.slice(0, 3).join(" + ")
-      : null;
-  const languageLabel = descriptor.usesTypeScript
-    ? "TypeScript"
-    : descriptor.hasJsconfig
-      ? "JavaScript"
-      : "JS/TS";
-  const parts = [
-    packageName,
-    frameworkLabel,
-    languageLabel,
-    descriptor.packageManager,
-  ].filter((part): part is string => Boolean(part));
-
-  return parts.join(" · ");
 }
 
 function toolSourceLabel(source: string): string {

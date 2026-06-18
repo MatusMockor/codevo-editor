@@ -64,7 +64,65 @@ export interface JavaScriptTypeScriptProjectDescriptor {
   packageName: string | null;
   packageManager: string | null;
   frameworks: string[];
+  typeScriptDependencyVersion: string | null;
   usesTypeScript: boolean;
+  workspaceTypeScriptVersion: string | null;
+}
+
+export function javaScriptTypeScriptWorkspaceLabel(
+  descriptor: JavaScriptTypeScriptProjectDescriptor,
+  typeScriptVersionPreference: string,
+): string {
+  const packageName = descriptor.packageName || "JavaScript/TypeScript";
+  const frameworkLabel =
+    descriptor.frameworks.length > 0
+      ? descriptor.frameworks.slice(0, 3).join(" + ")
+      : null;
+  const typeScriptLabel = javaScriptTypeScriptVersionLabel(
+    descriptor,
+    typeScriptVersionPreference,
+  );
+  const languageLabel = descriptor.usesTypeScript
+    ? "TypeScript"
+    : descriptor.hasJsconfig
+      ? "JavaScript"
+      : "JS/TS";
+  const parts = [
+    packageName,
+    frameworkLabel,
+    languageLabel,
+    typeScriptLabel,
+    descriptor.packageManager,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.join(" · ");
+}
+
+export function javaScriptTypeScriptVersionLabel(
+  descriptor: JavaScriptTypeScriptProjectDescriptor,
+  preference: string,
+): string | null {
+  if (!descriptor.usesTypeScript) {
+    return null;
+  }
+
+  if (preference === "workspace") {
+    if (descriptor.workspaceTypeScriptVersion) {
+      return `TS ${descriptor.workspaceTypeScriptVersion} workspace`;
+    }
+
+    if (descriptor.typeScriptDependencyVersion) {
+      return `TS ${descriptor.typeScriptDependencyVersion} dependency`;
+    }
+
+    return "TS workspace missing";
+  }
+
+  if (descriptor.workspaceTypeScriptVersion) {
+    return `TS bundled · workspace ${descriptor.workspaceTypeScriptVersion}`;
+  }
+
+  return "TS bundled";
 }
 
 export interface PhpToolAvailability {

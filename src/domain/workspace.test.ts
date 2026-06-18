@@ -4,10 +4,13 @@ import {
   getFileName,
   getParentPath,
   isDirty,
+  javaScriptTypeScriptVersionLabel,
+  javaScriptTypeScriptWorkspaceLabel,
   joinWorkspacePath,
   nextActiveEditorPathAfterClose,
   visibleEditorPaths,
   type EditorDocument,
+  type JavaScriptTypeScriptProjectDescriptor,
 } from "./workspace";
 
 describe("workspace path helpers", () => {
@@ -72,6 +75,48 @@ describe("workspace path helpers", () => {
     ).toBe("/project/B.php");
     expect(nextActiveEditorPathAfterClose("/project/A.php", [], null)).toBe(
       null,
+    );
+  });
+
+  it("labels JavaScript and TypeScript workspace status like an editor service selector", () => {
+    const descriptor: JavaScriptTypeScriptProjectDescriptor = {
+      frameworks: ["React", "Vite", "Express", "NestJS"],
+      hasJsconfig: false,
+      hasPackageJson: true,
+      hasTsconfig: true,
+      packageManager: "pnpm",
+      packageName: "example-web",
+      typeScriptDependencyVersion: "^5.9.0",
+      usesTypeScript: true,
+      workspaceTypeScriptVersion: "5.9.2",
+    };
+
+    expect(javaScriptTypeScriptVersionLabel(descriptor, "workspace")).toBe(
+      "TS 5.9.2 workspace",
+    );
+    expect(javaScriptTypeScriptVersionLabel(descriptor, "bundled")).toBe(
+      "TS bundled · workspace 5.9.2",
+    );
+    expect(javaScriptTypeScriptWorkspaceLabel(descriptor, "workspace")).toBe(
+      "example-web · React + Vite + Express · TypeScript · TS 5.9.2 workspace · pnpm",
+    );
+  });
+
+  it("labels missing workspace TypeScript before falling back to bundled service", () => {
+    const descriptor: JavaScriptTypeScriptProjectDescriptor = {
+      frameworks: [],
+      hasJsconfig: false,
+      hasPackageJson: true,
+      hasTsconfig: true,
+      packageManager: "npm",
+      packageName: "example-web",
+      typeScriptDependencyVersion: "^5.9.0",
+      usesTypeScript: true,
+      workspaceTypeScriptVersion: null,
+    };
+
+    expect(javaScriptTypeScriptVersionLabel(descriptor, "workspace")).toBe(
+      "TS ^5.9.0 dependency",
     );
   });
 });
