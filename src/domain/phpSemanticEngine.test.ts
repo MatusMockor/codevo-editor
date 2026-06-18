@@ -5,6 +5,7 @@ import {
   phpCurrentClassName,
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
+  phpDocRawTypeForVariableBefore,
   phpFunctionReturnsClassStringArgument,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
@@ -272,6 +273,25 @@ class AppServiceProvider
     expect(phpDeclaredTypeCandidate("array<int, \\App\\Models\\Album>")).toBe(
       "App\\Models\\Album",
     );
+  });
+
+  it("keeps spaced PHPDoc generic @var types intact", () => {
+    const source = `<?php
+/** @var \\Illuminate\\Database\\Eloquent\\Collection<int, \\App\\Models\\Album> $albums */
+$album = $albums->first();
+`;
+    const rawType = phpDocRawTypeForVariableBefore(
+      source,
+      { column: 10, lineNumber: 3 },
+      "albums",
+    );
+
+    expect(rawType).toBe(
+      "\\Illuminate\\Database\\Eloquent\\Collection<int, \\App\\Models\\Album>",
+    );
+    expect(phpDeclaredGenericTypeCandidates(rawType ?? "")).toEqual([
+      "App\\Models\\Album",
+    ]);
   });
 
   it("extracts method return expressions from concrete method bodies", () => {

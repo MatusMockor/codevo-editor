@@ -3477,6 +3477,10 @@ class AlbumController
         $typedAlbums = Album::query()->get();
         $typedAlbum = $typedAlbums->first();
         $typedAlbum->get
+
+        /** @var \\Illuminate\\Database\\Eloquent\\Collection<int, Album> $documentedAlbums */
+        $documentedAlbum = $documentedAlbums->first();
+        $documentedAlbum->get
     }
 }
 `;
@@ -3702,6 +3706,19 @@ class Builder
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$typed->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$documentedAlbum->get"),
       ),
     ).resolves.toEqual([
       {

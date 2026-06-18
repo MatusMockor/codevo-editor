@@ -381,7 +381,7 @@ export function phpDocRawTypeForVariableBefore(
   const offset = offsetAtPosition(source, position);
   const before = source.slice(0, offset);
   const pattern = new RegExp(
-    `\\/\\*\\*[\\s\\S]*?@var\\s+([^\\s*]+)\\s+\\$${escapeRegExp(
+    `\\/\\*\\*[\\s\\S]*?@var\\s+([\\s\\S]*?)\\s+\\$${escapeRegExp(
       variableName,
     )}\\b[\\s\\S]*?\\*\\/`,
     "g",
@@ -389,7 +389,7 @@ export function phpDocRawTypeForVariableBefore(
   let typeName: string | null = null;
 
   for (const match of before.matchAll(pattern)) {
-    typeName = match[1]?.trim() || null;
+    typeName = phpDocNormalizeType(match[1] ?? "") || null;
   }
 
   return typeName;
@@ -473,7 +473,7 @@ function phpDocTypeForProperty(
   propertyName: string,
 ): string | null {
   const pattern = new RegExp(
-    `\\/\\*\\*[\\s\\S]*?@var\\s+([^\\s*]+)[\\s\\S]*?\\*\\/\\s*(?:public|protected|private)?\\s+(?:readonly\\s+)?(?:static\\s+)?(?:[^\\n;=]+?\\s+)?\\$${escapeRegExp(
+    `\\/\\*\\*[\\s\\S]*?@var\\s+([^\\r\\n*]+)[\\s\\S]*?\\*\\/\\s*(?:public|protected|private)?\\s+(?:readonly\\s+)?(?:static\\s+)?(?:[^\\n;=]+?\\s+)?\\$${escapeRegExp(
       propertyName,
     )}\\b`,
     "g",
@@ -481,10 +481,18 @@ function phpDocTypeForProperty(
   let typeName: string | null = null;
 
   for (const match of source.matchAll(pattern)) {
-    typeName = phpDeclaredTypeCandidate(match[1] ?? "");
+    typeName = phpDeclaredTypeCandidate(phpDocNormalizeType(match[1] ?? ""));
   }
 
   return typeName;
+}
+
+function phpDocNormalizeType(rawTypeName: string): string {
+  return rawTypeName
+    .replace(/\s+/g, " ")
+    .replace(/\s*\*\/.*$/, "")
+    .replace(/\s+\$[A-Za-z_][A-Za-z0-9_]*\b.*$/, "")
+    .trim();
 }
 
 function phpDocBlockBefore(source: string, offset: number): string | null {
