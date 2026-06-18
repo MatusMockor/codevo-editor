@@ -28,9 +28,10 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 - Laravel container interface bindings are inferred from service providers when projects expose explicit `bind`, `singleton`, `scoped`, or contextual `needs()->give()` mappings. Completion, return inference, and Cmd+B can now use the bound concrete implementation when an injected dependency is typed as an interface.
 - Laravel local scopes on Eloquent models are exposed as builder completions. `scopePublished($query, bool $strict = true)` becomes `published(bool $strict = true)`, and scope chains keep the original model type through terminal methods like `first()`.
 - Laravel collection chains now preserve the related model type across fluent calls like `filter()`, `where()`, `values()`, and `unique()`, so `get()->filter()->first()->...` and relation-property chains keep model-aware completions.
+- Laravel polymorphic many-to-many relations now resolve `morphedByMany(Related::class, ...)` targets, so terminal relation chains like `$model->likers()->first()->...` expose the related model members.
 
 ## Next Tasks
 
 - Improve PHPDoc inheritance and trait host-context diagnostics to reduce false positives without hiding app bugs.
-- Add more model relation return inference for `hasOne`, `hasMany`, `belongsTo`, and `morph*` edge cases.
+- Add more model relation return inference for `hasOne`, `hasMany`, `belongsTo`, and remaining `morph*` edge cases.
 - Add UI smoke tests for IDE Mode on a real Laravel workspace.

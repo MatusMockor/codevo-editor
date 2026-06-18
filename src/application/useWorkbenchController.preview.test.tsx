@@ -2863,6 +2863,7 @@ class Comment
       "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
     const commentPath =
       "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const userPath = "/workspace/app/Models/User.php";
     const controllerSource = `<?php
 namespace App\\Http\\Controllers\\communication;
 
@@ -2894,6 +2895,9 @@ class CommentController
 
         $documentedParent = $comment->documentedParent()->first();
         $documentedParent->get
+
+        $liker = $comment->likers()->first();
+        $liker->get
     }
 }
 `;
@@ -2925,6 +2929,16 @@ class CommentController
           path: commentPath,
           relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
         },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\User",
+          kind: "class",
+          lineNumber: 5,
+          name: "User",
+          path: userPath,
+          relativePath: "app/Models/User.php",
+        },
       ],
       readTextFile: vi.fn(async (path: string) => {
         if (path === controllerPath) {
@@ -2948,8 +2962,10 @@ interface CommentRepositoryInterface
           return `<?php
 namespace Kontentino\\Communication\\Models;
 
+use App\\Models\\User;
 use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphedByMany;
 
 class Comment
 {
@@ -2969,7 +2985,23 @@ class Comment
         return $this->belongsTo();
     }
 
+    public function likers(): MorphedByMany
+    {
+        return $this->morphedByMany(User::class, 'likeable');
+    }
+
     public function getContent(): string {}
+}
+`;
+        }
+
+        if (path === userPath) {
+          return `<?php
+namespace App\\Models;
+
+class User
+{
+    public function getName(): string {}
 }
 `;
         }
@@ -3067,6 +3099,19 @@ class Comment
         returnType: "string",
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$liker->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        name: "getName",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
     act(() => {
       getWorkbench().updateActiveEditorPosition(
         positionAfter(controllerSource, "$parent->getContent"),
@@ -3084,7 +3129,7 @@ class Comment
       path: commentPath,
       position: {
         column: 21,
-        lineNumber: 25,
+        lineNumber: 32,
       },
     });
   });

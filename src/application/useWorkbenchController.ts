@@ -8473,6 +8473,7 @@ const laravelEloquentRelationTypes = new Set([
   "hasonethrough",
   "morphmany",
   "morphone",
+  "morphedbymany",
   "morphto",
   "morphtomany",
 ]);
@@ -8492,7 +8493,7 @@ function phpLaravelRelationTargetClassNameFromExpression(
   const classNamePattern =
     String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
   const match = new RegExp(
-    String.raw`\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphToMany)\s*\(\s*(` +
+    String.raw`\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphedByMany|morphToMany)\s*\(\s*(` +
       classNamePattern +
       String.raw`)\s*::\s*class\b`,
   ).exec(expression.trim());
