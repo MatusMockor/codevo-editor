@@ -266,6 +266,14 @@ pub struct LanguageServerSignatureParameter {
     pub label: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerPrepareRenameResult {
+    pub default_behavior: bool,
+    pub placeholder: Option<String>,
+    pub range: Option<LanguageServerRange>,
+}
+
 pub trait TextDocumentFeatureRequestFactory {
     fn hover(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn completion(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
@@ -287,6 +295,7 @@ pub trait TextDocumentFeatureRequestFactory {
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn selection_ranges(&self, range: &TextDocumentSelectionRange) -> LanguageServerFeatureRequest;
     fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn prepare_rename(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn rename(&self, rename: &TextDocumentRename) -> LanguageServerFeatureRequest;
     fn code_actions(
         &self,
@@ -414,6 +423,10 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
 
     fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
         request("textDocument/signatureHelp", position)
+    }
+
+    fn prepare_rename(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
+        request("textDocument/prepareRename", position)
     }
 
     fn rename(&self, rename: &TextDocumentRename) -> LanguageServerFeatureRequest {
@@ -716,6 +729,46 @@ pub fn parse_signature_help_result(
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32,
         signatures: parsed_signatures,
+    }))
+}
+
+pub fn parse_prepare_rename_result(
+    value: &Value,
+) -> Result<Option<LanguageServerPrepareRenameResult>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    if value
+        .get("defaultBehavior")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(Some(LanguageServerPrepareRenameResult {
+            default_behavior: true,
+            placeholder: None,
+            range: None,
+        }));
+    }
+
+    if let Ok(range) = serde_json::from_value::<LanguageServerRange>(value.clone()) {
+        return Ok(Some(LanguageServerPrepareRenameResult {
+            default_behavior: false,
+            placeholder: None,
+            range: Some(range),
+        }));
+    }
+
+    let Some(range_value) = value.get("range") else {
+        return Err("Language server returned a malformed prepare rename response.".to_string());
+    };
+    let range = serde_json::from_value::<LanguageServerRange>(range_value.clone())
+        .map_err(|error| format!("Language server returned a malformed rename range: {error}"))?;
+
+    Ok(Some(LanguageServerPrepareRenameResult {
+        default_behavior: false,
+        placeholder: optional_string(value.get("placeholder")),
+        range: Some(range),
     }))
 }
 
@@ -1229,14 +1282,15 @@ mod tests {
         parse_document_highlights_result, parse_document_links_result,
         parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
         parse_hover_result, parse_inlay_hints_result, parse_optional_workspace_edit_result,
-        parse_selection_ranges_result, parse_signature_help_result, parse_workspace_edit_result,
-        parse_workspace_symbols_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-        LanguageServerCodeActionContext, LanguageServerCompletionItem,
-        LanguageServerCompletionList, LanguageServerDocumentLink, LanguageServerFormattingOptions,
-        LanguageServerHover, LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
-        LanguageServerTextEdit, LspTextDocumentFeatureRequestFactory,
-        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-        TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
+        parse_prepare_rename_result, parse_selection_ranges_result, parse_signature_help_result,
+        parse_workspace_edit_result, parse_workspace_symbols_result, LanguageServerCodeAction,
+        LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
+        LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentLink,
+        LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
+        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
+        TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition,
+        TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
         TextDocumentSelectionRange,
     };
     use serde_json::json;
@@ -1330,6 +1384,20 @@ mod tests {
 
         assert_eq!(request.method, "textDocument/references");
         assert_eq!(request.params["context"]["includeDeclaration"], true);
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn prepare_rename_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.prepare_rename(&position());
+
+        assert_eq!(request.method, "textDocument/prepareRename");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
         assert_eq!(request.params["position"]["line"], 10);
         assert_eq!(request.params["position"]["character"], 4);
     }
@@ -2198,6 +2266,47 @@ mod tests {
         assert_eq!(
             parse_folding_ranges_result(&json!(null)).expect("null"),
             Vec::new()
+        );
+    }
+
+    #[test]
+    fn parses_prepare_rename_variants() {
+        let with_placeholder = parse_prepare_rename_result(&json!({
+            "range": {
+                "start": { "line": 2, "character": 4 },
+                "end": { "line": 2, "character": 12 }
+            },
+            "placeholder": "userName"
+        }))
+        .expect("prepare rename")
+        .expect("result");
+
+        assert!(!with_placeholder.default_behavior);
+        assert_eq!(with_placeholder.placeholder.as_deref(), Some("userName"));
+        assert_eq!(with_placeholder.range.expect("range").start.character, 4);
+
+        let range_only = parse_prepare_rename_result(&json!({
+            "start": { "line": 5, "character": 1 },
+            "end": { "line": 5, "character": 4 }
+        }))
+        .expect("prepare rename")
+        .expect("result");
+
+        assert!(!range_only.default_behavior);
+        assert_eq!(range_only.placeholder, None);
+        assert_eq!(range_only.range.expect("range").end.character, 4);
+
+        let default_behavior = parse_prepare_rename_result(&json!({
+            "defaultBehavior": true
+        }))
+        .expect("prepare rename")
+        .expect("result");
+
+        assert!(default_behavior.default_behavior);
+        assert_eq!(default_behavior.range, None);
+        assert_eq!(
+            parse_prepare_rename_result(&json!(null)).expect("null"),
+            None
         );
     }
 

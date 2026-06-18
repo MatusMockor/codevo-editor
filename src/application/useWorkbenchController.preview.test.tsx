@@ -4023,6 +4023,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
     inlayHints: vi.fn(async () => []),
+    prepareRename: vi.fn(async () => null),
     rangeFormatting: vi.fn(async () => []),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),

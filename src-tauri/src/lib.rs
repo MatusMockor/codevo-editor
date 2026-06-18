@@ -57,18 +57,19 @@ use lsp_features::{
     parse_code_action_result, parse_completion_result, parse_definition_result,
     parse_document_highlights_result, parse_document_links_result, parse_document_symbols_result,
     parse_folding_ranges_result, parse_formatting_result, parse_hover_result,
-    parse_inlay_hints_result, parse_optional_workspace_edit_result, parse_selection_ranges_result,
-    parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
-    LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
-    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFoldingRange,
-    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInlayHint,
-    LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
-    LanguageServerSelectionRange, LanguageServerSignatureHelp, LanguageServerTextEdit,
-    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
-    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
-    TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
+    parse_inlay_hints_result, parse_optional_workspace_edit_result, parse_prepare_rename_result,
+    parse_selection_ranges_result, parse_signature_help_result, parse_workspace_edit_result,
+    parse_workspace_symbols_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+    LanguageServerCodeActionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
+    LanguageServerDocumentHighlight, LanguageServerDocumentLink, LanguageServerDocumentSymbol,
+    LanguageServerFoldingRange, LanguageServerFormattingOptions, LanguageServerHover,
+    LanguageServerInlayHint, LanguageServerLocation, LanguageServerPosition,
+    LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
+    LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
+    LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory,
+    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+    TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
+    TextDocumentSelectionRange,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1156,6 +1157,36 @@ fn javascript_typescript_text_document_references(
 }
 
 #[tauri::command]
+fn text_document_prepare_rename(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerPrepareRenameResult>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.prepare_rename(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_prepare_rename_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_prepare_rename(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerPrepareRenameResult>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.prepare_rename(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_prepare_rename_result(&result)
+}
+
+#[tauri::command]
 fn text_document_rename(
     root_path: String,
     position: TextDocumentPosition,
@@ -1854,6 +1885,7 @@ pub fn run() {
             javascript_typescript_text_document_hover,
             javascript_typescript_text_document_implementation,
             javascript_typescript_text_document_inlay_hints,
+            javascript_typescript_text_document_prepare_rename,
             javascript_typescript_text_document_range_formatting,
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
@@ -1879,6 +1911,7 @@ pub fn run() {
             text_document_hover,
             text_document_implementation,
             text_document_inlay_hints,
+            text_document_prepare_rename,
             text_document_range_formatting,
             text_document_references,
             text_document_rename,

@@ -292,6 +292,11 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           tooltip: "Inferred type",
         },
       ],
+      prepareRename: {
+        defaultBehavior: false,
+        placeholder: "user",
+        range: range(0, 1, 0, 5),
+      },
       signatureHelp: {
         activeParameter: 1,
         activeSignature: 0,
@@ -354,6 +359,26 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     const renameProvider = (monaco.languages.registerRenameProvider as any).mock
       .calls[0][1];
+    const renameLocation = await renameProvider.resolveRenameLocation(
+      model,
+      position,
+    );
+
+    expect(gateway.prepareRename).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 0,
+      path: "/project/src/user.ts",
+    });
+    expect(renameLocation).toEqual({
+      range: expect.objectContaining({
+        endColumn: 6,
+        endLineNumber: 1,
+        startColumn: 2,
+        startLineNumber: 1,
+      }),
+      text: "user",
+    });
+
     const rename = await renameProvider.provideRenameEdits(
       model,
       position,
@@ -857,6 +882,9 @@ function featuresGateway(
       ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>
     >;
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
+    prepareRename: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["prepareRename"]>
+    >;
     references: Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>;
     rangeFormatting: Awaited<
       ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>
@@ -903,6 +931,7 @@ function featuresGateway(
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
+    prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
@@ -937,6 +966,7 @@ function runningStatus(
       hover: true,
       implementation: true,
       inlayHint: true,
+      prepareRename: true,
       rangeFormatting: true,
       references: true,
       rename: true,
@@ -963,6 +993,12 @@ function document(): EditorDocument {
 function textModel() {
   return {
     getVersionId: vi.fn(() => 7),
+    getValueInRange: vi.fn(() => "user"),
+    getWordAtPosition: vi.fn(() => ({
+      endColumn: 5,
+      startColumn: 1,
+      word: "user",
+    })),
     getWordUntilPosition: vi.fn(() => ({
       endColumn: 5,
       startColumn: 1,

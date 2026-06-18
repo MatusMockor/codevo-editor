@@ -135,6 +135,12 @@ export interface LanguageServerWorkspaceEdit {
   changes: Record<string, LanguageServerTextEdit[]>;
 }
 
+export interface LanguageServerPrepareRenameResult {
+  defaultBehavior: boolean;
+  placeholder: string | null;
+  range: LanguageServerRange | null;
+}
+
 export interface LanguageServerWorkspaceEditEvent {
   edit: LanguageServerWorkspaceEdit;
   label: string | null;
@@ -246,6 +252,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerSignatureHelp | null>;
+  prepareRename(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerPrepareRenameResult | null>;
   rename(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

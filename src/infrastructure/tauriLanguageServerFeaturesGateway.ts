@@ -16,6 +16,7 @@ import {
   type LanguageServerInlayHint,
   type LanguageServerLocation,
   type LanguageServerPosition,
+  type LanguageServerPrepareRenameResult,
   type LanguageServerRange,
   type LanguageServerSelectionRange,
   type LanguageServerSignatureHelp,
@@ -48,6 +49,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   hover: "text_document_hover",
   implementation: "text_document_implementation",
   inlayHints: "text_document_inlay_hints",
+  prepareRename: "text_document_prepare_rename",
   rangeFormatting: "text_document_range_formatting",
   references: "text_document_references",
   rename: "text_document_rename",
@@ -72,6 +74,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   hover: "javascript_typescript_text_document_hover",
   implementation: "javascript_typescript_text_document_implementation",
   inlayHints: "javascript_typescript_text_document_inlay_hints",
+  prepareRename: "javascript_typescript_text_document_prepare_rename",
   rangeFormatting: "javascript_typescript_text_document_range_formatting",
   references: "javascript_typescript_text_document_references",
   rename: "javascript_typescript_text_document_rename",
@@ -96,6 +99,7 @@ export interface TauriLanguageServerFeatureCommands {
   hover: string;
   implementation: string;
   inlayHints: string;
+  prepareRename: string;
   rangeFormatting: string;
   references: string;
   rename: string;
@@ -268,6 +272,17 @@ export class TauriLanguageServerFeaturesGateway
   ): Promise<LanguageServerSignatureHelp | null> {
     return this.invokeWhenAvailable(
       this.commands.signatureHelp,
+      { position, rootPath },
+      null,
+    );
+  }
+
+  prepareRename(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerPrepareRenameResult | null> {
+    return this.invokeWhenAvailable(
+      this.commands.prepareRename,
       { position, rootPath },
       null,
     );

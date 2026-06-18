@@ -192,6 +192,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerRenameProvider) {
       disposables.push(
         registry.registerRenameProvider(language, {
+          resolveRenameLocation: (model, position) =>
+            resolveRenameLocation(monaco, context, model, position),
           provideRenameEdits: (model, position, newName) =>
             provideRenameEdits(monaco, context, model, position, newName),
         }),
@@ -687,6 +689,42 @@ async function provideSelectionRanges(
   }
 }
 
+async function resolveRenameLocation(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<(Monaco.languages.RenameLocation & Monaco.languages.Rejection) | null> {
+  const request = featureRequestContext(context, model, position, "prepareRename");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const prepareRename = await context.featuresGateway.prepareRename(
+      request.rootPath,
+      request.position,
+    );
+
+    if (!prepareRename?.range || prepareRename.defaultBehavior) {
+      return defaultRenameLocation(model, position);
+    }
+
+    const range = toMonacoRange(monaco, prepareRename.range);
+
+    return {
+      range,
+      text: prepareRename.placeholder ?? model.getValueInRange(range),
+    };
+  } catch (error) {
+    return {
+      rejectReason: errorMessage(error),
+    } as Monaco.languages.RenameLocation & Monaco.languages.Rejection;
+  }
+}
+
 async function provideCodeActions(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -861,6 +899,7 @@ function featureRequestContext(
     | "documentHighlight"
     | "hover"
     | "implementation"
+    | "prepareRename"
     | "references"
     | "rename"
     | "signatureHelp",
@@ -933,6 +972,33 @@ function documentRequestContext(
     path: activeDocument.path,
     rootPath,
   };
+}
+
+function defaultRenameLocation(
+  model: MonacoModel,
+  position: MonacoPosition,
+): (Monaco.languages.RenameLocation & Monaco.languages.Rejection) | null {
+  const word = model.getWordAtPosition(position);
+
+  if (!word) {
+    return {
+      rejectReason: "Cannot rename this symbol.",
+    } as Monaco.languages.RenameLocation & Monaco.languages.Rejection;
+  }
+
+  return {
+    range: {
+      endColumn: word.endColumn,
+      endLineNumber: position.lineNumber,
+      startColumn: word.startColumn,
+      startLineNumber: position.lineNumber,
+    },
+    text: word.word,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function toMonacoFoldingRange(

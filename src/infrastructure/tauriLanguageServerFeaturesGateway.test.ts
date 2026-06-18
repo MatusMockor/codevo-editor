@@ -49,6 +49,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.signatureHelp("/project", position()),
     ).resolves.toBeNull();
+    await expect(
+      gateway.prepareRename("/project", position()),
+    ).resolves.toBeNull();
     await expect(gateway.references("/project", position())).resolves.toEqual([]);
     await expect(
       gateway.selectionRanges("/project", "/project/src/User.php", [
@@ -178,6 +181,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
           ],
         },
       ],
+    };
+    const prepareRename = {
+      defaultBehavior: false,
+      placeholder: "user",
+      range: range(),
     };
     const documentSymbols = [
       {
@@ -316,6 +324,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return signatureHelp;
       }
 
+      if (command === "text_document_prepare_rename") {
+        return prepareRename;
+      }
+
       return definition;
     });
     const gateway = new TauriLanguageServerFeaturesGateway(
@@ -395,6 +407,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.signatureHelp("/project", requestPosition),
     ).resolves.toEqual(signatureHelp);
+    await expect(
+      gateway.prepareRename("/project", requestPosition),
+    ).resolves.toEqual(prepareRename);
     expect(invokeCommand).toHaveBeenCalledWith("text_document_hover", {
       position: requestPosition,
       rootPath: "/project",
@@ -496,6 +511,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_signature_help", {
+      position: requestPosition,
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_prepare_rename", {
       position: requestPosition,
       rootPath: "/project",
     });

@@ -64,6 +64,7 @@ pub struct LanguageServerCapabilities {
     pub formatting: bool,
     pub implementation: bool,
     pub inlay_hint: bool,
+    pub prepare_rename: bool,
     pub range_formatting: bool,
     pub references: bool,
     pub rename: bool,
@@ -1451,6 +1452,11 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         formatting: is_capability_enabled(capabilities.get("documentFormattingProvider")),
         implementation: is_capability_enabled(capabilities.get("implementationProvider")),
         inlay_hint: is_capability_enabled(capabilities.get("inlayHintProvider")),
+        prepare_rename: capabilities
+            .get("renameProvider")
+            .and_then(|provider| provider.get("prepareProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         range_formatting: is_capability_enabled(
             capabilities.get("documentRangeFormattingProvider"),
         ),
@@ -1643,6 +1649,7 @@ mod tests {
                     formatting: false,
                     implementation: true,
                     inlay_hint: false,
+                    prepare_rename: false,
                     range_formatting: false,
                     references: false,
                     rename: false,
@@ -1672,6 +1679,7 @@ mod tests {
                 formatting: true,
                 implementation: false,
                 inlay_hint: true,
+                prepare_rename: true,
                 range_formatting: true,
                 references: true,
                 rename: true,
@@ -1697,6 +1705,7 @@ mod tests {
                     "formatting": true,
                     "implementation": false,
                     "inlayHint": true,
+                    "prepareRename": true,
                     "rangeFormatting": true,
                     "references": true,
                     "rename": true,
@@ -1758,6 +1767,7 @@ mod tests {
                 formatting: true,
                 implementation: true,
                 inlay_hint: true,
+                prepare_rename: true,
                 range_formatting: true,
                 references: true,
                 rename: true,

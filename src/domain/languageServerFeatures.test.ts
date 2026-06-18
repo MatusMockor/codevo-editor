@@ -22,6 +22,7 @@ describe("canUseLanguageServerFeature", () => {
       hover: true,
       implementation: false,
       inlayHint: false,
+      prepareRename: false,
       rangeFormatting: false,
       references: false,
       rename: false,

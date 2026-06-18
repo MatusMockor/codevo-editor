@@ -89,6 +89,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript range formatting is now served by the managed language server in Basic mode, so formatting a selection uses the same LSP path as full document formatting.
 - TypeScript/JavaScript document links are now served by the managed language server in Basic mode, including lazy `documentLink/resolve` for links whose target is resolved on demand.
 - TypeScript/JavaScript folding ranges are now served by the managed language server in Basic mode, so code folding can follow TypeScript service structure instead of relying only on text indentation.
+- TypeScript/JavaScript rename now uses `textDocument/prepareRename` when the server advertises it, giving Monaco the same VS Code-style rename range, placeholder, and rejection reason before applying workspace edits.
 
 ## Full VS Code-Like Target
 
@@ -133,6 +134,7 @@ Basic mode must support:
 - go to implementation
 - find references
 - rename symbol
+- prepare rename / rename validation. Implemented through LSP-backed Monaco provider.
 - workspace symbols
 - document symbols
 - diagnostics
