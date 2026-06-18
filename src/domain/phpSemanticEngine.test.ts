@@ -5,6 +5,8 @@ import {
   phpCurrentClassName,
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
+  phpDocGenericInheritances,
+  phpDocTemplateNames,
   phpDocRawTypeForVariableBefore,
   phpFunctionReturnsClassStringArgument,
   phpLaravelContainerBindingsFromSource,
@@ -273,6 +275,35 @@ class AppServiceProvider
     expect(phpDeclaredTypeCandidate("array<int, \\App\\Models\\Album>")).toBe(
       "App\\Models\\Album",
     );
+  });
+
+  it("extracts PHPDoc template inheritance declarations", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Comment;
+
+/**
+ * @template TModel of object
+ * @phpstan-extends BaseRepository<Comment>
+ * @psalm-implements SearchRepository<int, Comment>
+ */
+class CommentRepository extends BaseRepository implements SearchRepository
+{
+}
+`;
+
+    expect(phpDocTemplateNames(source)).toEqual(["TModel"]);
+    expect(phpDocGenericInheritances(source)).toEqual([
+      {
+        className: "BaseRepository",
+        genericTypes: ["Comment"],
+      },
+      {
+        className: "SearchRepository",
+        genericTypes: ["Comment"],
+      },
+    ]);
   });
 
   it("keeps spaced PHPDoc generic @var types intact", () => {

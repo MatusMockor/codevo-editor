@@ -1,6 +1,9 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import { phpParameterTypeForVariable } from "./phpNavigation";
-import { phpDocClassStringReturnTemplate } from "./phpDocTemplates";
+import {
+  firstPhpDocTypeToken,
+  phpDocClassStringReturnTemplate,
+} from "./phpDocTemplates";
 import {
   PHP_CLASS_NAME_CAPTURE_PATTERN,
   PHP_EXPRESSION_RECEIVER_PATTERN,
@@ -44,6 +47,11 @@ export type PhpClassStringCallExpression =
 export interface PhpLaravelContainerBinding {
   abstractClassName: string;
   concreteClassName: string;
+}
+
+export interface PhpDocGenericInheritance {
+  className: string;
+  genericTypes: string[];
 }
 
 export function phpCurrentClassName(source: string): string | null {
@@ -416,6 +424,48 @@ export function phpDeclaredGenericTypeCandidates(typeName: string): string[] {
     .flatMap((part) => phpGenericArguments(part))
     .map((part) => phpDeclaredTypeCandidate(part))
     .filter((part): part is string => Boolean(part));
+}
+
+export function phpDocTemplateNames(source: string): string[] {
+  const templates: string[] = [];
+
+  for (const match of source.matchAll(
+    /@template(?:-[A-Za-z]+)?\s+([A-Za-z_][A-Za-z0-9_]*)\b/g,
+  )) {
+    const template = match[1];
+
+    if (!template || templates.includes(template)) {
+      continue;
+    }
+
+    templates.push(template);
+  }
+
+  return templates;
+}
+
+export function phpDocGenericInheritances(
+  source: string,
+): PhpDocGenericInheritance[] {
+  const inheritances: PhpDocGenericInheritance[] = [];
+
+  for (const match of source.matchAll(
+    /@(?:(?:phpstan|psalm|template)-)?(?:extends|implements)\s+([^\r\n*]+)/g,
+  )) {
+    const typeName = firstPhpDocTypeToken(match[1] ?? "");
+    const className = typeName ? phpDeclaredTypeCandidate(typeName) : null;
+
+    if (!typeName || !className) {
+      continue;
+    }
+
+    inheritances.push({
+      className,
+      genericTypes: phpDeclaredGenericTypeCandidates(typeName),
+    });
+  }
+
+  return inheritances;
 }
 
 function phpPromotedPropertyType(

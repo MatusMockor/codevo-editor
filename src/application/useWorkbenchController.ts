@@ -160,7 +160,11 @@ import {
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
   phpCurrentClassName,
+  phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
+  phpDocGenericInheritances,
+  phpDocRawTypeForVariableBefore,
+  phpDocTemplateNames,
   phpLaravelContainerExpressionClassName,
   phpMethodCallExpression,
   phpMethodReturnExpressions,
@@ -168,8 +172,6 @@ import {
   phpPropertyAccessExpression,
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
-  phpDeclaredGenericTypeCandidates,
-  phpDocRawTypeForVariableBefore,
   phpFunctionReturnsClassStringArgument,
   phpLaravelContainerBindingsFromSource,
 } from "../domain/phpSemanticEngine";
@@ -3829,9 +3831,21 @@ export function useWorkbenchController(
       source: string,
       typeName: string | null,
       lateStaticClassName: string,
+      templateTypes: ReadonlyMap<string, string> = new Map(),
     ): string | null => {
       if (phpReturnTypeIncludesLateStatic(typeName)) {
         return lateStaticClassName || null;
+      }
+
+      const templateCandidate = typeName
+        ? phpDeclaredTypeCandidate(typeName)
+        : null;
+      const templateType = templateCandidate
+        ? templateTypes.get(templateCandidate.toLowerCase()) ?? null
+        : null;
+
+      if (templateType) {
+        return templateType;
       }
 
       return resolvePhpDeclaredType(source, typeName);
@@ -4026,6 +4040,73 @@ export function useWorkbenchController(
       projectSymbolSearch,
       workspaceDescriptor,
       workspaceRoot,
+    ],
+  );
+
+  const resolvePhpGenericTemplateTypesForInheritedClass = useCallback(
+    async (
+      source: string,
+      inheritedClassName: string,
+    ): Promise<ReadonlyMap<string, string>> => {
+      const normalizedInheritedClassName = inheritedClassName
+        .trim()
+        .replace(/^\\+/, "")
+        .toLowerCase();
+
+      if (!normalizedInheritedClassName) {
+        return new Map();
+      }
+
+      for (const inheritance of phpDocGenericInheritances(source)) {
+        const resolvedInheritedClassName = resolvePhpClassReference(
+          source,
+          inheritance.className,
+        );
+
+        if (
+          resolvedInheritedClassName?.toLowerCase() !==
+          normalizedInheritedClassName
+        ) {
+          continue;
+        }
+
+        for (const path of await resolvePhpClassSourcePaths(
+          resolvedInheritedClassName,
+        )) {
+          try {
+            const inheritedSource = await readNavigationFileContent(path);
+            const templateNames = phpDocTemplateNames(inheritedSource);
+            const templateTypes = new Map<string, string>();
+
+            templateNames.forEach((templateName, index) => {
+              const genericType = inheritance.genericTypes[index];
+              const resolvedGenericType = genericType
+                ? resolvePhpClassReference(source, genericType)
+                : null;
+
+              if (resolvedGenericType) {
+                templateTypes.set(
+                  templateName.toLowerCase(),
+                  resolvedGenericType,
+                );
+              }
+            });
+
+            if (templateTypes.size > 0) {
+              return templateTypes;
+            }
+          } catch {
+            continue;
+          }
+        }
+      }
+
+      return new Map();
+    },
+    [
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
     ],
   );
 
@@ -4420,6 +4501,7 @@ export function useWorkbenchController(
       methodName: string,
       visitedClassNames = new Set<string>(),
       lateStaticClassName = className,
+      templateTypes: ReadonlyMap<string, string> = new Map(),
     ): Promise<string | null> => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
         return null;
@@ -4539,6 +4621,7 @@ export function useWorkbenchController(
                 content,
                 method.returnType,
                 normalizedLateStaticClassName || normalizedClassName,
+                templateTypes,
               )
             : null;
 
@@ -4600,11 +4683,17 @@ export function useWorkbenchController(
             : null;
 
           if (resolvedParentClassName) {
+            const parentTemplateTypes =
+              await resolvePhpGenericTemplateTypesForInheritedClass(
+                content,
+                resolvedParentClassName,
+              );
             const parentReturnType = await resolvePhpMethodReturnType(
               resolvedParentClassName,
               methodName,
               visitedClassNames,
               normalizedLateStaticClassName || normalizedClassName,
+              parentTemplateTypes,
             );
 
             if (parentReturnType) {
@@ -4626,6 +4715,7 @@ export function useWorkbenchController(
       resolvePhpClassReference,
       resolvePhpMethodDeclaredReturnType,
       resolvePhpClassSourcePaths,
+      resolvePhpGenericTemplateTypesForInheritedClass,
       workspaceDescriptor,
       workspaceRoot,
     ],
