@@ -17,6 +17,7 @@ pub struct LanguageServerDiagnostic {
     pub message: String,
     pub severity: LanguageServerDiagnosticSeverity,
     pub source: Option<String>,
+    pub tags: Vec<u64>,
     pub line: u64,
     pub character: u64,
 }
@@ -80,9 +81,22 @@ fn parse_diagnostic(value: &Value) -> LanguageServerDiagnostic {
             .get("source")
             .and_then(Value::as_str)
             .map(str::to_string),
+        tags: parse_tags(value.get("tags")),
         line: start.get("line").and_then(Value::as_u64).unwrap_or(0),
         character: start.get("character").and_then(Value::as_u64).unwrap_or(0),
     }
+}
+
+fn parse_tags(value: Option<&Value>) -> Vec<u64> {
+    value
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter()
+                .filter_map(Value::as_u64)
+                .filter(|tag| *tag == 1 || *tag == 2)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_code(value: Option<&Value>) -> Option<LanguageServerDiagnosticCode> {
@@ -139,6 +153,7 @@ mod tests {
                             "severity": 1,
                             "code": "worse.docblock_missing_param",
                             "source": "phpactor",
+                            "tags": [1, 2, 99, "bad"],
                             "message": "Unexpected token",
                         }
                     ]
@@ -163,6 +178,7 @@ mod tests {
         );
         assert_eq!(event.diagnostics[0].line, 2);
         assert_eq!(event.diagnostics[0].character, 4);
+        assert_eq!(event.diagnostics[0].tags, vec![1, 2]);
         assert_eq!(event.diagnostics[0].message, "Unexpected token");
     }
 
