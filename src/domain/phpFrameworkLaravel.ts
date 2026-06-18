@@ -181,6 +181,13 @@ const laravelEloquentModelBuilderFactoryMethods = new Set([
   "query",
 ]);
 
+const laravelEloquentModelFluentMethods = new Set([
+  "load",
+  "loadcount",
+  "loadmissing",
+  "loadmorph",
+]);
+
 const laravelDatabaseQueryBuilderFactoryMethods = new Set(["table"]);
 
 const laravelDatabaseQueryBuilderFluentMethods = new Set([
@@ -250,6 +257,7 @@ const laravelDatabaseQueryBuilderTypes = new Set([
 const laravelCollectionTerminalModelMethods = new Set([
   "find",
   "first",
+  "firstorfail",
   "firstwhere",
   "last",
   "sole",
@@ -325,6 +333,10 @@ export function isLaravelEloquentModelBuilderFactoryMethod(
   methodName: string,
 ): boolean {
   return laravelEloquentModelBuilderFactoryMethods.has(methodName.toLowerCase());
+}
+
+export function isLaravelEloquentModelFluentMethod(methodName: string): boolean {
+  return laravelEloquentModelFluentMethods.has(methodName.toLowerCase());
 }
 
 export function isLaravelDatabaseQueryBuilderFactoryMethod(

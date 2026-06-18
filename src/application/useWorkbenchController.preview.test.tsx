@@ -4742,8 +4742,14 @@ class CommentController
         $childFromProperty = $comment->children->first();
         $childFromProperty->get
 
+        $requiredChildFromProperty = $comment->children->firstOrFail();
+        $requiredChildFromProperty->get
+
         $sibling = $comment->siblings()->first();
         $sibling->get
+
+        $loadedComment = $comment->load('children');
+        $loadedComment->get
 
         $reply = $comment->replies()->first();
         $reply->get
@@ -4943,7 +4949,33 @@ class User
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$requiredChildFromProperty->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$sibling->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$loadedComment->get"),
       ),
     ).resolves.toEqual([
       {

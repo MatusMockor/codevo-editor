@@ -154,6 +154,7 @@ import {
   isLaravelEloquentBuilderMethodName,
   isLaravelEloquentBuilderTerminalModelMethod,
   isLaravelEloquentModelBuilderFactoryMethod,
+  isLaravelEloquentModelFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelRelationTargetClassNameFromExpression,
@@ -6119,6 +6120,13 @@ export function useWorkbenchController(
           methodCall.receiverExpression,
           depth + 1,
         );
+
+        if (
+          receiverType &&
+          isLaravelEloquentModelFluentMethod(methodCall.methodName)
+        ) {
+          return receiverType;
+        }
 
         return receiverType
           ? resolvePhpMethodReturnType(receiverType, methodCall.methodName)
