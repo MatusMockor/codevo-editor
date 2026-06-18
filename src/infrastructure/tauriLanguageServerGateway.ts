@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  JavaScriptTypeScriptLanguageServerPlanOptions,
   LanguageServerGateway,
   LanguageServerPlan,
 } from "../domain/languageServer";
-import type { JavaScriptTypeScriptVersionPreference } from "../domain/settings";
 
 export class TauriLanguageServerGateway implements LanguageServerGateway {
   planPhpLanguageServer(rootPath: string): Promise<LanguageServerPlan> {
@@ -14,12 +14,16 @@ export class TauriLanguageServerGateway implements LanguageServerGateway {
 
   planJavaScriptTypeScriptLanguageServer(
     rootPath: string,
-    typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference,
+    options: JavaScriptTypeScriptLanguageServerPlanOptions = {},
   ): Promise<LanguageServerPlan> {
     const args: Record<string, unknown> = { rootPath };
 
-    if (typeScriptVersionPreference) {
-      args.typeScriptVersionPreference = typeScriptVersionPreference;
+    if (options.typeScriptVersionPreference) {
+      args.typeScriptVersionPreference = options.typeScriptVersionPreference;
+    }
+
+    if (options.inlayHintsEnabled !== undefined) {
+      args.inlayHintsEnabled = options.inlayHintsEnabled;
     }
 
     return invoke<LanguageServerPlan>(

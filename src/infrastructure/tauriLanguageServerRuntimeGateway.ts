@@ -86,6 +86,10 @@ export class TauriLanguageServerRuntimeGateway
       args.typeScriptVersionPreference = options.typeScriptVersionPreference;
     }
 
+    if (options.inlayHintsEnabled !== undefined) {
+      args.inlayHintsEnabled = options.inlayHintsEnabled;
+    }
+
     return this.invokeCommand(this.commands.start, args);
   }
 

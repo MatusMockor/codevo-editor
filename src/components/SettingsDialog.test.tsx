@@ -179,6 +179,60 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("persists JavaScript and TypeScript validation and inlay hint changes", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptValidationCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptValidation: false,
+      },
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptInlayHintsCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptInlayHints: false,
+        javaScriptTypeScriptValidation: false,
+      },
+    });
+  });
+
   function revealActiveFileCheckbox(): HTMLInputElement {
     const labels = Array.from(host.querySelectorAll("label"));
     const label = labels.find((item) =>
@@ -231,5 +285,25 @@ describe("SettingsDialog", () => {
     }
 
     return select;
+  }
+
+  function javaScriptTypeScriptValidationCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JavaScript/TypeScript validation");
+  }
+
+  function javaScriptTypeScriptInlayHintsCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JavaScript/TypeScript inlay hints");
+  }
+
+  function checkboxWithLabel(labelText: string): HTMLInputElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) => item.textContent?.includes(labelText));
+    const input = label?.querySelector<HTMLInputElement>("input");
+
+    if (!input) {
+      throw new Error(`${labelText} checkbox was not rendered.`);
+    }
+
+    return input;
   }
 });

@@ -116,6 +116,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
 
     await expect(
       gateway.start("/workspace", {
+        inlayHintsEnabled: false,
         typeScriptVersionPreference: "workspace",
       }),
     ).resolves.toEqual(running);
@@ -123,6 +124,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith(
       "start_javascript_typescript_language_server",
       {
+        inlayHintsEnabled: false,
         rootPath: "/workspace",
         typeScriptVersionPreference: "workspace",
       },

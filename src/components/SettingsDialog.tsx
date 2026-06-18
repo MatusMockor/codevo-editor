@@ -219,6 +219,22 @@ export function SettingsDialog({
                       javaScriptTypeScriptService,
                     })
                   }
+                  onChangeJavaScriptTypeScriptInlayHints={(
+                    javaScriptTypeScriptInlayHints,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptInlayHints,
+                    })
+                  }
+                  onChangeJavaScriptTypeScriptValidation={(
+                    javaScriptTypeScriptValidation,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptValidation,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptVersion={(
                     javaScriptTypeScriptVersion,
                   ) =>
@@ -334,6 +350,8 @@ interface GeneralSettingsProps {
   onChangeJavaScriptTypeScriptService(
     mode: JavaScriptTypeScriptServiceMode,
   ): void;
+  onChangeJavaScriptTypeScriptInlayHints(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptValidation(enabled: boolean): void;
   onChangeJavaScriptTypeScriptVersion(
     preference: JavaScriptTypeScriptVersionPreference,
   ): void;
@@ -352,7 +370,9 @@ function GeneralSettings({
   hasWorkspace,
   onChangeAutoSave,
   onChangeIntelligenceMode,
+  onChangeJavaScriptTypeScriptInlayHints,
   onChangeJavaScriptTypeScriptService,
+  onChangeJavaScriptTypeScriptValidation,
   onChangeJavaScriptTypeScriptVersion,
   onChangeRevealActiveFileInTree,
   onChangeRuntimePolicy,
@@ -416,6 +436,30 @@ function GeneralSettings({
           <option value="bundled">Bundled</option>
           <option value="workspace">Workspace</option>
         </select>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptValidation}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptValidation(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>JavaScript/TypeScript validation</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptInlayHints}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptInlayHints(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>JavaScript/TypeScript inlay hints</span>
       </label>
 
       <label className="settings-field">

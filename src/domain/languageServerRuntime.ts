@@ -29,6 +29,7 @@ export type LanguageServerRuntimeStatus =
 export type UnsubscribeFn = () => void;
 
 export interface LanguageServerRuntimeStartOptions {
+  inlayHintsEnabled?: boolean;
   typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
 }
 

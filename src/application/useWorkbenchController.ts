@@ -745,6 +745,22 @@ export function useWorkbenchController(
       const groupKey = javaScriptTypeScriptDiagnosticNoticeGroup(event.uri);
       const diagnosticPath = pathFromLanguageServerUri(event.uri);
 
+      if (!workspaceSettingsRef.current.javaScriptTypeScriptValidation) {
+        setNotices((current) =>
+          replaceWorkbenchNoticeGroup(current, groupKey, []),
+        );
+
+        if (diagnosticPath) {
+          setJavaScriptTypeScriptDiagnosticsByPath((current) => {
+            const next = { ...current };
+            delete next[diagnosticPath];
+            return next;
+          });
+        }
+
+        return;
+      }
+
       const diagnosticNotices = event.diagnostics.map((diagnostic) =>
         createWorkbenchNotice(
           languageServerDiagnosticNoticeSeverity(diagnostic.severity),
@@ -793,7 +809,11 @@ export function useWorkbenchController(
         const plan =
           await languageServerGateway.planJavaScriptTypeScriptLanguageServer(
             rootPath,
-            typeScriptVersionPreference,
+            {
+              inlayHintsEnabled:
+                workspaceSettingsRef.current.javaScriptTypeScriptInlayHints,
+              typeScriptVersionPreference,
+            },
           );
         setJavaScriptTypeScriptLanguageServerPlan(plan);
         return plan;
@@ -5472,7 +5492,9 @@ export function useWorkbenchController(
         };
         const shouldRestartJavaScriptTypeScriptRuntime =
           previousWorkspaceSettings.javaScriptTypeScriptVersion !==
-          resolvedWorkspaceSettings.javaScriptTypeScriptVersion;
+            resolvedWorkspaceSettings.javaScriptTypeScriptVersion ||
+          previousWorkspaceSettings.javaScriptTypeScriptInlayHints !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptInlayHints;
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
           await stopLanguageServerRuntime();
@@ -6217,6 +6239,7 @@ export function useWorkbenchController(
     autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = workspaceRoot;
     javaScriptTypeScriptLanguageServerRuntimeGateway
       .start(workspaceRoot, {
+        inlayHintsEnabled: workspaceSettings.javaScriptTypeScriptInlayHints,
         typeScriptVersionPreference:
           workspaceSettings.javaScriptTypeScriptVersion,
       })
@@ -6228,6 +6251,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     reportError,
+    workspaceSettings.javaScriptTypeScriptInlayHints,
     workspaceSettings.javaScriptTypeScriptService,
     workspaceSettings.javaScriptTypeScriptVersion,
     workspaceRoot,
@@ -6261,6 +6285,17 @@ export function useWorkbenchController(
     stopJavaScriptTypeScriptLanguageServerRuntime,
     workspaceSettings.javaScriptTypeScriptService,
     workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (workspaceSettings.javaScriptTypeScriptValidation) {
+      return;
+    }
+
+    clearJavaScriptTypeScriptLanguageServerDiagnostics();
+  }, [
+    clearJavaScriptTypeScriptLanguageServerDiagnostics,
+    workspaceSettings.javaScriptTypeScriptValidation,
   ]);
 
   useEffect(() => {

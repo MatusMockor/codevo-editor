@@ -45,7 +45,9 @@ export interface WorkspaceSettings {
   extraIgnorePatterns: string[];
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
+  javaScriptTypeScriptInlayHints: boolean;
   javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
+  javaScriptTypeScriptValidation: boolean;
   javaScriptTypeScriptVersion: JavaScriptTypeScriptVersionPreference;
   phpBackend: PhpBackendPreference;
   phpVersionOverride: string | null;
@@ -101,7 +103,9 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     extraIgnorePatterns: [],
     intelligenceMode: "basic",
     intelephensePath: null,
+    javaScriptTypeScriptInlayHints: true,
     javaScriptTypeScriptService: "auto",
+    javaScriptTypeScriptValidation: true,
     javaScriptTypeScriptVersion: "bundled",
     phpBackend: "auto",
     phpVersionOverride: null,
@@ -189,11 +193,19 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.intelephensePath,
       defaults.intelephensePath,
     ),
+    javaScriptTypeScriptInlayHints: normalizeBoolean(
+      value.javaScriptTypeScriptInlayHints,
+      defaults.javaScriptTypeScriptInlayHints,
+    ),
     javaScriptTypeScriptService: isJavaScriptTypeScriptServiceMode(
       value.javaScriptTypeScriptService,
     )
       ? value.javaScriptTypeScriptService
       : defaults.javaScriptTypeScriptService,
+    javaScriptTypeScriptValidation: normalizeBoolean(
+      value.javaScriptTypeScriptValidation,
+      defaults.javaScriptTypeScriptValidation,
+    ),
     javaScriptTypeScriptVersion: isJavaScriptTypeScriptVersionPreference(
       value.javaScriptTypeScriptVersion,
     )

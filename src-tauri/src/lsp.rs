@@ -65,8 +65,12 @@ pub trait LanguageServerPlanner {
 }
 
 pub trait JavaScriptTypeScriptLanguageServerPlanner {
-    fn plan(&self, root: &Path, tools: &JavaScriptTypeScriptToolAvailability)
-        -> LanguageServerPlan;
+    fn plan(
+        &self,
+        root: &Path,
+        tools: &JavaScriptTypeScriptToolAvailability,
+        settings: TypeScriptLanguageServerSettings,
+    ) -> LanguageServerPlan;
 }
 
 pub trait InitializeRequestFactory {
@@ -166,6 +170,17 @@ pub struct TypeScriptLanguageServerPlanner<TFactory = TypeScriptInitializeReques
     initialize_request_factory: TFactory,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypeScriptLanguageServerSettings {
+    pub inlay_hints: bool,
+}
+
+impl Default for TypeScriptLanguageServerSettings {
+    fn default() -> Self {
+        Self { inlay_hints: true }
+    }
+}
+
 impl TypeScriptLanguageServerPlanner {
     pub fn new() -> Self {
         Self {
@@ -183,12 +198,14 @@ where
         root: &Path,
         server: &ToolLocation,
         typescript_server: Option<&ToolLocation>,
+        settings: TypeScriptLanguageServerSettings,
     ) -> LanguageServerPlan {
         let mut initialize_request = self.initialize_request_factory.create(root);
 
         if let Some(typescript_server) = typescript_server {
             configure_typescript_server_path(&mut initialize_request, &typescript_server.path);
         }
+        configure_typescript_inlay_hints(&mut initialize_request, settings.inlay_hints);
 
         LanguageServerPlan {
             provider: LanguageServerProvider::TypeScriptLanguageServer,
@@ -213,6 +230,7 @@ where
         &self,
         root: &Path,
         tools: &JavaScriptTypeScriptToolAvailability,
+        settings: TypeScriptLanguageServerSettings,
     ) -> LanguageServerPlan {
         if !is_javascript_typescript_workspace(root) {
             return unavailable_javascript_typescript_plan(
@@ -226,7 +244,7 @@ where
             );
         };
 
-        self.ready_plan(root, server, tools.typescript_server.as_ref())
+        self.ready_plan(root, server, tools.typescript_server.as_ref(), settings)
     }
 }
 
@@ -247,6 +265,44 @@ fn configure_typescript_server_path(request: &mut JsonRpcRequest, path: &str) {
             "path": path,
         }),
     );
+}
+
+fn configure_typescript_inlay_hints(request: &mut JsonRpcRequest, enabled: bool) {
+    let Some(params) = request.params.as_object_mut() else {
+        return;
+    };
+    let initialization_options = params
+        .entry("initializationOptions")
+        .or_insert_with(|| json!({}));
+    let Some(initialization_options) = initialization_options.as_object_mut() else {
+        return;
+    };
+    let preferences = initialization_options
+        .entry("preferences")
+        .or_insert_with(|| json!({}));
+    let Some(preferences) = preferences.as_object_mut() else {
+        return;
+    };
+
+    preferences.insert(
+        "includeInlayParameterNameHints".to_string(),
+        Value::String(if enabled { "literals" } else { "none" }.to_string()),
+    );
+    preferences.insert(
+        "includeInlayParameterNameHintsWhenArgumentMatchesName".to_string(),
+        Value::Bool(false),
+    );
+
+    for key in [
+        "includeInlayEnumMemberValueHints",
+        "includeInlayFunctionLikeReturnTypeHints",
+        "includeInlayFunctionParameterTypeHints",
+        "includeInlayPropertyDeclarationTypeHints",
+        "includeInlayVariableTypeHints",
+        "includeInlayVariableTypeHintsWhenTypeMatchesName",
+    ] {
+        preferences.insert(key.to_string(), Value::Bool(enabled));
+    }
 }
 
 pub struct TypeScriptInitializeRequestFactory;
@@ -453,7 +509,7 @@ mod tests {
     use super::{
         file_uri, JavaScriptTypeScriptLanguageServerPlanner, LanguageServerPlanStatus,
         LanguageServerPlanner, LanguageServerProvider, PhpactorLanguageServerPlanner,
-        TypeScriptLanguageServerPlanner,
+        TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings,
     };
     use crate::project::{PhpProjectDescriptor, WorkspaceDescriptor};
     use crate::tools::{
@@ -524,7 +580,11 @@ mod tests {
         let root = create_temp_dir("lsp-typescript-ready");
         fs::write(root.join("package.json"), "{}").expect("write package.json");
         let planner = TypeScriptLanguageServerPlanner::new();
-        let plan = planner.plan(&root, &tools_with_typescript_language_server(&root));
+        let plan = planner.plan(
+            &root,
+            &tools_with_typescript_language_server(&root),
+            TypeScriptLanguageServerSettings::default(),
+        );
 
         assert!(matches!(
             plan.provider,
@@ -548,6 +608,39 @@ mod tests {
             .as_str()
             .expect("tsserver path")
             .ends_with("node_modules/typescript/lib/tsserver.js"));
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["includeInlayParameterNameHints"],
+            "literals"
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["includeInlayVariableTypeHints"],
+            true
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn javascript_typescript_plan_can_disable_inlay_hint_preferences() {
+        let root = create_temp_dir("lsp-typescript-inlay-disabled");
+        fs::write(root.join("package.json"), "{}").expect("write package.json");
+        let planner = TypeScriptLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            &tools_with_typescript_language_server(&root),
+            TypeScriptLanguageServerSettings { inlay_hints: false },
+        );
+
+        let request = plan.initialize_request.expect("initialize request");
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["includeInlayParameterNameHints"],
+            "none"
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["includeInlayVariableTypeHints"],
+            false
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -555,7 +648,11 @@ mod tests {
     fn non_javascript_typescript_workspace_reports_unavailable_plan() {
         let root = create_temp_dir("lsp-typescript-unavailable");
         let planner = TypeScriptLanguageServerPlanner::new();
-        let plan = planner.plan(&root, &tools_with_typescript_language_server(&root));
+        let plan = planner.plan(
+            &root,
+            &tools_with_typescript_language_server(&root),
+            TypeScriptLanguageServerSettings::default(),
+        );
 
         assert!(matches!(
             plan.provider,

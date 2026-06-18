@@ -47,6 +47,7 @@ use lsp::{
     JavaScriptTypeScriptLanguageServerPlanner, JsonRpcRequest, LanguageServerCommand,
     LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
     PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
+    TypeScriptLanguageServerSettings,
 };
 use lsp_document::{
     LspTextDocumentSyncNotificationFactory, TextDocumentContent, TextDocumentPath,
@@ -507,15 +508,19 @@ fn build_php_language_server_plan(
 fn build_javascript_typescript_language_server_plan(
     root_path: &str,
     type_script_version_preference: Option<&str>,
+    inlay_hints_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     let root = PathBuf::from(root_path);
     let preference =
         javascript_typescript_tool_preference_from_setting(type_script_version_preference);
+    let settings = TypeScriptLanguageServerSettings {
+        inlay_hints: inlay_hints_enabled.unwrap_or(true),
+    };
     let tools = LocalJavaScriptTypeScriptToolDetector
         .detect(Some(&root), preference)
         .map_err(|error| error.to_string())?;
 
-    Ok(TypeScriptLanguageServerPlanner::new().plan(&root, &tools))
+    Ok(TypeScriptLanguageServerPlanner::new().plan(&root, &tools, settings))
 }
 
 fn javascript_typescript_tool_preference_from_setting(
@@ -539,10 +544,12 @@ fn plan_php_language_server(
 fn plan_javascript_typescript_language_server(
     root_path: String,
     type_script_version_preference: Option<String>,
+    inlay_hints_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     build_javascript_typescript_language_server_plan(
         &root_path,
         type_script_version_preference.as_deref(),
+        inlay_hints_enabled,
     )
 }
 
@@ -725,12 +732,14 @@ fn start_php_language_server(
 fn start_javascript_typescript_language_server(
     root_path: String,
     type_script_version_preference: Option<String>,
+    inlay_hints_enabled: Option<bool>,
     app: AppHandle,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     let plan = build_javascript_typescript_language_server_plan(
         &root_path,
         type_script_version_preference.as_deref(),
+        inlay_hints_enabled,
     )?;
 
     if !matches!(plan.status, LanguageServerPlanStatus::Ready) {

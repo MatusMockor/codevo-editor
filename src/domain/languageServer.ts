@@ -25,10 +25,15 @@ export interface JsonRpcRequest {
   params: unknown;
 }
 
+export interface JavaScriptTypeScriptLanguageServerPlanOptions {
+  inlayHintsEnabled?: boolean;
+  typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
+}
+
 export interface LanguageServerGateway {
   planPhpLanguageServer(rootPath: string): Promise<LanguageServerPlan>;
   planJavaScriptTypeScriptLanguageServer(
     rootPath: string,
-    typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference,
+    options?: JavaScriptTypeScriptLanguageServerPlanOptions,
   ): Promise<LanguageServerPlan>;
 }
