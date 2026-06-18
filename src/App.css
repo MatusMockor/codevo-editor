@@ -488,7 +488,6 @@ button {
   display: block;
   min-width: 100%;
   min-height: 100%;
-  overflow: visible;
   padding: 6px 0 10px;
 }
 
@@ -499,7 +498,6 @@ button {
 
 .tree-virtual-window {
   position: absolute;
-  top: 6px;
   right: 0;
   left: 0;
 }
