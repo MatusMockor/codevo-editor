@@ -191,8 +191,9 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().selectedGitChange?.path).toBe(file.path);
     expect(getWorkbench().activePath).toContain(file.path);
 
-    act(() => {
+    await act(async () => {
       getWorkbench().closeGitDiffPreview();
+      await Promise.resolve();
     });
 
     expect(getWorkbench().selectedGitChange).toBeNull();
