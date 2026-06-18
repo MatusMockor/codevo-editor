@@ -537,6 +537,10 @@ async function resolveCompletionItem(
       backedItem.__languageServerItem,
     );
 
+    if (!isStoredWorkspaceRootActive(context, backedItem.__workspaceRoot)) {
+      return item;
+    }
+
     return {
       ...item,
       ...toMonacoCompletionItem(
@@ -771,6 +775,10 @@ async function resolveDocumentLink(
       backedLink.__workspaceRoot,
       backedLink.__languageServerLink,
     );
+
+    if (!isStoredWorkspaceRootActive(context, backedLink.__workspaceRoot)) {
+      return link;
+    }
 
     return {
       ...link,
@@ -1023,6 +1031,11 @@ async function resolveCodeAction(
       backedAction.__workspaceRoot,
       backedAction.__languageServerAction,
     );
+
+    if (!isStoredWorkspaceRootActive(context, backedAction.__workspaceRoot)) {
+      return action;
+    }
+
     const [mapped] = toMonacoCodeAction(
       monaco,
       backedAction.__workspaceEditContext ?? {
@@ -1095,6 +1108,10 @@ async function resolveCodeLens(
       backedCodeLens.__workspaceRoot,
       backedCodeLens.__languageServerCodeLens,
     );
+
+    if (!isStoredWorkspaceRootActive(context, backedCodeLens.__workspaceRoot)) {
+      return codeLens;
+    }
 
     return {
       ...codeLens,

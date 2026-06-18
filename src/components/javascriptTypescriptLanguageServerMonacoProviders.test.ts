@@ -1210,6 +1210,73 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight TypeScript completion resolves after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const resolvedCompletion =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCompletionItem"]>>
+      >();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            data: { entryNames: ["loadUser"] },
+            detail: "function",
+            documentation: null,
+            insertText: "loadUser",
+            kind: 3,
+            label: "loadUser",
+          },
+        ],
+      },
+    });
+    vi.mocked(gateway.resolveCompletionItem).mockImplementationOnce(
+      async () => resolvedCompletion.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const completion = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+    const originalItem = completion.suggestions[0];
+    const resolvePromise = completionProvider.resolveCompletionItem(originalItem);
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    resolvedCompletion.resolve({
+      additionalTextEdits: [
+        {
+          newText: "import { loadUser } from './users';\n",
+          range: range(0, 0, 0, 0),
+        },
+      ],
+      data: { entryNames: ["loadUser"] },
+      detail: "resolved function loadUser(id: string): Promise<User>",
+      documentation: "Resolved docs",
+      insertText: "loadUser(${1:id})",
+      insertTextFormat: 2,
+      kind: 3,
+      label: "loadUser",
+    });
+
+    await expect(resolvePromise).resolves.toBe(originalItem);
+    expect(gateway.resolveCompletionItem).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({ label: "loadUser" }),
+    );
+  });
+
   it("ignores stale TypeScript lazy resolves after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";
@@ -1535,6 +1602,23 @@ function runningStatus(
     },
     kind: "running",
     sessionId: 1,
+  };
+}
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T): void;
+} {
+  let resolveValue: ((value: T) => void) | null = null;
+  const promise = new Promise<T>((resolve) => {
+    resolveValue = resolve;
+  });
+
+  return {
+    promise,
+    resolve(value: T): void {
+      resolveValue?.(value);
+    },
   };
 }
 

@@ -112,6 +112,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript runtime status is now cached per workspace root. Status events from a kept-alive background project are retained without changing the active tab, then restored immediately when that project tab is activated.
 - The backend language-server registry now has regression coverage proving root-keyed notifications are written only to the requested workspace process, reducing the risk of JS/TS project tab cross-talk.
 - The backend language-server registry now also proves request/response routing is workspace-scoped, so hover/completion/navigation requests for one project cannot be written to another project's TypeScript service.
+- TypeScript/JavaScript lazy resolves for completions, document links, code actions, and CodeLens now re-check the active workspace after the server responds. If the user switches project tabs while a resolve is in flight, stale auto-import edits or resolved metadata are dropped instead of being applied to the new active project.
 
 ## Full VS Code-Like Target
 
