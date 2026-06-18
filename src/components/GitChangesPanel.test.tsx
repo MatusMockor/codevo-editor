@@ -44,6 +44,20 @@ describe("GitChangesPanel", () => {
     ).toBe(false);
   });
 
+  it("enables commit for included unstaged files when a message is present", async () => {
+    await renderPanel({
+      includedChangePaths: new Set(["src/User.php"]),
+      status: gitStatus([gitChange("modified", "src/User.php", false)]),
+    });
+
+    expect(
+      host.querySelector<HTMLButtonElement>(".git-commit-button")?.disabled,
+    ).toBe(false);
+    expect(
+      host.querySelector<HTMLButtonElement>(".git-commit-push-button")?.disabled,
+    ).toBe(false);
+  });
+
   it("opens a diff preview when a change row is clicked", async () => {
     const change = gitChange("modified", "src/User.php", true);
     const onPreviewChange = vi.fn();
@@ -163,6 +177,31 @@ describe("GitChangesPanel", () => {
     });
 
     expect(onStageChanges).toHaveBeenCalledWith([untracked]);
+  });
+
+  it("does not open rows or collapse groups while a Git operation is running", async () => {
+    const change = gitChange("modified", "src/User.php", true);
+    const onOpenChange = vi.fn();
+    const onPreviewChange = vi.fn();
+    await renderPanel({
+      gitOperationLoading: true,
+      onOpenChange,
+      onPreviewChange,
+      status: gitStatus([change]),
+    });
+
+    const toggle = host.querySelector<HTMLButtonElement>(".git-change-group-toggle");
+    const row = host.querySelector<HTMLButtonElement>(".git-change-row");
+
+    act(() => {
+      toggle?.click();
+      row?.click();
+      row?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+    });
+
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(onPreviewChange).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it("updates the commit message and submits the commit", async () => {

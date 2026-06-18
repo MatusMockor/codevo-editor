@@ -3,6 +3,7 @@ use std::{
     io,
     path::{Component, Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -47,8 +48,12 @@ pub struct GitFileDiff {
 }
 
 pub trait GitRepositoryGateway {
-    fn commit(&self, root: &Path, message: &str, changes: &[GitChangedFile])
-        -> io::Result<GitStatus>;
+    fn commit(
+        &self,
+        root: &Path,
+        message: &str,
+        changes: &[GitChangedFile],
+    ) -> io::Result<GitStatus>;
     fn diff(&self, root: &Path, change: &GitChangedFile) -> io::Result<GitFileDiff>;
     fn push(&self, root: &Path) -> io::Result<GitStatus>;
     fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
@@ -83,14 +88,14 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             ));
         }
 
-        let mut args = vec!["commit", "-m", message, "--"];
-
         for change in changes {
             safe_relative_path(&change.relative_path)?;
-            args.push(change.relative_path.as_str());
+            if let Some(old_relative_path) = change.old_relative_path.as_deref() {
+                safe_relative_path(old_relative_path)?;
+            }
         }
 
-        run_git_vec(&root, args)?;
+        commit_selected_staged_changes(&root, message, changes)?;
         self.status(&root)
     }
 
@@ -121,6 +126,12 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             safe_relative_path(&change.relative_path)?;
 
             if change.status == GitChangeStatus::Untracked {
+                run_git(&root, ["clean", "-f", "--", change.relative_path.as_str()])?;
+            } else if change.status == GitChangeStatus::Added && change.is_staged {
+                run_git(
+                    &root,
+                    ["restore", "--staged", "--", change.relative_path.as_str()],
+                )?;
                 run_git(&root, ["clean", "-f", "--", change.relative_path.as_str()])?;
             } else {
                 if change.is_staged {
@@ -347,6 +358,200 @@ fn run_git_vec(root: &Path, args: Vec<&str>) -> io::Result<()> {
     ))
 }
 
+fn git_output_vec(root: &Path, args: Vec<&str>) -> io::Result<String> {
+    git_output_vec_with_env(root, args, None)
+}
+
+fn git_output_vec_with_env(
+    root: &Path,
+    args: Vec<&str>,
+    index_file: Option<&Path>,
+) -> io::Result<String> {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(args);
+
+    if let Some(index_file) = index_file {
+        command.env("GIT_INDEX_FILE", index_file);
+    }
+
+    let output = command.output()?;
+
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    ))
+}
+
+fn run_git_vec_with_env(root: &Path, args: Vec<&str>, index_file: Option<&Path>) -> io::Result<()> {
+    git_output_vec_with_env(root, args, index_file).map(|_| ())
+}
+
+fn commit_selected_staged_changes(
+    root: &Path,
+    message: &str,
+    changes: &[GitChangedFile],
+) -> io::Result<()> {
+    let temp_index = TempGitIndex::new(root);
+    let has_head = git_output_vec(root, vec!["rev-parse", "--verify", "HEAD"]).is_ok();
+
+    if has_head {
+        run_git_vec_with_env(root, vec!["read-tree", "HEAD"], Some(temp_index.path()))?;
+    }
+
+    for change in changes {
+        apply_staged_change_to_temp_index(root, temp_index.path(), change)?;
+    }
+
+    let tree = git_output_vec_with_env(root, vec!["write-tree"], Some(temp_index.path()))?;
+    let tree = tree.trim();
+    let commit = if has_head {
+        git_output_vec(root, vec!["commit-tree", tree, "-p", "HEAD", "-m", message])?
+    } else {
+        git_output_vec(root, vec!["commit-tree", tree, "-m", message])?
+    };
+    let commit = commit.trim();
+    run_git_vec(root, vec!["update-ref", "HEAD", commit])?;
+
+    Ok(())
+}
+
+fn apply_staged_change_to_temp_index(
+    root: &Path,
+    temp_index: &Path,
+    change: &GitChangedFile,
+) -> io::Result<()> {
+    if change.status == GitChangeStatus::Conflicted {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Conflicted files cannot be committed from the commit panel.",
+        ));
+    }
+
+    if change.status == GitChangeStatus::Renamed {
+        let Some(old_relative_path) = change.old_relative_path.as_deref() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Renamed Git file is missing its old path.",
+            ));
+        };
+        run_git_vec_with_env(
+            root,
+            vec!["update-index", "--force-remove", "--", old_relative_path],
+            Some(temp_index),
+        )?;
+    }
+
+    if change.status == GitChangeStatus::Deleted {
+        run_git_vec_with_env(
+            root,
+            vec![
+                "update-index",
+                "--force-remove",
+                "--",
+                change.relative_path.as_str(),
+            ],
+            Some(temp_index),
+        )?;
+        return Ok(());
+    }
+
+    let entry = git_output_vec(
+        root,
+        vec!["ls-files", "-s", "--", change.relative_path.as_str()],
+    )?;
+    let mut entries = entry.lines();
+    let Some(first_entry) = entries.next() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("No staged content for {}.", change.relative_path),
+        ));
+    };
+
+    if entries.next().is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Conflicted file has multiple index entries: {}.",
+                change.relative_path
+            ),
+        ));
+    }
+
+    let mut parts = first_entry.split_whitespace();
+    let mode = parts.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Malformed Git index entry for {}.", change.relative_path),
+        )
+    })?;
+    let object_id = parts.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Malformed Git index entry for {}.", change.relative_path),
+        )
+    })?;
+    let stage = parts.next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Malformed Git index entry for {}.", change.relative_path),
+        )
+    })?;
+
+    if stage != "0" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Conflicted file cannot be committed: {}.",
+                change.relative_path
+            ),
+        ));
+    }
+
+    let cacheinfo = format!("{mode},{object_id},{}", change.relative_path);
+    run_git_vec_with_env(
+        root,
+        vec!["update-index", "--add", "--cacheinfo", cacheinfo.as_str()],
+        Some(temp_index),
+    )
+}
+
+struct TempGitIndex {
+    path: PathBuf,
+}
+
+impl TempGitIndex {
+    fn new(root: &Path) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let root_name = root
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("workspace");
+        let path = std::env::temp_dir().join(format!(
+            "mockor-index-{root_name}-{}-{nanos}",
+            std::process::id()
+        ));
+
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempGitIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 fn workspace_file_path(root: &Path, relative_path: &str) -> io::Result<String> {
     Ok(root
         .join(safe_relative_path(relative_path)?)
@@ -439,8 +644,16 @@ fn language_for_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_porcelain_status, safe_relative_path, GitChangeStatus};
-    use std::path::Path;
+    use super::{
+        parse_porcelain_status, safe_relative_path, CommandGitRepositoryGateway, GitChangeStatus,
+        GitChangedFile, GitRepositoryGateway,
+    };
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        process::Command,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn parses_porcelain_status_changes() {
@@ -473,5 +686,133 @@ mod tests {
         assert!(safe_relative_path("../secret.php").is_err());
         assert!(safe_relative_path("/secret.php").is_err());
         assert!(safe_relative_path("src/User.php").is_ok());
+    }
+
+    #[test]
+    fn commits_only_staged_content_for_selected_paths() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+        repo.write("file.txt", "three\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway
+            .commit(
+                repo.path(),
+                "selected",
+                &[git_changed_file(
+                    "file.txt",
+                    true,
+                    GitChangeStatus::Modified,
+                )],
+            )
+            .expect("commit");
+
+        assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
+        assert_eq!(repo.read("file.txt"), "three\n");
+    }
+
+    #[test]
+    fn reverts_staged_added_files() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("existing.txt", "one\n");
+        repo.run(["add", "existing.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("new.txt", "new\n");
+        repo.run(["add", "new.txt"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway
+            .revert(
+                repo.path(),
+                &[git_changed_file("new.txt", true, GitChangeStatus::Added)],
+            )
+            .expect("revert staged addition");
+
+        assert!(!repo.path().join("new.txt").exists());
+        assert_eq!(repo.git_output(["status", "--porcelain"]), "");
+    }
+
+    fn git_changed_file(
+        relative_path: &str,
+        is_staged: bool,
+        status: GitChangeStatus,
+    ) -> GitChangedFile {
+        GitChangedFile {
+            is_staged,
+            is_unversioned: status == GitChangeStatus::Untracked,
+            old_path: None,
+            old_relative_path: None,
+            path: format!("/workspace/{relative_path}"),
+            relative_path: relative_path.to_string(),
+            status,
+        }
+    }
+
+    struct TestGitRepo {
+        path: PathBuf,
+    }
+
+    impl TestGitRepo {
+        fn new() -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "mockor-editor-git-test-{}-{nanos}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create temp repo");
+            let repo = Self { path };
+            repo.run(["init"]);
+            repo
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+
+        fn read(&self, relative_path: &str) -> String {
+            fs::read_to_string(self.path.join(relative_path)).expect("read file")
+        }
+
+        fn write(&self, relative_path: &str, content: &str) {
+            fs::write(self.path.join(relative_path), content).expect("write file");
+        }
+
+        fn git_output<const N: usize>(&self, args: [&str; N]) -> String {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&self.path)
+                .args(args)
+                .output()
+                .expect("run git");
+
+            assert!(
+                output.status.success(),
+                "git failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            String::from_utf8_lossy(&output.stdout).to_string()
+        }
+
+        fn run<const N: usize>(&self, args: [&str; N]) {
+            self.git_output(args);
+        }
+    }
+
+    impl Drop for TestGitRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }

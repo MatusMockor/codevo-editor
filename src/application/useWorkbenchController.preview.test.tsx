@@ -94,8 +94,12 @@ describe("useWorkbenchController preview tabs", () => {
     root = createRoot(host);
   });
 
-  afterEach(() => {
-    act(() => root.unmount());
+  afterEach(async () => {
+    await flushAsyncTurns();
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
     host.remove();
   });
 
@@ -1059,12 +1063,7 @@ describe("useWorkbenchController preview tabs", () => {
       status: "untracked" as const,
     };
     const gitGateway: GitGateway = {
-      commit: vi.fn(async (rootPath) => ({
-        branch: "main",
-        changes: [],
-        isRepository: true,
-        rootPath,
-      })),
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
         change: requestedChange,
@@ -1079,19 +1078,7 @@ describe("useWorkbenchController preview tabs", () => {
         rootPath,
       })),
       revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
-      stageFiles: vi.fn(async (rootPath) => ({
-        branch: "main",
-        changes: [
-          {
-            ...unversioned,
-            isStaged: true,
-            isUnversioned: false,
-            status: "added" as const,
-          },
-        ],
-        isRepository: true,
-        rootPath,
-      })),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     };
     const { getWorkbench } = renderController({
@@ -1126,7 +1113,7 @@ describe("useWorkbenchController preview tabs", () => {
   });
 
   it("commits included files and pushes the branch", async () => {
-    const change = gitChangedFile("src/User.php", false);
+    const change = gitChangedFile("src/User.php", true);
     const gitGateway: GitGateway = {
       commit: vi.fn(async (rootPath) => ({
         branch: "main",
@@ -1170,7 +1157,6 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
     act(() => {
-      getWorkbench().toggleGitChangeIncluded(change);
       getWorkbench().setGitCommitMessage("feat: push flow");
     });
     await flushAsyncTurns();
@@ -1178,7 +1164,7 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().commitAndPushGitChanges();
     });
 
-    expect(gitGateway.stageFiles).toHaveBeenCalledWith("/workspace", [change]);
+    expect(gitGateway.stageFiles).not.toHaveBeenCalled();
     expect(gitGateway.commit).toHaveBeenCalledWith(
       "/workspace",
       "feat: push flow",

@@ -289,7 +289,12 @@ function GitChangeGroupView({
         <button
           aria-expanded={!isCollapsed}
           className="git-change-group-toggle"
-          onClick={onToggleCollapsed}
+          disabled={disabled}
+          onClick={() => {
+            if (!disabled) {
+              onToggleCollapsed();
+            }
+          }}
           type="button"
         >
           {isCollapsed ? (
@@ -322,14 +327,23 @@ function GitChangeGroupView({
               : "tree-row git-change-row"
           }
           key={`${change.status}:${change.path}:${change.oldPath || ""}`}
+          disabled={disabled}
           onClick={(event) => {
+            if (disabled) {
+              return;
+            }
+
             if (event.detail > 1) {
               return;
             }
 
             onPreviewChange(change);
           }}
-          onDoubleClick={() => onOpenChange(change)}
+          onDoubleClick={() => {
+            if (!disabled) {
+              onOpenChange(change);
+            }
+          }}
           title={gitStatusTitle(change.status)}
           type="button"
         >
