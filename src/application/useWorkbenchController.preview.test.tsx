@@ -3458,6 +3458,9 @@ class CommentController
         $filteredChildFromProperty = $comment->children->filter()->first();
         $filteredChildFromProperty->get
 
+        $reviewer = $comment->reviewers->first();
+        $reviewer->get
+
         $documentedParent = $comment->documentedParent()->first();
         $documentedParent->get
 
@@ -3532,6 +3535,7 @@ use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
 use Illuminate\\Database\\Eloquent\\Relations\\MorphedByMany;
 
+/** @property-read \\Illuminate\\Database\\Eloquent\\Collection<int, User> $reviewers */
 class Comment
 {
     public function parent(): BelongsTo
@@ -3674,6 +3678,19 @@ class User
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$reviewer->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        name: "getName",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$child->get"),
       ),
     ).resolves.toEqual([
@@ -3714,7 +3731,7 @@ class User
       path: commentPath,
       position: {
         column: 21,
-        lineNumber: 32,
+        lineNumber: 33,
       },
     });
   });

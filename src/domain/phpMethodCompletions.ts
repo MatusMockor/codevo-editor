@@ -225,9 +225,9 @@ function phpPropertyCompletionsFromSource(
   const members: PhpMethodCompletion[] = [];
 
   for (const match of source.matchAll(
-    /@property(?:-read|-write)?\s+([^\s*]+)\s+\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
+    /@property(?:-read|-write)?\s+([^\r\n*]+?)\s+\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
   )) {
-    const returnType = normalizeReturnType(match[1] ?? null);
+    const returnType = normalizeReturnType(firstPhpDocTypeToken(match[1] ?? null));
     const name = match[2];
 
     if (!name) {

@@ -524,6 +524,7 @@ trait InteractsWithInput
 /**
  * @property string $body
  * @property-read int $externalId
+ * @property-read \\Illuminate\\Database\\Eloquent\\Collection<int, Comment> $children
  */
 class Comment
 {
@@ -556,6 +557,13 @@ class Comment
         name: "externalId",
         parameters: "",
         returnType: "int",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "children",
+        parameters: "",
+        returnType: "\\Illuminate\\Database\\Eloquent\\Collection<int, Comment>",
       },
       {
         declaringClassName: "Comment",

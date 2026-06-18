@@ -4613,6 +4613,18 @@ export function useWorkbenchController(
             (candidate) =>
               candidate.name.toLowerCase() === propertyName.toLowerCase(),
           );
+          const collectionPropertyModelType =
+            member?.kind === "property" && includeCollectionRelations
+              ? phpCollectionGenericModelTypeCandidate(member.returnType)
+              : null;
+          const resolvedCollectionPropertyModelType = collectionPropertyModelType
+            ? resolvePhpClassReference(content, collectionPropertyModelType)
+            : null;
+
+          if (resolvedCollectionPropertyModelType) {
+            return resolvedCollectionPropertyModelType;
+          }
+
           const propertyType =
             member?.kind === "property"
               ? resolvePhpDeclaredType(content, member.returnType)
@@ -8784,6 +8796,22 @@ function resolvePhpLaravelRelationModelType(
   return relatedModelType ? resolvePhpClassName(source, relatedModelType) : null;
 }
 
+function phpCollectionGenericModelTypeCandidate(
+  typeName: string | null,
+): string | null {
+  if (!typeName) {
+    return null;
+  }
+
+  if (!/\bCollection\s*</i.test(typeName)) {
+    return null;
+  }
+
+  return phpDeclaredGenericTypeCandidates(typeName).find(
+    (candidate) => !isGenericPhpPlaceholder(candidate),
+  ) ?? null;
+}
+
 function mergePhpMethodCompletions(
   ...groups: PhpMethodCompletion[][]
 ): PhpMethodCompletion[] {
@@ -8831,6 +8859,17 @@ function isLaravelEloquentRelationType(
   return includeCollectionRelations
     ? laravelEloquentRelationTypes.has(normalizedTypeName)
     : laravelEloquentSingularRelationTypes.has(normalizedTypeName);
+}
+
+function isGenericPhpPlaceholder(typeName: string): boolean {
+  const normalized = typeName.trim().replace(/^\\+/, "").toLowerCase();
+
+  return (
+    normalized === "self" ||
+    normalized === "static" ||
+    normalized === "$this" ||
+    /^t[A-Z_]/.test(typeName)
+  );
 }
 
 const laravelEloquentRelationTypes = new Set([
