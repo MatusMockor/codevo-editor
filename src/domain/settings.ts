@@ -25,6 +25,7 @@ export type BackgroundRuntimePolicy =
   | "keepAlive"
   | "singleActive"
   | "suspendOnBackground";
+export type JavaScriptTypeScriptServiceMode = "auto" | "off";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
@@ -43,6 +44,7 @@ export interface WorkspaceSettings {
   extraIgnorePatterns: string[];
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
+  javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
   phpBackend: PhpBackendPreference;
   phpVersionOverride: string | null;
   phpactorPath: string | null;
@@ -97,6 +99,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     extraIgnorePatterns: [],
     intelligenceMode: "basic",
     intelephensePath: null,
+    javaScriptTypeScriptService: "auto",
     phpBackend: "auto",
     phpVersionOverride: null,
     phpactorPath: null,
@@ -183,6 +186,11 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.intelephensePath,
       defaults.intelephensePath,
     ),
+    javaScriptTypeScriptService: isJavaScriptTypeScriptServiceMode(
+      value.javaScriptTypeScriptService,
+    )
+      ? value.javaScriptTypeScriptService
+      : defaults.javaScriptTypeScriptService,
     phpBackend: isPhpBackendPreference(value.phpBackend)
       ? value.phpBackend
       : defaults.phpBackend,
@@ -452,6 +460,12 @@ function isPhpBackendPreference(
   value: unknown,
 ): value is PhpBackendPreference {
   return value === "auto" || value === "phpactor" || value === "intelephense";
+}
+
+function isJavaScriptTypeScriptServiceMode(
+  value: unknown,
+): value is JavaScriptTypeScriptServiceMode {
+  return value === "auto" || value === "off";
 }
 
 function isWorkspaceSessionBottomPanelView(

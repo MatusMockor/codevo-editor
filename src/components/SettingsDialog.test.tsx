@@ -103,6 +103,44 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("persists JavaScript and TypeScript service mode changes", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      javaScriptTypeScriptServiceSelect().value = "off";
+      javaScriptTypeScriptServiceSelect().dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptService: "off",
+      },
+    });
+  });
+
   function revealActiveFileCheckbox(): HTMLInputElement {
     const labels = Array.from(host.querySelectorAll("label"));
     const label = labels.find((item) =>
@@ -127,5 +165,19 @@ describe("SettingsDialog", () => {
     }
 
     return input;
+  }
+
+  function javaScriptTypeScriptServiceSelect(): HTMLSelectElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) =>
+      item.textContent?.includes("JavaScript/TypeScript service"),
+    );
+    const select = label?.querySelector<HTMLSelectElement>("select");
+
+    if (!select) {
+      throw new Error("JavaScript/TypeScript service select was not rendered.");
+    }
+
+    return select;
   }
 });

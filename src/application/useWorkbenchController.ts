@@ -6162,6 +6162,10 @@ export function useWorkbenchController(
       return;
     }
 
+    if (workspaceSettings.javaScriptTypeScriptService !== "auto") {
+      return;
+    }
+
     if (javaScriptTypeScriptLanguageServerPlan?.status !== "ready") {
       return;
     }
@@ -6192,6 +6196,37 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     reportError,
+    workspaceSettings.javaScriptTypeScriptService,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    if (workspaceSettings.javaScriptTypeScriptService !== "off") {
+      return;
+    }
+
+    autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
+
+    if (
+      isLanguageServerActive(javaScriptTypeScriptLanguageServerRuntimeStatus) ||
+      javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "crashed"
+    ) {
+      void stopJavaScriptTypeScriptLanguageServerRuntime(workspaceRoot);
+      return;
+    }
+
+    clearJavaScriptTypeScriptLanguageServerDiagnostics();
+    resetJavaScriptTypeScriptLanguageServerDocuments();
+  }, [
+    clearJavaScriptTypeScriptLanguageServerDiagnostics,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    resetJavaScriptTypeScriptLanguageServerDocuments,
+    stopJavaScriptTypeScriptLanguageServerRuntime,
+    workspaceSettings.javaScriptTypeScriptService,
     workspaceRoot,
   ]);
 

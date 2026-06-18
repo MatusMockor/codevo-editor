@@ -734,6 +734,104 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
   });
 
+  it("does not start JavaScript and TypeScript language service when disabled", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const { dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+        javaScriptTypeScriptService: "off",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("stops JavaScript and TypeScript language service when settings disable it", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 14,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerPlan,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        {
+          ...defaultWorkspaceSettings(),
+          javaScriptTypeScriptService: "off",
+        },
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace");
+  });
+
   it("detects PHP workspace metadata before restoring startup tabs", async () => {
     const restoredPath = "/workspace/app/Http/Controllers/CommentController.php";
     const readTextFile = vi.fn(async () => "<?php\nclass CommentController {}\n");

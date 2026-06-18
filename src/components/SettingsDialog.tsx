@@ -12,6 +12,7 @@ import {
   type AppSettings,
   type AppTheme,
   type BackgroundRuntimePolicy,
+  type JavaScriptTypeScriptServiceMode,
   type PhpBackendPreference,
   type StatusBarItemVisibility,
   type WorkspaceSettings,
@@ -209,6 +210,14 @@ export function SettingsDialog({
                       autoSaveConfigured: true,
                     })
                   }
+                  onChangeJavaScriptTypeScriptService={(
+                    javaScriptTypeScriptService,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptService,
+                    })
+                  }
                   onChangeRevealActiveFileInTree={(revealActiveFileInTree) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -313,6 +322,9 @@ interface GeneralSettingsProps {
   workspaceSettings: WorkspaceSettings;
   onChangeAutoSave(autoSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
+  onChangeJavaScriptTypeScriptService(
+    mode: JavaScriptTypeScriptServiceMode,
+  ): void;
   onChangeRevealActiveFileInTree(enabled: boolean): void;
   onChangeRuntimePolicy(policy: BackgroundRuntimePolicy): void;
   onChangeStatusBarVisibility(
@@ -328,6 +340,7 @@ function GeneralSettings({
   hasWorkspace,
   onChangeAutoSave,
   onChangeIntelligenceMode,
+  onChangeJavaScriptTypeScriptService,
   onChangeRevealActiveFileInTree,
   onChangeRuntimePolicy,
   onChangeStatusBarVisibility,
@@ -356,6 +369,22 @@ function GeneralSettings({
           <option value="basic">Editor Mode</option>
           <option value="lightSmart">Smart Index</option>
           <option value="fullSmart">IDE Mode</option>
+        </select>
+      </label>
+
+      <label className="settings-field">
+        <span>JavaScript/TypeScript service</span>
+        <select
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptService(
+              event.currentTarget.value as JavaScriptTypeScriptServiceMode,
+            )
+          }
+          value={workspaceSettings.javaScriptTypeScriptService}
+        >
+          <option value="auto">Auto</option>
+          <option value="off">Off</option>
         </select>
       </label>
 

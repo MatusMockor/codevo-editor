@@ -76,6 +76,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - `textDocument/signatureHelp` is wired through the managed JS/TS language server and Monaco provider, so function calls can show VS Code-style active signatures and parameter documentation.
 - `textDocument/documentSymbol` is wired through the shared LSP gateway and JS/TS Basic-mode file structure, giving `Cmd+R` a VS Code-like outline for JavaScript and TypeScript files without PHP IDE Mode.
 - `workspace/symbol` is wired through the shared LSP gateway and JS/TS `Cmd+O` search, giving Basic mode VS Code-like project symbol lookup from TypeScript server state.
+- JavaScript/TypeScript service can now be set per workspace to Auto or Off. Off stops the running managed TS service, clears synced JS/TS state, and prevents Basic-mode auto-start.
 
 ## Full VS Code-Like Target
 
