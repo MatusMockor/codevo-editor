@@ -46,9 +46,11 @@ describe("GitChangesPanel", () => {
 
   it("opens a diff preview when a change row is clicked", async () => {
     const change = gitChange("modified", "src/User.php", true);
+    const onPreviewChange = vi.fn();
     const onOpenChange = vi.fn();
     await renderPanel({
       onOpenChange,
+      onPreviewChange,
       status: gitStatus([change]),
     });
 
@@ -56,6 +58,28 @@ describe("GitChangesPanel", () => {
       host.querySelector<HTMLButtonElement>(".git-change-row")?.click();
     });
 
+    expect(onPreviewChange).toHaveBeenCalledWith(change);
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("pins a diff when a change row is double clicked", async () => {
+    const change = gitChange("modified", "src/User.php", true);
+    const onPreviewChange = vi.fn();
+    const onOpenChange = vi.fn();
+    await renderPanel({
+      onOpenChange,
+      onPreviewChange,
+      status: gitStatus([change]),
+    });
+
+    const row = host.querySelector<HTMLButtonElement>(".git-change-row");
+
+    act(() => {
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
+      row?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+    });
+
+    expect(onPreviewChange).not.toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(change);
   });
 
@@ -192,6 +216,7 @@ describe("GitChangesPanel", () => {
           onCommitMessageChange={props.onCommitMessageChange ?? vi.fn()}
           onToggleChangeIncluded={props.onToggleChangeIncluded ?? vi.fn()}
           onOpenChange={props.onOpenChange ?? vi.fn()}
+          onPreviewChange={props.onPreviewChange ?? vi.fn()}
           onRefresh={props.onRefresh ?? vi.fn()}
           onRevertChanges={props.onRevertChanges ?? vi.fn()}
           onStageChanges={props.onStageChanges ?? vi.fn()}

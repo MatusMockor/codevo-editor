@@ -31,6 +31,7 @@ interface GitChangesPanelProps {
   onCommitAndPush(): void;
   onCommitMessageChange(message: string): void;
   onOpenChange(change: GitChangedFile): void;
+  onPreviewChange(change: GitChangedFile): void;
   onRefresh(): void;
   onRevertChanges(changes: GitChangedFile[]): void;
   onStageChanges(changes: GitChangedFile[]): void;
@@ -48,6 +49,7 @@ export function GitChangesPanel({
   onCommitAndPush,
   onCommitMessageChange,
   onOpenChange,
+  onPreviewChange,
   onRefresh,
   onRevertChanges,
   onStageChanges,
@@ -131,6 +133,7 @@ export function GitChangesPanel({
             group={group}
             key={group.id}
             onOpenChange={onOpenChange}
+            onPreviewChange={onPreviewChange}
             onToggleChangeIncluded={onToggleChangeIncluded}
             includedChangePaths={includedChangePaths}
             isCollapsed={collapsedGroupIds.has(group.id)}
@@ -259,6 +262,7 @@ interface GitChangeGroupViewProps {
   includedChangePaths: Set<string>;
   isCollapsed: boolean;
   onOpenChange(change: GitChangedFile): void;
+  onPreviewChange(change: GitChangedFile): void;
   onToggleChangeIncluded(change: GitChangedFile): void;
   onToggleCollapsed(): void;
 }
@@ -270,6 +274,7 @@ function GitChangeGroupView({
   includedChangePaths,
   isCollapsed,
   onOpenChange,
+  onPreviewChange,
   onToggleChangeIncluded,
   onToggleCollapsed,
 }: GitChangeGroupViewProps) {
@@ -317,7 +322,14 @@ function GitChangeGroupView({
               : "tree-row git-change-row"
           }
           key={`${change.status}:${change.path}:${change.oldPath || ""}`}
-          onClick={() => onOpenChange(change)}
+          onClick={(event) => {
+            if (event.detail > 1) {
+              return;
+            }
+
+            onPreviewChange(change);
+          }}
+          onDoubleClick={() => onOpenChange(change)}
           title={gitStatusTitle(change.status)}
           type="button"
         >

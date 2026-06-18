@@ -524,7 +524,8 @@ function App() {
             onCommit={workbench.commitGitChanges}
             onCommitAndPush={workbench.commitAndPushGitChanges}
             onCommitMessageChange={workbench.setGitCommitMessage}
-            onOpenChange={workbench.previewGitChange}
+            onOpenChange={workbench.openGitChange}
+            onPreviewChange={workbench.previewGitChange}
             onRefresh={workbench.refreshGitStatus}
             onRevertChanges={workbench.revertGitChanges}
             onStageChanges={workbench.stageGitChanges}

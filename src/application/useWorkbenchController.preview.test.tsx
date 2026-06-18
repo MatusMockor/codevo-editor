@@ -172,7 +172,7 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().openFile(file);
+      await getWorkbench().openPinnedFile(file);
       await getWorkbench().previewGitChange({
         isStaged: false,
         isUnversioned: false,
@@ -185,7 +185,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(getWorkbench().selectedGitChange?.path).toBe(file.path);
-    expect(getWorkbench().activePath).toBe(file.path);
+    expect(getWorkbench().activePath).toContain(file.path);
 
     act(() => {
       getWorkbench().closeGitDiffPreview();
@@ -194,6 +194,103 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().selectedGitChange).toBeNull();
     expect(getWorkbench().gitDiffPreview).toBeNull();
     expect(getWorkbench().activePath).toBe(file.path);
+  });
+
+  it("opens a Git diff as an active preview tab named for the changed file", async () => {
+    const change = gitChangedFile("assets/spinner.gif", false);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "plaintext",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+
+    expect(getWorkbench().activePath).toContain("assets/spinner.gif");
+    expect(getWorkbench().previewPath).toBe(getWorkbench().activePath);
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        name: "Diff: spinner.gif",
+        path: getWorkbench().activePath,
+      }),
+    ]);
+  });
+
+  it("reloads a pinned Git diff when its tab is activated again", async () => {
+    const change = gitChangedFile("assets/spinner.gif", false);
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "plaintext",
+        modifiedContent: "new",
+        originalContent: "old",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitChange(change);
+    });
+    const diffPath = getWorkbench().activePath!;
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    expect(getWorkbench().selectedGitChange).toBeNull();
+
+    act(() => {
+      getWorkbench().setActivePath(diffPath);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().selectedGitChange).toEqual(change);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({ change }),
+    );
+    expect(getWorkbench().activePath).toBe(diffPath);
   });
 
   it("switches between persisted project tabs without stopping another project runtime", async () => {
