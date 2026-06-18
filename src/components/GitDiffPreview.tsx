@@ -2,7 +2,7 @@ import { DiffEditor } from "@monaco-editor/react";
 import { X } from "lucide-react";
 import type { MonacoAppTheme } from "../domain/settings";
 import type { GitFileDiff } from "../domain/git";
-import { registerMonacoAppThemes } from "./monacoThemes";
+import { setupShikiTokenization } from "../infrastructure/shikiHighlighter";
 
 interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
@@ -46,7 +46,11 @@ export function GitDiffPreview({
       </header>
       <div className="editor-panel">
         <DiffEditor
-          beforeMount={registerMonacoAppThemes}
+          beforeMount={(monaco) => {
+            setupShikiTokenization(monaco, monacoTheme).catch((error) => {
+              console.error("Shiki tokenization setup failed", error);
+            });
+          }}
           height="100%"
           language={diff.language}
           modified={diff.modifiedContent}

@@ -94,6 +94,22 @@ describe("contrastRatio", () => {
     expect(
       contrastRatio(materialActiveText, materialActive),
     ).toBeGreaterThanOrEqual(minimumTextContrast);
+
+    for (const id of [
+      "oneDarkPro",
+      "dracula",
+      "catppuccinMocha",
+      "catppuccinLatte",
+      "oneLight",
+    ]) {
+      const selector = `.app-shell[data-theme="${id}"]`;
+      const active = cssVariable(appCss, selector, "--color-active");
+      const activeText = cssVariable(appCss, selector, "--color-active-text");
+      expect(
+        contrastRatio(activeText, active),
+        `${id}: active-text on active`,
+      ).toBeGreaterThanOrEqual(minimumTextContrast);
+    }
   });
 
   it("keeps terminal text colors readable in app themes", () => {
@@ -101,6 +117,11 @@ describe("contrastRatio", () => {
     expectTerminalThemeContrast(terminalThemeForAppTheme("light"));
     expectTerminalThemeContrast(terminalThemeForAppTheme("ayuMirage"));
     expectTerminalThemeContrast(terminalThemeForAppTheme("materialDeepOcean"));
+    expectTerminalThemeContrast(terminalThemeForAppTheme("oneDarkPro"));
+    expectTerminalThemeContrast(terminalThemeForAppTheme("dracula"));
+    expectTerminalThemeContrast(terminalThemeForAppTheme("catppuccinMocha"));
+    expectTerminalThemeContrast(terminalThemeForAppTheme("catppuccinLatte"));
+    expectTerminalThemeContrast(terminalThemeForAppTheme("oneLight"));
     expectTerminalThemeContrast(terminalThemeForAppTheme("system", true));
     expectTerminalThemeContrast(terminalThemeForAppTheme("system", false));
   });
@@ -138,6 +159,11 @@ describe("calm design tokens", () => {
       ["system", '.app-shell[data-theme="system"]'],
       ["ayuMirage", '.app-shell[data-theme="ayuMirage"]'],
       ["materialDeepOcean", '.app-shell[data-theme="materialDeepOcean"]'],
+      ["oneDarkPro", '.app-shell[data-theme="oneDarkPro"]'],
+      ["dracula", '.app-shell[data-theme="dracula"]'],
+      ["catppuccinMocha", '.app-shell[data-theme="catppuccinMocha"]'],
+      ["catppuccinLatte", '.app-shell[data-theme="catppuccinLatte"]'],
+      ["oneLight", '.app-shell[data-theme="oneLight"]'],
     ];
 
     for (const [name, selector] of themeSelectors) {

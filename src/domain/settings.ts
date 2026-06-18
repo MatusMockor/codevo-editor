@@ -11,16 +11,24 @@ export const appThemeOptions = [
   { id: "system", label: "System" },
   { id: "ayuMirage", label: "Ayu Mirage" },
   { id: "materialDeepOcean", label: "Material Deep Ocean" },
+  { id: "oneDarkPro", label: "One Dark Pro" },
+  { id: "dracula", label: "Dracula" },
+  { id: "catppuccinMocha", label: "Catppuccin Mocha" },
+  { id: "catppuccinLatte", label: "Catppuccin Latte" },
+  { id: "oneLight", label: "One Light" },
 ] as const;
 
 export type AppTheme = (typeof appThemeOptions)[number]["id"];
 export type MonacoAppTheme =
-  | "vs"
-  | "vs-dark"
-  | "mockor-calm-dark"
-  | "mockor-calm-light"
-  | "mockor-ayu-mirage"
-  | "mockor-material-deep-ocean";
+  | "calm-dark"
+  | "calm-light"
+  | "ayu-mirage"
+  | "material-deep-ocean"
+  | "one-dark-pro"
+  | "dracula"
+  | "catppuccin-mocha"
+  | "catppuccin-latte"
+  | "one-light";
 export type BackgroundRuntimePolicy =
   | "keepAlive"
   | "singleActive"
@@ -349,18 +357,38 @@ export function monacoThemeForAppTheme(
   prefersLight = false,
 ): MonacoAppTheme {
   if (theme === "ayuMirage") {
-    return "mockor-ayu-mirage";
+    return "ayu-mirage";
   }
 
   if (theme === "materialDeepOcean") {
-    return "mockor-material-deep-ocean";
+    return "material-deep-ocean";
+  }
+
+  if (theme === "oneDarkPro") {
+    return "one-dark-pro";
+  }
+
+  if (theme === "dracula") {
+    return "dracula";
+  }
+
+  if (theme === "catppuccinMocha") {
+    return "catppuccin-mocha";
+  }
+
+  if (theme === "catppuccinLatte") {
+    return "catppuccin-latte";
+  }
+
+  if (theme === "oneLight") {
+    return "one-light";
   }
 
   if (resolveAppTheme(theme, prefersLight) === "light") {
-    return "mockor-calm-light";
+    return "calm-light";
   }
 
-  return "mockor-calm-dark";
+  return "calm-dark";
 }
 
 export function terminalThemeForAppTheme(
@@ -395,25 +423,150 @@ export function terminalThemeForAppTheme(
   if (theme === "materialDeepOcean") {
     return {
       background: "#0f111a",
-      black: "#8f98b3",
+      black: "#8a90b5",
       blue: "#82aaff",
-      brightBlack: "#c3c8d8",
-      brightBlue: "#b2c8ff",
-      brightCyan: "#b7ffff",
-      brightGreen: "#d1ff9e",
-      brightMagenta: "#f6c1ff",
-      brightRed: "#ffb8c8",
+      brightBlack: "#b4b9d4",
+      brightBlue: "#9fc1ff",
+      brightCyan: "#a3f7f7",
+      brightGreen: "#d3f59a",
+      brightMagenta: "#e2b6ff",
+      brightRed: "#ff9aa0",
       brightWhite: "#ffffff",
-      brightYellow: "#ffe6a8",
+      brightYellow: "#ffe0a3",
       cursor: "#84ffff",
       cyan: "#89ddff",
-      foreground: "#d8dee9",
+      foreground: "#a6accd",
       green: "#c3e88d",
       magenta: "#c792ea",
       red: "#f07178",
-      selectionBackground: "#26345c",
-      white: "#d8dee9",
+      selectionBackground: "#1f2233",
+      white: "#d7dbe8",
       yellow: "#ffcb6b",
+    };
+  }
+
+  if (theme === "oneDarkPro") {
+    return {
+      background: "#282c34",
+      black: "#969cab",
+      blue: "#61afef",
+      brightBlack: "#abb2bf",
+      brightBlue: "#8fc4f5",
+      brightCyan: "#7fd4de",
+      brightGreen: "#b6e09a",
+      brightMagenta: "#dba6e8",
+      brightRed: "#f4929a",
+      brightWhite: "#ffffff",
+      brightYellow: "#f0d29a",
+      cursor: "#61afef",
+      cyan: "#56b6c2",
+      foreground: "#abb2bf",
+      green: "#98c379",
+      magenta: "#c678dd",
+      red: "#e88a91",
+      selectionBackground: "#3e4451",
+      white: "#cdd3de",
+      yellow: "#e5c07b",
+    };
+  }
+
+  if (theme === "dracula") {
+    return {
+      background: "#282a36",
+      black: "#8b93b8",
+      blue: "#bd93f9",
+      brightBlack: "#b3bbe0",
+      brightBlue: "#d6b8ff",
+      brightCyan: "#a4ffff",
+      brightGreen: "#74ffa0",
+      brightMagenta: "#ff92e0",
+      brightRed: "#ff8080",
+      brightWhite: "#ffffff",
+      brightYellow: "#ffffa5",
+      cursor: "#f8f8f2",
+      cyan: "#8be9fd",
+      foreground: "#f8f8f2",
+      green: "#50fa7b",
+      magenta: "#ff79c6",
+      red: "#ff5555",
+      selectionBackground: "#44475a",
+      white: "#e8e8e3",
+      yellow: "#f1fa8c",
+    };
+  }
+
+  if (theme === "catppuccinMocha") {
+    return {
+      background: "#1e1e2e",
+      black: "#9399b2",
+      blue: "#89b4fa",
+      brightBlack: "#a6adc8",
+      brightBlue: "#a6c8ff",
+      brightCyan: "#a0eaf0",
+      brightGreen: "#c2f0bd",
+      brightMagenta: "#f0abdc",
+      brightRed: "#f8aec2",
+      brightWhite: "#ffffff",
+      brightYellow: "#fceec6",
+      cursor: "#f5e0dc",
+      cyan: "#94e2d5",
+      foreground: "#cdd6f4",
+      green: "#a6e3a1",
+      magenta: "#f5c2e7",
+      red: "#f38ba8",
+      selectionBackground: "#363a4f",
+      white: "#dce0f0",
+      yellow: "#f9e2af",
+    };
+  }
+
+  if (theme === "catppuccinLatte") {
+    return {
+      background: "#eff1f5",
+      black: "#4c4f69",
+      blue: "#1e5fd6",
+      brightBlack: "#383a4f",
+      brightBlue: "#1a52c0",
+      brightCyan: "#0a6270",
+      brightGreen: "#266b1b",
+      brightMagenta: "#8c1a9b",
+      brightRed: "#b00d2f",
+      brightWhite: "#45485c",
+      brightYellow: "#7a5200",
+      cursor: "#dc8a78",
+      cyan: "#0a7080",
+      foreground: "#4c4f69",
+      green: "#2e7d20",
+      magenta: "#a01fb0",
+      red: "#d20f39",
+      selectionBackground: "#bcc0cc",
+      white: "#5c5f77",
+      yellow: "#8a5e00",
+    };
+  }
+
+  if (theme === "oneLight") {
+    return {
+      background: "#fafafa",
+      black: "#383a42",
+      blue: "#274fb0",
+      brightBlack: "#2b2d34",
+      brightBlue: "#1f4499",
+      brightCyan: "#0a5f6c",
+      brightGreen: "#2a6029",
+      brightMagenta: "#841d92",
+      brightRed: "#b32a1e",
+      brightWhite: "#1c1d22",
+      brightYellow: "#6a4f00",
+      cursor: "#526fff",
+      cyan: "#0a6e7a",
+      foreground: "#383a42",
+      green: "#2f6b2e",
+      magenta: "#9020a0",
+      red: "#c4331f",
+      selectionBackground: "#cfcfcf",
+      white: "#4f525e",
+      yellow: "#7a5800",
     };
   }
 
