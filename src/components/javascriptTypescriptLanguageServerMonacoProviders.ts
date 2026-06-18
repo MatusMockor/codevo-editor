@@ -7,6 +7,7 @@ import {
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
   type LanguageServerCodeLens,
+  type LanguageServerCompletionContext,
   type LanguageServerCompletionItem,
   type LanguageServerCompletionTextEdit,
   type LanguageServerDocumentHighlight,
@@ -199,8 +200,14 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       disposables.push(
         registry.registerCompletionItemProvider(language, {
           triggerCharacters: [".", "'", "\"", "`", "/", "@", "<", "#"],
-          provideCompletionItems: (model, position) =>
-            provideCompletionItems(monaco, context, model, position),
+          provideCompletionItems: (model, position, completionContext) =>
+            provideCompletionItems(
+              monaco,
+              context,
+              model,
+              position,
+              completionContext,
+            ),
           resolveCompletionItem: (item) =>
             resolveCompletionItem(monaco, context, item),
         }),
@@ -443,6 +450,7 @@ async function provideCompletionItems(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  completionContext?: Monaco.languages.CompletionContext,
 ): Promise<Monaco.languages.CompletionList> {
   const request = featureRequestContext(context, model, position, "completion");
 
@@ -452,10 +460,18 @@ async function provideCompletionItems(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    const completion = await context.featuresGateway.completion(
-      request.rootPath,
-      request.position,
-    );
+    const languageServerContext =
+      toLanguageServerCompletionContext(completionContext);
+    const completion = languageServerContext
+      ? await context.featuresGateway.completion(
+          request.rootPath,
+          request.position,
+          languageServerContext,
+        )
+      : await context.featuresGateway.completion(
+          request.rootPath,
+          request.position,
+        );
     const word = model.getWordUntilPosition(position);
     const range = {
       endColumn: word.endColumn,
@@ -480,6 +496,20 @@ async function provideCompletionItems(
     context.reportError(error);
     return { suggestions: [] };
   }
+}
+
+function toLanguageServerCompletionContext(
+  context: Monaco.languages.CompletionContext | undefined,
+): LanguageServerCompletionContext | undefined {
+  if (!context) {
+    return undefined;
+  }
+
+  return {
+    triggerCharacter: context.triggerCharacter ?? null,
+    triggerKind:
+      context.triggerKind === 1 ? 2 : context.triggerKind === 2 ? 3 : 1,
+  };
 }
 
 async function resolveCompletionItem(

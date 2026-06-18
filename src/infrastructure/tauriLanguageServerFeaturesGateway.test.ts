@@ -442,7 +442,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     const requestPosition = position();
 
     await expect(gateway.hover("/project", requestPosition)).resolves.toEqual(hover);
-    await expect(gateway.completion("/project", requestPosition)).resolves.toEqual(completion);
+    await expect(
+      gateway.completion("/project", requestPosition, {
+        triggerCharacter: ".",
+        triggerKind: 2,
+      }),
+    ).resolves.toEqual(completion);
     await expect(
       gateway.resolveCompletionItem("/project", completionItem()),
     ).resolves.toEqual({
@@ -573,6 +578,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_completion", {
+      context: {
+        triggerCharacter: ".",
+        triggerKind: 2,
+      },
       position: requestPosition,
       rootPath: "/project",
     });

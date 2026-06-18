@@ -105,6 +105,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript completions now trigger on `#` as well as standard member/import/JSX trigger characters, so private class fields and methods go through the managed language-server completion path.
 - TypeScript/JavaScript completions now also trigger on backticks, matching VS Code-style TypeScript completions in template string contexts.
 - TypeScript/JavaScript completion metadata now preserves deprecated item markers from LSP `deprecated` and `tags`, so Monaco can render deprecated suggestions like VS Code.
+- TypeScript/JavaScript completion requests now pass VS Code-like LSP completion context (`triggerKind` and `triggerCharacter`) when Monaco invokes completions from trigger characters such as `.`, quotes, backticks, JSX markers, and private field `#`.
 
 ## Full VS Code-Like Target
 

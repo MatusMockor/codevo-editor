@@ -12,6 +12,20 @@ pub struct TextDocumentPosition {
     pub character: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerCompletionContext {
+    pub trigger_kind: u32,
+    pub trigger_character: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextDocumentCompletion {
+    pub position: TextDocumentPosition,
+    pub context: Option<LanguageServerCompletionContext>,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct LanguageServerFeatureRequest {
     pub method: String,
@@ -354,7 +368,7 @@ pub struct LanguageServerPrepareRenameResult {
 
 pub trait TextDocumentFeatureRequestFactory {
     fn hover(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
-    fn completion(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn completion(&self, completion: &TextDocumentCompletion) -> LanguageServerFeatureRequest;
     fn resolve_completion_item(
         &self,
         item: &LanguageServerCompletionItem,
@@ -420,8 +434,14 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         request("textDocument/hover", position)
     }
 
-    fn completion(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
-        request("textDocument/completion", position)
+    fn completion(&self, completion: &TextDocumentCompletion) -> LanguageServerFeatureRequest {
+        let mut request = request("textDocument/completion", &completion.position);
+
+        if let Some(context) = &completion.context {
+            request.params["context"] = json!(context);
+        }
+
+        request
     }
 
     fn resolve_completion_item(
@@ -1550,16 +1570,16 @@ mod tests {
         parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
         parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
         LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-        LanguageServerCodeLens, LanguageServerCompletionItem,
+        LanguageServerCodeLens, LanguageServerCompletionContext, LanguageServerCompletionItem,
         LanguageServerCompletionItemLabelDetails, LanguageServerCompletionList,
         LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
-        LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-        TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentOnTypeFormatting,
-        TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
-        TextDocumentSelectionRange, WorkspaceFileChange, WorkspaceFileChangeType,
-        WorkspaceFileRename,
+        LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
+        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+        TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
+        TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
+        WorkspaceFileChange, WorkspaceFileChangeType, WorkspaceFileRename,
     };
     use serde_json::json;
 
@@ -1617,6 +1637,28 @@ mod tests {
             .starts_with("file://"));
         assert_eq!(request.params["position"]["line"], 10);
         assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn completion_request_can_include_trigger_context() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let plain = factory.completion(&TextDocumentCompletion {
+            position: position(),
+            context: None,
+        });
+        let triggered = factory.completion(&TextDocumentCompletion {
+            position: position(),
+            context: Some(LanguageServerCompletionContext {
+                trigger_kind: 2,
+                trigger_character: Some(".".to_string()),
+            }),
+        });
+
+        assert_eq!(plain.method, "textDocument/completion");
+        assert!(plain.params.get("context").is_none());
+        assert_eq!(triggered.method, "textDocument/completion");
+        assert_eq!(triggered.params["context"]["triggerKind"], 2);
+        assert_eq!(triggered.params["context"]["triggerCharacter"], ".");
     }
 
     #[test]

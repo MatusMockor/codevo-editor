@@ -110,13 +110,24 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const result = await completionProvider.provideCompletionItems(
       model,
       position,
+      {
+        triggerCharacter: ".",
+        triggerKind: 1,
+      },
     );
 
-    expect(gateway.completion).toHaveBeenCalledWith("/project", {
-      character: 3,
-      line: 1,
-      path: "/project/src/App.tsx",
-    });
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 1,
+        path: "/project/src/App.tsx",
+      },
+      {
+        triggerCharacter: ".",
+        triggerKind: 2,
+      },
+    );
     expect(result.suggestions[0]).toEqual(
       expect.objectContaining({
         insertText: "useUser()$0",
