@@ -146,6 +146,7 @@ import {
   phpDeclaredGenericTypeCandidates,
   phpDocRawTypeForVariableBefore,
   phpFunctionReturnsClassStringArgument,
+  phpLaravelContainerBindingsFromSource,
 } from "../domain/phpSemanticEngine";
 import {
   phpClassPathCandidates,
@@ -453,6 +454,7 @@ export function useWorkbenchController(
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
   );
+  const phpLaravelBindingCacheRef = useRef<Record<string, string | null>>({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
@@ -909,6 +911,7 @@ export function useWorkbenchController(
       pendingIndexScanRef.current = false;
       activeIndexRootRef.current = event.rootPath;
       phpClassSourcePathCacheRef.current = {};
+      phpLaravelBindingCacheRef.current = {};
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
       );
@@ -969,6 +972,7 @@ export function useWorkbenchController(
     lastPhpFileOutlineRefreshKeyRef.current = null;
     phpClassSourcePathCacheRef.current = {};
     phpClassMemberCacheRef.current = {};
+    phpLaravelBindingCacheRef.current = {};
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
     setPhpTree(emptyPhpTree());
@@ -1808,6 +1812,7 @@ export function useWorkbenchController(
       lastPhpFileOutlineRefreshKeyRef.current = null;
       phpClassSourcePathCacheRef.current = {};
       phpClassMemberCacheRef.current = {};
+      phpLaravelBindingCacheRef.current = {};
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
       autoStartedLanguageServerRootRef.current = null;
@@ -3411,6 +3416,88 @@ export function useWorkbenchController(
     [resolvePhpClassReference],
   );
 
+  const resolvePhpLaravelBoundConcrete = useCallback(
+    async (className: string): Promise<string | null> => {
+      if (!workspaceRoot) {
+        return null;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+      if (!normalizedClassName) {
+        return null;
+      }
+
+      const cacheKey = normalizedClassName.toLowerCase();
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          phpLaravelBindingCacheRef.current,
+          cacheKey,
+        )
+      ) {
+        return phpLaravelBindingCacheRef.current[cacheKey] ?? null;
+      }
+
+      let concreteClassName: string | null = null;
+      const shortName = shortPhpName(normalizedClassName);
+      const results = await textSearch.searchText(
+        workspaceRoot,
+        `${shortName}::class`,
+        200,
+      );
+      const visitedPaths = new Set<string>();
+
+      for (const result of results) {
+        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+          continue;
+        }
+
+        visitedPaths.add(result.path);
+
+        try {
+          const content = await readNavigationFileContent(result.path);
+
+          for (const binding of phpLaravelContainerBindingsFromSource(content)) {
+            const abstractClassName = resolvePhpClassReference(
+              content,
+              binding.abstractClassName,
+            );
+
+            if (abstractClassName?.toLowerCase() !== cacheKey) {
+              continue;
+            }
+
+            const resolvedConcreteClassName = resolvePhpClassReference(
+              content,
+              binding.concreteClassName,
+            );
+
+            if (resolvedConcreteClassName) {
+              concreteClassName = resolvedConcreteClassName;
+              break;
+            }
+          }
+        } catch {
+          continue;
+        }
+
+        if (concreteClassName) {
+          break;
+        }
+      }
+
+      phpLaravelBindingCacheRef.current[cacheKey] = concreteClassName;
+      return concreteClassName;
+    },
+    [
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      textSearch,
+      workspaceRoot,
+    ],
+  );
+
   const findPhpClassSourcePathsByFileName = useCallback(
     async (className: string): Promise<string[]> => {
       if (!workspaceRoot) {
@@ -3611,10 +3698,18 @@ export function useWorkbenchController(
 
       await collectMethods(className);
 
+      const boundConcreteClassName =
+        await resolvePhpLaravelBoundConcrete(className);
+
+      if (boundConcreteClassName) {
+        await collectMethods(boundConcreteClassName);
+      }
+
       return Array.from(completions.values());
     },
     [
       readPhpClassMembersFromPath,
+      resolvePhpLaravelBoundConcrete,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
@@ -3860,6 +3955,24 @@ export function useWorkbenchController(
         );
       }
 
+      const resolveBoundConcreteReturnType = async (): Promise<string | null> => {
+        const boundConcreteClassName =
+          await resolvePhpLaravelBoundConcrete(normalizedClassName);
+
+        if (
+          !boundConcreteClassName ||
+          boundConcreteClassName.toLowerCase() === visitedKey
+        ) {
+          return null;
+        }
+
+        return resolvePhpMethodReturnType(
+          boundConcreteClassName,
+          methodName,
+          visitedClassNames,
+        );
+      };
+
       const resolveReturnExpressionType = async (
         ownerSource: string,
         expression: string,
@@ -3970,23 +4083,28 @@ export function useWorkbenchController(
             : null;
 
           if (resolvedParentClassName) {
-            return resolvePhpMethodReturnType(
+            const parentReturnType = await resolvePhpMethodReturnType(
               resolvedParentClassName,
               methodName,
               visitedClassNames,
             );
+
+            if (parentReturnType) {
+              return parentReturnType;
+            }
           }
 
-          return null;
+          return resolveBoundConcreteReturnType();
         } catch {
           continue;
         }
       }
 
-      return null;
+      return resolveBoundConcreteReturnType();
     },
     [
       readPhpClassMembersFromPath,
+      resolvePhpLaravelBoundConcrete,
       resolvePhpClassReference,
       resolvePhpDeclaredType,
       resolvePhpClassSourcePaths,
@@ -4876,13 +4994,23 @@ export function useWorkbenchController(
         return false;
       };
 
-      return openMethodInClassHierarchy(className);
+      if (await openMethodInClassHierarchy(className)) {
+        return true;
+      }
+
+      const boundConcreteClassName =
+        await resolvePhpLaravelBoundConcrete(className);
+
+      return boundConcreteClassName
+        ? openMethodInClassHierarchy(boundConcreteClassName)
+        : false;
     },
     [
       intelligenceMode,
       openNavigationTarget,
       projectSymbolSearch,
       readNavigationFileContent,
+      resolvePhpLaravelBoundConcrete,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,

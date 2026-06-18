@@ -41,6 +41,11 @@ export type PhpClassStringCallExpression =
       methodName: string;
     };
 
+export interface PhpLaravelContainerBinding {
+  abstractClassName: string;
+  concreteClassName: string;
+}
+
 export function phpCurrentClassName(source: string): string | null {
   const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
     source,
@@ -156,6 +161,40 @@ export function phpLaravelContainerExpressionClassName(
     ).exec(normalized);
 
   return match?.[1]?.replace(/^\\+/, "") ?? null;
+}
+
+export function phpLaravelContainerBindingsFromSource(
+  source: string,
+): PhpLaravelContainerBinding[] {
+  const bindings: PhpLaravelContainerBinding[] = [];
+  const directBindingPattern = new RegExp(
+    `(?:->|::)(?:bind|singleton|scoped)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\s*,\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class`,
+    "g",
+  );
+  const contextualBindingPattern = new RegExp(
+    `->\\s*needs\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\s*\\)\\s*->\\s*give\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class`,
+    "g",
+  );
+
+  for (const match of source.matchAll(directBindingPattern)) {
+    const abstractClassName = match[1]?.replace(/^\\+/, "");
+    const concreteClassName = match[2]?.replace(/^\\+/, "");
+
+    if (abstractClassName && concreteClassName) {
+      bindings.push({ abstractClassName, concreteClassName });
+    }
+  }
+
+  for (const match of source.matchAll(contextualBindingPattern)) {
+    const abstractClassName = match[1]?.replace(/^\\+/, "");
+    const concreteClassName = match[2]?.replace(/^\\+/, "");
+
+    if (abstractClassName && concreteClassName) {
+      bindings.push({ abstractClassName, concreteClassName });
+    }
+  }
+
+  return bindings;
 }
 
 export function phpClassStringCallExpression(

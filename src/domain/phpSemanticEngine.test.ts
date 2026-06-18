@@ -6,6 +6,7 @@ import {
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
   phpFunctionReturnsClassStringArgument,
+  phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
   phpMethodCallExpression,
   phpMethodReturnExpressions,
@@ -208,6 +209,53 @@ function service(string $className): object {}
         "service",
       ),
     ).toBe(false);
+  });
+
+  it("extracts Laravel container bindings from service providers", () => {
+    expect(
+      phpLaravelContainerBindingsFromSource(`<?php
+namespace App\\Providers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Repositories\\EloquentCommentRepository;
+use App\\Contracts\\StatusRepositoryInterface;
+use App\\Repositories\\DatabaseStatusRepository;
+use App\\Contracts\\ReportRepositoryInterface;
+use App\\Repositories\\CachedReportRepository;
+use App\\Contracts\\WebhookRepositoryInterface;
+use App\\Repositories\\DatabaseWebhookRepository;
+
+class AppServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
+        $this->app->singleton(StatusRepositoryInterface::class, DatabaseStatusRepository::class);
+        app()->scoped(ReportRepositoryInterface::class, CachedReportRepository::class);
+        $this->app->when(SendWebhookJob::class)
+            ->needs(WebhookRepositoryInterface::class)
+            ->give(DatabaseWebhookRepository::class);
+    }
+}
+`),
+    ).toEqual([
+      {
+        abstractClassName: "CommentRepositoryInterface",
+        concreteClassName: "EloquentCommentRepository",
+      },
+      {
+        abstractClassName: "StatusRepositoryInterface",
+        concreteClassName: "DatabaseStatusRepository",
+      },
+      {
+        abstractClassName: "ReportRepositoryInterface",
+        concreteClassName: "CachedReportRepository",
+      },
+      {
+        abstractClassName: "WebhookRepositoryInterface",
+        concreteClassName: "DatabaseWebhookRepository",
+      },
+    ]);
   });
 
   it("normalizes generic PHPDoc type candidates", () => {
