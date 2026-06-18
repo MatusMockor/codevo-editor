@@ -82,6 +82,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - JavaScript/TypeScript validation and inlay hints are now per-workspace settings. Validation Off clears and ignores JS/TS diagnostics; inlay hints flow into TypeScript server preferences and restart the managed JS/TS service when changed.
 - JavaScript/TypeScript Auto Imports is now a per-workspace setting. Off disables TypeScript module-export/import-statement completions and package.json auto-import suggestions in the managed JS/TS server preferences.
 - Settings now include a per-workspace Restart JavaScript/TypeScript service action, so users can refresh the managed TS runtime after dependency or TypeScript-version changes without restarting the whole editor.
+- Settings now include an Open JavaScript/TypeScript service log action. The managed runtime captures bounded server stderr per workspace and writes/opens a readable log file for debugging TS service startup, crashes, and degraded IntelliSense.
 - Workspace detection now includes a JavaScript/TypeScript project descriptor for `package.json`, `tsconfig.json`, `jsconfig.json`, package manager and common framework markers. The status bar can show this JS/TS project context in Basic mode when editing JS/TS files.
 - The managed LSP supervisor now answers TypeScript/JavaScript `workspace/configuration` requests with the runtime preferences derived from initialize settings, keeping tsserver-wrapper behavior aligned with service settings instead of returning empty configuration.
 - TypeScript/JavaScript document highlights are now served by the managed language server in Basic mode, so symbol reads/writes under the cursor can be highlighted like VS Code.
@@ -172,7 +173,7 @@ Add settings:
 - Auto imports on/off. Done.
 - Inlay hints on/off. Done.
 - Restart JS/TS service. Done.
-- Open JS/TS service log
+- Open JS/TS service log. Done.
 
 ## Tests
 

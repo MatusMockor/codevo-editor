@@ -47,6 +47,7 @@ export interface LanguageServerRuntimeGateway {
     options?: LanguageServerRuntimeStartOptions,
   ): Promise<LanguageServerRuntimeStatus>;
   stop(rootPath: string): Promise<LanguageServerRuntimeStatus>;
+  openLog(rootPath: string): Promise<string | null>;
   subscribeStatus(
     listener: (status: LanguageServerRuntimeStatus) => void,
   ): Promise<UnsubscribeFn>;

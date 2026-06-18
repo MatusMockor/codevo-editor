@@ -976,6 +976,28 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).toBe("JavaScript/TypeScript service restarted.");
   });
 
+  it("opens JavaScript and TypeScript language service log for the active workspace", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openJavaScriptTypeScriptServiceLog();
+      await flushAsyncTurns(4);
+    });
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.openLog,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(getWorkbench().message).toBe(
+      "Opened JavaScript/TypeScript service log: /tmp/typescript-language-server.log",
+    );
+  });
+
   it("detects PHP workspace metadata before restoring startup tabs", async () => {
     const restoredPath = "/workspace/app/Http/Controllers/CommentController.php";
     const readTextFile = vi.fn(async () => "<?php\nclass CommentController {}\n");
@@ -4010,6 +4032,7 @@ function createControllerDependencies({
     },
     languageServerRuntimeGateway: {
       getStatus: vi.fn(async () => runtimeStatus),
+      openLog: vi.fn(async () => null),
       start: vi.fn(async () => runtimeStatus),
       stop: vi.fn(async () => ({ kind: "stopped" as const })),
       subscribeStatus: vi.fn(async () => () => undefined),
@@ -4022,6 +4045,7 @@ function createControllerDependencies({
       javaScriptTypeScriptLanguageServerFeaturesGateway ?? featuresGateway(),
     javaScriptTypeScriptLanguageServerRuntimeGateway: {
       getStatus: vi.fn(async () => javaScriptTypeScriptInitialRuntimeStatus),
+      openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
       start: vi.fn(async () => javaScriptTypeScriptRuntimeStatus),
       stop: vi.fn(async () => ({ kind: "stopped" as const })),
       subscribeStatus: vi.fn(async () => () => undefined),

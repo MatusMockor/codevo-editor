@@ -771,6 +771,9 @@ function App() {
         appSettings={workbench.appSettings}
         isOpen={workbench.settingsOpen}
         onClose={() => workbench.setSettingsOpen(false)}
+        onOpenJavaScriptTypeScriptServiceLog={
+          workbench.openJavaScriptTypeScriptServiceLog
+        }
         onRestartJavaScriptTypeScriptService={
           workbench.restartJavaScriptTypeScriptService
         }

@@ -23,6 +23,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       kind: "stopped",
     });
     await expect(gateway.stop("/workspace")).resolves.toEqual({ kind: "stopped" });
+    await expect(gateway.openLog("/workspace")).resolves.toBeNull();
     await expect(gateway.start("/workspace")).resolves.toEqual({
       kind: "crashed",
       message: "Language server requires the Tauri desktop runtime.",
@@ -141,6 +142,31 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         inlayHintsEnabled: false,
         rootPath: "/workspace",
         typeScriptVersionPreference: "workspace",
+      },
+    );
+  });
+
+  it("opens JavaScript and TypeScript runtime log through its configured command", async () => {
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
+      if (command === "open_javascript_typescript_language_server_log") {
+        return "/tmp/js-ts.log";
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const gateway = new TauriLanguageServerRuntimeGateway(
+      invokeCommand,
+      vi.fn<ListenToEvent>(),
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
+    );
+
+    await expect(gateway.openLog("/workspace")).resolves.toBe("/tmp/js-ts.log");
+
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "open_javascript_typescript_language_server_log",
+      {
+        rootPath: "/workspace",
       },
     );
   });

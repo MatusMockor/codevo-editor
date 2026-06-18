@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -31,6 +31,8 @@ pub const JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT: &str =
 type PendingRequestResult = Result<Value, String>;
 type PendingRequestSender = mpsc::Sender<PendingRequestResult>;
 type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
+type RuntimeLog = Arc<Mutex<String>>;
+const RUNTIME_LOG_MAX_BYTES: usize = 128 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -225,6 +227,7 @@ pub trait ServerProcessSpawner {
 }
 
 pub struct SpawnedServer {
+    pub stderr: Option<Box<dyn Read + Send>>,
     pub stdin: Box<dyn Write + Send>,
     pub stdout: Box<dyn Read + Send>,
     pub killer: Box<dyn ProcessKiller>,
@@ -244,7 +247,7 @@ impl ServerProcessSpawner for ChildServerProcessSpawner {
             .current_dir(&command.working_directory)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
 
         #[cfg(unix)]
         {
@@ -263,8 +266,13 @@ impl ServerProcessSpawner for ChildServerProcessSpawner {
             .stdout
             .take()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing child stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .map(|stderr| Box::new(stderr) as Box<dyn Read + Send>);
 
         Ok(SpawnedServer {
+            stderr,
             stdin: Box::new(stdin),
             stdout: Box::new(stdout),
             killer: Box::new(ChildKiller {
@@ -351,6 +359,7 @@ enum HandshakeOutcome {
 }
 
 struct RunningSession {
+    stderr_reader: Option<JoinHandle<()>>,
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Box<dyn ProcessKiller>,
     pending_requests: PendingRequests,
@@ -360,6 +369,7 @@ struct RunningSession {
 }
 
 pub struct LanguageServerSupervisor {
+    log: RuntimeLog,
     next_request_id: AtomicU64,
     next_session_id: AtomicU64,
     server_label: &'static str,
@@ -430,6 +440,12 @@ impl LanguageServerRegistry {
         self.existing_supervisor(root_path)
             .map(|supervisor| supervisor.status())
             .unwrap_or(LanguageServerRuntimeStatus::Stopped)
+    }
+
+    pub fn log(&self, root_path: &str) -> String {
+        self.existing_supervisor(root_path)
+            .map(|supervisor| supervisor.log())
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -596,6 +612,7 @@ impl LanguageServerSupervisor {
 
     pub fn new_with_label(server_label: &'static str) -> Self {
         Self {
+            log: Arc::new(Mutex::new(String::new())),
             next_request_id: AtomicU64::new(2),
             next_session_id: AtomicU64::new(1),
             server_label,
@@ -609,6 +626,10 @@ impl LanguageServerSupervisor {
             .lock()
             .map(|status| status.clone())
             .unwrap_or(LanguageServerRuntimeStatus::Stopped)
+    }
+
+    pub fn log(&self) -> String {
+        self.log.lock().map(|log| log.clone()).unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -641,6 +662,7 @@ impl LanguageServerSupervisor {
     ) -> Result<LanguageServerRuntimeStatus, String> {
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         self.terminate_stale_session();
+        reset_runtime_log(&self.log, self.server_label, session_id, command);
         self.begin_start(status_sink.as_ref(), session_id)?;
 
         let spawned = match spawner.spawn(command) {
@@ -655,7 +677,11 @@ impl LanguageServerSupervisor {
         let stdin = Arc::new(Mutex::new(spawned.stdin));
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
         let stop_requested = Arc::new(AtomicBool::new(false));
+        let stderr_reader = spawned
+            .stderr
+            .map(|stderr| spawn_stderr_reader(stderr, Arc::clone(&self.log)));
         let mut session = Some(RunningSession {
+            stderr_reader,
             stdin: Arc::clone(&stdin),
             killer: spawned.killer,
             pending_requests: Arc::clone(&pending_requests),
@@ -1057,6 +1083,70 @@ fn terminate_session(mut session: RunningSession) {
     if let Some(reader) = session.reader.take() {
         let _ = reader.join();
     }
+
+    if let Some(stderr_reader) = session.stderr_reader.take() {
+        let _ = stderr_reader.join();
+    }
+}
+
+fn reset_runtime_log(
+    log: &RuntimeLog,
+    server_label: &str,
+    session_id: u64,
+    command: &LanguageServerCommand,
+) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let command_line = std::iter::once(command.executable.clone())
+        .chain(command.args.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let header = format!(
+        "{server_label} session {session_id} started at {timestamp}\nworking directory: {}\ncommand: {command_line}\n\n",
+        command.working_directory,
+    );
+
+    if let Ok(mut current) = log.lock() {
+        *current = header;
+    }
+}
+
+fn spawn_stderr_reader(stderr: Box<dyn Read + Send>, log: RuntimeLog) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut buffer = [0_u8; 4096];
+
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => return,
+                Ok(count) => {
+                    append_runtime_log(&log, &String::from_utf8_lossy(&buffer[..count]));
+                }
+            }
+        }
+    })
+}
+
+fn append_runtime_log(log: &RuntimeLog, chunk: &str) {
+    let Ok(mut current) = log.lock() else {
+        return;
+    };
+
+    current.push_str(chunk);
+
+    if current.len() <= RUNTIME_LOG_MAX_BYTES {
+        return;
+    }
+
+    let mut trim_to = current.len() - RUNTIME_LOG_MAX_BYTES;
+
+    while trim_to < current.len() && !current.is_char_boundary(trim_to) {
+        trim_to += 1;
+    }
+
+    current.drain(..trim_to);
 }
 
 fn remove_pending_request(pending_requests: &PendingRequests, id: u64) {
@@ -1527,6 +1617,30 @@ mod tests {
 
         assert_eq!(initialize["method"], "initialize");
         assert_eq!(initialized["method"], "initialized");
+    }
+
+    #[test]
+    fn captures_language_server_stderr_in_runtime_log() {
+        let spawner =
+            FakeSpawner::new(ready_script(), true).with_stderr(b"tsserver warning\n".to_vec());
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new_with_label("TypeScript language server");
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        wait_for_log(&supervisor, "tsserver warning");
+
+        let log = supervisor.log();
+
+        assert!(log.contains("TypeScript language server session 1 started"));
+        assert!(log.contains("tsserver warning"));
     }
 
     #[test]
@@ -2385,6 +2499,20 @@ mod tests {
         }
     }
 
+    fn wait_for_log(supervisor: &LanguageServerSupervisor, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        while Instant::now() < deadline {
+            if supervisor.log().contains(needle) {
+                return;
+            }
+
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        panic!("expected runtime log to contain {needle:?}");
+    }
+
     fn wait_for_captured_request_id(capture: &Arc<Mutex<Vec<u8>>>, method: &str) -> u64 {
         let deadline = Instant::now() + Duration::from_secs(2);
 
@@ -2500,6 +2628,7 @@ mod tests {
     }
 
     struct FakeSpawner {
+        stderr_script: Vec<u8>,
         stdin_capture: Arc<Mutex<Vec<u8>>>,
         stdin: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
         script: Vec<u8>,
@@ -2510,6 +2639,7 @@ mod tests {
     impl FakeSpawner {
         fn new(script: Vec<u8>, keep_open: bool) -> Self {
             Self {
+                stderr_script: Vec::new(),
                 stdin_capture: Arc::new(Mutex::new(Vec::new())),
                 stdin: Arc::new(Mutex::new(None)),
                 script,
@@ -2520,6 +2650,7 @@ mod tests {
 
         fn with_stdin(script: Vec<u8>, keep_open: bool, stdin: Box<dyn Write + Send>) -> Self {
             Self {
+                stderr_script: Vec::new(),
                 stdin_capture: Arc::new(Mutex::new(Vec::new())),
                 stdin: Arc::new(Mutex::new(Some(stdin))),
                 script,
@@ -2527,18 +2658,32 @@ mod tests {
                 keep_open,
             }
         }
+
+        fn with_stderr(mut self, stderr_script: Vec<u8>) -> Self {
+            self.stderr_script = stderr_script;
+            self
+        }
     }
 
     impl ServerProcessSpawner for FakeSpawner {
         fn spawn(&self, _command: &LanguageServerCommand) -> io::Result<SpawnedServer> {
             let (reader, mut writer) = std::io::pipe()?;
             writer.write_all(&self.script)?;
+            let stderr = if self.stderr_script.is_empty() {
+                None
+            } else {
+                let (stderr_reader, mut stderr_writer) = std::io::pipe()?;
+                stderr_writer.write_all(&self.stderr_script)?;
+                drop(stderr_writer);
+                Some(Box::new(stderr_reader) as Box<dyn std::io::Read + Send>)
+            };
 
             if self.keep_open {
                 *self.held_writer.lock().expect("held writer lock") = Some(writer);
             }
 
             Ok(SpawnedServer {
+                stderr,
                 stdin: self
                     .stdin
                     .lock()

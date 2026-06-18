@@ -19,6 +19,7 @@ const DEFAULT_RUNTIME_COMMANDS = {
 
 export const JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS = {
   getStatus: "get_javascript_typescript_language_server_status",
+  openLog: "open_javascript_typescript_language_server_log",
   start: "start_javascript_typescript_language_server",
   statusEvent: "javascript-typescript-language-server://status",
   stop: "stop_javascript_typescript_language_server",
@@ -26,6 +27,7 @@ export const JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS = {
 
 export interface TauriLanguageServerRuntimeCommands {
   getStatus: string;
+  openLog?: string;
   start: string;
   statusEvent: string;
   stop: string;
@@ -34,7 +36,7 @@ export interface TauriLanguageServerRuntimeCommands {
 type InvokeRuntimeCommand = (
   command: string,
   args?: Record<string, unknown>,
-) => Promise<LanguageServerRuntimeStatus>;
+) => Promise<unknown>;
 type ListenToRuntimeStatus = (
   event: string,
   handler: (event: { payload: LanguageServerRuntimeStatus }) => void,
@@ -42,7 +44,7 @@ type ListenToRuntimeStatus = (
 type RuntimeDetector = () => boolean;
 
 const invokeRuntimeCommand: InvokeRuntimeCommand = (command, args) =>
-  invoke<LanguageServerRuntimeStatus>(command, args);
+  invoke(command, args);
 const listenToRuntimeStatus: ListenToRuntimeStatus = (event, handler) =>
   listen<LanguageServerRuntimeStatus>(event, handler);
 
@@ -66,7 +68,10 @@ export class TauriLanguageServerRuntimeGateway
       return Promise.resolve(stoppedStatus());
     }
 
-    return this.invokeCommand(this.commands.getStatus, { rootPath });
+    return this.invokeCommand(
+      this.commands.getStatus,
+      { rootPath },
+    ) as Promise<LanguageServerRuntimeStatus>;
   }
 
   start(
@@ -94,7 +99,10 @@ export class TauriLanguageServerRuntimeGateway
       args.inlayHintsEnabled = options.inlayHintsEnabled;
     }
 
-    return this.invokeCommand(this.commands.start, args);
+    return this.invokeCommand(
+      this.commands.start,
+      args,
+    ) as Promise<LanguageServerRuntimeStatus>;
   }
 
   stop(rootPath: string): Promise<LanguageServerRuntimeStatus> {
@@ -102,7 +110,17 @@ export class TauriLanguageServerRuntimeGateway
       return Promise.resolve(stoppedStatus());
     }
 
-    return this.invokeCommand(this.commands.stop, { rootPath });
+    return this.invokeCommand(this.commands.stop, {
+      rootPath,
+    }) as Promise<LanguageServerRuntimeStatus>;
+  }
+
+  openLog(rootPath: string): Promise<string | null> {
+    if (!this.isRuntimeAvailable() || !this.commands.openLog) {
+      return Promise.resolve(null);
+    }
+
+    return this.invokeCommand(this.commands.openLog, { rootPath }) as Promise<string>;
   }
 
   subscribeStatus(

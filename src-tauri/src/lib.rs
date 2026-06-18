@@ -88,6 +88,7 @@ use serde::Serialize;
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
     ffi::OsString,
+    fs,
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -95,6 +96,7 @@ use tauri::{
     menu::{Menu, MenuItemBuilder, SubmenuBuilder},
     AppHandle, Emitter, Manager, RunEvent, State, WindowEvent,
 };
+use tauri_plugin_opener::OpenerExt;
 use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize};
 use terminal_session::{
     LocalTerminalProfileProvider, PortablePtySpawner, TerminalProfileProvider, TerminalSupervisor,
@@ -692,6 +694,59 @@ fn get_javascript_typescript_language_server_status(
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     Ok(registry.status(&root_path))
+}
+
+#[tauri::command]
+fn open_javascript_typescript_language_server_log(
+    root_path: String,
+    app: AppHandle,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<String, String> {
+    let mut log = registry.log(&root_path);
+
+    if log.trim().is_empty() {
+        log = "No JavaScript/TypeScript language-server log has been captured for this workspace yet.\n".to_string();
+    }
+
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|error| format!("Failed to resolve app log directory: {error}"))?;
+    fs::create_dir_all(&log_dir)
+        .map_err(|error| format!("Failed to create app log directory: {error}"))?;
+    let log_path = log_dir.join(format!(
+        "javascript-typescript-language-server-{}.log",
+        sanitized_log_file_stem(&root_path)
+    ));
+
+    fs::write(&log_path, log)
+        .map_err(|error| format!("Failed to write JavaScript/TypeScript service log: {error}"))?;
+    app.opener()
+        .open_path(log_path.to_string_lossy().to_string(), None::<String>)
+        .map_err(|error| format!("Failed to open JavaScript/TypeScript service log: {error}"))?;
+
+    Ok(log_path.to_string_lossy().to_string())
+}
+
+fn sanitized_log_file_stem(value: &str) -> String {
+    let stem = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+
+    if stem.is_empty() {
+        return "workspace".to_string();
+    }
+
+    stem
 }
 
 #[tauri::command]
@@ -1839,6 +1894,7 @@ pub fn run() {
             get_workspace_trust,
             initialize_workspace_index,
             list_terminal_profiles,
+            open_javascript_typescript_language_server_log,
             parse_php_file_outline,
             parse_php_syntax,
             plan_javascript_typescript_language_server,

@@ -41,6 +41,7 @@ interface SettingsDialogProps {
   workspaceSettings: WorkspaceSettings;
   workspaceTrust: WorkspaceTrustState | null;
   onClose(): void;
+  onOpenJavaScriptTypeScriptServiceLog(): Promise<void>;
   onRestartJavaScriptTypeScriptService(): Promise<void>;
   onSave(input: SettingsSaveInput): Promise<void>;
 }
@@ -59,6 +60,7 @@ export function SettingsDialog({
   appSettings,
   isOpen,
   onClose,
+  onOpenJavaScriptTypeScriptServiceLog,
   onRestartJavaScriptTypeScriptService,
   onSave,
   phpTools,
@@ -272,6 +274,9 @@ export function SettingsDialog({
                   onRestartJavaScriptTypeScriptService={
                     onRestartJavaScriptTypeScriptService
                   }
+                  onOpenJavaScriptTypeScriptServiceLog={
+                    onOpenJavaScriptTypeScriptServiceLog
+                  }
                   workspaceRoot={workspaceRoot}
                   workspaceSettings={draftWorkspaceSettings}
                 />
@@ -376,6 +381,7 @@ interface GeneralSettingsProps {
     visible: boolean,
   ): void;
   onChangeTrusted(trusted: boolean): void;
+  onOpenJavaScriptTypeScriptServiceLog(): Promise<void>;
   onRestartJavaScriptTypeScriptService(): Promise<void>;
 }
 
@@ -394,6 +400,7 @@ function GeneralSettings({
   onChangeRuntimePolicy,
   onChangeStatusBarVisibility,
   onChangeTrusted,
+  onOpenJavaScriptTypeScriptServiceLog,
   onRestartJavaScriptTypeScriptService,
   workspaceRoot,
   workspaceSettings,
@@ -501,6 +508,13 @@ function GeneralSettings({
           type="button"
         >
           Restart JavaScript/TypeScript service
+        </button>
+        <button
+          disabled={!hasWorkspace}
+          onClick={() => void onOpenJavaScriptTypeScriptServiceLog()}
+          type="button"
+        >
+          Open JavaScript/TypeScript service log
         </button>
       </div>
 

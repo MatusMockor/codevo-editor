@@ -5649,6 +5649,32 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const openJavaScriptTypeScriptServiceLog = useCallback(async () => {
+    if (!workspaceRoot) {
+      setMessage("Open a workspace before opening the JavaScript/TypeScript service log.");
+      return;
+    }
+
+    try {
+      const logPath =
+        await javaScriptTypeScriptLanguageServerRuntimeGateway.openLog(
+          workspaceRoot,
+        );
+
+      setMessage(
+        logPath
+          ? `Opened JavaScript/TypeScript service log: ${logPath}`
+          : "JavaScript/TypeScript service log is unavailable in this runtime.",
+      );
+    } catch (error) {
+      reportError("JavaScript/TypeScript", error);
+    }
+  }, [
+    javaScriptTypeScriptLanguageServerRuntimeGateway,
+    reportError,
+    workspaceRoot,
+  ]);
+
   const installManagedPhpactor = useCallback(async () => {
     if (!workspaceRoot || !workspaceDescriptor?.php) {
       return;
@@ -7305,6 +7331,7 @@ export function useWorkbenchController(
     setFileStructureScopeMode,
     setSmartMode,
     pinDocument,
+    openJavaScriptTypeScriptServiceLog,
     restartJavaScriptTypeScriptService,
     startIndexScan,
     startHardReindex,

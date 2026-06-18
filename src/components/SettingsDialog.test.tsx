@@ -31,6 +31,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
           onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
@@ -75,6 +76,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
           onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
@@ -114,6 +116,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
           onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
@@ -153,6 +156,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
           onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
@@ -192,6 +196,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
           onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
@@ -265,6 +270,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
           onRestartJavaScriptTypeScriptService={onRestart}
           onSave={vi.fn(async () => undefined)}
           phpTools={null}
@@ -287,6 +293,38 @@ describe("SettingsDialog", () => {
     expect(onRestart).toHaveBeenCalledTimes(1);
   });
 
+  it("opens JavaScript and TypeScript service log from settings", async () => {
+    const onOpenLog = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={onOpenLog}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      openJavaScriptTypeScriptServiceLogButton().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onOpenLog).toHaveBeenCalledTimes(1);
+  });
+
   it("disables JavaScript and TypeScript restart when the service is off", async () => {
     await act(async () => {
       root.render(
@@ -294,6 +332,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
           onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={vi.fn(async () => undefined)}
           phpTools={null}
@@ -386,6 +425,20 @@ describe("SettingsDialog", () => {
     if (!button) {
       throw new Error(
         "Restart JavaScript/TypeScript service button was not rendered.",
+      );
+    }
+
+    return button;
+  }
+
+  function openJavaScriptTypeScriptServiceLogButton(): HTMLButtonElement {
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("Open JavaScript/TypeScript service log"),
+    );
+
+    if (!button) {
+      throw new Error(
+        "Open JavaScript/TypeScript service log button was not rendered.",
       );
     }
 
