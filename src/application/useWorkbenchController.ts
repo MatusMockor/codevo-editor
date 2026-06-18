@@ -901,6 +901,19 @@ export function useWorkbenchController(
     [],
   );
 
+  const cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime = useCallback(
+    (rootPath: string | null, status: LanguageServerRuntimeStatus) => {
+      if (!rootPath || !languageServerCrashMessage(status)) {
+        return;
+      }
+
+      void javaScriptTypeScriptLanguageServerRuntimeGateway
+        .stop(rootPath)
+        .catch((error) => reportError("JavaScript/TypeScript", error));
+    },
+    [javaScriptTypeScriptLanguageServerRuntimeGateway, reportError],
+  );
+
   const handleLanguageServerRuntimeStatus = useCallback(
     (status: LanguageServerRuntimeStatus) => {
       if (
@@ -938,6 +951,12 @@ export function useWorkbenchController(
             status,
           )
         : status;
+      const crash = languageServerCrashMessage(status);
+
+      cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime(
+        statusRootPath ?? null,
+        status,
+      );
 
       if (
         statusRootPath &&
@@ -951,7 +970,6 @@ export function useWorkbenchController(
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
         statusRootPath ?? null,
       );
-      const crash = languageServerCrashMessage(status);
 
       if (status.kind !== "running") {
         clearJavaScriptTypeScriptLanguageServerDiagnostics();
@@ -966,6 +984,7 @@ export function useWorkbenchController(
     [
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime,
       reportError,
     ],
   );
@@ -8235,6 +8254,10 @@ export function useWorkbenchController(
               status,
             );
 
+          cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime(
+            workspaceRoot,
+            status,
+          );
           setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
           setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
         })
@@ -8275,6 +8298,7 @@ export function useWorkbenchController(
     };
   }, [
     cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
+    cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime,
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     reportError,

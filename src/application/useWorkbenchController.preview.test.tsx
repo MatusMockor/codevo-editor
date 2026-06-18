@@ -1429,6 +1429,98 @@ describe("useWorkbenchController preview tabs", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("stops a crashed JavaScript and TypeScript language service to release project resources", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => ({ kind: "stopped" as const })),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.({
+        kind: "crashed",
+        message: "tsserver crashed",
+        rootPath: "/workspace",
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("cleans up a crashed background JavaScript and TypeScript service without changing the active project status", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => ({ kind: "stopped" as const })),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.({
+        kind: "crashed",
+        message: "workspace b tsserver crashed",
+        rootPath: "/workspace-b",
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-b");
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({ kind: "stopped", rootPath: "/workspace-a" }),
+    );
+  });
+
   it("stops JavaScript and TypeScript language service when settings disable it", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
