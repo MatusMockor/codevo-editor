@@ -36,7 +36,7 @@ import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
 import { registerJavaScriptTypeScriptLanguageServerMonacoProviders } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
-import { registerMonacoAppThemes } from "./monacoThemes";
+import { setupShikiTokenization } from "../infrastructure/shikiHighlighter";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
 
@@ -766,17 +766,20 @@ export function EditorSurface({
       role="tabpanel"
     >
       <Editor
-        beforeMount={beforeMonacoMount}
+        beforeMount={(monaco) => beforeMonacoMount(monaco, monacoTheme)}
         height="100%"
         language={activeDocument.language}
         onChange={(value) => onChange(value || "")}
         onMount={handleMount}
         options={{
+          autoIndent: "full",
           automaticLayout: true,
+          detectIndentation: false,
           fontFamily:
             "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
           fontSize: 13,
           glyphMargin: true,
+          insertSpaces: true,
           lineHeight: 20,
           minimap: { enabled: false },
           padding: { top: 14, bottom: 14 },
@@ -1258,9 +1261,11 @@ function isIdentifierCharacter(character: string | undefined): boolean {
   return Boolean(character && /[A-Za-z0-9_$]/.test(character));
 }
 
-function beforeMonacoMount(monaco: typeof Monaco): void {
-  registerMonacoAppThemes(monaco);
+function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
   configureTypescriptJavascriptDefaults(monaco);
+  setupShikiTokenization(monaco, theme).catch((error) => {
+    console.error("Shiki tokenization setup failed", error);
+  });
 }
 
 function isTypescriptJavascriptDocument(

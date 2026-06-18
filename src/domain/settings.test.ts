@@ -265,14 +265,19 @@ describe("settings ignore pattern text", () => {
 
 describe("monacoThemeForAppTheme", () => {
   it("maps light theme to Monaco light and keeps dark themes dark", () => {
-    expect(monacoThemeForAppTheme("light")).toBe("mockor-calm-light");
-    expect(monacoThemeForAppTheme("dark")).toBe("mockor-calm-dark");
-    expect(monacoThemeForAppTheme("system")).toBe("mockor-calm-dark");
-    expect(monacoThemeForAppTheme("system", true)).toBe("mockor-calm-light");
-    expect(monacoThemeForAppTheme("ayuMirage")).toBe("mockor-ayu-mirage");
+    expect(monacoThemeForAppTheme("light")).toBe("calm-light");
+    expect(monacoThemeForAppTheme("dark")).toBe("calm-dark");
+    expect(monacoThemeForAppTheme("system")).toBe("calm-dark");
+    expect(monacoThemeForAppTheme("system", true)).toBe("calm-light");
+    expect(monacoThemeForAppTheme("ayuMirage")).toBe("ayu-mirage");
     expect(monacoThemeForAppTheme("materialDeepOcean")).toBe(
-      "mockor-material-deep-ocean",
+      "material-deep-ocean",
     );
+    expect(monacoThemeForAppTheme("oneDarkPro")).toBe("one-dark-pro");
+    expect(monacoThemeForAppTheme("dracula")).toBe("dracula");
+    expect(monacoThemeForAppTheme("catppuccinMocha")).toBe("catppuccin-mocha");
+    expect(monacoThemeForAppTheme("catppuccinLatte")).toBe("catppuccin-latte");
+    expect(monacoThemeForAppTheme("oneLight")).toBe("one-light");
   });
 });
 

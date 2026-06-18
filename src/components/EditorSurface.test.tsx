@@ -130,7 +130,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
@@ -240,7 +240,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
@@ -305,7 +305,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
@@ -404,7 +404,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
@@ -500,7 +500,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
@@ -572,7 +572,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
@@ -644,7 +644,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
@@ -711,7 +711,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
@@ -832,7 +832,7 @@ interface ParserFactory
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
-          monacoTheme="vs-dark"
+          monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}

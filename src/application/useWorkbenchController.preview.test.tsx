@@ -602,6 +602,58 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("closes synced JavaScript and TypeScript documents before stopping an active project runtime", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 45,
+    };
+    const path = "/workspace-a/src/App.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => `// ${requestedPath}\n`),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace-a",
+      expect.objectContaining({ path }),
+    );
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace-a",
+      path,
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(
+      vi.mocked(dependencies.documentSyncGateway.didClose).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(
+        dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+      ).mock.invocationCallOrder[0],
+    );
+  });
+
   it("clears JavaScript and TypeScript diagnostics when switching project tabs", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)
