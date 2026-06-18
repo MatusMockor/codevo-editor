@@ -79,7 +79,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - `workspace/symbol` is wired through the shared LSP gateway and JS/TS `Cmd+O` search, giving Basic mode VS Code-like project symbol lookup from TypeScript server state.
 - JavaScript/TypeScript service can now be set per workspace to Auto or Off. Off stops the running managed TS service, clears synced JS/TS state, and prevents Basic-mode auto-start.
 - TypeScript version preference can now be set per workspace to Bundled or Workspace. Workspace mode prefers the project `node_modules/typescript/lib/tsserver.js` and restarts the managed JS/TS service when the preference changes.
-- JavaScript/TypeScript validation and inlay hints are now per-workspace settings. Validation Off clears and ignores JS/TS diagnostics; inlay hints flow into TypeScript server preferences and restart the managed JS/TS service when changed.
+- JavaScript/TypeScript validation and inlay hints are now per-workspace settings. Validation Off clears and ignores JS/TS diagnostics, and validation/inlay settings flow into TypeScript server configuration.
 - JavaScript/TypeScript Auto Imports is now a per-workspace setting. Off disables TypeScript module-export/import-statement completions and package.json auto-import suggestions in the managed JS/TS server preferences.
 - Settings now include a per-workspace Restart JavaScript/TypeScript service action, so users can refresh the managed TS runtime after dependency or TypeScript-version changes without restarting the whole editor.
 - Settings now include an Open JavaScript/TypeScript service log action. The managed runtime captures bounded server stderr per workspace and writes/opens a readable log file for debugging TS service startup, crashes, and degraded IntelliSense.
@@ -118,7 +118,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - `singleActive` background runtime policy now has regression coverage proving JavaScript/TypeScript services are stopped for every inactive project tab, not just the previous tab.
 - Saving the `singleActive` background runtime policy now has regression coverage proving inactive JavaScript/TypeScript services, PHP language servers, and terminal sessions are stopped immediately without stopping the active project.
 - Managed JS/TS LSP sessions now answer `workspace/workspaceFolders` with the session root folder instead of `null`, giving TypeScript-language-server a VS Code-like workspace context per project tab.
-- Managed JS/TS LSP sessions now receive `workspace/didChangeConfiguration` when per-workspace JS/TS settings change, and the backend updates that session's configuration cache before answering later `workspace/configuration` requests. This keeps auto-import, inlay hint, and CodeLens settings scoped to the active project runtime instead of relying only on process restart.
+- Managed JS/TS LSP sessions now receive `workspace/didChangeConfiguration` when per-workspace JS/TS settings change, and the backend updates that session's configuration cache before answering later `workspace/configuration` requests. This keeps validation, auto-import, inlay hint, and CodeLens settings scoped to the active project runtime instead of relying only on process restart.
 
 ## Full VS Code-Like Target
 

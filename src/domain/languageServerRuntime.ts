@@ -45,6 +45,7 @@ export interface LanguageServerRuntimeStartOptions {
   codeLensEnabled?: boolean;
   inlayHintsEnabled?: boolean;
   typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
+  validationEnabled?: boolean;
 }
 
 export interface LanguageServerRuntimeGateway {

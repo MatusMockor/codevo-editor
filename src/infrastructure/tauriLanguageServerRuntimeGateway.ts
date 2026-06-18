@@ -103,6 +103,10 @@ export class TauriLanguageServerRuntimeGateway
       args.inlayHintsEnabled = options.inlayHintsEnabled;
     }
 
+    if (options.validationEnabled !== undefined) {
+      args.validationEnabled = options.validationEnabled;
+    }
+
     return this.invokeCommand(
       this.commands.start,
       args,

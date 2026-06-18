@@ -30,6 +30,7 @@ export interface JavaScriptTypeScriptLanguageServerPlanOptions {
   codeLensEnabled?: boolean;
   inlayHintsEnabled?: boolean;
   typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
+  validationEnabled?: boolean;
 }
 
 export interface LanguageServerGateway {

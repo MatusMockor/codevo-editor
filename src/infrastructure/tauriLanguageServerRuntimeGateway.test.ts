@@ -145,6 +145,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         codeLensEnabled: true,
         inlayHintsEnabled: false,
         typeScriptVersionPreference: "workspace",
+        validationEnabled: false,
       }),
     ).resolves.toEqual(running);
 
@@ -156,6 +157,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         inlayHintsEnabled: false,
         rootPath: "/workspace",
         typeScriptVersionPreference: "workspace",
+        validationEnabled: false,
       },
     );
   });

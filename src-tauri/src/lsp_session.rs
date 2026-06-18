@@ -1481,6 +1481,10 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
         .get("mockorCodeLensEnabled")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let validation_enabled = preferences
+        .get("mockorValidationEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
 
     json!({
         "formattingOptions": {
@@ -1497,6 +1501,9 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
             "target": 11,
         },
         "preferences": preferences,
+        "validate": {
+            "enable": validation_enabled,
+        },
         "implementationsCodeLens": { "enabled": code_lens_enabled },
         "referencesCodeLens": {
             "enabled": code_lens_enabled,
@@ -2349,7 +2356,8 @@ mod tests {
                         "includeCompletionsForModuleExports": false,
                         "includeInlayFunctionLikeReturnTypeHints": false,
                         "includeInlayParameterNameHints": "none",
-                        "mockorCodeLensEnabled": true
+                        "mockorCodeLensEnabled": true,
+                        "mockorValidationEnabled": false
                     }
                 }
             }),
@@ -2379,6 +2387,7 @@ mod tests {
                         { "section": "typescript.inlayHints" },
                         { "section": "typescript.referencesCodeLens" },
                         { "section": "typescript.implementationsCodeLens" },
+                        { "section": "typescript.validate" },
                         { "section": "formattingOptions" },
                         { "section": "typescript.implicitProjectConfiguration" },
                         { "section": "editor" }
@@ -2399,12 +2408,13 @@ mod tests {
         assert_eq!(response["result"][3]["enabled"], true);
         assert_eq!(response["result"][3]["showOnAllFunctions"], false);
         assert_eq!(response["result"][4]["enabled"], true);
-        assert_eq!(response["result"][5]["tabSize"], 2);
-        assert_eq!(response["result"][5]["insertSpaces"], true);
-        assert_eq!(response["result"][6]["strict"], true);
-        assert_eq!(response["result"][6]["module"], 99);
-        assert_eq!(response["result"][6]["target"], 11);
-        assert_eq!(response["result"][7], json!({}));
+        assert_eq!(response["result"][5]["enable"], false);
+        assert_eq!(response["result"][6]["tabSize"], 2);
+        assert_eq!(response["result"][6]["insertSpaces"], true);
+        assert_eq!(response["result"][7]["strict"], true);
+        assert_eq!(response["result"][7]["module"], 99);
+        assert_eq!(response["result"][7]["target"], 11);
+        assert_eq!(response["result"][8], json!({}));
     }
 
     #[test]
@@ -2440,6 +2450,9 @@ mod tests {
                     "enabled": true,
                     "showOnAllFunctions": false,
                 },
+                "validate": {
+                    "enable": false,
+                },
             }))
             .expect("update configuration");
 
@@ -2453,7 +2466,8 @@ mod tests {
                     "items": [
                         { "section": "typescript.suggest" },
                         { "section": "javascript.preferences" },
-                        { "section": "typescript.referencesCodeLens" }
+                        { "section": "typescript.referencesCodeLens" },
+                        { "section": "javascript.validate" }
                     ]
                 }
             }),
@@ -2469,6 +2483,7 @@ mod tests {
         );
         assert_eq!(response["result"][1]["mockorCodeLensEnabled"], true);
         assert_eq!(response["result"][2]["enabled"], true);
+        assert_eq!(response["result"][3]["enable"], false);
     }
 
     #[test]

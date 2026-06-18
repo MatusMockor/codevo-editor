@@ -529,6 +529,7 @@ fn build_javascript_typescript_language_server_plan(
     auto_imports_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
     inlay_hints_enabled: Option<bool>,
+    validation_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     let root = PathBuf::from(root_path);
     let preference =
@@ -537,6 +538,7 @@ fn build_javascript_typescript_language_server_plan(
         auto_imports: auto_imports_enabled.unwrap_or(true),
         code_lens: code_lens_enabled.unwrap_or(false),
         inlay_hints: inlay_hints_enabled.unwrap_or(true),
+        validation: validation_enabled.unwrap_or(true),
     };
     let tools = LocalJavaScriptTypeScriptToolDetector
         .detect(Some(&root), preference)
@@ -569,6 +571,7 @@ fn plan_javascript_typescript_language_server(
     auto_imports_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
     inlay_hints_enabled: Option<bool>,
+    validation_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     build_javascript_typescript_language_server_plan(
         &root_path,
@@ -576,6 +579,7 @@ fn plan_javascript_typescript_language_server(
         auto_imports_enabled,
         code_lens_enabled,
         inlay_hints_enabled,
+        validation_enabled,
     )
 }
 
@@ -858,6 +862,7 @@ fn start_javascript_typescript_language_server(
     auto_imports_enabled: Option<bool>,
     code_lens_enabled: Option<bool>,
     inlay_hints_enabled: Option<bool>,
+    validation_enabled: Option<bool>,
     app: AppHandle,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
@@ -868,6 +873,7 @@ fn start_javascript_typescript_language_server(
         auto_imports_enabled,
         code_lens_enabled,
         inlay_hints_enabled,
+        validation_enabled,
     )?;
 
     if !matches!(plan.status, LanguageServerPlanStatus::Ready) {

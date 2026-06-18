@@ -34,6 +34,10 @@ export class TauriLanguageServerGateway implements LanguageServerGateway {
       args.inlayHintsEnabled = options.inlayHintsEnabled;
     }
 
+    if (options.validationEnabled !== undefined) {
+      args.validationEnabled = options.validationEnabled;
+    }
+
     return invoke<LanguageServerPlan>(
       "plan_javascript_typescript_language_server",
       args,

@@ -890,6 +890,8 @@ export function useWorkbenchController(
               inlayHintsEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptInlayHints,
               typeScriptVersionPreference,
+              validationEnabled:
+                workspaceSettingsRef.current.javaScriptTypeScriptValidation,
             },
           );
         setJavaScriptTypeScriptLanguageServerPlan(plan);
@@ -7314,7 +7316,9 @@ export function useWorkbenchController(
           previousWorkspaceSettings.javaScriptTypeScriptCodeLens !==
             resolvedWorkspaceSettings.javaScriptTypeScriptCodeLens ||
           previousWorkspaceSettings.javaScriptTypeScriptInlayHints !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptInlayHints;
+            resolvedWorkspaceSettings.javaScriptTypeScriptInlayHints ||
+          previousWorkspaceSettings.javaScriptTypeScriptValidation !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptValidation;
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
           await stopLanguageServerRuntime();
@@ -7466,6 +7470,7 @@ export function useWorkbenchController(
           inlayHintsEnabled: currentSettings.javaScriptTypeScriptInlayHints,
           typeScriptVersionPreference:
             currentSettings.javaScriptTypeScriptVersion,
+          validationEnabled: currentSettings.javaScriptTypeScriptValidation,
         });
       handleJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
       setMessage("JavaScript/TypeScript service restarted.");
@@ -8157,6 +8162,7 @@ export function useWorkbenchController(
         inlayHintsEnabled: workspaceSettings.javaScriptTypeScriptInlayHints,
         typeScriptVersionPreference:
           workspaceSettings.javaScriptTypeScriptVersion,
+        validationEnabled: workspaceSettings.javaScriptTypeScriptValidation,
       })
       .then(handleJavaScriptTypeScriptLanguageServerRuntimeStatus)
       .catch((error) => reportError("JavaScript/TypeScript", error));
@@ -10092,6 +10098,7 @@ function javaScriptTypeScriptLanguageServerConfiguration(
   const autoImportsEnabled = settings.javaScriptTypeScriptAutoImports;
   const codeLensEnabled = settings.javaScriptTypeScriptCodeLens;
   const inlayHintsEnabled = settings.javaScriptTypeScriptInlayHints;
+  const validationEnabled = settings.javaScriptTypeScriptValidation;
   const parameterNameHints = inlayHintsEnabled ? "literals" : "none";
   const preferences = {
     includeAutomaticOptionalChainCompletions: true,
@@ -10138,6 +10145,9 @@ function javaScriptTypeScriptLanguageServerConfiguration(
       },
     },
     preferences,
+    validate: {
+      enable: validationEnabled,
+    },
     referencesCodeLens: {
       enabled: codeLensEnabled,
       showOnAllFunctions: false,

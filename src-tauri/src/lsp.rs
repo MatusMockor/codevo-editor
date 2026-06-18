@@ -175,6 +175,7 @@ pub struct TypeScriptLanguageServerSettings {
     pub auto_imports: bool,
     pub code_lens: bool,
     pub inlay_hints: bool,
+    pub validation: bool,
 }
 
 impl Default for TypeScriptLanguageServerSettings {
@@ -183,6 +184,7 @@ impl Default for TypeScriptLanguageServerSettings {
             auto_imports: true,
             code_lens: false,
             inlay_hints: true,
+            validation: true,
         }
     }
 }
@@ -214,6 +216,7 @@ where
         configure_typescript_auto_imports(&mut initialize_request, settings.auto_imports);
         configure_typescript_code_lens(&mut initialize_request, settings.code_lens);
         configure_typescript_inlay_hints(&mut initialize_request, settings.inlay_hints);
+        configure_typescript_validation(&mut initialize_request, settings.validation);
 
         LanguageServerPlan {
             provider: LanguageServerProvider::TypeScriptLanguageServer,
@@ -326,6 +329,14 @@ fn configure_typescript_code_lens(request: &mut JsonRpcRequest, enabled: bool) {
     };
 
     preferences.insert("mockorCodeLensEnabled".to_string(), Value::Bool(enabled));
+}
+
+fn configure_typescript_validation(request: &mut JsonRpcRequest, enabled: bool) {
+    let Some(preferences) = typescript_preferences_mut(request) else {
+        return;
+    };
+
+    preferences.insert("mockorValidationEnabled".to_string(), Value::Bool(enabled));
 }
 
 fn typescript_preferences_mut(
@@ -853,6 +864,7 @@ mod tests {
                 auto_imports: false,
                 code_lens: true,
                 inlay_hints: false,
+                validation: false,
             },
         );
 
@@ -878,6 +890,10 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]["mockorCodeLensEnabled"],
             true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["mockorValidationEnabled"],
+            false
         );
         fs::remove_dir_all(root).expect("cleanup");
     }

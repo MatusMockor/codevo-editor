@@ -1860,6 +1860,7 @@ describe("useWorkbenchController preview tabs", () => {
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
     });
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
@@ -1868,6 +1869,7 @@ describe("useWorkbenchController preview tabs", () => {
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
     });
     expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
   });
@@ -1918,6 +1920,7 @@ describe("useWorkbenchController preview tabs", () => {
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
+      validationEnabled: true,
     });
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
@@ -1926,6 +1929,7 @@ describe("useWorkbenchController preview tabs", () => {
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
+      validationEnabled: true,
     });
   });
 
@@ -2139,6 +2143,7 @@ describe("useWorkbenchController preview tabs", () => {
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
     });
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
@@ -2186,6 +2191,7 @@ describe("useWorkbenchController preview tabs", () => {
       codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
     });
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
@@ -2383,6 +2389,7 @@ describe("useWorkbenchController preview tabs", () => {
         javaScriptTypeScriptAutoImports: true,
         javaScriptTypeScriptCodeLens: false,
         javaScriptTypeScriptInlayHints: true,
+        javaScriptTypeScriptValidation: true,
       },
     });
     await flushAsyncTurns(24);
@@ -2398,6 +2405,7 @@ describe("useWorkbenchController preview tabs", () => {
           javaScriptTypeScriptAutoImports: false,
           javaScriptTypeScriptCodeLens: true,
           javaScriptTypeScriptInlayHints: false,
+          javaScriptTypeScriptValidation: false,
         },
         true,
       );
@@ -2419,6 +2427,9 @@ describe("useWorkbenchController preview tabs", () => {
           includeCompletionsForImportStatements: false,
           includeCompletionsForModuleExports: false,
         }),
+        validate: {
+          enable: false,
+        },
       }),
     );
     expect(
@@ -2506,6 +2517,7 @@ describe("useWorkbenchController preview tabs", () => {
       codeLensEnabled: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
+      validationEnabled: true,
     });
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
@@ -2514,6 +2526,7 @@ describe("useWorkbenchController preview tabs", () => {
       codeLensEnabled: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
+      validationEnabled: true,
     });
     expect(getWorkbench().message).toBe("JavaScript/TypeScript service restarted.");
   });
