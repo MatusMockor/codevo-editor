@@ -6866,6 +6866,63 @@ export function useWorkbenchController(
     [activeDocument, openDirectPhpMethodTarget, openPhpLaravelDynamicWhereTarget],
   );
 
+  const goToPhpLaravelRelationStringDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "laravelRelationString" }>,
+    ): Promise<boolean> => {
+      if (!activeDocument) {
+        return false;
+      }
+
+      const position =
+        activeEditorPositionRef.current ?? { column: 1, lineNumber: 1 };
+      const staticClassName = context.className
+        ? resolvePhpClassName(activeDocument.content, context.className)
+        : null;
+      const receiverModelType = context.receiverExpression
+        ? await resolvePhpEloquentBuilderModelType(
+            activeDocument.content,
+            position,
+            context.receiverExpression,
+          )
+        : null;
+      const receiverType =
+        !receiverModelType && context.receiverExpression
+          ? await resolvePhpExpressionType(
+              activeDocument.content,
+              position,
+              context.receiverExpression,
+            )
+          : null;
+      const relationOwnerType = staticClassName ?? receiverModelType ?? receiverType;
+
+      if (!relationOwnerType) {
+        setMessage(`No typed target found for relation ${context.relationName}.`);
+        return false;
+      }
+
+      const openedRelation = await openDirectPhpMethodTarget(
+        relationOwnerType,
+        context.relationName,
+      );
+
+      if (openedRelation) {
+        return true;
+      }
+
+      setMessage(
+        `No relation method found for ${relationOwnerType}::${context.relationName}().`,
+      );
+      return false;
+    },
+    [
+      activeDocument,
+      openDirectPhpMethodTarget,
+      resolvePhpEloquentBuilderModelType,
+      resolvePhpExpressionType,
+    ],
+  );
+
   const goToPhpClassIdentifierDefinition = useCallback(
     async (name: string): Promise<boolean> => {
       if (!activeDocument) {
@@ -6908,6 +6965,10 @@ export function useWorkbenchController(
       return goToPhpStaticMethodCallDefinition(context);
     }
 
+    if (context.kind === "laravelRelationString") {
+      return goToPhpLaravelRelationStringDefinition(context);
+    }
+
     if (context.kind === "laravelRouteActionMethod") {
       const className = resolvePhpClassName(
         activeDocument.content,
@@ -6933,6 +6994,7 @@ export function useWorkbenchController(
     return false;
   }, [
     activeDocument,
+    goToPhpLaravelRelationStringDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
     openDirectPhpMethodTarget,
@@ -7138,6 +7200,10 @@ export function useWorkbenchController(
           return goToPhpStaticMethodCallDefinition(context);
         }
 
+        if (context.kind === "laravelRelationString") {
+          return goToPhpLaravelRelationStringDefinition(context);
+        }
+
         if (context.kind === "laravelRouteActionMethod") {
           const className = resolvePhpClassName(
             activeDocument.content,
@@ -7224,6 +7290,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpClassIdentifierDefinition,
+    goToPhpLaravelRelationStringDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
     intelligenceMode,

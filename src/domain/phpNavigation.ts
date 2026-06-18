@@ -22,6 +22,13 @@ export type PhpIdentifierContext =
       methodName: string;
     }
   | {
+      className: string | null;
+      kind: "laravelRelationString";
+      methodName: string;
+      receiverExpression: string | null;
+      relationName: string;
+    }
+  | {
       kind: "methodCall";
       methodName: string;
       receiverExpression: string;
@@ -53,6 +60,12 @@ export function phpIdentifierContextAt(
 
   if (!identifier) {
     return null;
+  }
+
+  const relationString = laravelRelationStringContextAt(source, identifier);
+
+  if (relationString) {
+    return relationString;
   }
 
   const routeAction = laravelRouteActionContextAt(source, identifier);
@@ -300,6 +313,113 @@ function staticMethodCallContextAt(
   return null;
 }
 
+const laravelRelationStringMethods = new Set([
+  "doesnthave",
+  "has",
+  "load",
+  "loadaggregate",
+  "loadavg",
+  "loadcount",
+  "loadmax",
+  "loadmin",
+  "loadmissing",
+  "loadmorph",
+  "loadsum",
+  "orhas",
+  "orwherehas",
+  "orwherehasmorph",
+  "orwheredoesnthave",
+  "with",
+  "withavg",
+  "withcount",
+  "withexists",
+  "withmax",
+  "withmin",
+  "withsum",
+  "withwherehas",
+  "wherehas",
+  "wherehasmorph",
+  "wheremorphedto",
+  "wheredoesnthave",
+  "whererelation",
+]);
+
+function laravelRelationStringContextAt(
+  source: string,
+  identifier: IdentifierAtOffset,
+): PhpIdentifierContext | null {
+  const literal = stringLiteralAtOffset(source, identifier.start);
+
+  if (!literal || literal.value !== identifier.name) {
+    return null;
+  }
+
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(literal.value)) {
+    return null;
+  }
+
+  const openParen = source.lastIndexOf("(", literal.quoteStart);
+
+  if (openParen < 0) {
+    return null;
+  }
+
+  const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+  if (!closeParen || literal.quoteEnd > closeParen) {
+    return null;
+  }
+
+  if (topLevelArgumentIndexAtOffset(source, openParen, literal.quoteStart) !== 0) {
+    return null;
+  }
+
+  const beforeCall = source.slice(Math.max(0, openParen - 800), openParen);
+  const memberPattern = new RegExp(
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*$`,
+  );
+  const memberMatch = memberPattern.exec(beforeCall);
+
+  if (memberMatch?.[1] && memberMatch[2]) {
+    const methodName = memberMatch[2];
+
+    if (!laravelRelationStringMethods.has(methodName.toLowerCase())) {
+      return null;
+    }
+
+    return {
+      className: null,
+      kind: "laravelRelationString",
+      methodName,
+      receiverExpression: phpNormalizeReceiverExpression(memberMatch[1]),
+      relationName: literal.value,
+    };
+  }
+
+  const staticMatch =
+    /((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+      beforeCall,
+    );
+
+  if (!staticMatch?.[1] || !staticMatch[2]) {
+    return null;
+  }
+
+  const methodName = staticMatch[2];
+
+  if (!laravelRelationStringMethods.has(methodName.toLowerCase())) {
+    return null;
+  }
+
+  return {
+    className: staticMatch[1].replace(/^\\+/, ""),
+    kind: "laravelRelationString",
+    methodName,
+    receiverExpression: null,
+    relationName: literal.value,
+  };
+}
+
 function laravelRouteActionContextAt(
   source: string,
   identifier: IdentifierAtOffset,
@@ -438,6 +558,58 @@ function matchingBracketOffset(
   }
 
   return null;
+}
+
+function topLevelArgumentIndexAtOffset(
+  source: string,
+  openParenOffset: number,
+  targetOffset: number,
+): number {
+  let argumentIndex = 0;
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (
+    let index = openParenOffset + 1;
+    index < source.length && index < targetOffset;
+    index += 1
+  ) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      argumentIndex += 1;
+    }
+  }
+
+  return argumentIndex;
 }
 
 function identifierAtOffset(

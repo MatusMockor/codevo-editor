@@ -135,6 +135,55 @@ class AlbumController
     });
   });
 
+  it("detects Laravel relation strings under the cursor", () => {
+    const source = `<?php
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->load('children');
+        Comment::with('parent')->first();
+        Comment::query()->whereHas('attachments', fn ($query) => $query);
+        Comment::query()->whereRelation('children', 'is_visible', true);
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'children'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "load",
+      receiverExpression: "$comment",
+      relationName: "children",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'parent'")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "with",
+      receiverExpression: null,
+      relationName: "parent",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'attachments'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "whereHas",
+      receiverExpression: "Comment::query()",
+      relationName: "attachments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'is_visible'")),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "is_visible",
+    });
+  });
+
   it("detects Laravel container expression method calls under the cursor", () => {
     const source = `<?php
 class CommentController
