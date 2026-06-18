@@ -7,6 +7,7 @@ pub mod index_reindex;
 pub mod index_scan;
 pub mod index_update;
 pub mod job_scheduler;
+pub mod js_ts_file_watcher;
 pub mod js_ts_symbols;
 mod lsp;
 mod lsp_diagnostics;
@@ -43,6 +44,7 @@ use index_scan::{
     InitialMetadataScanStart, MetadataScanCompletionEvent, MetadataScanEventSink,
     WorkspaceReindexMode, METADATA_SCAN_COMPLETED_EVENT,
 };
+use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use lsp::{
     file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
@@ -147,6 +149,10 @@ fn quit_application(app: AppHandle) {
 }
 
 fn shutdown_runtime_processes(app: &AppHandle) {
+    if let Some(watch_registry) = app.try_state::<JavaScriptTypeScriptWorkspaceWatchRegistry>() {
+        watch_registry.stop_all();
+    }
+
     if let Some(registry) = app.try_state::<PhpLanguageServerRegistry>() {
         let _ = registry.stop_all();
     }
@@ -809,6 +815,7 @@ fn start_javascript_typescript_language_server(
     inlay_hints_enabled: Option<bool>,
     app: AppHandle,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+    watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
     let plan = build_javascript_typescript_language_server_plan(
         &root_path,
@@ -828,6 +835,7 @@ fn start_javascript_typescript_language_server(
     let initialize_request: JsonRpcRequest = plan
         .initialize_request
         .ok_or_else(|| "Language server plan is missing an initialize request.".to_string())?;
+    let watch_app = app.clone();
     let event_sink = Arc::new(AppHandleEventSink::javascript_typescript_for_workspace(
         app,
         root_path.clone(),
@@ -836,7 +844,7 @@ fn start_javascript_typescript_language_server(
     let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
     let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink;
 
-    registry.start_with_workspace_edit_sink(
+    let status = registry.start_with_workspace_edit_sink(
         &root_path,
         &command,
         &initialize_request,
@@ -844,7 +852,13 @@ fn start_javascript_typescript_language_server(
         status_sink,
         diagnostics_sink,
         workspace_edit_sink,
-    )
+    )?;
+
+    if matches!(status, LanguageServerRuntimeStatus::Running { .. }) {
+        let _ = watch_registry.start(&root_path, watch_app);
+    }
+
+    Ok(status)
 }
 
 #[tauri::command]
@@ -859,7 +873,9 @@ fn stop_php_language_server(
 fn stop_javascript_typescript_language_server(
     root_path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+    watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
+    watch_registry.stop(&root_path);
     Ok(registry.stop(&root_path))
 }
 
@@ -873,7 +889,9 @@ fn stop_all_php_language_servers(
 #[tauri::command]
 fn stop_all_javascript_typescript_language_servers(
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+    watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
+    watch_registry.stop_all();
     Ok(registry.stop_all())
 }
 
@@ -2236,6 +2254,7 @@ pub fn run() {
         .manage(Mutex::new(SmartModeService::new()))
         .manage(PhpLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
+        .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
         .manage(TerminalSupervisor::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

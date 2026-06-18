@@ -100,6 +100,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript CodeLens is wired through the managed language server and Monaco provider. References/implementations CodeLens is disabled by default and can be enabled per workspace in settings.
 - TypeScript/JavaScript file rename edits now use `workspace/willRenameFiles` before local file rename and `workspace/didRenameFiles` after local file rename. Closed-file import edits are written to disk through the workspace layer, while open-file edits are applied to editor buffers.
 - TypeScript/JavaScript file create/delete operations now notify the managed language server through `workspace/didChangeWatchedFiles`, so editor-originated file changes update the TypeScript project graph without requiring a service restart.
+- TypeScript/JavaScript service startup now also starts a per-workspace filesystem watcher. External JS/TS/config file creates, changes, deletes and renames are translated into `workspace/didChangeWatchedFiles`; stopping the service, stopping all services, or quitting the app stops the watcher sessions.
 
 ## Full VS Code-Like Target
 
@@ -165,7 +166,7 @@ Basic mode must support:
 - code lenses for references/implementations. Implemented through LSP-backed Monaco provider when enabled in workspace settings.
 - update imports on file rename. Implemented through managed TypeScript LSP file-operation requests.
 - file create/delete project graph refresh. Implemented for editor-originated JS/TS file operations through `workspace/didChangeWatchedFiles`.
-- filesystem watcher refresh for external creates/changes/deletes. Still needed for full VS Code parity; should reuse the Rust workspace watcher with per-workspace JS/TS service lifecycle.
+- filesystem watcher refresh for external creates/changes/deletes. Implemented through the Rust workspace watcher with per-workspace JS/TS service lifecycle.
 - document symbols / file structure. Implemented for JS/TS through managed LSP-backed `Cmd+R`.
 - workspace symbols. Implemented for JS/TS-backed `Cmd+O` type search.
 - JS/TS version status. Implemented in the workspace status label for Bundled, Workspace, installed workspace version, and dependency-only fallback.
