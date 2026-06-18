@@ -3579,6 +3579,9 @@ class CommentController
 
         $liker = $comment->likers()->first();
         $liker->get
+
+        $namedChild = $comment->namedChildren()->first();
+        $namedChild->get
     }
 }
 `;
@@ -3659,6 +3662,14 @@ class Comment
     public function children(): HasMany
     {
         return $this->hasMany(Comment::class, 'parent_id');
+    }
+
+    public function namedChildren(): HasMany
+    {
+        return $this->hasMany(
+            foreignKey: 'parent_id',
+            related: Comment::class,
+        );
     }
 
     /** @return BelongsTo<Comment, self> */
@@ -3827,6 +3838,19 @@ class User
         returnType: "string",
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$namedChild->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
     act(() => {
       getWorkbench().updateActiveEditorPosition(
         positionAfter(controllerSource, "$parent->getContent"),
@@ -3844,7 +3868,7 @@ class User
       path: commentPath,
       position: {
         column: 21,
-        lineNumber: 33,
+        lineNumber: 41,
       },
     });
   });

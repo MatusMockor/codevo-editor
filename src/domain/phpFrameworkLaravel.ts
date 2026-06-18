@@ -634,28 +634,82 @@ export function phpLaravelRelationTargetClassNameFromExpression(
   expression: string,
   includeCollectionRelations: boolean,
 ): string | null {
+  const normalizedExpression = expression.trim();
+  const pattern =
+    /\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphedByMany|morphToMany)\s*\(/g;
+
+  for (const match of normalizedExpression.matchAll(pattern)) {
+    const relationType = match[1]?.toLowerCase();
+
+    if (!relationType) {
+      continue;
+    }
+
+    if (
+      !includeCollectionRelations &&
+      !laravelEloquentSingularRelationTypes.has(relationType)
+    ) {
+      continue;
+    }
+
+    const openOffset = (match.index ?? 0) + (match[0]?.lastIndexOf("(") ?? 0);
+    const closeOffset = matchingPairOffset(
+      normalizedExpression,
+      openOffset,
+      "(",
+      ")",
+    );
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    const targetClassName = phpLaravelRelationTargetClassNameFromArguments(
+      normalizedExpression.slice(openOffset + 1, closeOffset),
+    );
+
+    if (targetClassName) {
+      return targetClassName;
+    }
+  }
+
+  return null;
+}
+
+function phpLaravelRelationTargetClassNameFromArguments(
+  argumentsSource: string,
+): string | null {
   const classNamePattern =
     String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
-  const match = new RegExp(
-    String.raw`\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphedByMany|morphToMany)\s*\(\s*(` +
-      classNamePattern +
-      String.raw`)\s*::\s*class\b`,
-  ).exec(expression.trim());
+  const classNameReferencePattern = new RegExp(
+    String.raw`^(` + classNamePattern + String.raw`)\s*::\s*class\b`,
+  );
 
-  const relationType = match?.[1]?.toLowerCase();
+  for (const [index, argument] of splitPhpParameterList(
+    argumentsSource,
+  ).entries()) {
+    const namedArgumentMatch =
+      /^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!:)\s*([\s\S]+)$/.exec(argument);
+    const argumentName = namedArgumentMatch?.[1]?.toLowerCase() ?? null;
+    const value = (namedArgumentMatch?.[2] ?? argument).trim();
 
-  if (!relationType) {
-    return null;
+    if (argumentName && argumentName !== "related") {
+      continue;
+    }
+
+    if (!argumentName && index > 0) {
+      continue;
+    }
+
+    const classNameMatch = classNameReferencePattern.exec(value);
+    const className = classNameMatch?.[1]?.replace(/^\\+/, "") ?? null;
+
+    if (className) {
+      return className;
+    }
   }
 
-  if (
-    !includeCollectionRelations &&
-    !laravelEloquentSingularRelationTypes.has(relationType)
-  ) {
-    return null;
-  }
-
-  return match?.[2]?.replace(/^\\+/, "") ?? null;
+  return null;
 }
 
 function phpLaravelRelationModelTypeFromReturnType(

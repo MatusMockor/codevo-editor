@@ -575,6 +575,66 @@ class Comment
     ]);
   });
 
+  it("extracts Laravel relation targets from named relation arguments", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use App\\Models\\Attachment;
+use App\\Models\\Post;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Comment
+{
+    public function post(): BelongsTo
+    {
+        return $this->belongsTo(
+            related: Post::class,
+            foreignKey: 'post_id',
+        );
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(
+            foreignKey: 'comment_id',
+            related: Attachment::class,
+        );
+    }
+}
+`,
+        "Comment",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "post",
+        parameters: "",
+        returnType: "BelongsTo",
+      },
+      {
+        declaringClassName: "Comment",
+        name: "attachments",
+        parameters: "",
+        returnType: "HasMany",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "post",
+        parameters: "",
+        returnType: "Post",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "attachments",
+        parameters: "",
+        returnType: "Attachment",
+      },
+    ]);
+  });
+
   it("extracts Laravel model attributes from fillable and casts", () => {
     expect(
       phpMethodCompletionsFromSource(
