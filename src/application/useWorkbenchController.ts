@@ -5090,12 +5090,19 @@ export function useWorkbenchController(
 
           for (const traitName of phpTraitClassNames(content)) {
             const resolvedTraitName = resolvePhpClassReference(content, traitName);
+            const traitTemplateTypes = resolvedTraitName
+              ? await resolvePhpGenericTemplateTypesForInheritedClass(
+                  content,
+                  resolvedTraitName,
+                )
+              : new Map<string, string>();
             const traitReturnType = resolvedTraitName
               ? await resolvePhpMethodReturnType(
                   resolvedTraitName,
                   methodName,
                   visitedClassNames,
                   normalizedLateStaticClassName || normalizedClassName,
+                  traitTemplateTypes,
                 )
               : null;
 

@@ -356,15 +356,17 @@ use App\\Models\\Comment;
 
 /**
  * @template TModel of object
+ * @phpstan-template TKey of array-key
  * @phpstan-extends BaseRepository<Comment>
  * @psalm-implements SearchRepository<int, Comment>
+ * @template-use FindsModels<Comment>
  */
 class CommentRepository extends BaseRepository implements SearchRepository
 {
 }
 `;
 
-    expect(phpDocTemplateNames(source)).toEqual(["TModel"]);
+    expect(phpDocTemplateNames(source)).toEqual(["TModel", "TKey"]);
     expect(phpDocGenericInheritances(source)).toEqual([
       {
         className: "BaseRepository",
@@ -372,6 +374,10 @@ class CommentRepository extends BaseRepository implements SearchRepository
       },
       {
         className: "SearchRepository",
+        genericTypes: ["Comment"],
+      },
+      {
+        className: "FindsModels",
         genericTypes: ["Comment"],
       },
     ]);

@@ -503,7 +503,7 @@ export function phpDocTemplateNames(source: string): string[] {
   const templates: string[] = [];
 
   for (const match of source.matchAll(
-    /@template(?:-[A-Za-z]+)?\s+([A-Za-z_][A-Za-z0-9_]*)\b/g,
+    /@(?:(?:phpstan|psalm)-)?template(?:-(?!extends\b|implements\b|use\b)[A-Za-z]+)?\s+([A-Za-z_][A-Za-z0-9_]*)\b/g,
   )) {
     const template = match[1];
 
@@ -523,7 +523,7 @@ export function phpDocGenericInheritances(
   const inheritances: PhpDocGenericInheritance[] = [];
 
   for (const match of source.matchAll(
-    /@(?:(?:phpstan|psalm|template)-)?(?:extends|implements)\s+([^\r\n*]+)/g,
+    /@(?:(?:phpstan|psalm|template)-)?(?:extends|implements|use)\s+([^\r\n*]+)/g,
   )) {
     const typeName = firstPhpDocTypeToken(match[1] ?? "");
     const className = typeName ? phpDeclaredTypeCandidate(typeName) : null;
