@@ -6207,7 +6207,10 @@ trait SoftDeletes
     });
     await flushAsyncTurns(24);
 
-    expect(getWorkbench().languageServerRuntimeStatus).toEqual(runningStatus);
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual({
+      ...runningStatus,
+      rootPath: "/workspace",
+    });
     expect(diagnosticsListener).not.toBeNull();
 
     act(() => {

@@ -112,6 +112,11 @@ import {
   type LanguageServerRuntimeStatus,
   type UnsubscribeFn,
 } from "../domain/languageServerRuntime";
+import {
+  cachedLanguageServerRuntimeStatusForRoot,
+  cacheLanguageServerRuntimeStatus,
+  removeCachedLanguageServerRuntimeStatus,
+} from "../domain/languageServerRuntimeStatusCache";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import {
   createNavigationHistory,
@@ -336,6 +341,10 @@ export function useWorkbenchController(
   const [languageServerRuntimeStatus, setLanguageServerRuntimeStatus] =
     useState<LanguageServerRuntimeStatus | null>(null);
   const [
+    languageServerRuntimeStatusRoot,
+    setLanguageServerRuntimeStatusRoot,
+  ] = useState<string | null>(null);
+  const [
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     setJavaScriptTypeScriptLanguageServerRuntimeStatus,
   ] = useState<LanguageServerRuntimeStatus | null>(null);
@@ -491,6 +500,9 @@ export function useWorkbenchController(
   >({});
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const languageServerRuntimeStatusByRootRef = useRef<
+    Record<string, LanguageServerRuntimeStatus>
+  >({});
   const javaScriptTypeScriptDocumentVersionsRef = useRef<Record<string, number>>(
     {},
   );
@@ -918,11 +930,22 @@ export function useWorkbenchController(
 
   const cacheJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
     (rootPath: string, status: LanguageServerRuntimeStatus) => {
-      const rootedStatus = languageServerRuntimeStatusWithRoot(status, rootPath);
-      javaScriptTypeScriptRuntimeStatusByRootRef.current[rootPath] =
-        rootedStatus;
+      return cacheLanguageServerRuntimeStatus(
+        javaScriptTypeScriptRuntimeStatusByRootRef.current,
+        rootPath,
+        status,
+      );
+    },
+    [],
+  );
 
-      return rootedStatus;
+  const cachePhpLanguageServerRuntimeStatus = useCallback(
+    (rootPath: string, status: LanguageServerRuntimeStatus) => {
+      return cacheLanguageServerRuntimeStatus(
+        languageServerRuntimeStatusByRootRef.current,
+        rootPath,
+        status,
+      );
     },
     [],
   );
@@ -942,15 +965,21 @@ export function useWorkbenchController(
 
   const handleLanguageServerRuntimeStatus = useCallback(
     (status: LanguageServerRuntimeStatus) => {
+      const statusRootPath = status.rootPath ?? currentWorkspaceRootRef.current;
+      const rootedStatus = statusRootPath
+        ? cachePhpLanguageServerRuntimeStatus(statusRootPath, status)
+        : status;
+
       if (
-        status.rootPath &&
+        statusRootPath &&
         currentWorkspaceRootRef.current &&
-        status.rootPath !== currentWorkspaceRootRef.current
+        statusRootPath !== currentWorkspaceRootRef.current
       ) {
         return;
       }
 
-      setLanguageServerRuntimeStatus(status);
+      setLanguageServerRuntimeStatus(rootedStatus);
+      setLanguageServerRuntimeStatusRoot(statusRootPath ?? null);
       const crash = languageServerCrashMessage(status);
 
       if (status.kind !== "running") {
@@ -964,7 +993,11 @@ export function useWorkbenchController(
 
       reportLanguageServerError(crash);
     },
-    [clearLanguageServerDiagnostics, reportLanguageServerError],
+    [
+      cachePhpLanguageServerRuntimeStatus,
+      clearLanguageServerDiagnostics,
+      reportLanguageServerError,
+    ],
   );
 
   const handleJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
@@ -1257,9 +1290,14 @@ export function useWorkbenchController(
 
     try {
       const status = await languageServerRuntimeGateway.stop(targetRootPath);
+      const rootedStatus = cachePhpLanguageServerRuntimeStatus(
+        targetRootPath,
+        status,
+      );
 
       if (targetRootPath === currentWorkspaceRootRef.current) {
-        setLanguageServerRuntimeStatus(status);
+        setLanguageServerRuntimeStatus(rootedStatus);
+        setLanguageServerRuntimeStatusRoot(targetRootPath);
         lastLanguageServerCrashRef.current = null;
         clearLanguageServerDiagnostics();
         resetLanguageServerDocuments();
@@ -1272,6 +1310,7 @@ export function useWorkbenchController(
     }
   }, [
     clearLanguageServerDiagnostics,
+    cachePhpLanguageServerRuntimeStatus,
     languageServerRuntimeGateway,
     reportLanguageServerError,
     resetLanguageServerDocuments,
@@ -1457,6 +1496,7 @@ export function useWorkbenchController(
     workspaceSessionRestoredRef.current = false;
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
+    languageServerRuntimeStatusByRootRef.current = {};
     javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
@@ -1465,6 +1505,7 @@ export function useWorkbenchController(
     setLanguageServerPlan(null);
     setJavaScriptTypeScriptLanguageServerPlan(null);
     setLanguageServerRuntimeStatus(null);
+    setLanguageServerRuntimeStatusRoot(null);
     setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
     setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
     setEntriesByDirectory({});
@@ -2033,7 +2074,17 @@ export function useWorkbenchController(
       setWorkspaceTrust(null);
       setLanguageServerPlan(null);
       setJavaScriptTypeScriptLanguageServerPlan(null);
-      setLanguageServerRuntimeStatus(null);
+      const cachedPhpStatus = cachedLanguageServerRuntimeStatusForRoot(
+        languageServerRuntimeStatusByRootRef.current,
+        path,
+      );
+      if (cachedPhpStatus) {
+        setLanguageServerRuntimeStatus(cachedPhpStatus);
+        setLanguageServerRuntimeStatusRoot(path);
+      } else {
+        setLanguageServerRuntimeStatus(null);
+        setLanguageServerRuntimeStatusRoot(null);
+      }
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
       setIndexProgress(initialIndexProgress());
@@ -2260,6 +2311,10 @@ export function useWorkbenchController(
             : currentSettings.recentWorkspacePath;
 
         delete workspaceStateCacheRef.current[path];
+        removeCachedLanguageServerRuntimeStatus(
+          languageServerRuntimeStatusByRootRef.current,
+          path,
+        );
         delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
         await closeSyncedJavaScriptTypeScriptDocumentsForRoot(path);
         await stopProjectRuntimes(path);
@@ -2290,6 +2345,10 @@ export function useWorkbenchController(
         null;
 
       delete workspaceStateCacheRef.current[path];
+      removeCachedLanguageServerRuntimeStatus(
+        languageServerRuntimeStatusByRootRef.current,
+        path,
+      );
       delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
       await Promise.allSettled([
         closeSyncedLanguageServerDocumentsForRoot(path),
@@ -8909,6 +8968,10 @@ export function useWorkbenchController(
       return;
     }
 
+    if (languageServerRuntimeStatusRoot !== workspaceRoot) {
+      return;
+    }
+
     if (isLanguageServerActive(languageServerRuntimeStatus)) {
       return;
     }
@@ -8932,6 +8995,7 @@ export function useWorkbenchController(
     languageServerPlan,
     languageServerRuntimeGateway,
     languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
     reportLanguageServerError,
     workspaceRoot,
     workspaceTrust,
@@ -9567,6 +9631,19 @@ export function useWorkbenchController(
     let unsubscribe: UnsubscribeFn | null = null;
 
     if (workspaceRoot) {
+      const cachedStatus = cachedLanguageServerRuntimeStatusForRoot(
+        languageServerRuntimeStatusByRootRef.current,
+        workspaceRoot,
+      );
+
+      if (cachedStatus) {
+        setLanguageServerRuntimeStatus(cachedStatus);
+        setLanguageServerRuntimeStatusRoot(workspaceRoot);
+      } else {
+        setLanguageServerRuntimeStatus(null);
+        setLanguageServerRuntimeStatusRoot(null);
+      }
+
       languageServerRuntimeGateway
         .getStatus(workspaceRoot)
         .then((status) => {
@@ -9574,11 +9651,18 @@ export function useWorkbenchController(
             return;
           }
 
-          setLanguageServerRuntimeStatus(status);
+          const rootedStatus = cachePhpLanguageServerRuntimeStatus(
+            workspaceRoot,
+            status,
+          );
+
+          setLanguageServerRuntimeStatus(rootedStatus);
+          setLanguageServerRuntimeStatusRoot(workspaceRoot);
         })
         .catch((error) => reportError("Language Server", error));
     } else {
       setLanguageServerRuntimeStatus(null);
+      setLanguageServerRuntimeStatusRoot(null);
     }
 
     languageServerRuntimeGateway
@@ -9604,6 +9688,7 @@ export function useWorkbenchController(
       unsubscribe?.();
     };
   }, [
+    cachePhpLanguageServerRuntimeStatus,
     handleLanguageServerRuntimeStatus,
     languageServerRuntimeGateway,
     reportLanguageServerError,
@@ -11026,20 +11111,6 @@ function isJavaScriptTypeScriptPath(path: string): boolean {
   const language = detectLanguage(path);
 
   return language === "javascript" || language === "typescript";
-}
-
-function languageServerRuntimeStatusWithRoot(
-  status: LanguageServerRuntimeStatus,
-  rootPath: string,
-): LanguageServerRuntimeStatus {
-  if (status.rootPath === rootPath) {
-    return status;
-  }
-
-  return {
-    ...status,
-    rootPath,
-  };
 }
 
 function cachedWorkspaceHasDirtyDocuments(
