@@ -28,11 +28,13 @@
 
 ## Task 2: Gateway Operations
 
-- [ ] Add failing gateway tests for `stageFiles`, `unstageFiles`, `revertFiles`, and `commit`.
+- [ ] Add failing gateway tests for `stageFiles`, `unstageFiles`, `revertFiles`, `commit`, and `push`.
 - [ ] Run `npm test -- src/infrastructure/tauriGitGateway.test.ts` and confirm failures reference missing methods.
 - [ ] Implement TypeScript gateway methods and no-op browser fallbacks.
-- [ ] Extend Rust `GitRepositoryGateway` with `stage`, `unstage`, `revert`, and `commit`; expose Tauri commands in `lib.rs`.
+- [ ] Extend Rust `GitRepositoryGateway` with `stage`, `unstage`, `revert`, `commit`, and `push`; expose Tauri commands in `lib.rs`.
+- [ ] Wire controller commit-and-push flow through the gateway push operation after a successful commit.
 - [ ] Add Rust tests for staged porcelain parsing.
+- [ ] Add controller tests for commit-and-push success and push failure after a successful commit.
 - [ ] Run `npm test -- src/infrastructure/tauriGitGateway.test.ts` and `cd src-tauri && cargo test git`.
 
 ## Task 3: Commit Panel Component
@@ -57,4 +59,3 @@
 - [ ] Run `npm test`.
 - [ ] Run `cd src-tauri && cargo test git`.
 - [ ] Inspect `git diff --stat` and `git status --short` before final response.
-

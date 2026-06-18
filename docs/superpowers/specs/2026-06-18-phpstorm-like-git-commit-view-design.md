@@ -11,12 +11,12 @@ This slice covers local Git operations only:
 - grouped `Changes` and `Unversioned Files` sections with counts
 - per-file and per-group checkboxes for commit inclusion
 - toolbar actions for refresh, stage selected/all, unstage selected/all, and revert selected
-- commit message textarea and `Commit` button
+- commit message textarea, `Commit` button, and commit-and-push action
+- push operation for the current branch
 - existing row click behavior continues to open the diff preview
 
 Out of scope:
 
-- push and commit-and-push
 - amend last commit
 - branch checkout or branch creation
 - named changelists
@@ -37,7 +37,8 @@ The `GitGateway` contract gains:
 - `stageFiles(rootPath, changes)`
 - `unstageFiles(rootPath, changes)`
 - `revertFiles(rootPath, changes)`
-- `commit(rootPath, message)`
+- `commit(rootPath, message, changes)`
+- `push(rootPath)`
 
 The Rust gateway mirrors these commands and validates every relative path through the existing `safe_relative_path` helper.
 
@@ -62,4 +63,3 @@ Tests cover:
 - Git panel rendering and user interactions
 - controller action flow for stage/commit refresh and commit message reset
 - Rust porcelain parsing and path-safe command behavior where practical
-
