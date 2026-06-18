@@ -4,7 +4,7 @@ import {
   Search,
   Settings as SettingsIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   PointerEvent as ReactPointerEvent,
@@ -41,6 +41,7 @@ import {
   type IndexProgressState,
 } from "./domain/indexProgress";
 import { editorChangeHunks } from "./domain/editorChangeMarkers";
+import type { GitChangeStatus } from "./domain/git";
 import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
@@ -140,12 +141,14 @@ const javaScriptTypeScriptLanguageServerWorkspaceEditGateway =
 const terminalGateway = new TauriTerminalGateway();
 const settingsGateway = new BrowserSettingsGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
+const EMPTY_FILE_STATUSES_BY_PATH: Record<string, GitChangeStatus> = {};
 
 function App() {
   const prefersLightTheme = usePrefersLightTheme();
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(152);
   const [activeFileRevealSignal, setActiveFileRevealSignal] = useState(0);
+  const fileStatusesByPathRef = useRef<Record<string, GitChangeStatus>>({});
   const workbench = useWorkbenchController(
     workspaceGateways,
     smartModeGateway,
@@ -167,6 +170,39 @@ function App() {
     settingsGateway,
     workbenchPrompter,
   );
+  const fileStatusesByPath = useMemo<Record<string, GitChangeStatus>>(() => {
+    const gitChanges = workbench.gitStatus?.changes;
+    const previous = fileStatusesByPathRef.current;
+
+    if (!Array.isArray(gitChanges) || gitChanges.length === 0) {
+      if (Object.keys(previous).length === 0) {
+        return previous;
+      }
+
+      fileStatusesByPathRef.current = EMPTY_FILE_STATUSES_BY_PATH;
+      return fileStatusesByPathRef.current;
+    }
+
+    const next: Record<string, GitChangeStatus> = gitChanges.reduce(
+      (accumulator, change) => {
+        accumulator[change.path] = change.status;
+
+        if (change.oldPath) {
+          accumulator[change.oldPath] = change.status;
+        }
+
+        return accumulator;
+      },
+      {} as Record<string, GitChangeStatus>,
+    );
+
+    if (areFileStatusesByPathEqual(previous, next)) {
+      return previous;
+    }
+
+    fileStatusesByPathRef.current = next;
+    return next;
+  }, [workbench.gitStatus?.changes]);
   const activeLanguage = useMemo(
     () => workbench.activeDocument?.language ?? null,
     [workbench.activeDocument],
@@ -508,6 +544,7 @@ function App() {
         ) : (
           <FileTree
             activePath={workbench.activePath}
+            fileStatusesByPath={fileStatusesByPath}
             entriesByDirectory={workbench.entriesByDirectory}
             expandedDirectories={workbench.expandedDirectories}
             loadingDirectories={workbench.loadingDirectories}
@@ -581,6 +618,7 @@ function App() {
         <EditorTabs
           activePath={workbench.activePath}
           documents={workbench.openDocuments}
+          fileStatusesByPath={fileStatusesByPath}
           onActivate={workbench.setActivePath}
           onClose={workbench.closeDocument}
           onPin={workbench.pinDocument}
@@ -987,6 +1025,23 @@ function toolSourceLabel(source: string): string {
   }
 
   return "PATH PHPactor";
+}
+
+function areFileStatusesByPathEqual(
+  left: Record<string, GitChangeStatus>,
+  right: Record<string, GitChangeStatus>,
+): boolean {
+  if (left === right) {
+    return true;
+  }
+
+  const leftKeys = Object.keys(left);
+
+  if (leftKeys.length !== Object.keys(right).length) {
+    return false;
+  }
+
+  return leftKeys.every((path) => left[path] === right[path]);
 }
 
 function usePrefersLightTheme(): boolean {

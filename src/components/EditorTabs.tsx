@@ -2,11 +2,17 @@ import { Circle, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { MouseEvent } from "react";
 import type { EditorDocument } from "../domain/workspace";
+import {
+  gitStatusLabel,
+  gitStatusTitle,
+  type GitChangeStatus,
+} from "../domain/git";
 import { isDirty } from "../domain/workspace";
 import { getTabId, getTabPanelId } from "./tabIds";
 
 interface EditorTabsProps {
   documents: EditorDocument[];
+  fileStatusesByPath?: Record<string, GitChangeStatus>;
   activePath: string | null;
   previewPath: string | null;
   onActivate(path: string): void;
@@ -16,6 +22,7 @@ interface EditorTabsProps {
 
 export function EditorTabs({
   documents,
+  fileStatusesByPath,
   activePath,
   previewPath,
   onActivate,
@@ -60,6 +67,7 @@ export function EditorTabs({
         const dirty = isDirty(document);
         const active = document.path === activePath;
         const preview = document.path === previewPath && !dirty;
+        const status = fileStatusesByPath?.[document.path];
 
         return (
           <div
@@ -83,7 +91,17 @@ export function EditorTabs({
               {dirty ? (
                 <Circle aria-hidden="true" className="dirty-dot" size={8} />
               ) : null}
-              <span>{document.name}</span>
+              <span className="tab-name">{document.name}</span>
+              {status ? (
+                <span
+                  aria-label={gitStatusTitle(status)}
+                  className={getEditorTabStatusClassName(
+                    status,
+                  )}
+                >
+                  {gitStatusLabel(status)}
+                </span>
+              ) : null}
             </button>
             <button
               aria-label={`Close ${document.name}`}
@@ -145,4 +163,16 @@ function getEditorTabClassName(
   }
 
   return classNames.join(" ");
+}
+
+function getEditorTabStatusClassName(status: GitChangeStatus): string {
+  if (status === "added" || status === "renamed") {
+    return "editor-tab-status editor-tab-status-added";
+  }
+
+  if (status === "modified") {
+    return "editor-tab-status editor-tab-status-modified";
+  }
+
+  return `editor-tab-status editor-tab-status-${status}`;
 }
