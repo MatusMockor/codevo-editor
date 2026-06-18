@@ -19,6 +19,7 @@ import {
   type LanguageServerPrepareRenameResult,
   type LanguageServerRange,
   type LanguageServerSelectionRange,
+  type LanguageServerSemanticTokens,
   type LanguageServerSignatureHelp,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
@@ -54,6 +55,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   references: "text_document_references",
   rename: "text_document_rename",
   selectionRanges: "text_document_selection_ranges",
+  semanticTokens: "text_document_semantic_tokens",
   signatureHelp: "text_document_signature_help",
   workspaceSymbols: "workspace_symbols",
 };
@@ -79,6 +81,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   references: "javascript_typescript_text_document_references",
   rename: "javascript_typescript_text_document_rename",
   selectionRanges: "javascript_typescript_text_document_selection_ranges",
+  semanticTokens: "javascript_typescript_text_document_semantic_tokens",
   signatureHelp: "javascript_typescript_text_document_signature_help",
   workspaceSymbols: "javascript_typescript_workspace_symbols",
 };
@@ -104,6 +107,7 @@ export interface TauriLanguageServerFeatureCommands {
   references: string;
   rename: string;
   selectionRanges: string;
+  semanticTokens: string;
   signatureHelp: string;
   workspaceSymbols: string;
 }
@@ -263,6 +267,17 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.selectionRanges,
       { path, positions, rootPath },
       [],
+    );
+  }
+
+  semanticTokens(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerSemanticTokens | null> {
+    return this.invokeWhenAvailable(
+      this.commands.semanticTokens,
+      { path, rootPath },
+      null,
     );
   }
 

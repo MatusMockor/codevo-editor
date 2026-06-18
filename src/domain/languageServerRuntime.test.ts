@@ -61,6 +61,7 @@ describe("languageServerCapabilities", () => {
       references: true,
       rename: true,
       selectionRange: true,
+      semanticTokens: true,
       signatureHelp: true,
       workspaceSymbol: true,
     });
@@ -88,6 +89,7 @@ describe("languageServerCapabilities", () => {
       "references",
       "rename",
       "smart selection",
+      "semantic tokens",
       "signature help",
       "workspace symbols",
       "code actions",
@@ -122,6 +124,7 @@ function status(
           references: true,
           rename: true,
           selectionRange: true,
+          semanticTokens: true,
           signatureHelp: true,
           workspaceSymbol: true,
         },

@@ -4395,6 +4395,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
     selectionRanges: vi.fn(async () => []),
+    semanticTokens: vi.fn(async () => null),
     signatureHelp: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),

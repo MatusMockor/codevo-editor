@@ -236,6 +236,13 @@ pub struct LanguageServerSelectionRange {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LanguageServerSemanticTokens {
+    pub data: Vec<u32>,
+    pub result_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LanguageServerWorkspaceSymbol {
     pub container_name: Option<String>,
     pub kind: u32,
@@ -294,6 +301,7 @@ pub trait TextDocumentFeatureRequestFactory {
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn selection_ranges(&self, range: &TextDocumentSelectionRange) -> LanguageServerFeatureRequest;
+    fn semantic_tokens(&self, path: &str) -> LanguageServerFeatureRequest;
     fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn prepare_rename(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn rename(&self, rename: &TextDocumentRename) -> LanguageServerFeatureRequest;
@@ -417,6 +425,17 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                     "uri": file_uri(Path::new(&range.path)),
                 },
                 "positions": range.positions,
+            }),
+        }
+    }
+
+    fn semantic_tokens(&self, path: &str) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/semanticTokens/full".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(path)),
+                },
             }),
         }
     }
@@ -684,6 +703,36 @@ pub fn parse_selection_ranges_result(
     };
 
     items.iter().map(parse_selection_range_item).collect()
+}
+
+pub fn parse_semantic_tokens_result(
+    value: &Value,
+) -> Result<Option<LanguageServerSemanticTokens>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    let Some(data) = value.get("data").and_then(Value::as_array) else {
+        return Err("Language server returned malformed semantic tokens.".to_string());
+    };
+    let parsed_data: Result<Vec<u32>, String> = data
+        .iter()
+        .map(|item| {
+            item.as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    "Language server returned a malformed semantic token integer.".to_string()
+                })
+        })
+        .collect();
+
+    Ok(Some(LanguageServerSemanticTokens {
+        data: parsed_data?,
+        result_id: value
+            .get("resultId")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }))
 }
 
 pub fn parse_workspace_symbols_result(
@@ -1282,9 +1331,9 @@ mod tests {
         parse_document_highlights_result, parse_document_links_result,
         parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
         parse_hover_result, parse_inlay_hints_result, parse_optional_workspace_edit_result,
-        parse_prepare_rename_result, parse_selection_ranges_result, parse_signature_help_result,
-        parse_workspace_edit_result, parse_workspace_symbols_result, LanguageServerCodeAction,
-        LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
+        parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
+        parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
+        LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
         LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
@@ -1355,6 +1404,18 @@ mod tests {
         let request = factory.folding_ranges("/tmp/User.ts");
 
         assert_eq!(request.method, "textDocument/foldingRange");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+    }
+
+    #[test]
+    fn semantic_tokens_request_contains_document_uri() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.semantic_tokens("/tmp/User.ts");
+
+        assert_eq!(request.method, "textDocument/semanticTokens/full");
         assert!(request.params["textDocument"]["uri"]
             .as_str()
             .expect("uri")
@@ -2335,6 +2396,24 @@ mod tests {
             parse_selection_ranges_result(&json!(null)).expect("null"),
             Vec::new()
         );
+    }
+
+    #[test]
+    fn parses_semantic_tokens() {
+        let tokens = parse_semantic_tokens_result(&json!({
+            "resultId": "semantic-1",
+            "data": [0, 6, 4, 8, 0, 1, 2, 3, 9, 1]
+        }))
+        .expect("semantic tokens")
+        .expect("result");
+
+        assert_eq!(tokens.result_id.as_deref(), Some("semantic-1"));
+        assert_eq!(tokens.data, vec![0, 6, 4, 8, 0, 1, 2, 3, 9, 1]);
+        assert_eq!(
+            parse_semantic_tokens_result(&json!(null)).expect("null"),
+            None
+        );
+        assert!(parse_semantic_tokens_result(&json!({ "data": ["bad"] })).is_err());
     }
 
     fn position() -> TextDocumentPosition {

@@ -58,6 +58,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         { character: 4, line: 10 },
       ]),
     ).resolves.toEqual([]);
+    await expect(
+      gateway.semanticTokens("/project", "/project/src/User.php"),
+    ).resolves.toBeNull();
     await expect(gateway.rename("/project", position(), "Account")).resolves.toBeNull();
     await expect(
       gateway.codeActions("/project", "/project/src/User.php", range(), {
@@ -248,6 +251,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         range: range(),
       },
     ];
+    const semanticTokens = {
+      data: [0, 6, 4, 8, 0],
+      resultId: "semantic-1",
+    };
     const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
       if (command === "text_document_hover") {
         return hover;
@@ -320,6 +327,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return selectionRanges;
       }
 
+      if (command === "text_document_semantic_tokens") {
+        return semanticTokens;
+      }
+
       if (command === "text_document_signature_help") {
         return signatureHelp;
       }
@@ -374,6 +385,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         { character: 4, line: 10 },
       ]),
     ).resolves.toEqual(selectionRanges);
+    await expect(
+      gateway.semanticTokens("/project", "/project/src/User.php"),
+    ).resolves.toEqual(semanticTokens);
     await expect(gateway.rename("/project", requestPosition, "Account")).resolves.toEqual(
       rename,
     );
@@ -464,6 +478,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     expect(invokeCommand).toHaveBeenCalledWith("text_document_selection_ranges", {
       path: "/project/src/User.php",
       positions: [{ character: 4, line: 10 }],
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_semantic_tokens", {
+      path: "/project/src/User.php",
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_rename", {

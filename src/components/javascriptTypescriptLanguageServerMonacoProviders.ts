@@ -16,6 +16,7 @@ import {
   type LanguageServerLocation,
   type LanguageServerRange,
   type LanguageServerSelectionRange,
+  type LanguageServerSemanticTokens,
   type LanguageServerSignature,
   type LanguageServerSignatureHelp,
   type LanguageServerSignatureParameter,
@@ -61,6 +62,44 @@ interface ExecuteCommandPayload {
 
 const EXECUTE_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.javascriptTypeScript.executeLanguageServerCommand";
+const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
+  tokenModifiers: [
+    "declaration",
+    "definition",
+    "readonly",
+    "static",
+    "deprecated",
+    "abstract",
+    "async",
+    "modification",
+    "documentation",
+    "defaultLibrary",
+  ],
+  tokenTypes: [
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "macro",
+    "keyword",
+    "modifier",
+    "comment",
+    "string",
+    "number",
+    "regexp",
+    "operator",
+  ],
+} satisfies Monaco.languages.SemanticTokensLegend;
 
 export interface JavaScriptTypeScriptLanguageServerProviderContext {
   featuresGateway: LanguageServerFeaturesGateway;
@@ -288,6 +327,17 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerSelectionRangeProvider(language, {
           provideSelectionRanges: (model, positions) =>
             provideSelectionRanges(monaco, context, model, positions),
+        }),
+      );
+    }
+
+    if (registry.registerDocumentSemanticTokensProvider) {
+      disposables.push(
+        registry.registerDocumentSemanticTokensProvider(language, {
+          getLegend: () => JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND,
+          provideDocumentSemanticTokens: (model) =>
+            provideDocumentSemanticTokens(context, model),
+          releaseDocumentSemanticTokens: () => undefined,
         }),
       );
     }
@@ -689,6 +739,27 @@ async function provideSelectionRanges(
   }
 }
 
+async function provideDocumentSemanticTokens(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+): Promise<Monaco.languages.SemanticTokens | null> {
+  const request = documentRequestContext(context, model, "semanticTokens");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    return toMonacoSemanticTokens(
+      await context.featuresGateway.semanticTokens(request.rootPath, request.path),
+    );
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
 async function resolveRenameLocation(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -945,7 +1016,8 @@ function documentRequestContext(
     | "formatting"
     | "inlayHint"
     | "rangeFormatting"
-    | "selectionRange",
+    | "selectionRange"
+    | "semanticTokens",
 ) {
   const status = context.getRuntimeStatus();
 
@@ -1066,6 +1138,19 @@ function flattenSelectionRange(
   }
 
   return ranges;
+}
+
+function toMonacoSemanticTokens(
+  tokens: LanguageServerSemanticTokens | null,
+): Monaco.languages.SemanticTokens | null {
+  if (!tokens || tokens.data.length === 0) {
+    return null;
+  }
+
+  return {
+    data: Uint32Array.from(tokens.data),
+    ...(tokens.resultId ? { resultId: tokens.resultId } : {}),
+  };
 }
 
 function toMonacoLocations(

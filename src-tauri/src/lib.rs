@@ -58,18 +58,18 @@ use lsp_features::{
     parse_document_highlights_result, parse_document_links_result, parse_document_symbols_result,
     parse_folding_ranges_result, parse_formatting_result, parse_hover_result,
     parse_inlay_hints_result, parse_optional_workspace_edit_result, parse_prepare_rename_result,
-    parse_selection_ranges_result, parse_signature_help_result, parse_workspace_edit_result,
-    parse_workspace_symbols_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-    LanguageServerCodeActionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
-    LanguageServerDocumentHighlight, LanguageServerDocumentLink, LanguageServerDocumentSymbol,
-    LanguageServerFoldingRange, LanguageServerFormattingOptions, LanguageServerHover,
-    LanguageServerInlayHint, LanguageServerLocation, LanguageServerPosition,
+    parse_selection_ranges_result, parse_semantic_tokens_result, parse_signature_help_result,
+    parse_workspace_edit_result, parse_workspace_symbols_result, LanguageServerCodeAction,
+    LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCompletionItem,
+    LanguageServerCompletionList, LanguageServerDocumentHighlight, LanguageServerDocumentLink,
+    LanguageServerDocumentSymbol, LanguageServerFoldingRange, LanguageServerFormattingOptions,
+    LanguageServerHover, LanguageServerInlayHint, LanguageServerLocation, LanguageServerPosition,
     LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
-    LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
-    LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory,
-    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-    TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
-    TextDocumentSelectionRange,
+    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerTextEdit,
+    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
+    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
+    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
+    TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1700,6 +1700,36 @@ fn javascript_typescript_text_document_selection_ranges(
 }
 
 #[tauri::command]
+fn text_document_semantic_tokens(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerSemanticTokens>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.semantic_tokens(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_semantic_tokens_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_semantic_tokens(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerSemanticTokens>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.semantic_tokens(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_semantic_tokens_result(&result)
+}
+
+#[tauri::command]
 fn text_document_signature_help(
     root_path: String,
     position: TextDocumentPosition,
@@ -1946,6 +1976,7 @@ pub fn run() {
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
             javascript_typescript_text_document_selection_ranges,
+            javascript_typescript_text_document_semantic_tokens,
             javascript_typescript_text_document_signature_help,
             javascript_typescript_workspace_symbols,
             language_server_execute_command,
@@ -1972,6 +2003,7 @@ pub fn run() {
             text_document_references,
             text_document_rename,
             text_document_selection_ranges,
+            text_document_semantic_tokens,
             text_document_signature_help,
             upsert_workspace_index_file,
             workspace_symbols,

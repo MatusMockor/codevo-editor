@@ -40,10 +40,13 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(2);
+    expect(
+      monaco.languages.registerDocumentSemanticTokensProvider,
+    ).toHaveBeenCalledTimes(2);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(31);
+    expect(monaco.dispose).toHaveBeenCalledTimes(33);
   });
 
   it("maps TypeScript document links and lazy resolution", async () => {
@@ -238,6 +241,43 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       ],
     ]);
+  });
+
+  it("maps TypeScript semantic tokens through the language server", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      semanticTokens: {
+        data: [0, 6, 4, 8, 0, 1, 2, 3, 9, 1],
+        resultId: "semantic-1",
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+
+    const semanticTokensProvider = (
+      monaco.languages.registerDocumentSemanticTokensProvider as any
+    ).mock.calls[0][1];
+    const tokens = await semanticTokensProvider.provideDocumentSemanticTokens(
+      model,
+      null,
+    );
+
+    expect(semanticTokensProvider.getLegend()).toEqual({
+      tokenModifiers: expect.arrayContaining(["readonly", "static"]),
+      tokenTypes: expect.arrayContaining(["class", "method", "variable"]),
+    });
+    expect(gateway.semanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+    );
+    expect(tokens).toEqual({
+      data: Uint32Array.from([0, 6, 4, 8, 0, 1, 2, 3, 9, 1]),
+      resultId: "semantic-1",
+    });
+    expect(context.flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/user.ts",
+    );
   });
 
   it("maps references, rename edits, code actions, commands and formatting through the gateway", async () => {
@@ -893,6 +933,9 @@ function featuresGateway(
     selectionRanges: Awaited<
       ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>
     >;
+    semanticTokens: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["semanticTokens"]>
+    >;
     signatureHelp: Awaited<
       ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
     >;
@@ -936,6 +979,7 @@ function featuresGateway(
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
+    semanticTokens: vi.fn(async () => responses.semanticTokens ?? null),
     signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(
@@ -971,6 +1015,7 @@ function runningStatus(
       references: true,
       rename: true,
       selectionRange: true,
+      semanticTokens: true,
       signatureHelp: true,
       workspaceSymbol: true,
       ...capabilities,
@@ -1118,6 +1163,7 @@ function createMonaco() {
       registerReferenceProvider: vi.fn(() => disposable()),
       registerRenameProvider: vi.fn(() => disposable()),
       registerSelectionRangeProvider: vi.fn(() => disposable()),
+      registerDocumentSemanticTokensProvider: vi.fn(() => disposable()),
       registerSignatureHelpProvider: vi.fn(() => disposable()),
     },
     MarkerSeverity: {

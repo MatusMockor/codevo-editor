@@ -107,6 +107,11 @@ export interface LanguageServerSelectionRange {
   range: LanguageServerRange;
 }
 
+export interface LanguageServerSemanticTokens {
+  data: number[];
+  resultId: string | null;
+}
+
 export interface LanguageServerWorkspaceSymbol {
   containerName: string | null;
   kind: number;
@@ -248,6 +253,10 @@ export interface LanguageServerFeaturesGateway {
     path: string,
     positions: LanguageServerPosition[],
   ): Promise<LanguageServerSelectionRange[]>;
+  semanticTokens(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerSemanticTokens | null>;
   signatureHelp(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

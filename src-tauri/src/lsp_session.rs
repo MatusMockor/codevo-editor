@@ -71,6 +71,7 @@ pub struct LanguageServerCapabilities {
     pub references: bool,
     pub rename: bool,
     pub selection_range: bool,
+    pub semantic_tokens: bool,
     pub signature_help: bool,
     pub workspace_symbol: bool,
 }
@@ -1553,6 +1554,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         references: is_capability_enabled(capabilities.get("referencesProvider")),
         rename: is_capability_enabled(capabilities.get("renameProvider")),
         selection_range: is_capability_enabled(capabilities.get("selectionRangeProvider")),
+        semantic_tokens: is_capability_enabled(capabilities.get("semanticTokensProvider")),
         signature_help: is_capability_enabled(capabilities.get("signatureHelpProvider")),
         workspace_symbol: is_capability_enabled(capabilities.get("workspaceSymbolProvider")),
     })
@@ -1768,6 +1770,7 @@ mod tests {
                     references: false,
                     rename: false,
                     selection_range: false,
+                    semantic_tokens: false,
                     signature_help: false,
                     workspace_symbol: false,
                 },
@@ -1798,6 +1801,7 @@ mod tests {
                 references: true,
                 rename: true,
                 selection_range: true,
+                semantic_tokens: true,
                 signature_help: true,
                 workspace_symbol: true,
             },
@@ -1824,6 +1828,7 @@ mod tests {
                     "references": true,
                     "rename": true,
                     "selectionRange": true,
+                    "semanticTokens": true,
                     "signatureHelp": true,
                     "workspaceSymbol": true,
                     "codeAction": true,
@@ -1857,6 +1862,13 @@ mod tests {
                     "referencesProvider": true,
                     "renameProvider": { "prepareProvider": true },
                     "selectionRangeProvider": true,
+                    "semanticTokensProvider": {
+                        "full": true,
+                        "legend": {
+                            "tokenModifiers": ["readonly"],
+                            "tokenTypes": ["class"]
+                        }
+                    },
                     "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
                     "workspaceSymbolProvider": true,
                     "codeActionProvider": { "codeActionKinds": ["quickfix"] },
@@ -1886,6 +1898,7 @@ mod tests {
                 references: true,
                 rename: true,
                 selection_range: true,
+                semantic_tokens: true,
                 signature_help: true,
                 workspace_symbol: true,
             }

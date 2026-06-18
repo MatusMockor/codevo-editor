@@ -17,6 +17,7 @@ export interface LanguageServerCapabilities {
   references: boolean;
   rename: boolean;
   selectionRange: boolean;
+  semanticTokens: boolean;
   signatureHelp: boolean;
   workspaceSymbol: boolean;
 }
@@ -168,6 +169,10 @@ export function languageServerCapabilityLabels(
     labels.push("smart selection");
   }
 
+  if (capabilities.semanticTokens) {
+    labels.push("semantic tokens");
+  }
+
   if (capabilities.signatureHelp) {
     labels.push("signature help");
   }
@@ -205,6 +210,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     references: false,
     rename: false,
     selectionRange: false,
+    semanticTokens: false,
     signatureHelp: false,
     workspaceSymbol: false,
   };

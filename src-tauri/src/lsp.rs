@@ -408,6 +408,53 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "prepareSupport": true
                         },
                         "selectionRange": { "dynamicRegistration": false },
+                        "semanticTokens": {
+                            "dynamicRegistration": false,
+                            "formats": ["relative"],
+                            "multilineTokenSupport": false,
+                            "overlappingTokenSupport": false,
+                            "requests": {
+                                "full": true,
+                                "range": false
+                            },
+                            "serverCancelSupport": false,
+                            "tokenModifiers": [
+                                "declaration",
+                                "definition",
+                                "readonly",
+                                "static",
+                                "deprecated",
+                                "abstract",
+                                "async",
+                                "modification",
+                                "documentation",
+                                "defaultLibrary"
+                            ],
+                            "tokenTypes": [
+                                "namespace",
+                                "type",
+                                "class",
+                                "enum",
+                                "interface",
+                                "struct",
+                                "typeParameter",
+                                "parameter",
+                                "variable",
+                                "property",
+                                "enumMember",
+                                "event",
+                                "function",
+                                "method",
+                                "macro",
+                                "keyword",
+                                "modifier",
+                                "comment",
+                                "string",
+                                "number",
+                                "regexp",
+                                "operator"
+                            ]
+                        },
                         "synchronization": {
                             "didSave": true,
                             "dynamicRegistration": false,
@@ -677,6 +724,14 @@ mod tests {
             request.params["capabilities"]["textDocument"]["rangeFormatting"]
                 ["dynamicRegistration"],
             false
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["semanticTokens"]["formats"][0],
+            "relative"
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["semanticTokens"]["requests"]["full"],
+            true
         );
         fs::remove_dir_all(root).expect("cleanup");
     }
