@@ -103,6 +103,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript file create/delete operations now notify the managed language server through `workspace/didChangeWatchedFiles`, so editor-originated file changes update the TypeScript project graph without requiring a service restart.
 - TypeScript/JavaScript service startup now also starts a per-workspace filesystem watcher. External JS/TS/config file creates, changes, deletes and renames are translated into `workspace/didChangeWatchedFiles`; stopping the service, stopping all services, or quitting the app stops the watcher sessions.
 - TypeScript/JavaScript completions now trigger on `#` as well as standard member/import/JSX trigger characters, so private class fields and methods go through the managed language-server completion path.
+- TypeScript/JavaScript completions now also trigger on backticks, matching VS Code-style TypeScript completions in template string contexts.
 
 ## Full VS Code-Like Target
 

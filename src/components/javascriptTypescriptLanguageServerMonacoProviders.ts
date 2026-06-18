@@ -198,7 +198,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerCompletionItemProvider) {
       disposables.push(
         registry.registerCompletionItemProvider(language, {
-          triggerCharacters: [".", "'", "\"", "/", "@", "<", "#"],
+          triggerCharacters: [".", "'", "\"", "`", "/", "@", "<", "#"],
           provideCompletionItems: (model, position) =>
             provideCompletionItems(monaco, context, model, position),
           resolveCompletionItem: (item) =>
