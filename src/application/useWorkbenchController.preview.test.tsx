@@ -1988,6 +1988,82 @@ class CommentService
     });
   });
 
+  it("opens Laravel container receiver method definitions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const servicePath = "/workspace/app/Services/CommentService.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Services\\CommentService;
+
+class CommentController
+{
+    public function store(): void
+    {
+        app(CommentService::class)->createWithAttachments();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === servicePath) {
+          return `<?php
+namespace App\\Services;
+
+class CommentService
+{
+    public function createWithAttachments(array $attachments = []): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(
+          controllerSource,
+          "app(CommentService::class)->createWithAttachments",
+        ),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(servicePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: servicePath,
+      position: {
+        column: 21,
+        lineNumber: 6,
+      },
+    });
+  });
+
   it("infers assigned variable completions from indexed interface method return types", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

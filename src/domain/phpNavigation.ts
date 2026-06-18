@@ -34,6 +34,9 @@ interface IdentifierAtOffset {
   start: number;
 }
 
+const PHP_CLASS_NAME_PATTERN = String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+const PHP_CONTAINER_CALL_PATTERN = String.raw`(?:(?:app|resolve|make)\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|app\s*\(\s*\)\s*->\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|${PHP_CLASS_NAME_PATTERN}\s*::\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|${PHP_CLASS_NAME_PATTERN}\s*::\s*getInstance\s*\(\s*\)\s*->\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\))`;
+
 export function phpIdentifierContextAt(
   source: string,
   position: EditorPosition,
@@ -228,9 +231,7 @@ function methodCallContextAt(
   const lineStart = source.lastIndexOf("\n", identifier.start - 1) + 1;
   const lineEnd = source.indexOf("\n", identifier.end);
   const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
-  const classNamePattern =
-    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
-  const baseReceiverPattern = String.raw`(?:\$[A-Za-z_][A-Za-z0-9_]*|\$this|${classNamePattern}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
+  const baseReceiverPattern = String.raw`(?:\$[A-Za-z_][A-Za-z0-9_]*|\$this|${PHP_CONTAINER_CALL_PATTERN}|${PHP_CLASS_NAME_PATTERN}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
   const methodPattern = new RegExp(
     `(${baseReceiverPattern}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
     "g",

@@ -11,6 +11,23 @@ import {
 } from "./phpNavigation";
 import type { PhpProjectDescriptor } from "./workspace";
 
+function positionAfter(source: string, needle: string) {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing test needle: ${needle}`);
+  }
+
+  const before = source.slice(0, offset + needle.length);
+  const lines = before.split("\n");
+  const lastLine = lines[lines.length - 1] ?? "";
+
+  return {
+    column: lastLine.length,
+    lineNumber: lines.length,
+  };
+}
+
 describe("phpNavigation", () => {
   const controllerSource = `<?php
 namespace App\\Http\\Controllers;
@@ -73,6 +90,57 @@ class AlbumController
       kind: "methodCall",
       methodName: "firstOrFail",
       receiverExpression: "Album::query()->whereNull('parent_id')",
+      variableName: "",
+    });
+  });
+
+  it("detects Laravel container expression method calls under the cursor", () => {
+    const source = `<?php
+class CommentController
+{
+    public function store(): void
+    {
+        app(CommentService::class)->createWithAttachments();
+        App::make(CommentService::class)->createWithAttachments();
+        Container::getInstance()->make(CommentService::class)->createWithAttachments();
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "app(CommentService::class)->create"),
+      ),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "createWithAttachments",
+      receiverExpression: "app(CommentService::class)",
+      variableName: "",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "App::make(CommentService::class)->create"),
+      ),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "createWithAttachments",
+      receiverExpression: "App::make(CommentService::class)",
+      variableName: "",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(
+          source,
+          "Container::getInstance()->make(CommentService::class)->create",
+        ),
+      ),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "createWithAttachments",
+      receiverExpression: "Container::getInstance()->make(CommentService::class)",
       variableName: "",
     });
   });
