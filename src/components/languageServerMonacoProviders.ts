@@ -7,7 +7,9 @@ import {
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import {
+  phpMemberAccessCompletionContextAt,
   phpMethodParameters,
+  phpStaticAccessCompletionContextAt,
   type PhpMethodCompletion,
   type PhpMethodParameter,
   type PhpMethodSignature,
@@ -217,8 +219,18 @@ async function provideCompletionItems(
     position,
     range,
   );
+  const isMemberOrStaticCompletion = Boolean(
+    phpMemberAccessCompletionContextAt(
+      documentContext.activeDocument.content,
+      position,
+    ) ||
+      phpStaticAccessCompletionContextAt(
+        documentContext.activeDocument.content,
+        position,
+      ),
+  );
   const variableSuggestions: Monaco.languages.CompletionItem[] =
-    methodSuggestions.length > 0
+    methodSuggestions.length > 0 || isMemberOrStaticCompletion
       ? []
       : phpVariableCompletionsAt(
           documentContext.activeDocument.content,

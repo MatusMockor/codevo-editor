@@ -386,6 +386,39 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(providePhpMethodCompletions).toHaveBeenCalled();
   });
 
+  it("does not offer local variables as a fallback inside PHP member access", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(Comment $comment, StoreCommentRequest $request): void\n{\n    $comment->\n}\n",
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          lineContent: "    $comment->",
+          word: {
+            endColumn: 15,
+            startColumn: 15,
+          },
+        }),
+        {
+          column: 15,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [],
+    });
+    expect(providePhpMethodCompletions).toHaveBeenCalled();
+  });
+
   it("maps typed PHP receiver properties without method parentheses", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
