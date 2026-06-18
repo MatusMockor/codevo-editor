@@ -183,6 +183,15 @@ pub struct LanguageServerDocumentSymbol {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LanguageServerWorkspaceSymbol {
+    pub container_name: Option<String>,
+    pub kind: u32,
+    pub location: Option<LanguageServerLocation>,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LanguageServerSignatureHelp {
     pub active_parameter: u32,
     pub active_signature: u32,
@@ -213,6 +222,7 @@ pub trait TextDocumentFeatureRequestFactory {
     ) -> LanguageServerFeatureRequest;
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest;
+    fn workspace_symbols(&self, query: &str) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
@@ -266,6 +276,15 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                 "textDocument": {
                     "uri": file_uri(Path::new(path)),
                 },
+            }),
+        }
+    }
+
+    fn workspace_symbols(&self, query: &str) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/symbol".to_string(),
+            params: json!({
+                "query": query,
             }),
         }
     }
@@ -446,6 +465,20 @@ pub fn parse_document_symbols_result(
         .iter()
         .filter_map(parse_document_symbol_item)
         .collect())
+}
+
+pub fn parse_workspace_symbols_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerWorkspaceSymbol>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed workspace symbols.".to_string());
+    };
+
+    Ok(items.iter().filter_map(parse_workspace_symbol).collect())
 }
 
 pub fn parse_signature_help_result(
@@ -769,6 +802,30 @@ fn parse_symbol_information(value: &Value) -> Option<LanguageServerDocumentSymbo
     })
 }
 
+fn parse_workspace_symbol(value: &Value) -> Option<LanguageServerWorkspaceSymbol> {
+    let name = value.get("name").and_then(Value::as_str)?.to_string();
+    let kind = value.get("kind").and_then(Value::as_u64)? as u32;
+    let location = parse_workspace_symbol_location(value.get("location")?);
+
+    Some(LanguageServerWorkspaceSymbol {
+        container_name: value
+            .get("containerName")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        kind,
+        location,
+        name,
+    })
+}
+
+fn parse_workspace_symbol_location(value: &Value) -> Option<LanguageServerLocation> {
+    if value.get("range").is_none() {
+        return None;
+    }
+
+    serde_json::from_value(value.clone()).ok()
+}
+
 fn parse_signature_information(value: &Value) -> Option<LanguageServerSignature> {
     let label = value.get("label").and_then(Value::as_str)?.to_string();
     let parameters = value
@@ -946,8 +1003,8 @@ mod tests {
         parse_code_action_result, parse_completion_result, parse_definition_result,
         parse_document_symbols_result, parse_formatting_result, parse_hover_result,
         parse_inlay_hints_result, parse_optional_workspace_edit_result,
-        parse_signature_help_result, parse_workspace_edit_result, LanguageServerCodeAction,
-        LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
+        parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
+        LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
         LanguageServerCompletionItem, LanguageServerCompletionList,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
@@ -1020,6 +1077,15 @@ mod tests {
             .as_str()
             .expect("uri")
             .starts_with("file://"));
+    }
+
+    #[test]
+    fn workspace_symbols_request_contains_query() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.workspace_symbols("User");
+
+        assert_eq!(request.method, "workspace/symbol");
+        assert_eq!(request.params["query"], "User");
     }
 
     #[test]
@@ -1657,6 +1723,50 @@ mod tests {
         assert_eq!(symbols[1].selection_range.start.line, 8);
         assert_eq!(
             parse_document_symbols_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn parses_workspace_symbols_with_and_without_ranges() {
+        let symbols = parse_workspace_symbols_result(&json!([
+            {
+                "name": "UserService",
+                "kind": 5,
+                "containerName": "App",
+                "location": {
+                    "uri": "file:///tmp/UserService.ts",
+                    "range": {
+                        "start": { "line": 1, "character": 13 },
+                        "end": { "line": 6, "character": 1 }
+                    }
+                }
+            },
+            {
+                "name": "UnresolvedSymbol",
+                "kind": 5,
+                "location": {
+                    "uri": "file:///tmp/Unresolved.ts"
+                }
+            }
+        ]))
+        .expect("symbols");
+
+        assert_eq!(symbols[0].name, "UserService");
+        assert_eq!(symbols[0].container_name.as_deref(), Some("App"));
+        assert_eq!(
+            symbols[0]
+                .location
+                .as_ref()
+                .expect("location")
+                .range
+                .start
+                .line,
+            1
+        );
+        assert!(symbols[1].location.is_none());
+        assert_eq!(
+            parse_workspace_symbols_result(&json!(null)).expect("null"),
             Vec::new()
         );
     }

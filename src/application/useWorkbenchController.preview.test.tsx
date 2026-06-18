@@ -992,6 +992,88 @@ describe("useWorkbenchController preview tabs", () => {
     ]);
   });
 
+  it("uses JavaScript and TypeScript workspace symbols for Cmd+O in Basic mode", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 12,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockResolvedValue([
+      {
+        containerName: "src/userService",
+        kind: 5,
+        location: {
+          range: range(4, 13, 8, 1),
+          uri: fileUriFromPath("/workspace/src/userService.ts"),
+        },
+        name: "UserService",
+      },
+      {
+        containerName: null,
+        kind: 11,
+        location: {
+          range: range(1, 17, 3, 1),
+          uri: fileUriFromPath("/workspace/src/UserRepository.ts"),
+        },
+        name: "UserRepository",
+      },
+      {
+        containerName: "UserService",
+        kind: 6,
+        location: {
+          range: range(5, 2, 7, 3),
+          uri: fileUriFromPath("/workspace/src/userService.ts"),
+        },
+        name: "loadUser",
+      },
+    ]);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).not.toHaveBeenCalled();
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).toHaveBeenCalledWith("/workspace", "User");
+    expect(getWorkbench().classOpenResults.map((result) => result.name)).toEqual([
+      "UserService",
+      "UserRepository",
+    ]);
+    expect(getWorkbench().classOpenResults[0]).toMatchObject({
+      kind: "class",
+      lineNumber: 5,
+      relativePath: "src/userService.ts",
+    });
+  });
+
   it("uses the project index for go to definition when the language server is unavailable", async () => {
     const controllerPath = "/workspace/src/CommentController.php";
     const agentPath = "/workspace/src/CommentsAgent.php";
@@ -3314,6 +3396,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
     signatureHelp: vi.fn(async () => null),
+    workspaceSymbols: vi.fn(async () => []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
   };

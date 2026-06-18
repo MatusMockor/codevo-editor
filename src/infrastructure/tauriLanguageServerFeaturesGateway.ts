@@ -16,6 +16,7 @@ import {
   type LanguageServerSignatureHelp,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
+  type LanguageServerWorkspaceSymbol,
   type LanguageServerWorkspaceEdit,
 } from "../domain/languageServerFeatures";
 
@@ -41,6 +42,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   references: "text_document_references",
   rename: "text_document_rename",
   signatureHelp: "text_document_signature_help",
+  workspaceSymbols: "workspace_symbols",
 };
 
 export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
@@ -58,6 +60,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   references: "javascript_typescript_text_document_references",
   rename: "javascript_typescript_text_document_rename",
   signatureHelp: "javascript_typescript_text_document_signature_help",
+  workspaceSymbols: "javascript_typescript_workspace_symbols",
 };
 
 export interface TauriLanguageServerFeatureCommands {
@@ -75,6 +78,7 @@ export interface TauriLanguageServerFeatureCommands {
   references: string;
   rename: string;
   signatureHelp: string;
+  workspaceSymbols: string;
 }
 
 export class TauriLanguageServerFeaturesGateway
@@ -153,6 +157,17 @@ export class TauriLanguageServerFeaturesGateway
     return this.invokeWhenAvailable(
       this.commands.documentSymbols,
       { path, rootPath },
+      [],
+    );
+  }
+
+  workspaceSymbols(
+    rootPath: string,
+    query: string,
+  ): Promise<LanguageServerWorkspaceSymbol[]> {
+    return this.invokeWhenAvailable(
+      this.commands.workspaceSymbols,
+      { query, rootPath },
       [],
     );
   }

@@ -64,6 +64,7 @@ pub struct LanguageServerCapabilities {
     pub references: bool,
     pub rename: bool,
     pub signature_help: bool,
+    pub workspace_symbol: bool,
 }
 
 pub trait StatusSink: Send + Sync {
@@ -1354,6 +1355,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         references: is_capability_enabled(capabilities.get("referencesProvider")),
         rename: is_capability_enabled(capabilities.get("renameProvider")),
         signature_help: is_capability_enabled(capabilities.get("signatureHelpProvider")),
+        workspace_symbol: is_capability_enabled(capabilities.get("workspaceSymbolProvider")),
     })
 }
 
@@ -1538,6 +1540,7 @@ mod tests {
                     references: false,
                     rename: false,
                     signature_help: false,
+                    workspace_symbol: false,
                 },
             }
         );
@@ -1561,6 +1564,7 @@ mod tests {
                 references: true,
                 rename: true,
                 signature_help: true,
+                workspace_symbol: true,
             },
         };
 
@@ -1580,6 +1584,7 @@ mod tests {
                     "references": true,
                     "rename": true,
                     "signatureHelp": true,
+                    "workspaceSymbol": true,
                     "codeAction": true,
                 },
             })
@@ -1608,6 +1613,7 @@ mod tests {
                     "referencesProvider": true,
                     "renameProvider": { "prepareProvider": true },
                     "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
+                    "workspaceSymbolProvider": true,
                     "codeActionProvider": { "codeActionKinds": ["quickfix"] },
                     "documentFormattingProvider": true,
                 }
@@ -1629,6 +1635,7 @@ mod tests {
                 references: true,
                 rename: true,
                 signature_help: true,
+                workspace_symbol: true,
             }
         );
     }

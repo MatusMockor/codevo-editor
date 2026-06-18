@@ -298,6 +298,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                     "workspace": {
                         "configuration": true,
                         "didChangeConfiguration": { "dynamicRegistration": false },
+                        "symbol": { "dynamicRegistration": false },
                         "workspaceEdit": {
                             "documentChanges": true
                         },

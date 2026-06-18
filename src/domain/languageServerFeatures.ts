@@ -81,6 +81,13 @@ export interface LanguageServerDocumentSymbol {
   selectionRange: LanguageServerRange;
 }
 
+export interface LanguageServerWorkspaceSymbol {
+  containerName: string | null;
+  kind: number;
+  location: LanguageServerLocation | null;
+  name: string;
+}
+
 export interface LanguageServerSignatureParameter {
   documentation: string | null;
   label: string;
@@ -180,6 +187,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     path: string,
   ): Promise<LanguageServerDocumentSymbol[]>;
+  workspaceSymbols(
+    rootPath: string,
+    query: string,
+  ): Promise<LanguageServerWorkspaceSymbol[]>;
   references(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

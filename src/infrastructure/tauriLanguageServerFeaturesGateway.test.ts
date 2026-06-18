@@ -27,6 +27,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.documentSymbols("/project", "/project/src/User.php"),
     ).resolves.toEqual([]);
+    await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
+      [],
+    );
     await expect(gateway.implementation("/project", position())).resolves.toEqual([]);
     await expect(
       gateway.inlayHints("/project", "/project/src/User.php", range()),
@@ -155,6 +158,17 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         selectionRange: range(),
       },
     ];
+    const workspaceSymbols = [
+      {
+        containerName: "App",
+        kind: 5,
+        location: {
+          range: range(),
+          uri: "file:///project/src/User.php",
+        },
+        name: "User",
+      },
+    ];
     const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
       if (command === "text_document_hover") {
         return hover;
@@ -199,6 +213,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return documentSymbols;
       }
 
+      if (command === "workspace_symbols") {
+        return workspaceSymbols;
+      }
+
       if (command === "text_document_signature_help") {
         return signatureHelp;
       }
@@ -223,6 +241,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.documentSymbols("/project", "/project/src/User.php"),
     ).resolves.toEqual(documentSymbols);
+    await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
+      workspaceSymbols,
+    );
     await expect(gateway.implementation("/project", requestPosition)).resolves.toEqual(
       definition,
     );
@@ -274,6 +295,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_document_symbols", {
       path: "/project/src/User.php",
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("workspace_symbols", {
+      query: "User",
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_implementation", {

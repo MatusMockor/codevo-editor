@@ -10,6 +10,7 @@ export interface LanguageServerCapabilities {
   references: boolean;
   rename: boolean;
   signatureHelp: boolean;
+  workspaceSymbol: boolean;
 }
 
 export type LanguageServerRuntimeStatus =
@@ -129,6 +130,10 @@ export function languageServerCapabilityLabels(
     labels.push("signature help");
   }
 
+  if (capabilities.workspaceSymbol) {
+    labels.push("workspace symbols");
+  }
+
   if (capabilities.codeAction) {
     labels.push("code actions");
   }
@@ -153,5 +158,6 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     references: false,
     rename: false,
     signatureHelp: false,
+    workspaceSymbol: false,
   };
 }

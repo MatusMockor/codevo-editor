@@ -611,6 +611,9 @@ function featuresGateway(
     signatureHelp: Awaited<
       ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
     >;
+    workspaceSymbols: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>
+    >;
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
     >;
@@ -638,6 +641,7 @@ function featuresGateway(
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
     signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
+    workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(
       async (_rootPath, item) => responses.resolvedCompletionItem ?? item,
     ),
@@ -663,6 +667,7 @@ function runningStatus(
       references: true,
       rename: true,
       signatureHelp: true,
+      workspaceSymbol: true,
       ...capabilities,
     },
     kind: "running",

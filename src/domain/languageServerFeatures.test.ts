@@ -22,6 +22,7 @@ describe("canUseLanguageServerFeature", () => {
       references: false,
       rename: false,
       signatureHelp: false,
+      workspaceSymbol: false,
     };
 
     expect(canUseLanguageServerFeature(capabilities, "hover")).toBe(true);

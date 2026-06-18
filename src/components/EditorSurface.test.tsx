@@ -945,5 +945,6 @@ function languageServerFeaturesGateway() {
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
     signatureHelp: vi.fn(),
+    workspaceSymbols: vi.fn(async () => []),
   };
 }

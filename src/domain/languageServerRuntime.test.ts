@@ -56,6 +56,7 @@ describe("languageServerCapabilities", () => {
       references: true,
       rename: true,
       signatureHelp: true,
+      workspaceSymbol: true,
     });
     expect(languageServerCapabilities(status("starting"))).toEqual(
       emptyLanguageServerCapabilities(),
@@ -76,6 +77,7 @@ describe("languageServerCapabilities", () => {
       "references",
       "rename",
       "signature help",
+      "workspace symbols",
       "code actions",
       "formatting",
     ]);
@@ -103,6 +105,7 @@ function status(
           references: true,
           rename: true,
           signatureHelp: true,
+          workspaceSymbol: true,
         },
       };
     }

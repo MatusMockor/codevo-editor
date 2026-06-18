@@ -76,6 +76,7 @@ import {
   type LanguageServerDocumentSymbol,
   type LanguageServerFeaturesGateway,
   type LanguageServerLocation,
+  type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import {
   matchesShortcut,
@@ -157,6 +158,7 @@ import {
   type PhpMethodDefinitionHint,
 } from "../domain/phpNavigation";
 import type {
+  ProjectSymbolKind,
   ProjectSymbolSearchGateway,
   ProjectSymbolSearchResult,
 } from "../domain/projectSymbols";
@@ -6204,12 +6206,77 @@ export function useWorkbenchController(
     };
   }, [fileSearch, quickOpenOpen, quickOpenQuery, reportError, workspaceRoot]);
 
+  const canSearchClassOpenSymbols = Boolean(
+    shouldIndexWorkspace(intelligenceMode) ||
+      (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+        canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "workspaceSymbol",
+        )),
+  );
+  const searchClassOpenSymbols = useCallback(
+    async (query: string, limit: number): Promise<ProjectSymbolSearchResult[]> => {
+      if (!workspaceRoot) {
+        return [];
+      }
+
+      const searches: Array<Promise<ProjectSymbolSearchResult[]>> = [];
+
+      if (shouldIndexWorkspace(intelligenceMode)) {
+        searches.push(
+          projectSymbolSearch.searchProjectSymbols(workspaceRoot, query, limit),
+        );
+      }
+
+      if (
+        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+        canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "workspaceSymbol",
+        )
+      ) {
+        searches.push(
+          javaScriptTypeScriptLanguageServerFeaturesGateway
+            .workspaceSymbols(workspaceRoot, query)
+            .then((symbols) =>
+              symbols
+                .map((symbol) =>
+                  projectSymbolFromLanguageServerWorkspaceSymbol(
+                    workspaceRoot,
+                    symbol,
+                  ),
+                )
+                .filter(
+                  (symbol): symbol is ProjectSymbolSearchResult =>
+                    symbol !== null,
+                ),
+            )
+            .catch((error) => {
+              reportError("JavaScript/TypeScript Workspace Symbols", error);
+              return [];
+            }),
+        );
+      }
+
+      const results = (await Promise.all(searches)).flat();
+      return uniqueProjectSymbols(results).slice(0, limit);
+    },
+    [
+      intelligenceMode,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      projectSymbolSearch,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
   useEffect(() => {
     if (
       !classOpenOpen ||
       !workspaceRoot ||
       !classOpenQuery.trim() ||
-      !shouldIndexWorkspace(intelligenceMode)
+      !canSearchClassOpenSymbols
     ) {
       setClassOpenResults([]);
       setClassOpenLoading(false);
@@ -6220,8 +6287,7 @@ export function useWorkbenchController(
     setClassOpenLoading(true);
 
     const timeout = window.setTimeout(() => {
-      projectSymbolSearch
-        .searchProjectSymbols(workspaceRoot, classOpenQuery, 120)
+      searchClassOpenSymbols(classOpenQuery, 120)
         .then((results) => {
           if (!active) {
             return;
@@ -6256,9 +6322,9 @@ export function useWorkbenchController(
   }, [
     classOpenOpen,
     classOpenQuery,
-    intelligenceMode,
-    projectSymbolSearch,
+    canSearchClassOpenSymbols,
     reportError,
+    searchClassOpenSymbols,
     workspaceRoot,
   ]);
 
@@ -6921,6 +6987,83 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
   }
 
   return path;
+}
+
+function projectSymbolFromLanguageServerWorkspaceSymbol(
+  workspaceRoot: string,
+  symbol: LanguageServerWorkspaceSymbol,
+): ProjectSymbolSearchResult | null {
+  const path = symbol.location ? pathFromLanguageServerUri(symbol.location.uri) : null;
+  const kind = projectSymbolKindFromLanguageServerSymbolKind(symbol.kind);
+
+  if (!path || !kind || !symbol.location) {
+    return null;
+  }
+
+  return {
+    column: symbol.location.range.start.character + 1,
+    containerName: symbol.containerName,
+    fullyQualifiedName: symbol.containerName
+      ? `${symbol.containerName}.${symbol.name}`
+      : symbol.name,
+    kind,
+    lineNumber: symbol.location.range.start.line + 1,
+    name: symbol.name,
+    path,
+    relativePath: relativeWorkspacePath(workspaceRoot, path),
+  };
+}
+
+function projectSymbolKindFromLanguageServerSymbolKind(
+  kind: number,
+): ProjectSymbolKind | null {
+  if (kind === 5) {
+    return "class";
+  }
+
+  if (kind === 6) {
+    return "method";
+  }
+
+  if (kind === 10) {
+    return "enum";
+  }
+
+  if (kind === 11) {
+    return "interface";
+  }
+
+  if (kind === 12) {
+    return "function";
+  }
+
+  return null;
+}
+
+function uniqueProjectSymbols(
+  symbols: ProjectSymbolSearchResult[],
+): ProjectSymbolSearchResult[] {
+  const seen = new Set<string>();
+  const unique: ProjectSymbolSearchResult[] = [];
+
+  for (const symbol of symbols) {
+    const key = [
+      symbol.kind,
+      symbol.fullyQualifiedName,
+      symbol.path,
+      symbol.lineNumber,
+      symbol.column,
+    ].join("\0");
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(symbol);
+  }
+
+  return unique;
 }
 
 function javaScriptTypeScriptDiagnosticNoticeGroup(uri: string): string {
