@@ -38,6 +38,7 @@ export interface LanguageServerCompletionItem {
   additionalTextEdits?: LanguageServerTextEdit[];
   commitCharacters?: string[];
   data?: unknown;
+  deprecated?: boolean;
   label: string;
   detail: string | null;
   documentation: string | null;
@@ -48,6 +49,7 @@ export interface LanguageServerCompletionItem {
   labelDetails?: LanguageServerCompletionItemLabelDetails | null;
   preselect?: boolean;
   sortText?: string | null;
+  tags?: number[];
   textEdit?: LanguageServerCompletionTextEdit | null;
 }
 

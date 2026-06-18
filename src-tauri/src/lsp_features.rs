@@ -204,6 +204,8 @@ pub struct LanguageServerCompletionItem {
     #[serde(default)]
     pub commit_characters: Vec<String>,
     pub data: Option<Value>,
+    #[serde(default)]
+    pub deprecated: bool,
     pub label: String,
     pub detail: Option<String>,
     pub documentation: Option<String>,
@@ -215,6 +217,8 @@ pub struct LanguageServerCompletionItem {
     #[serde(default)]
     pub preselect: bool,
     pub sort_text: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<u32>,
     pub text_edit: Option<LanguageServerCompletionTextEdit>,
 }
 
@@ -1085,11 +1089,26 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
                 .collect()
         })
         .unwrap_or_default();
+    let tags = value
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_u64)
+                .map(|tag| tag as u32)
+                .collect()
+        })
+        .unwrap_or_default();
 
     Some(LanguageServerCompletionItem {
         additional_text_edits,
         commit_characters,
         data: value.get("data").cloned(),
+        deprecated: value
+            .get("deprecated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         label,
         detail: optional_string(value.get("detail")),
         documentation: value.get("documentation").and_then(markup_to_string),
@@ -1111,6 +1130,7 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
             .and_then(Value::as_bool)
             .unwrap_or(false),
         sort_text: optional_string(value.get("sortText")),
+        tags,
         text_edit: value.get("textEdit").and_then(parse_completion_text_edit),
     })
 }
@@ -1983,6 +2003,8 @@ mod tests {
                         "sortText": "11",
                         "data": { "entryNames": ["User"] },
                         "commitCharacters": ["."],
+                        "deprecated": true,
+                        "tags": [1],
                         "additionalTextEdits": [
                             {
                                 "range": {
@@ -2022,6 +2044,7 @@ mod tests {
                     }],
                     commit_characters: vec![".".to_string()],
                     data: Some(json!({ "entryNames": ["User"] })),
+                    deprecated: true,
                     label: "User".to_string(),
                     detail: Some("class".to_string()),
                     documentation: Some("A user".to_string()),
@@ -2035,6 +2058,7 @@ mod tests {
                     }),
                     preselect: true,
                     sort_text: Some("11".to_string()),
+                    tags: vec![1],
                     text_edit: Some(LanguageServerCompletionTextEdit {
                         range: Some(LanguageServerRange {
                             start: LanguageServerPosition {
@@ -2069,6 +2093,7 @@ mod tests {
             additional_text_edits: Vec::new(),
             commit_characters: Vec::new(),
             data: Some(json!({ "entryNames": ["User"] })),
+            deprecated: false,
             label: "User".to_string(),
             detail: None,
             documentation: None,
@@ -2082,6 +2107,7 @@ mod tests {
             }),
             preselect: false,
             sort_text: None,
+            tags: Vec::new(),
             text_edit: None,
         };
         let request = factory.resolve_completion_item(&item);

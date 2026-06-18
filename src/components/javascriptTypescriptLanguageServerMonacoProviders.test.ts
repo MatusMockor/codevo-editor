@@ -926,6 +926,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
               },
             ],
             commitCharacters: ["."],
+            deprecated: true,
             detail: "function loadUser(id: string): Promise<User>",
             documentation: "Loads a user.",
             filterText: "loadUser",
@@ -1007,6 +1008,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           }),
         },
         sortText: "11",
+        tags: [monaco.languages.CompletionItemTag.Deprecated],
       }),
     );
     expect(result.incomplete).toBe(true);
@@ -1469,6 +1471,9 @@ function createMonaco() {
         Text: 1,
         Value: 12,
         Variable: 6,
+      },
+      CompletionItemTag: {
+        Deprecated: 1,
       },
       DocumentHighlightKind: {
         Read: 1,

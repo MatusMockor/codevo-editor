@@ -1805,7 +1805,14 @@ function toMonacoCompletionItem(
       ? toMonacoCompletionRange(monaco, item.textEdit, fallbackRange)
       : fallbackRange,
     sortText: item.sortText ?? fallbackSortText,
+    ...(isDeprecatedCompletionItem(item)
+      ? { tags: [monaco.languages.CompletionItemTag.Deprecated] }
+      : {}),
   };
+}
+
+function isDeprecatedCompletionItem(item: LanguageServerCompletionItem): boolean {
+  return Boolean(item.deprecated || item.tags?.includes(1));
 }
 
 function completionLabel(
