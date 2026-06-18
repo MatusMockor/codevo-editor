@@ -15,6 +15,13 @@ pub struct PhpToolAvailability {
 #[serde(rename_all = "camelCase")]
 pub struct JavaScriptTypeScriptToolAvailability {
     pub typescript_language_server: Option<ToolLocation>,
+    pub typescript_server: Option<ToolLocation>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JavaScriptTypeScriptToolPreference {
+    Bundled,
+    Workspace,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +50,7 @@ pub trait JavaScriptTypeScriptToolDetector {
     fn detect(
         &self,
         workspace_root: Option<&Path>,
+        preference: JavaScriptTypeScriptToolPreference,
     ) -> io::Result<JavaScriptTypeScriptToolAvailability>;
 }
 
@@ -62,12 +70,15 @@ impl JavaScriptTypeScriptToolDetector for LocalJavaScriptTypeScriptToolDetector 
     fn detect(
         &self,
         workspace_root: Option<&Path>,
+        preference: JavaScriptTypeScriptToolPreference,
     ) -> io::Result<JavaScriptTypeScriptToolAvailability> {
         Ok(JavaScriptTypeScriptToolAvailability {
             typescript_language_server: find_javascript_typescript_tool(
                 "typescript-language-server",
                 workspace_root,
+                preference,
             ),
+            typescript_server: find_typescript_server(workspace_root, preference),
         })
     }
 }
@@ -87,8 +98,17 @@ fn find_tool(name: &str, workspace_root: Option<&Path>) -> Option<ToolLocation> 
 fn find_javascript_typescript_tool(
     name: &str,
     workspace_root: Option<&Path>,
+    preference: JavaScriptTypeScriptToolPreference,
 ) -> Option<ToolLocation> {
     let managed_override = env::var_os(managed_tool_env_var(name)).map(PathBuf::from);
+
+    if matches!(preference, JavaScriptTypeScriptToolPreference::Workspace) {
+        if let Some(root) = workspace_root {
+            if let Some(location) = find_workspace_node_modules_tool(name, root) {
+                return Some(location);
+            }
+        }
+    }
 
     if let Some(location) = find_managed_tool(
         name,
@@ -102,13 +122,28 @@ fn find_javascript_typescript_tool(
         return Some(location);
     }
 
-    if let Some(root) = workspace_root {
-        if let Some(location) = find_workspace_node_modules_tool(name, root) {
-            return Some(location);
+    if matches!(preference, JavaScriptTypeScriptToolPreference::Bundled) {
+        if let Some(root) = workspace_root {
+            if let Some(location) = find_workspace_node_modules_tool(name, root) {
+                return Some(location);
+            }
         }
     }
 
     find_path_tool(name)
+}
+
+fn find_typescript_server(
+    workspace_root: Option<&Path>,
+    preference: JavaScriptTypeScriptToolPreference,
+) -> Option<ToolLocation> {
+    match preference {
+        JavaScriptTypeScriptToolPreference::Workspace => workspace_root
+            .and_then(find_workspace_typescript_server)
+            .or_else(find_bundled_typescript_server),
+        JavaScriptTypeScriptToolPreference::Bundled => find_bundled_typescript_server()
+            .or_else(|| workspace_root.and_then(find_workspace_typescript_server)),
+    }
 }
 
 fn find_tool_with_managed_locations(
@@ -231,34 +266,69 @@ fn javascript_typescript_managed_tool_roots() -> Vec<PathBuf> {
 }
 
 fn find_bundled_node_modules_tool(name: &str) -> Option<ToolLocation> {
-    bundled_node_modules_roots().into_iter().find_map(|root| {
-        executable_names(name).into_iter().find_map(|executable| {
-            let path = root.join(&executable);
+    bundled_node_modules_bin_roots()
+        .into_iter()
+        .find_map(|root| {
+            executable_names(name).into_iter().find_map(|executable| {
+                let path = root.join(&executable);
 
-            is_executable_file(&path).then(|| ToolLocation {
-                executable,
-                path: path.to_string_lossy().to_string(),
-                source: ToolSource::BundledNodeModulesBin,
+                is_executable_file(&path).then(|| ToolLocation {
+                    executable,
+                    path: path.to_string_lossy().to_string(),
+                    source: ToolSource::BundledNodeModulesBin,
+                })
             })
         })
+}
+
+fn find_bundled_typescript_server() -> Option<ToolLocation> {
+    bundled_node_modules_roots().into_iter().find_map(|root| {
+        find_typescript_server_in_node_modules(&root, ToolSource::BundledNodeModulesBin)
     })
+}
+
+fn find_workspace_typescript_server(root: &Path) -> Option<ToolLocation> {
+    find_typescript_server_in_node_modules(
+        &root.join("node_modules"),
+        ToolSource::WorkspaceNodeModulesBin,
+    )
+}
+
+fn find_typescript_server_in_node_modules(
+    node_modules_root: &Path,
+    source: ToolSource,
+) -> Option<ToolLocation> {
+    let path = node_modules_root
+        .join("typescript")
+        .join("lib")
+        .join("tsserver.js");
+
+    path.is_file()
+        .then(|| tool_location("tsserver.js", path, source))
+}
+
+fn bundled_node_modules_bin_roots() -> Vec<PathBuf> {
+    bundled_node_modules_roots()
+        .into_iter()
+        .map(|root| root.join(".bin"))
+        .collect()
 }
 
 fn bundled_node_modules_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
     if let Ok(current_dir) = env::current_dir() {
-        roots.push(current_dir.join("node_modules").join(".bin"));
+        roots.push(current_dir.join("node_modules"));
     }
 
     let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if let Some(workspace_root) = manifest_root.parent() {
-        roots.push(workspace_root.join("node_modules").join(".bin"));
+        roots.push(workspace_root.join("node_modules"));
     }
 
     if let Ok(executable) = env::current_exe() {
         for ancestor in executable.ancestors().take(8) {
-            roots.push(ancestor.join("node_modules").join(".bin"));
+            roots.push(ancestor.join("node_modules"));
         }
     }
 
@@ -356,7 +426,10 @@ fn is_executable_metadata(_metadata: &fs::Metadata) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_tool_with_managed_locations, ToolSource};
+    use super::{
+        find_javascript_typescript_tool, find_tool_with_managed_locations, find_typescript_server,
+        JavaScriptTypeScriptToolPreference, ToolSource,
+    };
     use std::{fs, time::SystemTime};
 
     #[test]
@@ -406,6 +479,44 @@ mod tests {
 
         fs::remove_dir_all(root).expect("cleanup root");
         fs::remove_dir_all(managed).expect("cleanup managed");
+    }
+
+    #[test]
+    fn workspace_preference_detects_workspace_typescript_language_server_first() {
+        let root = create_temp_dir("workspace-typescript-language-server");
+        let node_modules_bin = root.join("node_modules").join(".bin");
+        fs::create_dir_all(&node_modules_bin).expect("create node_modules bin");
+        let server_path = node_modules_bin.join("typescript-language-server");
+        fs::write(&server_path, "").expect("write typescript language server");
+        make_executable(&server_path);
+
+        let server = find_javascript_typescript_tool(
+            "typescript-language-server",
+            Some(&root),
+            JavaScriptTypeScriptToolPreference::Workspace,
+        )
+        .expect("typescript language server location");
+
+        assert_eq!(server.path, server_path.to_string_lossy().to_string());
+        assert!(matches!(server.source, ToolSource::WorkspaceNodeModulesBin));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn workspace_preference_detects_workspace_typescript_server_first() {
+        let root = create_temp_dir("workspace-typescript-server");
+        let typescript_lib = root.join("node_modules").join("typescript").join("lib");
+        fs::create_dir_all(&typescript_lib).expect("create typescript lib");
+        let server_path = typescript_lib.join("tsserver.js");
+        fs::write(&server_path, "").expect("write tsserver");
+
+        let server =
+            find_typescript_server(Some(&root), JavaScriptTypeScriptToolPreference::Workspace)
+                .expect("typescript server location");
+
+        assert_eq!(server.path, server_path.to_string_lossy().to_string());
+        assert!(matches!(server.source, ToolSource::WorkspaceNodeModulesBin));
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[cfg(unix)]

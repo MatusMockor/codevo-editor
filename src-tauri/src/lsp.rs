@@ -178,7 +178,18 @@ impl<TFactory> TypeScriptLanguageServerPlanner<TFactory>
 where
     TFactory: InitializeRequestFactory,
 {
-    fn ready_plan(&self, root: &Path, server: &ToolLocation) -> LanguageServerPlan {
+    fn ready_plan(
+        &self,
+        root: &Path,
+        server: &ToolLocation,
+        typescript_server: Option<&ToolLocation>,
+    ) -> LanguageServerPlan {
+        let mut initialize_request = self.initialize_request_factory.create(root);
+
+        if let Some(typescript_server) = typescript_server {
+            configure_typescript_server_path(&mut initialize_request, &typescript_server.path);
+        }
+
         LanguageServerPlan {
             provider: LanguageServerProvider::TypeScriptLanguageServer,
             status: LanguageServerPlanStatus::Ready,
@@ -188,7 +199,7 @@ where
                 args: vec!["--stdio".to_string()],
                 working_directory: root.to_string_lossy().to_string(),
             }),
-            initialize_request: Some(self.initialize_request_factory.create(root)),
+            initialize_request: Some(initialize_request),
         }
     }
 }
@@ -215,8 +226,27 @@ where
             );
         };
 
-        self.ready_plan(root, server)
+        self.ready_plan(root, server, tools.typescript_server.as_ref())
     }
+}
+
+fn configure_typescript_server_path(request: &mut JsonRpcRequest, path: &str) {
+    let Some(params) = request.params.as_object_mut() else {
+        return;
+    };
+    let initialization_options = params
+        .entry("initializationOptions")
+        .or_insert_with(|| json!({}));
+    let Some(initialization_options) = initialization_options.as_object_mut() else {
+        return;
+    };
+
+    initialization_options.insert(
+        "tsserver".to_string(),
+        json!({
+            "path": path,
+        }),
+    );
 }
 
 pub struct TypeScriptInitializeRequestFactory;
@@ -514,6 +544,10 @@ mod tests {
             request.params["initializationOptions"]["hostInfo"],
             "Mockor Editor"
         );
+        assert!(request.params["initializationOptions"]["tsserver"]["path"]
+            .as_str()
+            .expect("tsserver path")
+            .ends_with("node_modules/typescript/lib/tsserver.js"));
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -580,6 +614,17 @@ mod tests {
                     .join("node_modules")
                     .join(".bin")
                     .join("typescript-language-server")
+                    .to_string_lossy()
+                    .to_string(),
+                source: ToolSource::WorkspaceNodeModulesBin,
+            }),
+            typescript_server: Some(ToolLocation {
+                executable: "tsserver.js".to_string(),
+                path: root
+                    .join("node_modules")
+                    .join("typescript")
+                    .join("lib")
+                    .join("tsserver.js")
                     .to_string_lossy()
                     .to_string(),
                 source: ToolSource::WorkspaceNodeModulesBin,

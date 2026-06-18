@@ -141,6 +141,44 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("persists TypeScript version preference changes", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      typeScriptVersionSelect().value = "workspace";
+      typeScriptVersionSelect().dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptVersion: "workspace",
+      },
+    });
+  });
+
   function revealActiveFileCheckbox(): HTMLInputElement {
     const labels = Array.from(host.querySelectorAll("label"));
     const label = labels.find((item) =>
@@ -176,6 +214,20 @@ describe("SettingsDialog", () => {
 
     if (!select) {
       throw new Error("JavaScript/TypeScript service select was not rendered.");
+    }
+
+    return select;
+  }
+
+  function typeScriptVersionSelect(): HTMLSelectElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) =>
+      item.textContent?.includes("TypeScript version"),
+    );
+    const select = label?.querySelector<HTMLSelectElement>("select");
+
+    if (!select) {
+      throw new Error("TypeScript version select was not rendered.");
     }
 
     return select;

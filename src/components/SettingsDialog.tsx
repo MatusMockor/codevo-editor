@@ -13,6 +13,7 @@ import {
   type AppTheme,
   type BackgroundRuntimePolicy,
   type JavaScriptTypeScriptServiceMode,
+  type JavaScriptTypeScriptVersionPreference,
   type PhpBackendPreference,
   type StatusBarItemVisibility,
   type WorkspaceSettings,
@@ -218,6 +219,14 @@ export function SettingsDialog({
                       javaScriptTypeScriptService,
                     })
                   }
+                  onChangeJavaScriptTypeScriptVersion={(
+                    javaScriptTypeScriptVersion,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptVersion,
+                    })
+                  }
                   onChangeRevealActiveFileInTree={(revealActiveFileInTree) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -325,6 +334,9 @@ interface GeneralSettingsProps {
   onChangeJavaScriptTypeScriptService(
     mode: JavaScriptTypeScriptServiceMode,
   ): void;
+  onChangeJavaScriptTypeScriptVersion(
+    preference: JavaScriptTypeScriptVersionPreference,
+  ): void;
   onChangeRevealActiveFileInTree(enabled: boolean): void;
   onChangeRuntimePolicy(policy: BackgroundRuntimePolicy): void;
   onChangeStatusBarVisibility(
@@ -341,6 +353,7 @@ function GeneralSettings({
   onChangeAutoSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptService,
+  onChangeJavaScriptTypeScriptVersion,
   onChangeRevealActiveFileInTree,
   onChangeRuntimePolicy,
   onChangeStatusBarVisibility,
@@ -385,6 +398,23 @@ function GeneralSettings({
         >
           <option value="auto">Auto</option>
           <option value="off">Off</option>
+        </select>
+      </label>
+
+      <label className="settings-field">
+        <span>TypeScript version</span>
+        <select
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptVersion(
+              event.currentTarget
+                .value as JavaScriptTypeScriptVersionPreference,
+            )
+          }
+          value={workspaceSettings.javaScriptTypeScriptVersion}
+        >
+          <option value="bundled">Bundled</option>
+          <option value="workspace">Workspace</option>
         </select>
       </label>
 

@@ -77,6 +77,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - `textDocument/documentSymbol` is wired through the shared LSP gateway and JS/TS Basic-mode file structure, giving `Cmd+R` a VS Code-like outline for JavaScript and TypeScript files without PHP IDE Mode.
 - `workspace/symbol` is wired through the shared LSP gateway and JS/TS `Cmd+O` search, giving Basic mode VS Code-like project symbol lookup from TypeScript server state.
 - JavaScript/TypeScript service can now be set per workspace to Auto or Off. Off stops the running managed TS service, clears synced JS/TS state, and prevents Basic-mode auto-start.
+- TypeScript version preference can now be set per workspace to Bundled or Workspace. Workspace mode prefers the project `node_modules/typescript/lib/tsserver.js` and restarts the managed JS/TS service when the preference changes.
 
 ## Full VS Code-Like Target
 
@@ -146,7 +147,7 @@ With multi-project tabs:
 Add settings:
 
 - JavaScript/TypeScript service: Auto / Off
-- TypeScript version: bundled / workspace
+- TypeScript version: bundled / workspace. Done.
 - JavaScript validation on/off
 - Auto imports on/off
 - Inlay hints on/off

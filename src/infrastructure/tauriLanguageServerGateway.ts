@@ -3,6 +3,7 @@ import type {
   LanguageServerGateway,
   LanguageServerPlan,
 } from "../domain/languageServer";
+import type { JavaScriptTypeScriptVersionPreference } from "../domain/settings";
 
 export class TauriLanguageServerGateway implements LanguageServerGateway {
   planPhpLanguageServer(rootPath: string): Promise<LanguageServerPlan> {
@@ -13,12 +14,17 @@ export class TauriLanguageServerGateway implements LanguageServerGateway {
 
   planJavaScriptTypeScriptLanguageServer(
     rootPath: string,
+    typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference,
   ): Promise<LanguageServerPlan> {
+    const args: Record<string, unknown> = { rootPath };
+
+    if (typeScriptVersionPreference) {
+      args.typeScriptVersionPreference = typeScriptVersionPreference;
+    }
+
     return invoke<LanguageServerPlan>(
       "plan_javascript_typescript_language_server",
-      {
-        rootPath,
-      },
+      args,
     );
   }
 }

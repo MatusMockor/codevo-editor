@@ -94,8 +94,9 @@ use terminal_session::{
     LocalTerminalProfileProvider, PortablePtySpawner, TerminalProfileProvider, TerminalSupervisor,
 };
 use tools::{
-    JavaScriptTypeScriptToolDetector, LocalJavaScriptTypeScriptToolDetector, LocalPhpToolDetector,
-    PhpToolAvailability, PhpToolDetector,
+    JavaScriptTypeScriptToolDetector, JavaScriptTypeScriptToolPreference,
+    LocalJavaScriptTypeScriptToolDetector, LocalPhpToolDetector, PhpToolAvailability,
+    PhpToolDetector,
 };
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
@@ -505,13 +506,25 @@ fn build_php_language_server_plan(
 
 fn build_javascript_typescript_language_server_plan(
     root_path: &str,
+    type_script_version_preference: Option<&str>,
 ) -> Result<LanguageServerPlan, String> {
     let root = PathBuf::from(root_path);
+    let preference =
+        javascript_typescript_tool_preference_from_setting(type_script_version_preference);
     let tools = LocalJavaScriptTypeScriptToolDetector
-        .detect(Some(&root))
+        .detect(Some(&root), preference)
         .map_err(|error| error.to_string())?;
 
     Ok(TypeScriptLanguageServerPlanner::new().plan(&root, &tools))
+}
+
+fn javascript_typescript_tool_preference_from_setting(
+    value: Option<&str>,
+) -> JavaScriptTypeScriptToolPreference {
+    match value {
+        Some("workspace") => JavaScriptTypeScriptToolPreference::Workspace,
+        _ => JavaScriptTypeScriptToolPreference::Bundled,
+    }
 }
 
 #[tauri::command]
@@ -525,8 +538,12 @@ fn plan_php_language_server(
 #[tauri::command]
 fn plan_javascript_typescript_language_server(
     root_path: String,
+    type_script_version_preference: Option<String>,
 ) -> Result<LanguageServerPlan, String> {
-    build_javascript_typescript_language_server_plan(&root_path)
+    build_javascript_typescript_language_server_plan(
+        &root_path,
+        type_script_version_preference.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -707,10 +724,14 @@ fn start_php_language_server(
 #[tauri::command]
 fn start_javascript_typescript_language_server(
     root_path: String,
+    type_script_version_preference: Option<String>,
     app: AppHandle,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerRuntimeStatus, String> {
-    let plan = build_javascript_typescript_language_server_plan(&root_path)?;
+    let plan = build_javascript_typescript_language_server_plan(
+        &root_path,
+        type_script_version_preference.as_deref(),
+    )?;
 
     if !matches!(plan.status, LanguageServerPlanStatus::Ready) {
         return Err(plan.message);

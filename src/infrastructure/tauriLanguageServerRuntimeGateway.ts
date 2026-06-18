@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   LanguageServerRuntimeGateway,
+  LanguageServerRuntimeStartOptions,
   LanguageServerRuntimeStatus,
   UnsubscribeFn,
 } from "../domain/languageServerRuntime";
@@ -68,7 +69,10 @@ export class TauriLanguageServerRuntimeGateway
     return this.invokeCommand(this.commands.getStatus, { rootPath });
   }
 
-  start(rootPath: string): Promise<LanguageServerRuntimeStatus> {
+  start(
+    rootPath: string,
+    options: LanguageServerRuntimeStartOptions = {},
+  ): Promise<LanguageServerRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
       return Promise.resolve({
         kind: "crashed",
@@ -76,9 +80,13 @@ export class TauriLanguageServerRuntimeGateway
       });
     }
 
-    return this.invokeCommand(this.commands.start, {
-      rootPath,
-    });
+    const args: Record<string, unknown> = { rootPath };
+
+    if (options.typeScriptVersionPreference) {
+      args.typeScriptVersionPreference = options.typeScriptVersionPreference;
+    }
+
+    return this.invokeCommand(this.commands.start, args);
   }
 
   stop(rootPath: string): Promise<LanguageServerRuntimeStatus> {

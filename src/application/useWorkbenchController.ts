@@ -784,11 +784,16 @@ export function useWorkbenchController(
   );
 
   const refreshJavaScriptTypeScriptLanguageServerPlan = useCallback(
-    async (rootPath: string) => {
+    async (
+      rootPath: string,
+      typeScriptVersionPreference =
+        workspaceSettingsRef.current.javaScriptTypeScriptVersion,
+    ) => {
       try {
         const plan =
           await languageServerGateway.planJavaScriptTypeScriptLanguageServer(
             rootPath,
+            typeScriptVersionPreference,
           );
         setJavaScriptTypeScriptLanguageServerPlan(plan);
         return plan;
@@ -5435,6 +5440,7 @@ export function useWorkbenchController(
     ) => {
       try {
         const previousAppSettings = appSettingsRef.current;
+        const previousWorkspaceSettings = workspaceSettingsRef.current;
         await persistAppSettings(nextAppSettings);
 
         if (!workspaceRoot) {
@@ -5464,6 +5470,9 @@ export function useWorkbenchController(
           ...nextWorkspaceSettings,
           intelligenceMode: nextMode,
         };
+        const shouldRestartJavaScriptTypeScriptRuntime =
+          previousWorkspaceSettings.javaScriptTypeScriptVersion !==
+          resolvedWorkspaceSettings.javaScriptTypeScriptVersion;
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
           await stopLanguageServerRuntime();
@@ -5472,6 +5481,23 @@ export function useWorkbenchController(
         intelligenceModeRef.current = nextMode;
         await persistWorkspaceSettings(workspaceRoot, resolvedWorkspaceSettings);
         setIntelligenceMode(nextMode);
+
+        if (shouldRestartJavaScriptTypeScriptRuntime) {
+          autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
+          await refreshJavaScriptTypeScriptLanguageServerPlan(
+            workspaceRoot,
+            resolvedWorkspaceSettings.javaScriptTypeScriptVersion,
+          );
+
+          if (
+            isLanguageServerActive(
+              javaScriptTypeScriptLanguageServerRuntimeStatus,
+            ) ||
+            javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "crashed"
+          ) {
+            await stopJavaScriptTypeScriptLanguageServerRuntime(workspaceRoot);
+          }
+        }
 
         if (nextTrusted !== null && nextTrusted !== workspaceTrust?.trusted) {
           const trust = await workspaceTrustGateway.setTrust(
@@ -5506,11 +5532,14 @@ export function useWorkbenchController(
       clearWorkspaceIndex,
       persistAppSettings,
       persistWorkspaceSettings,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
       refreshLanguageServerPlan,
+      refreshJavaScriptTypeScriptLanguageServerPlan,
       reportError,
       smartModeGateway,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
+      stopJavaScriptTypeScriptLanguageServerRuntime,
       stopLanguageServerRuntime,
       workspaceDescriptor,
       workspaceRoot,
@@ -6187,7 +6216,10 @@ export function useWorkbenchController(
 
     autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = workspaceRoot;
     javaScriptTypeScriptLanguageServerRuntimeGateway
-      .start(workspaceRoot)
+      .start(workspaceRoot, {
+        typeScriptVersionPreference:
+          workspaceSettings.javaScriptTypeScriptVersion,
+      })
       .then(handleJavaScriptTypeScriptLanguageServerRuntimeStatus)
       .catch((error) => reportError("JavaScript/TypeScript", error));
   }, [
@@ -6197,6 +6229,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     reportError,
     workspaceSettings.javaScriptTypeScriptService,
+    workspaceSettings.javaScriptTypeScriptVersion,
     workspaceRoot,
   ]);
 

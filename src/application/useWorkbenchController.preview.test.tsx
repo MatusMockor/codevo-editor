@@ -727,11 +727,62 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().intelligenceMode).toBe("basic");
     expect(
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
-    ).toHaveBeenCalledWith("/workspace");
+    ).toHaveBeenCalledWith("/workspace", "bundled");
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
-    ).toHaveBeenCalledWith("/workspace");
+    ).toHaveBeenCalledWith("/workspace", {
+      typeScriptVersionPreference: "bundled",
+    });
     expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
+  it("starts JavaScript and TypeScript language service with workspace TypeScript preference", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 16,
+    };
+    const { dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptVersion: "workspace",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledWith("/workspace", "workspace");
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace", {
+      typeScriptVersionPreference: "workspace",
+    });
   });
 
   it("does not start JavaScript and TypeScript language service when disabled", async () => {
@@ -767,7 +818,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
-    ).toHaveBeenCalledWith("/workspace");
+    ).toHaveBeenCalledWith("/workspace", "bundled");
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).not.toHaveBeenCalled();

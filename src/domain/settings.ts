@@ -26,6 +26,7 @@ export type BackgroundRuntimePolicy =
   | "singleActive"
   | "suspendOnBackground";
 export type JavaScriptTypeScriptServiceMode = "auto" | "off";
+export type JavaScriptTypeScriptVersionPreference = "bundled" | "workspace";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
@@ -45,6 +46,7 @@ export interface WorkspaceSettings {
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
   javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
+  javaScriptTypeScriptVersion: JavaScriptTypeScriptVersionPreference;
   phpBackend: PhpBackendPreference;
   phpVersionOverride: string | null;
   phpactorPath: string | null;
@@ -100,6 +102,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     intelligenceMode: "basic",
     intelephensePath: null,
     javaScriptTypeScriptService: "auto",
+    javaScriptTypeScriptVersion: "bundled",
     phpBackend: "auto",
     phpVersionOverride: null,
     phpactorPath: null,
@@ -191,6 +194,11 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     )
       ? value.javaScriptTypeScriptService
       : defaults.javaScriptTypeScriptService,
+    javaScriptTypeScriptVersion: isJavaScriptTypeScriptVersionPreference(
+      value.javaScriptTypeScriptVersion,
+    )
+      ? value.javaScriptTypeScriptVersion
+      : defaults.javaScriptTypeScriptVersion,
     phpBackend: isPhpBackendPreference(value.phpBackend)
       ? value.phpBackend
       : defaults.phpBackend,
@@ -466,6 +474,12 @@ function isJavaScriptTypeScriptServiceMode(
   value: unknown,
 ): value is JavaScriptTypeScriptServiceMode {
   return value === "auto" || value === "off";
+}
+
+function isJavaScriptTypeScriptVersionPreference(
+  value: unknown,
+): value is JavaScriptTypeScriptVersionPreference {
+  return value === "bundled" || value === "workspace";
 }
 
 function isWorkspaceSessionBottomPanelView(

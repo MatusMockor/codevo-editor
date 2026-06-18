@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { TauriLanguageServerRuntimeGateway } from "./tauriLanguageServerRuntimeGateway";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS } from "./tauriLanguageServerRuntimeGateway";
 
 type RuntimeGatewayConstructor = ConstructorParameters<
   typeof TauriLanguageServerRuntimeGateway
@@ -84,5 +85,47 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       expect.any(Function),
     );
     expect(listener).toHaveBeenCalledWith(running);
+  });
+
+  it("passes TypeScript version preference to JavaScript and TypeScript start command", async () => {
+    const running: LanguageServerRuntimeStatus = {
+      capabilities: {
+        codeAction: false,
+        completion: true,
+        definition: true,
+        documentSymbol: true,
+        formatting: false,
+        hover: true,
+        implementation: true,
+        inlayHint: true,
+        references: true,
+        rename: true,
+        signatureHelp: true,
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 4,
+    };
+    const invokeCommand = vi.fn<InvokeCommand>(async () => running);
+    const gateway = new TauriLanguageServerRuntimeGateway(
+      invokeCommand,
+      vi.fn<ListenToEvent>(),
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
+    );
+
+    await expect(
+      gateway.start("/workspace", {
+        typeScriptVersionPreference: "workspace",
+      }),
+    ).resolves.toEqual(running);
+
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "start_javascript_typescript_language_server",
+      {
+        rootPath: "/workspace",
+        typeScriptVersionPreference: "workspace",
+      },
+    );
   });
 });

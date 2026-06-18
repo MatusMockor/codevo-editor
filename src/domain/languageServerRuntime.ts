@@ -1,3 +1,5 @@
+import type { JavaScriptTypeScriptVersionPreference } from "./settings";
+
 export interface LanguageServerCapabilities {
   codeAction: boolean;
   hover: boolean;
@@ -26,9 +28,16 @@ export type LanguageServerRuntimeStatus =
 
 export type UnsubscribeFn = () => void;
 
+export interface LanguageServerRuntimeStartOptions {
+  typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
+}
+
 export interface LanguageServerRuntimeGateway {
   getStatus(rootPath: string): Promise<LanguageServerRuntimeStatus>;
-  start(rootPath: string): Promise<LanguageServerRuntimeStatus>;
+  start(
+    rootPath: string,
+    options?: LanguageServerRuntimeStartOptions,
+  ): Promise<LanguageServerRuntimeStatus>;
   stop(rootPath: string): Promise<LanguageServerRuntimeStatus>;
   subscribeStatus(
     listener: (status: LanguageServerRuntimeStatus) => void,

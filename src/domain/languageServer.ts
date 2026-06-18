@@ -1,3 +1,5 @@
+import type { JavaScriptTypeScriptVersionPreference } from "./settings";
+
 export type LanguageServerProvider = "phpactor" | "typeScriptLanguageServer";
 
 export type LanguageServerPlanStatus = "blocked" | "ready" | "unavailable";
@@ -27,5 +29,6 @@ export interface LanguageServerGateway {
   planPhpLanguageServer(rootPath: string): Promise<LanguageServerPlan>;
   planJavaScriptTypeScriptLanguageServer(
     rootPath: string,
+    typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference,
   ): Promise<LanguageServerPlan>;
 }
