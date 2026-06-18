@@ -4311,6 +4311,127 @@ class Builder
     });
   });
 
+  it("opens Laravel static model scope and builder magic methods", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::withRelations()->findOrFail(1);
+        Album::whereNull('parent_id')->first();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Album
+{
+    public function scopeWithRelations(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    public function whereNull($columns, $boolean = 'and', $not = false)
+    {
+        return $this;
+    }
+
+    public function findOrFail($id)
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Album::withRelations"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(albumPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: albumPath,
+      position: {
+        column: 21,
+        lineNumber: 8,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Album::whereNull"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(builderPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: builderPath,
+      position: {
+        column: 21,
+        lineNumber: 6,
+      },
+    });
+  });
+
   it("falls back to verified PHP filename lookup before the index is warm", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

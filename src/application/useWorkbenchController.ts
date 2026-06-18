@@ -141,10 +141,12 @@ import {
   isLaravelCollectionTerminalModelMethod,
   isLaravelEloquentBuilderCollectionMethod,
   isLaravelEloquentBuilderFluentMethod,
+  isLaravelEloquentBuilderMethodName,
   isLaravelEloquentBuilderTerminalModelMethod,
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentStaticBuilderMethod,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelScopeMethodName,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
 import {
@@ -5653,6 +5655,54 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpStaticMethodCallDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "staticMethodCall" }>,
+    ): Promise<boolean> => {
+      if (!activeDocument) {
+        return false;
+      }
+
+      const className = resolvePhpClassName(
+        activeDocument.content,
+        context.className,
+      );
+
+      if (!className) {
+        return false;
+      }
+
+      if (await openDirectPhpMethodTarget(className, context.methodName)) {
+        return true;
+      }
+
+      const scopeMethodName = phpLaravelScopeMethodName(context.methodName);
+
+      if (
+        scopeMethodName &&
+        (await openDirectPhpMethodTarget(className, scopeMethodName))
+      ) {
+        return true;
+      }
+
+      if (
+        isLaravelEloquentBuilderMethodName(context.methodName) &&
+        (await openDirectPhpMethodTarget(
+          "Illuminate\\Database\\Eloquent\\Builder",
+          context.methodName,
+        ))
+      ) {
+        return true;
+      }
+
+      setMessage(
+        `No typed target found for ${context.className}::${context.methodName}().`,
+      );
+      return false;
+    },
+    [activeDocument, openDirectPhpMethodTarget],
+  );
+
   const goToPhpClassIdentifierDefinition = useCallback(
     async (name: string): Promise<boolean> => {
       if (!activeDocument) {
@@ -5691,6 +5741,10 @@ export function useWorkbenchController(
       return goToPhpMethodCallDefinition(context);
     }
 
+    if (context.kind === "staticMethodCall") {
+      return goToPhpStaticMethodCallDefinition(context);
+    }
+
     if (context.kind === "laravelRouteActionMethod") {
       const className = resolvePhpClassName(
         activeDocument.content,
@@ -5717,6 +5771,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpMethodCallDefinition,
+    goToPhpStaticMethodCallDefinition,
     openDirectPhpMethodTarget,
     openPhpClassTarget,
   ]);
@@ -5916,6 +5971,10 @@ export function useWorkbenchController(
           return goToPhpMethodCallDefinition(context);
         }
 
+        if (context.kind === "staticMethodCall") {
+          return goToPhpStaticMethodCallDefinition(context);
+        }
+
         if (context.kind === "laravelRouteActionMethod") {
           const className = resolvePhpClassName(
             activeDocument.content,
@@ -5927,6 +5986,10 @@ export function useWorkbenchController(
           }
 
           return openDirectPhpMethodTarget(className, context.methodName);
+        }
+
+        if (context.kind !== "classIdentifier") {
+          return false;
         }
 
         const openedClassTarget = await goToPhpClassIdentifierDefinition(
@@ -5999,6 +6062,7 @@ export function useWorkbenchController(
     activeDocument,
     goToPhpClassIdentifierDefinition,
     goToPhpMethodCallDefinition,
+    goToPhpStaticMethodCallDefinition,
     intelligenceMode,
     openDirectPhpMethodTarget,
     openNavigationTarget,

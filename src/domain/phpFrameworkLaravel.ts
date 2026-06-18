@@ -254,6 +254,16 @@ export function isLaravelEloquentBuilderMethodName(methodName: string): boolean 
   );
 }
 
+export function phpLaravelScopeMethodName(scopeName: string): string | null {
+  const normalizedScopeName = scopeName.trim();
+
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(normalizedScopeName)) {
+    return null;
+  }
+
+  return `scope${normalizedScopeName[0]?.toUpperCase() ?? ""}${normalizedScopeName.slice(1)}`;
+}
+
 export function phpLaravelLocalScopeCompletionsFromMethods(
   methods: PhpMethodCompletion[],
 ): PhpMethodCompletion[] {
