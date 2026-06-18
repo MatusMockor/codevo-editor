@@ -226,6 +226,7 @@ import {
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
+import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import {
   detectLanguage,
   getFileName,
@@ -311,6 +312,7 @@ export function useWorkbenchController(
   javaScriptTypeScriptLanguageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway,
   javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway,
+  workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway,
   terminalGateway: TerminalGateway,
   settingsGateway: SettingsGateway,
   prompter: WorkbenchPrompter,
@@ -1372,16 +1374,54 @@ export function useWorkbenchController(
         return;
       }
 
-      await Promise.allSettled([
-        stopLanguageServerRuntime(targetRootPath),
-        stopJavaScriptTypeScriptLanguageServerRuntime(targetRootPath),
-        terminalGateway.stopRoot(targetRootPath),
-      ]);
+      try {
+        await workspaceRuntimeLifecycleGateway.disposeWorkspace(targetRootPath);
+      } catch (error) {
+        reportError("Workspace Runtime", error);
+        await Promise.allSettled([
+          stopLanguageServerRuntime(targetRootPath),
+          stopJavaScriptTypeScriptLanguageServerRuntime(targetRootPath),
+          terminalGateway.stopRoot(targetRootPath),
+        ]);
+        return;
+      }
+
+      const stoppedStatus: LanguageServerRuntimeStatus = {
+        kind: "stopped",
+        rootPath: targetRootPath,
+      };
+      cachePhpLanguageServerRuntimeStatus(targetRootPath, stoppedStatus);
+      cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
+        targetRootPath,
+        stoppedStatus,
+      );
+
+      if (targetRootPath !== currentWorkspaceRootRef.current) {
+        return;
+      }
+
+      setLanguageServerRuntimeStatus(stoppedStatus);
+      setLanguageServerRuntimeStatusRoot(targetRootPath);
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus(stoppedStatus);
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(targetRootPath);
+      lastLanguageServerCrashRef.current = null;
+      clearLanguageServerDiagnostics();
+      clearJavaScriptTypeScriptLanguageServerDiagnostics();
+      resetLanguageServerDocuments();
+      resetJavaScriptTypeScriptLanguageServerDocuments();
     },
     [
+      cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
+      cachePhpLanguageServerRuntimeStatus,
+      clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      clearLanguageServerDiagnostics,
+      reportError,
+      resetJavaScriptTypeScriptLanguageServerDocuments,
+      resetLanguageServerDocuments,
       stopJavaScriptTypeScriptLanguageServerRuntime,
       stopLanguageServerRuntime,
       terminalGateway,
+      workspaceRuntimeLifecycleGateway,
     ],
   );
 

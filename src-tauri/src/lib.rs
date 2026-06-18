@@ -28,6 +28,7 @@ mod terminal_session;
 mod tools;
 mod trust;
 mod workspace;
+mod workspace_runtime;
 
 use git::{
     CommandGitRepositoryGateway, GitChangedFile, GitFileDiff, GitRepositoryGateway, GitStatus,
@@ -121,6 +122,9 @@ use workspace::{
     apply_text_edits_to_files, FileEntry, FileSearchResult, LocalWorkspaceFileRepository,
     WorkspaceFileRepository, WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
 };
+use workspace_runtime::{
+    dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
+};
 
 const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
 const CLOSE_ACTIVE_TAB_MENU_ID: &str = "close-active-tab";
@@ -197,6 +201,29 @@ fn detect_workspace(path: String) -> Result<WorkspaceDescriptor, String> {
     detector
         .detect(&PathBuf::from(path))
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn dispose_workspace_root(
+    root_path: String,
+    index_lifecycle: State<'_, WorkspaceIndexLifecycle>,
+    javascript_typescript_language_servers: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+    javascript_typescript_watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+    php_language_servers: State<'_, PhpLanguageServerRegistry>,
+    terminal_sessions: State<'_, TerminalSupervisor>,
+) -> Result<(), String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+
+    dispose_workspace_runtime_root(
+        &root,
+        WorkspaceRuntimeDisposal {
+            index_lifecycle: &*index_lifecycle,
+            javascript_typescript_language_servers: &*javascript_typescript_language_servers,
+            javascript_typescript_watch_registry: &*javascript_typescript_watch_registry,
+            php_language_servers: &*php_language_servers,
+            terminal_sessions: &*terminal_sessions,
+        },
+    )
 }
 
 #[tauri::command]
@@ -2611,6 +2638,7 @@ pub fn run() {
             install_managed_phpactor,
             detect_php_tools,
             detect_workspace,
+            dispose_workspace_root,
             get_php_file_outline,
             get_git_diff,
             get_git_status,

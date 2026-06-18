@@ -82,6 +82,7 @@ import { TauriPhpTreeGateway } from "./infrastructure/tauriPhpTreeGateway";
 import { TauriSmartModeGateway } from "./infrastructure/tauriSmartModeGateway";
 import { TauriTerminalGateway } from "./infrastructure/tauriTerminalGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
+import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWorkspaceRuntimeLifecycleGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import "./App.css";
 
@@ -141,6 +142,8 @@ const javaScriptTypeScriptLanguageServerWorkspaceEditGateway =
     JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT,
   );
 const terminalGateway = new TauriTerminalGateway();
+const workspaceRuntimeLifecycleGateway =
+  new TauriWorkspaceRuntimeLifecycleGateway();
 const settingsGateway = new BrowserSettingsGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 const EMPTY_FILE_STATUSES_BY_PATH: Record<string, GitChangeStatus> = {};
@@ -168,6 +171,7 @@ function App() {
     javaScriptTypeScriptLanguageServerDocumentSyncGateway,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
+    workspaceRuntimeLifecycleGateway,
     terminalGateway,
     settingsGateway,
     workbenchPrompter,

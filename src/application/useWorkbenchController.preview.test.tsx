@@ -46,6 +46,7 @@ import {
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
+import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import type {
   FileEntry,
   FileSearchResult,
@@ -75,6 +76,7 @@ interface ControllerDependencies {
   settingsGateway: SettingsGateway;
   smartModeGateway: SmartModeGateway;
   terminalGateway: TerminalGateway;
+  workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway;
   workspaceGateways: WorkbenchWorkspaceGateways;
   workspaceTrustGateway: WorkspaceTrustGateway;
 }
@@ -562,6 +564,73 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns(24);
   });
 
+  it("caches stopped JavaScript and TypeScript status when suspending an inactive project runtime", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningWorkspaceAStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 44,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningWorkspaceAStatus),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        runtimePolicy: "suspendOnBackground",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningWorkspaceAStatus);
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(expect.objectContaining({ kind: "running", rootPath: "/workspace-a" }));
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith("/workspace-a");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(expect.objectContaining({ kind: "stopped", rootPath: "/workspace-a" }));
+  });
+
   it("closes synced JavaScript and TypeScript documents before switching project tabs with keep-alive runtimes", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),
@@ -648,14 +717,14 @@ describe("useWorkbenchController preview tabs", () => {
       path,
     );
     expect(
-      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
     ).toHaveBeenCalledWith("/workspace-a");
     expect(
       vi.mocked(dependencies.documentSyncGateway.didClose).mock
         .invocationCallOrder[0],
     ).toBeLessThan(
       vi.mocked(
-        dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+        dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
       ).mock.invocationCallOrder[0],
     );
   });
@@ -840,15 +909,17 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
       "/workspace-a",
     );
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
-    ).toHaveBeenCalledWith("/workspace-a");
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
-      "/workspace-a",
-    );
+    ).not.toHaveBeenCalledWith("/workspace-a");
   });
 
   it("stops every inactive project runtime when only the active project may run IDE services", async () => {
@@ -867,22 +938,20 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(
       "/workspace-a",
     );
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(
       "/workspace-c",
     );
-    expect(
-      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
-    ).toHaveBeenCalledWith("/workspace-a");
-    expect(
-      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
-    ).toHaveBeenCalledWith("/workspace-c");
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
       "/workspace-a",
     );
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
       "/workspace-c",
     );
   });
@@ -912,22 +981,20 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(
       "/workspace-b",
     );
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(
       "/workspace-c",
     );
-    expect(
-      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
-    ).toHaveBeenCalledWith("/workspace-b");
-    expect(
-      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
-    ).toHaveBeenCalledWith("/workspace-c");
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
       "/workspace-b",
     );
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
       "/workspace-c",
     );
     expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
@@ -1030,13 +1097,12 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
     expect(getWorkbench().workspaceTabs).toEqual(["/workspace-a"]);
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(
       "/workspace-b",
     );
-    expect(
-      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
-    ).toHaveBeenCalledWith("/workspace-b");
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
       "/workspace-b",
     );
     expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
@@ -1064,13 +1130,12 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(
       "/workspace-a",
     );
-    expect(
-      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
-    ).toHaveBeenCalledWith("/workspace-a");
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
       "/workspace-a",
     );
     expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
@@ -1096,13 +1161,12 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns();
 
-    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(
       "/workspace",
     );
-    expect(
-      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
-    ).toHaveBeenCalledWith("/workspace");
-    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
       "/workspace",
     );
     expect(getWorkbench().workspaceRoot).toBeNull();
@@ -8406,6 +8470,7 @@ function WorkbenchHarness({
     dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway,
     dependencies.javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     dependencies.javaScriptTypeScriptLanguageServerFeaturesGateway,
+    dependencies.workspaceRuntimeLifecycleGateway,
     dependencies.terminalGateway,
     dependencies.settingsGateway,
     dependencies.prompter,
@@ -8637,6 +8702,9 @@ function createControllerDependencies({
       stopRoot: vi.fn(async () => undefined),
       subscribeOutput: vi.fn(async () => () => undefined),
       writeInput: vi.fn(async () => undefined),
+    },
+    workspaceRuntimeLifecycleGateway: {
+      disposeWorkspace: vi.fn(async () => undefined),
     },
     workspaceGateways,
     workspaceTrustGateway: {
