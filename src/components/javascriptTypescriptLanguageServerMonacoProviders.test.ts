@@ -1240,6 +1240,63 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.incomplete).toBeUndefined();
   });
 
+  it("keeps the cursor inside generic TypeScript function completions with parameters", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "function mapValues<T>(values: T[]): T[]",
+            documentation: null,
+            insertText: "mapValues",
+            kind: 3,
+            label: "mapValues",
+          },
+          {
+            detail: "method QueryBuilder.clone<T>(): QueryBuilder<T>",
+            documentation: null,
+            insertText: "clone",
+            kind: 2,
+            label: "clone",
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        command: {
+          id: "editor.action.triggerParameterHints",
+          title: "Trigger parameter hints",
+        },
+        insertText: "mapValues($0)",
+        insertTextRules: 4,
+        label: "mapValues",
+      }),
+    );
+    expect(result.suggestions[1]).toEqual(
+      expect.objectContaining({
+        insertText: "clone()$0",
+        insertTextRules: 4,
+        label: "clone",
+      }),
+    );
+    expect(result.suggestions[1]).not.toHaveProperty("command");
+  });
+
   it("resolves TypeScript completion items through the language server", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({

@@ -2230,9 +2230,9 @@ function completionInsert(
 }
 
 function hasParameters(detail: string, name: string): boolean {
-  const match = new RegExp(`${escapeRegExp(name)}\\s*\\(([^)]*)\\)`).exec(
-    detail,
-  );
+  const match = new RegExp(
+    `${escapeRegExp(name)}\\s*(?:<[^()]*>\\s*)?\\(([^)]*)\\)`,
+  ).exec(detail);
 
   return Boolean(match?.[1].trim());
 }
