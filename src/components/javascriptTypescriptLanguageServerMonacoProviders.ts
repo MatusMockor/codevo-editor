@@ -170,6 +170,10 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         return;
       }
 
+      if (!isStoredWorkspaceRootActive(context, payload.rootPath)) {
+        return;
+      }
+
       try {
         const edit = await context.featuresGateway.executeCommand(
           payload.rootPath,
@@ -177,7 +181,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         );
 
         if (edit) {
-          applyWorkspaceEditToOpenModels(monaco, edit);
+          applyWorkspaceEditToOpenModels(monaco, edit, payload.rootPath);
         }
       } catch (error) {
         context.reportError(error);
@@ -519,7 +523,11 @@ async function resolveCompletionItem(
 ): Promise<Monaco.languages.CompletionItem> {
   const backedItem = item as LanguageServerBackedCompletionItem;
 
-  if (!backedItem.__languageServerItem || !backedItem.__workspaceRoot) {
+  if (
+    !backedItem.__languageServerItem ||
+    !backedItem.__workspaceRoot ||
+    !isStoredWorkspaceRootActive(context, backedItem.__workspaceRoot)
+  ) {
     return item;
   }
 
@@ -750,7 +758,11 @@ async function resolveDocumentLink(
 ): Promise<Monaco.languages.ILink> {
   const backedLink = link as LanguageServerBackedLink;
 
-  if (!backedLink.__languageServerLink || !backedLink.__workspaceRoot) {
+  if (
+    !backedLink.__languageServerLink ||
+    !backedLink.__workspaceRoot ||
+    !isStoredWorkspaceRootActive(context, backedLink.__workspaceRoot)
+  ) {
     return link;
   }
 
@@ -817,7 +829,12 @@ async function provideRenameEdits(
     );
 
     return edit
-      ? toMonacoWorkspaceEdit(monaco, workspaceEditContext(model), edit)
+      ? toMonacoWorkspaceEdit(
+          monaco,
+          workspaceEditContext(model),
+          edit,
+          request.rootPath,
+        )
       : null;
   } catch (error) {
     context.reportError(error);
@@ -993,7 +1010,11 @@ async function resolveCodeAction(
 ): Promise<Monaco.languages.CodeAction> {
   const backedAction = action as LanguageServerBackedCodeAction;
 
-  if (!backedAction.__languageServerAction || !backedAction.__workspaceRoot) {
+  if (
+    !backedAction.__languageServerAction ||
+    !backedAction.__workspaceRoot ||
+    !isStoredWorkspaceRootActive(context, backedAction.__workspaceRoot)
+  ) {
     return action;
   }
 
@@ -1063,7 +1084,8 @@ async function resolveCodeLens(
 
   if (
     !backedCodeLens.__languageServerCodeLens ||
-    !backedCodeLens.__workspaceRoot
+    !backedCodeLens.__workspaceRoot ||
+    !isStoredWorkspaceRootActive(context, backedCodeLens.__workspaceRoot)
   ) {
     return codeLens;
   }
@@ -1292,6 +1314,15 @@ function documentRequestContext(
     path: activeDocument.path,
     rootPath,
   };
+}
+
+function isStoredWorkspaceRootActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  rootPath: string,
+): boolean {
+  const activeRootPath = context.getWorkspaceRoot?.() ?? null;
+
+  return !activeRootPath || activeRootPath === rootPath;
 }
 
 function defaultRenameLocation(
@@ -1545,12 +1576,17 @@ function toMonacoWorkspaceEdit(
   monaco: MonacoApi,
   context: WorkspaceEditContext,
   edit: LanguageServerWorkspaceEdit,
+  rootPath?: string,
 ): Monaco.languages.WorkspaceEdit {
   return {
     edits: Object.entries(edit.changes).flatMap(([uri, edits]) => {
       const path = pathFromLanguageServerUri(uri);
 
       if (!path) {
+        return [];
+      }
+
+      if (rootPath && !isPathInWorkspaceRoot(rootPath, path)) {
         return [];
       }
 
@@ -1692,7 +1728,14 @@ function toMonacoCodeAction(
         }
       : {}),
     ...(action.edit
-      ? { edit: toMonacoWorkspaceEdit(monaco, editContext, action.edit) }
+      ? {
+          edit: toMonacoWorkspaceEdit(
+            monaco,
+            editContext,
+            action.edit,
+            rootPath,
+          ),
+        }
       : {}),
     isPreferred: action.isPreferred,
     kind: action.kind ?? "quickfix",
@@ -1814,6 +1857,7 @@ function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {
 function applyWorkspaceEditToOpenModels(
   monaco: MonacoApi,
   edit: LanguageServerWorkspaceEdit,
+  rootPath?: string,
 ): void {
   const modelsByPath = new Map(
     monaco.editor.getModels().map((model) => [modelPath(model), model]),
@@ -1823,7 +1867,7 @@ function applyWorkspaceEditToOpenModels(
     const path = pathFromLanguageServerUri(uri);
     const model = path ? modelsByPath.get(path) : null;
 
-    if (!model) {
+    if (!path || !model || (rootPath && !isPathInWorkspaceRoot(rootPath, path))) {
       return;
     }
 
@@ -1849,7 +1893,21 @@ function applyWorkspaceEditEvent(
     return;
   }
 
-  applyWorkspaceEditToOpenModels(monaco, event.edit);
+  applyWorkspaceEditToOpenModels(monaco, event.edit, event.rootPath ?? undefined);
+}
+
+function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
+  const normalizedRootPath = normalizedWorkspacePath(rootPath);
+  const normalizedPath = normalizedWorkspacePath(path);
+
+  return (
+    normalizedPath === normalizedRootPath ||
+    normalizedPath.startsWith(`${normalizedRootPath}/`)
+  );
+}
+
+function normalizedWorkspacePath(path: string): string {
+  return path.trim().split("\\").join("/").replace(/\/+$/, "");
 }
 
 function toMonacoCompletionItem(
