@@ -446,6 +446,10 @@ async function provideHover(
       request.position,
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return hover ? { contents: [{ value: hover.contents }] } : null;
   } catch (error) {
     context.reportError(error);
@@ -480,6 +484,11 @@ async function provideCompletionItems(
           request.rootPath,
           request.position,
         );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return { suggestions: [] };
+    }
+
     const word = model.getWordUntilPosition(position);
     const range = {
       endColumn: word.endColumn,
@@ -580,6 +589,10 @@ async function provideDefinition(
       request.position,
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return toMonacoLocations(monaco, locations);
   } catch (error) {
     context.reportError(error);
@@ -611,6 +624,10 @@ async function provideImplementation(
       request.position,
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return toMonacoLocations(monaco, locations);
   } catch (error) {
     context.reportError(error);
@@ -636,6 +653,10 @@ async function provideTypeDefinition(
       request.rootPath,
       request.position,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
 
     return toMonacoLocations(monaco, locations);
   } catch (error) {
@@ -663,6 +684,10 @@ async function provideSignatureHelp(
       request.position,
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return signatureHelp ? toMonacoSignatureHelp(signatureHelp) : null;
   } catch (error) {
     context.reportError(error);
@@ -688,6 +713,10 @@ async function provideReferences(
       request.rootPath,
       request.position,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
 
     return toMonacoLocations(monaco, locations);
   } catch (error) {
@@ -720,6 +749,10 @@ async function provideDocumentHighlights(
       request.position,
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return highlights.map((highlight) =>
       toMonacoDocumentHighlight(monaco, highlight),
     );
@@ -746,6 +779,10 @@ async function provideDocumentLinks(
       request.rootPath,
       request.path,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return emptyLinksList();
+    }
 
     return {
       dispose: () => undefined,
@@ -812,6 +849,10 @@ async function provideFoldingRanges(
       request.path,
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return ranges.map((range) => toMonacoFoldingRange(monaco, range));
   } catch (error) {
     context.reportError(error);
@@ -839,6 +880,10 @@ async function provideRenameEdits(
       request.position,
       newName,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
 
     return edit
       ? toMonacoWorkspaceEdit(
@@ -877,6 +922,10 @@ async function provideSelectionRanges(
       })),
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return selectionRanges.map((selectionRange) =>
       flattenSelectionRange(monaco, selectionRange),
     );
@@ -898,9 +947,16 @@ async function provideDocumentSemanticTokens(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    return toMonacoSemanticTokens(
-      await context.featuresGateway.semanticTokens(request.rootPath, request.path),
+    const tokens = await context.featuresGateway.semanticTokens(
+      request.rootPath,
+      request.path,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
+    return toMonacoSemanticTokens(tokens);
   } catch (error) {
     context.reportError(error);
     return null;
@@ -926,13 +982,16 @@ async function provideLinkedEditingRanges(
 
   try {
     await context.flushPendingDocumentChange(request.path);
-    return toMonacoLinkedEditingRanges(
-      monaco,
-      await context.featuresGateway.linkedEditingRanges(
-        request.rootPath,
-        request.position,
-      ),
+    const ranges = await context.featuresGateway.linkedEditingRanges(
+      request.rootPath,
+      request.position,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
+    return toMonacoLinkedEditingRanges(monaco, ranges);
   } catch (error) {
     context.reportError(error);
     return null;
@@ -957,6 +1016,10 @@ async function resolveRenameLocation(
       request.rootPath,
       request.position,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
 
     if (!prepareRename?.range || prepareRename.defaultBehavior) {
       return defaultRenameLocation(model, position);
@@ -996,6 +1059,10 @@ async function provideCodeActions(
       toLanguageServerRange(range),
       toLanguageServerCodeActionContext(monaco, actionContext),
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return emptyCodeActionList();
+    }
 
     return {
       actions: actions.flatMap((action) =>
@@ -1080,6 +1147,10 @@ async function provideCodeLenses(
       request.path,
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return emptyCodeLensList();
+    }
+
     return {
       lenses: lenses.map((lens) =>
         toMonacoCodeLens(monaco, request.rootPath, lens),
@@ -1147,6 +1218,10 @@ async function provideDocumentFormattingEdits(
       toLanguageServerFormattingOptions(options),
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return [];
+    }
+
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
     context.reportError(error);
@@ -1175,6 +1250,10 @@ async function provideDocumentRangeFormattingEdits(
       toLanguageServerRange(range),
       toLanguageServerFormattingOptions(options),
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return [];
+    }
 
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
@@ -1210,6 +1289,10 @@ async function provideOnTypeFormattingEdits(
       toLanguageServerFormattingOptions(options),
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return [];
+    }
+
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
     context.reportError(error);
@@ -1236,6 +1319,10 @@ async function provideInlayHints(
       request.path,
       toLanguageServerRange(range),
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return emptyInlayHintList();
+    }
 
     return {
       hints: hints.map((hint) => toMonacoInlayHint(monaco, hint)),
