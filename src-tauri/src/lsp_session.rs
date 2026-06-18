@@ -684,6 +684,7 @@ impl LanguageServerSupervisor {
         }
 
         let (handshake_tx, handshake_rx) = mpsc::channel();
+        let server_configuration = server_configuration_from_initialize_request(initialize_request);
         let mut reader = Some(spawn_reader(
             spawned.stdout,
             Arc::clone(&stdin),
@@ -697,6 +698,7 @@ impl LanguageServerSupervisor {
             initialize_request.id,
             session_id,
             self.server_label,
+            server_configuration,
         ));
 
         if !self.attach_reader(&stop_requested, &mut reader)? {
@@ -1149,6 +1151,7 @@ fn spawn_reader(
     init_id: u64,
     session_id: u64,
     server_label: &'static str,
+    server_configuration: Value,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -1171,6 +1174,7 @@ fn spawn_reader(
                             &value,
                             workspace_edit_sink.as_ref(),
                             session_id,
+                            &server_configuration,
                         )
                         .is_ok()
                         {
@@ -1244,6 +1248,7 @@ fn respond_to_server_request(
     value: &Value,
     workspace_edit_sink: &dyn WorkspaceEditSink,
     session_id: u64,
+    server_configuration: &Value,
 ) -> Result<(), ()> {
     let Some(id) = value.get("id").cloned() else {
         return Err(());
@@ -1252,8 +1257,13 @@ fn respond_to_server_request(
         return Err(());
     };
 
-    let result =
-        server_request_result(method, value.get("params"), workspace_edit_sink, session_id);
+    let result = server_request_result(
+        method,
+        value.get("params"),
+        workspace_edit_sink,
+        session_id,
+        server_configuration,
+    );
     let response = json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -1271,16 +1281,10 @@ fn server_request_result(
     params: Option<&Value>,
     workspace_edit_sink: &dyn WorkspaceEditSink,
     session_id: u64,
+    server_configuration: &Value,
 ) -> Value {
     match method {
-        "workspace/configuration" => {
-            let item_count = params
-                .and_then(|params| params.get("items"))
-                .and_then(Value::as_array)
-                .map(|items| items.len())
-                .unwrap_or(0);
-            Value::Array((0..item_count).map(|_| json!({})).collect())
-        }
+        "workspace/configuration" => workspace_configuration_result(params, server_configuration),
         "workspace/workspaceFolders" => Value::Null,
         "workspace/applyEdit" => {
             workspace_apply_edit_result(params, workspace_edit_sink, session_id)
@@ -1288,6 +1292,93 @@ fn server_request_result(
         "client/registerCapability" | "client/unregisterCapability" => Value::Null,
         _ => Value::Null,
     }
+}
+
+fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequest) -> Value {
+    let preferences = initialize_request
+        .params
+        .pointer("/initializationOptions/preferences")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let auto_imports_enabled = preferences
+        .get("includeCompletionsForModuleExports")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let inlay_hints_enabled = preferences
+        .get("includeInlayFunctionLikeReturnTypeHints")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let parameter_name_hints = preferences
+        .get("includeInlayParameterNameHints")
+        .and_then(Value::as_str)
+        .unwrap_or("literals");
+
+    json!({
+        "preferences": preferences,
+        "suggest": {
+            "autoImports": auto_imports_enabled,
+            "completeFunctionCalls": true,
+            "includeAutomaticOptionalChainCompletions": true,
+            "includeCompletionsForImportStatements": auto_imports_enabled,
+            "includeCompletionsForModuleExports": auto_imports_enabled,
+        },
+        "inlayHints": {
+            "enumMemberValues": { "enabled": inlay_hints_enabled },
+            "functionLikeReturnTypes": { "enabled": inlay_hints_enabled },
+            "parameterNames": {
+                "enabled": parameter_name_hints,
+                "suppressWhenArgumentMatchesName": false,
+            },
+            "parameterTypes": { "enabled": inlay_hints_enabled },
+            "propertyDeclarationTypes": { "enabled": inlay_hints_enabled },
+            "variableTypes": {
+                "enabled": inlay_hints_enabled,
+                "suppressWhenTypeMatchesName": false,
+            },
+        },
+    })
+}
+
+fn workspace_configuration_result(params: Option<&Value>, server_configuration: &Value) -> Value {
+    let Some(items) = params
+        .and_then(|params| params.get("items"))
+        .and_then(Value::as_array)
+    else {
+        return Value::Array(Vec::new());
+    };
+
+    Value::Array(
+        items
+            .iter()
+            .map(|item| configuration_value_for_item(item, server_configuration))
+            .collect(),
+    )
+}
+
+fn configuration_value_for_item(item: &Value, server_configuration: &Value) -> Value {
+    let section = item.get("section").and_then(Value::as_str).unwrap_or("");
+    let Some(section) = javascript_typescript_configuration_section(section) else {
+        return json!({});
+    };
+
+    if section.is_empty() {
+        return server_configuration.clone();
+    }
+
+    server_configuration
+        .get(section)
+        .cloned()
+        .unwrap_or_else(|| json!({}))
+}
+
+fn javascript_typescript_configuration_section(section: &str) -> Option<&str> {
+    if section == "typescript" || section == "javascript" {
+        return Some("");
+    }
+
+    section
+        .strip_prefix("typescript.")
+        .or_else(|| section.strip_prefix("javascript."))
 }
 
 fn workspace_apply_edit_result(
@@ -1791,6 +1882,68 @@ mod tests {
 
         let response = wait_for_captured_response(&capture, 42);
         assert_eq!(response["result"]["applied"], true);
+    }
+
+    #[test]
+    fn workspace_configuration_requests_return_typescript_settings() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, status_rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+        let initialize_request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: 1,
+            method: "initialize".to_string(),
+            params: json!({
+                "initializationOptions": {
+                    "preferences": {
+                        "includeCompletionsForModuleExports": false,
+                        "includeInlayFunctionLikeReturnTypeHints": false,
+                        "includeInlayParameterNameHints": "none"
+                    }
+                }
+            }),
+        };
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request,
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 43,
+                "method": "workspace/configuration",
+                "params": {
+                    "items": [
+                        { "section": "typescript.preferences" },
+                        { "section": "javascript.suggest" },
+                        { "section": "typescript.inlayHints" },
+                        { "section": "editor" }
+                    ]
+                }
+            }),
+        );
+
+        let response = wait_for_captured_response(&capture, 43);
+
+        assert_eq!(
+            response["result"][0]["includeCompletionsForModuleExports"],
+            false
+        );
+        assert_eq!(response["result"][1]["autoImports"], false);
+        assert_eq!(response["result"][1]["completeFunctionCalls"], true);
+        assert_eq!(response["result"][2]["parameterNames"]["enabled"], "none");
+        assert_eq!(response["result"][3], json!({}));
     }
 
     #[test]

@@ -82,6 +82,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - JavaScript/TypeScript Auto Imports is now a per-workspace setting. Off disables TypeScript module-export/import-statement completions and package.json auto-import suggestions in the managed JS/TS server preferences.
 - Settings now include a per-workspace Restart JavaScript/TypeScript service action, so users can refresh the managed TS runtime after dependency or TypeScript-version changes without restarting the whole editor.
 - Workspace detection now includes a JavaScript/TypeScript project descriptor for `package.json`, `tsconfig.json`, `jsconfig.json`, package manager and common framework markers. The status bar can show this JS/TS project context in Basic mode when editing JS/TS files.
+- The managed LSP supervisor now answers TypeScript/JavaScript `workspace/configuration` requests with the runtime preferences derived from initialize settings, keeping tsserver-wrapper behavior aligned with service settings instead of returning empty configuration.
 
 ## Full VS Code-Like Target
 
@@ -131,6 +132,7 @@ Basic mode must support:
 - diagnostics
 - quick fixes
 - organize imports
+- workspace/configuration response. Implemented for managed JS/TS LSP preferences.
 - formatting
 - inlay hints. Implemented through LSP-backed Monaco provider.
 - signature help. Implemented through LSP-backed Monaco provider.
