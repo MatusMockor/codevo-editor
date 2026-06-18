@@ -25,6 +25,7 @@ export type PhpIdentifierContext =
       className: string | null;
       kind: "laravelRelationString";
       methodName: string;
+      previousRelationNames?: string[];
       receiverExpression: string | null;
       relationName: string;
     }
@@ -48,6 +49,7 @@ export interface PhpMethodDefinitionHint {
 export interface PhpLaravelRelationStringCompletionContext {
   className: string | null;
   methodName: string;
+  previousRelationNames?: string[];
   prefix: string;
   receiverExpression: string | null;
 }
@@ -110,7 +112,9 @@ export function phpLaravelRelationStringCompletionContextAt(
     return null;
   }
 
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(literal.prefix) && literal.prefix !== "") {
+  const relationPrefix = laravelRelationPrefixContext(literal.prefix);
+
+  if (!relationPrefix) {
     return null;
   }
 
@@ -138,7 +142,10 @@ export function phpLaravelRelationStringCompletionContextAt(
 
   return {
     ...callContext,
-    prefix: literal.prefix,
+    ...(relationPrefix.previousRelationNames.length
+      ? { previousRelationNames: relationPrefix.previousRelationNames }
+      : {}),
+    prefix: relationPrefix.prefix,
   };
 }
 
@@ -400,11 +407,17 @@ function laravelRelationStringContextAt(
 ): PhpIdentifierContext | null {
   const literal = stringLiteralAtOffset(source, identifier.start);
 
-  if (!literal || literal.value !== identifier.name) {
+  if (!literal) {
     return null;
   }
 
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(literal.value)) {
+  const relationSegment = laravelRelationSegmentContext(
+    literal.value,
+    identifier.start - literal.quoteStart - 1,
+    identifier.end - literal.quoteStart - 1,
+  );
+
+  if (!relationSegment) {
     return null;
   }
 
@@ -433,7 +446,10 @@ function laravelRelationStringContextAt(
   return {
     ...callContext,
     kind: "laravelRelationString",
-    relationName: literal.value,
+    ...(relationSegment.previousRelationNames.length
+      ? { previousRelationNames: relationSegment.previousRelationNames }
+      : {}),
+    relationName: relationSegment.relationName,
   };
 }
 
@@ -617,6 +633,67 @@ function stringLiteralCompletionAtOffset(
     prefix: source.slice(quoteStart + 1, offset),
     quoteStart,
   };
+}
+
+function laravelRelationPrefixContext(
+  prefix: string,
+): { prefix: string; previousRelationNames: string[] } | null {
+  if (prefix === "") {
+    return {
+      prefix: "",
+      previousRelationNames: [],
+    };
+  }
+
+  const segments = prefix.split(".");
+  const currentPrefix = segments.pop() ?? "";
+  const previousRelationNames = segments;
+
+  if (
+    previousRelationNames.some(
+      (segment) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(segment),
+    )
+  ) {
+    return null;
+  }
+
+  if (currentPrefix !== "" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(currentPrefix)) {
+    return null;
+  }
+
+  return {
+    prefix: currentPrefix,
+    previousRelationNames,
+  };
+}
+
+function laravelRelationSegmentContext(
+  value: string,
+  relativeStart: number,
+  relativeEnd: number,
+): { previousRelationNames: string[]; relationName: string } | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(value)) {
+    return null;
+  }
+
+  const previousRelationNames: string[] = [];
+  let segmentStart = 0;
+
+  for (const segment of value.split(".")) {
+    const segmentEnd = segmentStart + segment.length;
+
+    if (relativeStart >= segmentStart && relativeEnd <= segmentEnd) {
+      return {
+        previousRelationNames,
+        relationName: segment,
+      };
+    }
+
+    previousRelationNames.push(segment);
+    segmentStart = segmentEnd + 1;
+  }
+
+  return null;
 }
 
 function matchingBracketOffset(

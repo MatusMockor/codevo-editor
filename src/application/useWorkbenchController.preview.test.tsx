@@ -5258,10 +5258,12 @@ class Comment
 {
     public function parent()
     {
+        return $this->belongsTo(self::class, 'parent_id');
     }
 
     public function children()
     {
+        return $this->hasMany(self::class, 'parent_id');
     }
 }
 `;
@@ -5275,6 +5277,7 @@ class CommentController
     public function show(Comment $comment): void
     {
         $comment->load('children');
+        $comment->load('children.parent');
         Comment::with('parent')->first();
         Comment::query()->whereHas('children', fn ($query) => $query);
     }
@@ -5380,6 +5383,31 @@ class CommentController
         lineNumber: lineNumberOf(commentModelSource, "children"),
       },
     });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "children.parent"),
+      );
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(commentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentPath,
+      position: {
+        column: 21,
+        lineNumber: lineNumberOf(commentModelSource, "parent"),
+      },
+    });
   });
 
   it("completes Laravel relation strings from the owning model", async () => {
@@ -5395,6 +5423,7 @@ class CommentController
     public function show(Comment $comment): void
     {
         $comment->load('chi');
+        $comment->load('children.pa');
         Comment::with('par')->first();
         Comment::query()->whereHas('att', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_vis', true);
@@ -5472,6 +5501,20 @@ class Comment extends Model
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "Comment::with('par"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        kind: "relation",
+        name: "parent",
+        parameters: "",
+        returnType: "App\\Models\\Comment",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->load('children.pa"),
       ),
     ).resolves.toEqual([
       {

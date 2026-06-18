@@ -153,6 +153,7 @@ class CommentController
     {
         $comment->load('children');
         Comment::with('parent')->first();
+        Comment::with('children.parent')->first();
         Comment::query()->whereHas('attachments', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_visible', true);
     }
@@ -187,6 +188,16 @@ class CommentController
       relationName: "attachments",
     });
     expect(
+      phpIdentifierContextAt(source, positionAfter(source, "children.parent")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "with",
+      previousRelationNames: ["children"],
+      receiverExpression: null,
+      relationName: "parent",
+    });
+    expect(
       phpIdentifierContextAt(source, positionAfter(source, "'is_visible'")),
     ).toEqual({
       kind: "classIdentifier",
@@ -202,6 +213,7 @@ class CommentController
     {
         $comment->load('children');
         Comment::with('parent');
+        Comment::with('children.parent');
         Comment::query()->whereHas('attachments', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_visible', true);
     }
@@ -249,6 +261,18 @@ class CommentController
       methodName: "whereHas",
       prefix: "att",
       receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "with('children.pa"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      methodName: "with",
+      prefix: "pa",
+      previousRelationNames: ["children"],
+      receiverExpression: null,
     });
     expect(
       phpLaravelRelationStringCompletionContextAt(

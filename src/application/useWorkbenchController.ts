@@ -5527,6 +5527,32 @@ export function useWorkbenchController(
     [collectPhpMethodsForClass],
   );
 
+  const resolvePhpLaravelRelationPathOwnerType = useCallback(
+    async (
+      className: string,
+      previousRelationNames: readonly string[] = [],
+    ): Promise<string | null> => {
+      let ownerType: string | null = className;
+
+      for (const relationName of previousRelationNames) {
+        ownerType = ownerType
+          ? await resolvePhpClassPropertyOrRelationType(
+              ownerType,
+              relationName,
+              true,
+            )
+          : null;
+
+        if (!ownerType) {
+          return null;
+        }
+      }
+
+      return ownerType;
+    },
+    [resolvePhpClassPropertyOrRelationType],
+  );
+
   const resolvePhpCollectionModelTypeFromClass = useCallback(
     async (className: string): Promise<string | null> => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
@@ -6501,8 +6527,14 @@ export function useWorkbenchController(
                 relationContext.receiverExpression,
               )
             : null;
-        const relationOwnerType =
+        const relationBaseOwnerType =
           staticClassName ?? receiverModelType ?? receiverType;
+        const relationOwnerType = relationBaseOwnerType
+          ? await resolvePhpLaravelRelationPathOwnerType(
+              relationBaseOwnerType,
+              relationContext.previousRelationNames ?? [],
+            )
+          : null;
 
         if (!relationOwnerType) {
           return [];
@@ -6574,6 +6606,7 @@ export function useWorkbenchController(
       resolvePhpClassReference,
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
+      resolvePhpLaravelRelationPathOwnerType,
       resolvePhpReceiverMethodCompletions,
       resolvePhpStaticMethodCompletions,
     ],
@@ -7044,7 +7077,14 @@ export function useWorkbenchController(
               context.receiverExpression,
             )
           : null;
-      const relationOwnerType = staticClassName ?? receiverModelType ?? receiverType;
+      const relationBaseOwnerType =
+        staticClassName ?? receiverModelType ?? receiverType;
+      const relationOwnerType = relationBaseOwnerType
+        ? await resolvePhpLaravelRelationPathOwnerType(
+            relationBaseOwnerType,
+            context.previousRelationNames ?? [],
+          )
+        : null;
 
       if (!relationOwnerType) {
         setMessage(`No typed target found for relation ${context.relationName}.`);
@@ -7070,6 +7110,7 @@ export function useWorkbenchController(
       openDirectPhpMethodTarget,
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
+      resolvePhpLaravelRelationPathOwnerType,
     ],
   );
 
