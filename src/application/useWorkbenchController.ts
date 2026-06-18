@@ -78,6 +78,7 @@ import {
   type LanguageServerLocation,
   type LanguageServerPosition,
   type LanguageServerTextEdit,
+  type LanguageServerWorkspaceFileChange,
   type LanguageServerWorkspaceEdit,
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
@@ -3098,6 +3099,40 @@ export function useWorkbenchController(
     ],
   );
 
+  const notifyJavaScriptTypeScriptWatchedFilesChanged = useCallback(
+    async (changes: LanguageServerWorkspaceFileChange[]) => {
+      if (
+        !workspaceRoot ||
+        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running"
+      ) {
+        return;
+      }
+
+      const relevantChanges = changes.filter((change) =>
+        isJavaScriptTypeScriptPath(change.path),
+      );
+
+      if (relevantChanges.length === 0) {
+        return;
+      }
+
+      try {
+        await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles(
+          workspaceRoot,
+          relevantChanges,
+        );
+      } catch (error) {
+        reportError("JavaScript/TypeScript", error);
+      }
+    },
+    [
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      reportError,
+      workspaceRoot,
+    ],
+  );
+
   const saveActiveDocument = useCallback(async () => {
     if (!activeDocument) {
       return;
@@ -3387,6 +3422,12 @@ export function useWorkbenchController(
 
     try {
       await workspaceFiles.createTextFile(path);
+      await notifyJavaScriptTypeScriptWatchedFilesChanged([
+        {
+          changeType: "created",
+          path,
+        },
+      ]);
       const parentPath = getParentPath(path);
       setExpandedDirectories((current) => new Set(current).add(parentPath));
       await refreshDirectory(parentPath);
@@ -3396,6 +3437,7 @@ export function useWorkbenchController(
     }
   }, [
     openFile,
+    notifyJavaScriptTypeScriptWatchedFilesChanged,
     prompter,
     refreshDirectory,
     reportError,
@@ -5813,6 +5855,15 @@ export function useWorkbenchController(
 
     try {
       await workspaceFiles.deletePath(activeDocument.path);
+      if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+        await syncClosedJavaScriptTypeScriptDocument(activeDocument);
+      }
+      await notifyJavaScriptTypeScriptWatchedFilesChanged([
+        {
+          changeType: "deleted",
+          path: activeDocument.path,
+        },
+      ]);
       closeDocument(activeDocument.path);
       await refreshDirectory(parentPath);
       setMessage(`Deleted ${activeDocument.name}`);
@@ -5823,9 +5874,11 @@ export function useWorkbenchController(
     activeDocument,
     closeActiveSurface,
     closeDocument,
+    notifyJavaScriptTypeScriptWatchedFilesChanged,
     prompter,
     refreshDirectory,
     reportError,
+    syncClosedJavaScriptTypeScriptDocument,
     workspaceFiles,
   ]);
 
@@ -8613,6 +8666,12 @@ function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
 
 function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
+}
+
+function isJavaScriptTypeScriptPath(path: string): boolean {
+  const language = detectLanguage(path);
+
+  return language === "javascript" || language === "typescript";
 }
 
 function cachedWorkspaceHasDirtyDocuments(

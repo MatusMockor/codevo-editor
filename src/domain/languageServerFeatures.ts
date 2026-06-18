@@ -158,6 +158,16 @@ export interface LanguageServerWorkspaceEdit {
   changes: Record<string, LanguageServerTextEdit[]>;
 }
 
+export type LanguageServerWorkspaceFileChangeType =
+  | "created"
+  | "changed"
+  | "deleted";
+
+export interface LanguageServerWorkspaceFileChange {
+  path: string;
+  changeType: LanguageServerWorkspaceFileChangeType;
+}
+
 export interface LanguageServerPrepareRenameResult {
   defaultBehavior: boolean;
   placeholder: string | null;
@@ -330,6 +340,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     oldPath: string,
     newPath: string,
+  ): Promise<void>;
+  didChangeWatchedFiles(
+    rootPath: string,
+    changes: LanguageServerWorkspaceFileChange[],
   ): Promise<void>;
   formatting(
     rootPath: string,

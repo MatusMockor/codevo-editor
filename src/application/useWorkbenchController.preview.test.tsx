@@ -909,6 +909,104 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
   });
 
+  it("notifies the JavaScript TypeScript service when a JS TS file is created", async () => {
+    const newPath = "/workspace/src/NewWidget.ts";
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 25,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("src/NewWidget.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.new",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      dependencies.workspaceGateways.files.createTextFile,
+    ).toHaveBeenCalledWith(newPath);
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+    ).toHaveBeenCalledWith("/workspace", [
+      {
+        changeType: "created",
+        path: newPath,
+      },
+    ]);
+  });
+
+  it("closes a JS TS document before notifying the service that its file was deleted", async () => {
+    const path = "/workspace/src/User.ts";
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 26,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "export class User {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.ts"));
+    });
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(
+      path,
+    );
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      path,
+    );
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+    ).toHaveBeenCalledWith("/workspace", [
+      {
+        changeType: "deleted",
+        path,
+      },
+    ]);
+    expect(
+      vi.mocked(dependencies.documentSyncGateway.didClose).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+      ).mock.invocationCallOrder[0],
+    );
+  });
+
   it("does not start JavaScript and TypeScript language service when disabled", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
@@ -4621,6 +4719,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
       items: [],
     })),
     definition: vi.fn(async () => []),
+    didChangeWatchedFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(async () => []),
     documentLinks: vi.fn(async () => []),

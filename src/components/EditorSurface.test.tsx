@@ -935,6 +935,7 @@ function languageServerFeaturesGateway() {
     codeLenses: vi.fn(async () => []),
     completion: vi.fn(),
     definition: vi.fn(),
+    didChangeWatchedFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(async () => []),
     documentLinks: vi.fn(async () => []),

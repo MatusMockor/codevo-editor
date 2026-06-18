@@ -785,6 +785,7 @@ function featuresGateway(
       },
     ),
     definition: vi.fn(async () => responses.definition ?? []),
+    didChangeWatchedFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(async () => []),
     documentLinks: vi.fn(async () => []),

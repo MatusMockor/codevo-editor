@@ -139,6 +139,21 @@ pub struct WorkspaceFileRename {
     pub new_path: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspaceFileChangeType {
+    Created,
+    Changed,
+    Deleted,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileChange {
+    pub path: String,
+    pub change_type: WorkspaceFileChangeType,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextDocumentFormatting {
@@ -375,6 +390,10 @@ pub trait TextDocumentFeatureRequestFactory {
         command: &LanguageServerCodeActionCommand,
     ) -> LanguageServerFeatureRequest;
     fn will_rename_files(&self, files: &[WorkspaceFileRename]) -> LanguageServerFeatureRequest;
+    fn did_change_watched_files(
+        &self,
+        changes: &[WorkspaceFileChange],
+    ) -> LanguageServerFeatureRequest;
 }
 
 pub struct LspTextDocumentFeatureRequestFactory;
@@ -637,9 +656,37 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                             "newUri": file_uri(Path::new(&file.new_path)),
                         })
                     })
+                .collect::<Vec<_>>(),
+            }),
+        }
+    }
+
+    fn did_change_watched_files(
+        &self,
+        changes: &[WorkspaceFileChange],
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            params: json!({
+                "changes": changes
+                    .iter()
+                    .map(|change| {
+                        json!({
+                            "uri": file_uri(Path::new(&change.path)),
+                            "type": lsp_file_change_type(change.change_type),
+                        })
+                    })
                     .collect::<Vec<_>>(),
             }),
         }
+    }
+}
+
+fn lsp_file_change_type(change_type: WorkspaceFileChangeType) -> u8 {
+    match change_type {
+        WorkspaceFileChangeType::Created => 1,
+        WorkspaceFileChangeType::Changed => 2,
+        WorkspaceFileChangeType::Deleted => 3,
     }
 }
 
@@ -1461,7 +1508,8 @@ mod tests {
         LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
         TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition,
         TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
-        TextDocumentSelectionRange, WorkspaceFileRename,
+        TextDocumentSelectionRange, WorkspaceFileChange, WorkspaceFileChangeType,
+        WorkspaceFileRename,
     };
     use serde_json::json;
 
@@ -1822,6 +1870,42 @@ mod tests {
             request.params["files"][0]["newUri"],
             "file:///tmp/src/Account.ts"
         );
+    }
+
+    #[test]
+    fn did_change_watched_files_request_contains_lsp_file_change_types() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.did_change_watched_files(&[
+            WorkspaceFileChange {
+                path: "/tmp/src/User.ts".to_string(),
+                change_type: WorkspaceFileChangeType::Created,
+            },
+            WorkspaceFileChange {
+                path: "/tmp/src/Account.ts".to_string(),
+                change_type: WorkspaceFileChangeType::Changed,
+            },
+            WorkspaceFileChange {
+                path: "/tmp/src/Old.ts".to_string(),
+                change_type: WorkspaceFileChangeType::Deleted,
+            },
+        ]);
+
+        assert_eq!(request.method, "workspace/didChangeWatchedFiles");
+        assert_eq!(
+            request.params["changes"][0]["uri"],
+            "file:///tmp/src/User.ts"
+        );
+        assert_eq!(request.params["changes"][0]["type"], 1);
+        assert_eq!(
+            request.params["changes"][1]["uri"],
+            "file:///tmp/src/Account.ts"
+        );
+        assert_eq!(request.params["changes"][1]["type"], 2);
+        assert_eq!(
+            request.params["changes"][2]["uri"],
+            "file:///tmp/src/Old.ts"
+        );
+        assert_eq!(request.params["changes"][2]["type"], 3);
     }
 
     #[test]

@@ -25,6 +25,7 @@ import {
   type LanguageServerSignatureHelp,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
+  type LanguageServerWorkspaceFileChange,
   type LanguageServerWorkspaceSymbol,
   type LanguageServerWorkspaceEdit,
 } from "../domain/languageServerFeatures";
@@ -44,6 +45,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   completion: "text_document_completion",
   completionResolve: "text_document_completion_resolve",
   definition: "text_document_definition",
+  didChangeWatchedFiles: "workspace_did_change_watched_files",
   didRenameFiles: "workspace_did_rename_files",
   typeDefinition: "text_document_type_definition",
   documentHighlights: "text_document_document_highlights",
@@ -76,6 +78,8 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   completion: "javascript_typescript_text_document_completion",
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   definition: "javascript_typescript_text_document_definition",
+  didChangeWatchedFiles:
+    "javascript_typescript_workspace_did_change_watched_files",
   didRenameFiles: "javascript_typescript_workspace_did_rename_files",
   typeDefinition: "javascript_typescript_text_document_type_definition",
   documentHighlights: "javascript_typescript_text_document_document_highlights",
@@ -109,6 +113,7 @@ export interface TauriLanguageServerFeatureCommands {
   completion: string;
   completionResolve: string;
   definition: string;
+  didChangeWatchedFiles: string;
   didRenameFiles: string;
   typeDefinition: string;
   documentHighlights: string;
@@ -432,6 +437,17 @@ export class TauriLanguageServerFeaturesGateway
     return this.invokeWhenAvailable(
       this.commands.didRenameFiles,
       { newPath, oldPath, rootPath },
+      undefined,
+    );
+  }
+
+  didChangeWatchedFiles(
+    rootPath: string,
+    changes: LanguageServerWorkspaceFileChange[],
+  ): Promise<void> {
+    return this.invokeWhenAvailable(
+      this.commands.didChangeWatchedFiles,
+      { changes, rootPath },
       undefined,
     );
   }

@@ -101,6 +101,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       ),
     ).resolves.toBeUndefined();
     await expect(
+      gateway.didChangeWatchedFiles("/project", [
+        {
+          changeType: "created",
+          path: "/project/src/User.ts",
+        },
+      ]),
+    ).resolves.toBeUndefined();
+    await expect(
       gateway.formatting("/project", "/project/src/User.php", {
         insertSpaces: true,
         tabSize: 2,
@@ -340,6 +348,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return undefined;
       }
 
+      if (command === "workspace_did_change_watched_files") {
+        return undefined;
+      }
+
       if (command === "text_document_formatting") {
         return formatting;
       }
@@ -487,6 +499,18 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       ),
     ).resolves.toBeUndefined();
     await expect(
+      gateway.didChangeWatchedFiles("/project", [
+        {
+          changeType: "created",
+          path: "/project/src/User.ts",
+        },
+        {
+          changeType: "deleted",
+          path: "/project/src/Old.ts",
+        },
+      ]),
+    ).resolves.toBeUndefined();
+    await expect(
       gateway.formatting("/project", "/project/src/User.php", {
         insertSpaces: true,
         tabSize: 2,
@@ -618,6 +642,22 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       oldPath: "/project/src/User.ts",
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "workspace_did_change_watched_files",
+      {
+        changes: [
+          {
+            changeType: "created",
+            path: "/project/src/User.ts",
+          },
+          {
+            changeType: "deleted",
+            path: "/project/src/Old.ts",
+          },
+        ],
+        rootPath: "/project",
+      },
+    );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_formatting", {
       options: {
         insertSpaces: true,
