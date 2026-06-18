@@ -144,6 +144,10 @@ import {
 import {
   isLaravelCollectionFluentMethod,
   isLaravelCollectionTerminalModelMethod,
+  isLaravelDatabaseConnectionType,
+  isLaravelDatabaseQueryBuilderFactoryMethod,
+  isLaravelDatabaseQueryBuilderFluentMethod,
+  isLaravelDatabaseQueryBuilderType,
   isLaravelEloquentBuilderCollectionMethod,
   isLaravelEloquentBuilderFluentMethod,
   isLaravelEloquentBuilderMethodName,
@@ -5278,7 +5282,7 @@ export function useWorkbenchController(
       expression: string,
       depth = 0,
     ): Promise<string | null> => {
-      if (depth > 4) {
+      if (depth > 8) {
         return null;
       }
 
@@ -5543,6 +5547,32 @@ export function useWorkbenchController(
           }
         }
 
+        if (isLaravelDatabaseQueryBuilderFactoryMethod(methodCall.methodName)) {
+          const receiverType = await resolvePhpExpressionType(
+            source,
+            position,
+            methodCall.receiverExpression,
+            depth + 1,
+          );
+
+          if (receiverType && isLaravelDatabaseConnectionType(receiverType)) {
+            return "Illuminate\\Database\\Query\\Builder";
+          }
+        }
+
+        if (isLaravelDatabaseQueryBuilderFluentMethod(methodCall.methodName)) {
+          const receiverType = await resolvePhpExpressionType(
+            source,
+            position,
+            methodCall.receiverExpression,
+            depth + 1,
+          );
+
+          if (receiverType && isLaravelDatabaseQueryBuilderType(receiverType)) {
+            return "Illuminate\\Database\\Query\\Builder";
+          }
+        }
+
         const localScopeModelType = await resolvePhpEloquentBuilderModelType(
           source,
           position,
@@ -5576,6 +5606,9 @@ export function useWorkbenchController(
 
       if (staticCall) {
         const className = resolvePhpClassReference(source, staticCall.className);
+        const facadeOrClassName = className
+          ? (laravelFacadeTargetClassName(className) ?? className)
+          : null;
 
         if (
           className &&
@@ -5586,6 +5619,14 @@ export function useWorkbenchController(
 
         if (className && isLaravelEloquentStaticBuilderMethod(staticCall.methodName)) {
           return "Illuminate\\Database\\Eloquent\\Builder";
+        }
+
+        if (
+          facadeOrClassName &&
+          isLaravelDatabaseQueryBuilderFactoryMethod(staticCall.methodName) &&
+          isLaravelDatabaseConnectionType(facadeOrClassName)
+        ) {
+          return "Illuminate\\Database\\Query\\Builder";
         }
 
         if (

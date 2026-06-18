@@ -5308,6 +5308,8 @@ class Comment
       "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Model.php";
     const connectionPath =
       "/workspace/vendor/laravel/framework/src/Illuminate/Database/Connection.php";
+    const queryBuilderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Query/Builder.php";
     const localUserSource = `<?php
 namespace App\\Models;
 
@@ -5320,6 +5322,9 @@ class LocalUser
     {
         $connection = $this->userAccount->getDatabaseConnection();
         $userData = $connection->table('users')->get();
+        $connection->table('users')->wh
+        $userQuery = $connection->table('users')->where('login', $login);
+        $userQuery->ord
     }
 }
 `;
@@ -5391,6 +5396,27 @@ class Connection
 `;
       }
 
+      if (path === queryBuilderPath) {
+        return `<?php
+namespace Illuminate\\Database\\Query;
+
+class Builder
+{
+    public function where($column, $operator = null, $value = null, $boolean = 'and')
+    {
+    }
+
+    public function orderBy($column, $direction = 'asc')
+    {
+    }
+
+    public function first($columns = ['*'])
+    {
+    }
+}
+`;
+      }
+
       return `<?php\n// ${path}\n`;
     });
     const { getWorkbench } = renderController({
@@ -5402,6 +5428,9 @@ class Connection
       workspaceDescriptor,
     });
     await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
 
     await act(async () => {
       await getWorkbench().openFile(fileEntry(localUserPath, "LocalUser.php"));
@@ -5433,6 +5462,34 @@ class Connection
       },
       message: "Opened table() Connection.php:6:21",
     });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        localUserSource,
+        positionAfter(localUserSource, "$connection->table('users')->wh"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Query\\Builder",
+        name: "where",
+        parameters:
+          "$column, $operator = null, $value = null, $boolean = 'and'",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        localUserSource,
+        positionAfter(localUserSource, "$userQuery->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Query\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: null,
+      },
+    ]);
   });
 
   it("resolves Laravel route action strings to the paired controller method before LSP fallback", async () => {

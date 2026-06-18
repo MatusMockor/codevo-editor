@@ -180,6 +180,72 @@ const laravelEloquentModelBuilderFactoryMethods = new Set([
   "query",
 ]);
 
+const laravelDatabaseQueryBuilderFactoryMethods = new Set(["table"]);
+
+const laravelDatabaseQueryBuilderFluentMethods = new Set([
+  "addselect",
+  "crossjoin",
+  "distinct",
+  "from",
+  "groupby",
+  "having",
+  "havingraw",
+  "join",
+  "latest",
+  "leftjoin",
+  "limit",
+  "lock",
+  "offset",
+  "oldest",
+  "orderby",
+  "orderbydesc",
+  "orwhere",
+  "orwherebetween",
+  "orwherecolumn",
+  "orwheredate",
+  "orwhereexists",
+  "orwherein",
+  "orwherenotbetween",
+  "orwherenotin",
+  "orwherenotnull",
+  "orwherenull",
+  "rightjoin",
+  "select",
+  "sharedlock",
+  "skip",
+  "take",
+  "tap",
+  "unless",
+  "when",
+  "where",
+  "wherebetween",
+  "wherecolumn",
+  "wheredate",
+  "whereday",
+  "whereexists",
+  "wherein",
+  "wherejsoncontains",
+  "wherejsonlength",
+  "wheremonth",
+  "wherenotbetween",
+  "wherenotin",
+  "wherenotnull",
+  "wherenull",
+  "whereraw",
+  "wheretime",
+  "whereyear",
+]);
+
+const laravelDatabaseConnectionTypes = new Set([
+  "illuminate\\database\\connection",
+  "illuminate\\database\\connectioninterface",
+  "illuminate\\database\\databasemanager",
+]);
+
+const laravelDatabaseQueryBuilderTypes = new Set([
+  "illuminate\\database\\query\\builder",
+]);
+
 const laravelCollectionTerminalModelMethods = new Set([
   "find",
   "first",
@@ -258,6 +324,26 @@ export function isLaravelEloquentModelBuilderFactoryMethod(
   methodName: string,
 ): boolean {
   return laravelEloquentModelBuilderFactoryMethods.has(methodName.toLowerCase());
+}
+
+export function isLaravelDatabaseQueryBuilderFactoryMethod(
+  methodName: string,
+): boolean {
+  return laravelDatabaseQueryBuilderFactoryMethods.has(methodName.toLowerCase());
+}
+
+export function isLaravelDatabaseQueryBuilderFluentMethod(
+  methodName: string,
+): boolean {
+  return laravelDatabaseQueryBuilderFluentMethods.has(methodName.toLowerCase());
+}
+
+export function isLaravelDatabaseConnectionType(className: string): boolean {
+  return laravelDatabaseConnectionTypes.has(normalizedLaravelClassName(className));
+}
+
+export function isLaravelDatabaseQueryBuilderType(className: string): boolean {
+  return laravelDatabaseQueryBuilderTypes.has(normalizedLaravelClassName(className));
 }
 
 export function isLaravelCollectionTerminalModelMethod(
@@ -419,6 +505,10 @@ function laravelLocalScopeName(methodName: string): string | null {
   }
 
   return `${scopeName[0]?.toLowerCase() ?? ""}${scopeName.slice(1)}`;
+}
+
+function normalizedLaravelClassName(className: string): string {
+  return className.trim().replace(/^\\+/, "").toLowerCase();
 }
 
 function phpLaravelFillableAttributes(source: string): string[] {
