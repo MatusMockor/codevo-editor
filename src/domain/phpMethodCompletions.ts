@@ -8,7 +8,10 @@ import {
   phpNormalizeReceiverExpression,
   phpSimpleVariableName,
 } from "./phpReceiverExpressions";
-import { phpLaravelModelAttributeCompletionsFromSource } from "./phpFrameworkLaravel";
+import {
+  phpLaravelModelAttributeCompletionsFromSource,
+  phpLaravelRelationPropertyCompletionsFromSource,
+} from "./phpFrameworkLaravel";
 
 export interface PhpMemberAccessCompletionContext {
   prefix: string;
@@ -273,6 +276,12 @@ function phpPropertyCompletionsFromSource(
 
   members.push(
     ...phpLaravelModelAttributeCompletionsFromSource(source, declaringClassName),
+  );
+  members.push(
+    ...phpLaravelRelationPropertyCompletionsFromSource(
+      source,
+      declaringClassName,
+    ),
   );
 
   return members;

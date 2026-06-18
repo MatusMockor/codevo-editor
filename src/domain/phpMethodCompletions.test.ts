@@ -374,6 +374,87 @@ class Comment
         parameters: "",
         returnType: "BelongsTo<Comment, self>",
       },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "parent",
+        parameters: "",
+        returnType: "Comment",
+      },
+    ]);
+  });
+
+  it("extracts Laravel relation methods as magic properties", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use App\\Models\\Attachment;
+use App\\Models\\Post;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+
+class Comment
+{
+    public function post(): BelongsTo
+    {
+        return $this->belongsTo(Post::class);
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(Attachment::class);
+    }
+
+    /** @return MorphTo<Post, self> */
+    public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+`,
+        "Comment",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "post",
+        parameters: "",
+        returnType: "BelongsTo",
+      },
+      {
+        declaringClassName: "Comment",
+        name: "attachments",
+        parameters: "",
+        returnType: "HasMany",
+      },
+      {
+        declaringClassName: "Comment",
+        name: "commentable",
+        parameters: "",
+        returnType: "MorphTo<Post, self>",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "post",
+        parameters: "",
+        returnType: "Post",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "attachments",
+        parameters: "",
+        returnType: "Attachment",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "commentable",
+        parameters: "",
+        returnType: "Post",
+      },
     ]);
   });
 

@@ -1,5 +1,10 @@
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
 import { firstPhpDocTypeToken } from "./phpDocTemplates";
+import {
+  phpDeclaredGenericTypeCandidates,
+  phpDeclaredTypeCandidate,
+  phpMethodReturnExpressions,
+} from "./phpSemanticEngine";
 
 const laravelEloquentStaticBuilderMethods = new Set([
   "chunk",
@@ -207,6 +212,28 @@ const laravelCollectionFluentMethods = new Set([
   "wherenull",
 ]);
 
+const laravelEloquentRelationTypes = new Set([
+  "belongsto",
+  "belongstomany",
+  "hasmany",
+  "hasmanythrough",
+  "hasone",
+  "hasonethrough",
+  "morphmany",
+  "morphone",
+  "morphedbymany",
+  "morphto",
+  "morphtomany",
+]);
+
+const laravelEloquentSingularRelationTypes = new Set([
+  "belongsto",
+  "hasone",
+  "hasonethrough",
+  "morphone",
+  "morphto",
+]);
+
 export function isLaravelEloquentStaticBuilderMethod(methodName: string): boolean {
   return laravelEloquentStaticBuilderMethods.has(methodName.toLowerCase());
 }
@@ -330,6 +357,57 @@ export function phpLaravelModelAttributeCompletionsFromSource(
     parameters: "",
     returnType,
   }));
+}
+
+export function phpLaravelRelationPropertyCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+): PhpMethodCompletion[] {
+  const members: PhpMethodCompletion[] = [];
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?::\s*([^{;\n]+))?/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const modifiers = (match[1] ?? "").toLowerCase();
+
+    if (/\b(?:private|protected|static)\b/.test(modifiers)) {
+      continue;
+    }
+
+    const name = match[2];
+
+    if (!name) {
+      continue;
+    }
+
+    const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
+    const docBlock = phpDocBlockBefore(source, functionOffset);
+    const declaredReturnType = normalizeReturnType(match[4] ?? null);
+    const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
+    const returnType = bestPhpReturnType(declaredReturnType, documentedReturnType);
+    const relationTargetType =
+      phpLaravelRelationModelTypeFromReturnType(returnType) ??
+      phpMethodReturnExpressions(source, name)
+        .map((expression) =>
+          phpLaravelRelationTargetClassNameFromExpression(expression, true),
+        )
+        .find((target): target is string => Boolean(target));
+
+    if (!relationTargetType && !isLaravelEloquentRelationReturnType(returnType, true)) {
+      continue;
+    }
+
+    members.push({
+      declaringClassName,
+      kind: "property",
+      name,
+      parameters: "",
+      returnType: relationTargetType ?? "mixed",
+    });
+  }
+
+  return dedupePhpMembers(members);
 }
 
 function laravelLocalScopeName(methodName: string): string | null {
@@ -550,6 +628,86 @@ function phpLaravelAttributeAccessorValueType(
   }
 
   return normalizeReturnType(firstPhpGenericTypeArgument(returnType));
+}
+
+export function phpLaravelRelationTargetClassNameFromExpression(
+  expression: string,
+  includeCollectionRelations: boolean,
+): string | null {
+  const classNamePattern =
+    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+  const match = new RegExp(
+    String.raw`\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphedByMany|morphToMany)\s*\(\s*(` +
+      classNamePattern +
+      String.raw`)\s*::\s*class\b`,
+  ).exec(expression.trim());
+
+  const relationType = match?.[1]?.toLowerCase();
+
+  if (!relationType) {
+    return null;
+  }
+
+  if (
+    !includeCollectionRelations &&
+    !laravelEloquentSingularRelationTypes.has(relationType)
+  ) {
+    return null;
+  }
+
+  return match?.[2]?.replace(/^\\+/, "") ?? null;
+}
+
+function phpLaravelRelationModelTypeFromReturnType(
+  returnType: string | null,
+): string | null {
+  if (!isLaravelEloquentRelationReturnType(returnType, true)) {
+    return null;
+  }
+
+  return phpDeclaredGenericTypeCandidates(returnType ?? "").find(
+    (candidate) => !isGenericLaravelRelationPlaceholder(candidate),
+  ) ?? null;
+}
+
+function isLaravelEloquentRelationReturnType(
+  returnType: string | null,
+  includeCollectionRelations: boolean,
+): boolean {
+  const typeName = phpDeclaredTypeCandidate(returnType ?? "");
+  const normalizedTypeName = (typeName ?? returnType ?? "")
+    .trim()
+    .replace(/^\?/, "")
+    .replace(/^\\+/, "")
+    .split("<")[0]
+    ?.toLowerCase();
+
+  if (!normalizedTypeName) {
+    return false;
+  }
+
+  const shortTypeName = normalizedTypeName.startsWith(
+    "illuminate\\database\\eloquent\\relations\\",
+  )
+    ? normalizedTypeName.split("\\").pop() ?? normalizedTypeName
+    : normalizedTypeName;
+
+  return includeCollectionRelations
+    ? laravelEloquentRelationTypes.has(shortTypeName)
+    : laravelEloquentSingularRelationTypes.has(shortTypeName);
+}
+
+function isGenericLaravelRelationPlaceholder(typeName: string): boolean {
+  const normalized = typeName.trim().replace(/^\\+/, "").toLowerCase();
+
+  return (
+    normalized === "self" ||
+    normalized === "static" ||
+    normalized === "$this" ||
+    normalized === "illuminate\\database\\eloquent\\model" ||
+    normalized === "model" ||
+    /^t[A-Z_]/.test(typeName)
+  );
 }
 
 function phpCamelCaseToSnakeCase(value: string): string {

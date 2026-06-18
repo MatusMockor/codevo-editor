@@ -3245,6 +3245,7 @@ class CommentController
     public function getOne(GetOneCommentRequest $request): void
     {
         $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->par
         $comment->parent->get
 
         $parent = $comment->parent()->first();
@@ -3387,6 +3388,26 @@ class User
       );
     });
 
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->par"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "parent",
+        parameters: "",
+        returnType: "BelongsTo",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "parent",
+        parameters: "",
+        returnType: "Comment",
+      },
+    ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,

@@ -148,6 +148,7 @@ import {
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentStaticBuilderMethod,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelRelationTargetClassNameFromExpression,
   phpLaravelScopeMethodName,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
@@ -8736,34 +8737,6 @@ const laravelEloquentSingularRelationTypes = new Set([
   "morphone",
   "morphto",
 ]);
-
-function phpLaravelRelationTargetClassNameFromExpression(
-  expression: string,
-  includeCollectionRelations: boolean,
-): string | null {
-  const classNamePattern =
-    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
-  const match = new RegExp(
-    String.raw`\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphedByMany|morphToMany)\s*\(\s*(` +
-      classNamePattern +
-      String.raw`)\s*::\s*class\b`,
-  ).exec(expression.trim());
-
-  const relationType = match?.[1]?.toLowerCase();
-
-  if (!relationType) {
-    return null;
-  }
-
-  if (
-    !includeCollectionRelations &&
-    !laravelEloquentSingularRelationTypes.has(relationType)
-  ) {
-    return null;
-  }
-
-  return match?.[2]?.replace(/^\\+/, "") ?? null;
-}
 
 function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;
