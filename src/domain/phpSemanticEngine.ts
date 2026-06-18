@@ -1,5 +1,10 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import { phpParameterTypeForVariable } from "./phpNavigation";
+import {
+  PHP_CLASS_NAME_CAPTURE_PATTERN,
+  PHP_EXPRESSION_RECEIVER_PATTERN,
+  phpNormalizeReceiverExpression,
+} from "./phpReceiverExpressions";
 
 export interface PhpMethodCallExpression {
   methodName: string;
@@ -36,7 +41,7 @@ export function phpReceiverExpressionTypeInSource(
   position: EditorPosition,
   receiverExpression: string,
 ): string | null {
-  const normalizedExpression = normalizeReceiverExpression(receiverExpression);
+  const normalizedExpression = phpNormalizeReceiverExpression(receiverExpression);
 
   if (normalizedExpression === "$this") {
     return phpCurrentClassName(source);
@@ -122,14 +127,13 @@ export function phpLaravelContainerExpressionClassName(
   expression: string,
 ): string | null {
   const normalized = expression.trim();
-  const classNamePattern =
-    String.raw`((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)`;
   const match =
-    new RegExp(`^(?:app|resolve|make)\\s*\\(\\s*${classNamePattern}::class\\b`).exec(
-      normalized,
-    ) ?? new RegExp(`(?:->|::)make\\s*\\(\\s*${classNamePattern}::class\\b`).exec(
-      normalized,
-    );
+    new RegExp(
+      `^(?:app|resolve|make)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
+    ).exec(normalized) ??
+    new RegExp(
+      `(?:->|::)make\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
+    ).exec(normalized);
 
   return match?.[1]?.replace(/^\\+/, "") ?? null;
 }
@@ -137,15 +141,9 @@ export function phpLaravelContainerExpressionClassName(
 export function phpMethodCallExpression(
   expression: string,
 ): PhpMethodCallExpression | null {
-  const classNamePattern =
-    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
-  const containerCallPattern =
-    String.raw`(?:(?:app|resolve|make)\s*\(\s*${classNamePattern}::class\s*\)|app\s*\(\s*\)\s*->\s*make\s*\(\s*${classNamePattern}::class\s*\)|${classNamePattern}\s*::\s*make\s*\(\s*${classNamePattern}::class\s*\)|${classNamePattern}\s*::\s*getInstance\s*\(\s*\)\s*->\s*make\s*\(\s*${classNamePattern}::class\s*\))`;
-  const baseReceiverPattern =
-    String.raw`(?:new\s+${classNamePattern}\s*\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$this|${containerCallPattern}|${classNamePattern}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
   const match =
     new RegExp(
-      `^(${baseReceiverPattern}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
+      `^(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
     ).exec(
       expression.trim(),
     );
@@ -156,19 +154,15 @@ export function phpMethodCallExpression(
 
   return {
     methodName: match[2],
-    receiverExpression: normalizeReceiverExpression(match[1]),
+    receiverExpression: phpNormalizeReceiverExpression(match[1]),
   };
 }
 
 export function phpPropertyAccessExpression(
   expression: string,
 ): PhpPropertyAccessExpression | null {
-  const classNamePattern =
-    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
-  const baseReceiverPattern =
-    String.raw`(?:new\s+${classNamePattern}\s*\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$this|${classNamePattern}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
   const match = new RegExp(
-    `^(${baseReceiverPattern}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*$`,
+    `^(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*$`,
   ).exec(expression.trim());
 
   if (!match?.[1] || !match[2]) {
@@ -177,7 +171,7 @@ export function phpPropertyAccessExpression(
 
   return {
     propertyName: match[2],
-    receiverExpression: normalizeReceiverExpression(match[1]),
+    receiverExpression: phpNormalizeReceiverExpression(match[1]),
   };
 }
 
@@ -363,10 +357,6 @@ function phpDocTypeForProperty(
   }
 
   return typeName;
-}
-
-function normalizeReceiverExpression(receiverExpression: string): string {
-  return receiverExpression.replace(/\s*->\s*/g, "->").trim();
 }
 
 function splitPhpList(parameters: string): string[] {

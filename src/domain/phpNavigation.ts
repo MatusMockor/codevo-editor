@@ -1,5 +1,10 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
+  PHP_EXPRESSION_RECEIVER_PATTERN,
+  phpNormalizeReceiverExpression,
+  phpSimpleVariableName,
+} from "./phpReceiverExpressions";
+import {
   joinWorkspacePath,
   type ComposerPackageDescriptor,
   type PhpProjectDescriptor,
@@ -33,9 +38,6 @@ interface IdentifierAtOffset {
   name: string;
   start: number;
 }
-
-const PHP_CLASS_NAME_PATTERN = String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
-const PHP_CONTAINER_CALL_PATTERN = String.raw`(?:(?:app|resolve|make)\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|app\s*\(\s*\)\s*->\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|${PHP_CLASS_NAME_PATTERN}\s*::\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|${PHP_CLASS_NAME_PATTERN}\s*::\s*getInstance\s*\(\s*\)\s*->\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\))`;
 
 export function phpIdentifierContextAt(
   source: string,
@@ -231,9 +233,8 @@ function methodCallContextAt(
   const lineStart = source.lastIndexOf("\n", identifier.start - 1) + 1;
   const lineEnd = source.indexOf("\n", identifier.end);
   const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
-  const baseReceiverPattern = String.raw`(?:\$[A-Za-z_][A-Za-z0-9_]*|\$this|${PHP_CONTAINER_CALL_PATTERN}|${PHP_CLASS_NAME_PATTERN}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
   const methodPattern = new RegExp(
-    `(${baseReceiverPattern}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
     "g",
   );
 
@@ -246,24 +247,13 @@ function methodCallContextAt(
       return {
         kind: "methodCall",
         methodName: identifier.name,
-        receiverExpression: normalizeReceiverExpression(match[1] || ""),
-        variableName: simpleVariableName(match[1] || "") || "",
+        receiverExpression: phpNormalizeReceiverExpression(match[1] || ""),
+        variableName: phpSimpleVariableName(match[1] || "") || "",
       };
     }
   }
 
   return null;
-}
-
-function simpleVariableName(receiverExpression: string): string | null {
-  const match = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
-    normalizeReceiverExpression(receiverExpression),
-  );
-  return match?.[1] ?? null;
-}
-
-function normalizeReceiverExpression(receiverExpression: string): string {
-  return receiverExpression.replace(/\s*->\s*/g, "->").trim();
 }
 
 function laravelRouteActionContextAt(

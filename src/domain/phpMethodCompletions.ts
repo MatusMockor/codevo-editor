@@ -1,4 +1,9 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import {
+  PHP_MEMBER_RECEIVER_PATTERN,
+  phpNormalizeReceiverExpression,
+  phpSimpleVariableName,
+} from "./phpReceiverExpressions";
 
 export interface PhpMemberAccessCompletionContext {
   prefix: string;
@@ -42,10 +47,6 @@ export interface PhpMethodSignature {
   parameters: PhpMethodParameter[];
 }
 
-const PHP_CLASS_NAME_PATTERN = String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
-const PHP_CONTAINER_CALL_PATTERN = String.raw`(?:(?:app|resolve|make)\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|app\s*\(\s*\)\s*->\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|${PHP_CLASS_NAME_PATTERN}\s*::\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|${PHP_CLASS_NAME_PATTERN}\s*::\s*getInstance\s*\(\s*\)\s*->\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\))`;
-const PHP_MEMBER_RECEIVER_PATTERN = String.raw`(?:\$[A-Za-z_][A-Za-z0-9_]*|\$this|${PHP_CONTAINER_CALL_PATTERN})`;
-
 export function phpMemberAccessCompletionContextAt(
   source: string,
   position: EditorPosition,
@@ -61,12 +62,12 @@ export function phpMemberAccessCompletionContextAt(
     return null;
   }
 
-  const receiverExpression = normalizeReceiverExpression(match[1]);
+  const receiverExpression = phpNormalizeReceiverExpression(match[1]);
 
   return {
     prefix: match[2] ?? "",
     receiverExpression,
-    variableName: simpleVariableName(receiverExpression),
+    variableName: phpSimpleVariableName(receiverExpression),
   };
 }
 
@@ -104,14 +105,14 @@ export function phpMethodSignatureContextAt(
   ).exec(lineUntilCursor);
 
   if (memberMatch?.[1] && memberMatch[2]) {
-    const receiverExpression = normalizeReceiverExpression(memberMatch[1]);
+    const receiverExpression = phpNormalizeReceiverExpression(memberMatch[1]);
 
     return {
       argumentIndex: phpArgumentIndex(memberMatch[3] ?? ""),
       className: null,
       methodName: memberMatch[2],
       receiverExpression,
-      variableName: simpleVariableName(receiverExpression),
+      variableName: phpSimpleVariableName(receiverExpression),
     };
   }
 
@@ -359,15 +360,6 @@ export function phpTraitClassNames(source: string): string[] {
   }
 
   return Array.from(new Set(traits));
-}
-
-function simpleVariableName(receiverExpression: string): string | null {
-  const match = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(receiverExpression);
-  return match?.[1] ?? null;
-}
-
-function normalizeReceiverExpression(receiverExpression: string): string {
-  return receiverExpression.replace(/\s*->\s*/g, "->").trim();
 }
 
 function phpDocBlockBefore(source: string, functionOffset: number): string | null {
