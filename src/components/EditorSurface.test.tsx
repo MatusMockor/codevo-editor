@@ -780,6 +780,104 @@ interface ParserFactory
     });
   });
 
+  it("aligns a whitespace-only PHP line when typing space inside a block", async () => {
+    const lines = [
+      "<?php",
+      "class CommentController",
+      "{",
+      "    public function getOne(): JsonResponse",
+      "    {",
+      "        $comment = $this->commentRepository->findOrFail($id);",
+      " ",
+      "        return new CommentResource($comment);",
+      "    }",
+      "}",
+    ];
+    const activeDocument: EditorDocument = {
+      content: lines.join("\n"),
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/app/CommentController.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineCount: vi.fn(() => lines.length),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({
+      column: 2,
+      lineNumber: 7,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.modelContentChangeHandler?.({
+        changes: [{ text: " " }],
+      });
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "mockor.smartBlankLineIndent",
+      [
+        {
+          forceMoveMarkers: true,
+          range: expect.objectContaining({
+            endColumn: 2,
+            endLineNumber: 7,
+            startColumn: 1,
+            startLineNumber: 7,
+          }),
+          text: "        ",
+        },
+      ],
+    );
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      column: 9,
+      lineNumber: 7,
+    });
+  });
+
   it("previews and reverts local editor changes from the gutter", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php\n$comment = 'new';\n",

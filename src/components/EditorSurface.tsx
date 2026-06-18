@@ -288,7 +288,14 @@ export function EditorSurface({
     }
 
     const disposable = editorApi.onDidChangeModelContent((event) => {
-      if (!event.changes.some((change) => change.text.includes("\n"))) {
+      const insertedNewLine = event.changes.some((change) =>
+        change.text.includes("\n"),
+      );
+      const insertedBlankLineWhitespace = event.changes.some((change) =>
+        /^[\t ]+$/.test(change.text),
+      );
+
+      if (!insertedNewLine && !insertedBlankLineWhitespace) {
         return;
       }
 
@@ -309,6 +316,10 @@ export function EditorSurface({
       const currentIndent = leadingWhitespace(line);
 
       if (currentIndent === indent) {
+        return;
+      }
+
+      if (!insertedNewLine && currentIndent.length >= indent.length) {
         return;
       }
 
