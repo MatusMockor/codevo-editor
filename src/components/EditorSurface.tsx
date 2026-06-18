@@ -280,6 +280,61 @@ export function EditorSurface({
   }, [editorApi, onCursorPositionChange]);
 
   useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    if (!isSmartBlankLineIndentDocument(activeDocument)) {
+      return;
+    }
+
+    const disposable = editorApi.onDidChangeModelContent((event) => {
+      if (!event.changes.some((change) => change.text.includes("\n"))) {
+        return;
+      }
+
+      const model = editorApi.getModel();
+      const position = editorApi.getPosition();
+
+      if (!model || !position || modelPath(model) !== activeDocument.path) {
+        return;
+      }
+
+      const indent = smartBlankLineIndent(model, position.lineNumber);
+
+      if (indent === null) {
+        return;
+      }
+
+      const line = model.getLineContent(position.lineNumber);
+      const currentIndent = leadingWhitespace(line);
+
+      if (currentIndent === indent) {
+        return;
+      }
+
+      editorApi.executeEdits("mockor.smartBlankLineIndent", [
+        {
+          forceMoveMarkers: true,
+          range: new monacoApi.Range(
+            position.lineNumber,
+            1,
+            position.lineNumber,
+            currentIndent.length + 1,
+          ),
+          text: indent,
+        },
+      ]);
+      editorApi.setPosition({
+        column: indent.length + 1,
+        lineNumber: position.lineNumber,
+      });
+    });
+
+    return () => disposable.dispose();
+  }, [activeDocument, editorApi, monacoApi]);
+
+  useEffect(() => {
     if (!editorApi || !monacoApi) {
       return;
     }
@@ -1279,6 +1334,104 @@ function isTypescriptJavascriptDocument(
     document?.language === "typescript" ||
     document?.language === "javascript"
   );
+}
+
+function isSmartBlankLineIndentDocument(document: EditorDocument): boolean {
+  return (
+    document.language === "php" ||
+    document.language === "blade" ||
+    document.language === "javascript" ||
+    document.language === "typescript"
+  );
+}
+
+function smartBlankLineIndent(
+  model: Monaco.editor.ITextModel,
+  lineNumber: number,
+): string | null {
+  const line = model.getLineContent(lineNumber);
+
+  if (line.trim().length > 0) {
+    return null;
+  }
+
+  const previous = nearestNonEmptyLine(model, lineNumber, -1);
+
+  if (!previous) {
+    return null;
+  }
+
+  const previousIndent = leadingWhitespace(previous.content);
+
+  if (opensIndentedBlock(previous.content)) {
+    return previousIndent + indentationUnitNear(model, lineNumber, previousIndent);
+  }
+
+  return previousIndent;
+}
+
+function nearestNonEmptyLine(
+  model: Monaco.editor.ITextModel,
+  lineNumber: number,
+  direction: -1 | 1,
+): { content: string; lineNumber: number } | null {
+  const lineCount = model.getLineCount();
+
+  for (
+    let candidate = lineNumber + direction;
+    candidate >= 1 && candidate <= lineCount;
+    candidate += direction
+  ) {
+    const content = model.getLineContent(candidate);
+
+    if (content.trim().length > 0) {
+      return {
+        content,
+        lineNumber: candidate,
+      };
+    }
+  }
+
+  return null;
+}
+
+function indentationUnitNear(
+  model: Monaco.editor.ITextModel,
+  lineNumber: number,
+  baseIndent: string,
+): string {
+  const next = nearestNonEmptyLine(model, lineNumber, 1);
+
+  if (next) {
+    const nextIndent = leadingWhitespace(next.content);
+
+    if (nextIndent.startsWith(baseIndent) && nextIndent.length > baseIndent.length) {
+      return nextIndent.slice(baseIndent.length);
+    }
+  }
+
+  const lineCount = model.getLineCount();
+
+  for (let candidate = 1; candidate < lineCount; candidate += 1) {
+    const currentIndent = leadingWhitespace(model.getLineContent(candidate));
+    const nextIndent = leadingWhitespace(model.getLineContent(candidate + 1));
+
+    if (nextIndent.startsWith(currentIndent) && nextIndent.length > currentIndent.length) {
+      return nextIndent.slice(currentIndent.length);
+    }
+  }
+
+  return "  ";
+}
+
+function leadingWhitespace(value: string): string {
+  return /^\s*/.exec(value)?.[0] ?? "";
+}
+
+function opensIndentedBlock(value: string): boolean {
+  const trimmed = value.trimEnd();
+
+  return /(?:\{|\[|\(|=>)\s*(?:\/\/.*)?$/.test(trimmed);
 }
 
 function editorChangePopoverStyle(

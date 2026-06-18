@@ -11,6 +11,7 @@ import { EditorSurface } from "./EditorSurface";
 
 interface FakeModel {
   getLineContent?: ReturnType<typeof vi.fn>;
+  getLineCount?: ReturnType<typeof vi.fn>;
   uri: {
     fsPath: string;
     path: string;
@@ -20,6 +21,7 @@ interface FakeModel {
 interface FakeEditor {
   addAction: ReturnType<typeof vi.fn>;
   deltaDecorations: ReturnType<typeof vi.fn>;
+  executeEdits: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
   getLayoutInfo: ReturnType<typeof vi.fn>;
   getModel: ReturnType<typeof vi.fn>;
@@ -28,7 +30,11 @@ interface FakeEditor {
   getScrollTop: ReturnType<typeof vi.fn>;
   getTopForLineNumber: ReturnType<typeof vi.fn>;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
+  modelContentChangeHandler:
+    | ((event: { changes: Array<{ text: string }> }) => void)
+    | null;
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
+  onDidChangeModelContent: ReturnType<typeof vi.fn>;
   onMouseDown: ReturnType<typeof vi.fn>;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
   setPosition: ReturnType<typeof vi.fn>;
@@ -676,6 +682,104 @@ interface ParserFactory
     expect(onEditorFocused).toHaveBeenCalled();
   });
 
+  it("keeps a new blank PHP line aligned with the surrounding block", async () => {
+    const lines = [
+      "<?php",
+      "class CommentController",
+      "{",
+      "    public function getOne(): JsonResponse",
+      "    {",
+      "        $comment = $this->commentRepository->findOrFail($id);",
+      "",
+      "        return new CommentResource($comment);",
+      "    }",
+      "}",
+    ];
+    const activeDocument: EditorDocument = {
+      content: lines.join("\n"),
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/app/CommentController.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineCount: vi.fn(() => lines.length),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({
+      column: 1,
+      lineNumber: 7,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.modelContentChangeHandler?.({
+        changes: [{ text: "\n" }],
+      });
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "mockor.smartBlankLineIndent",
+      [
+        {
+          forceMoveMarkers: true,
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 7,
+            startColumn: 1,
+            startLineNumber: 7,
+          }),
+          text: "        ",
+        },
+      ],
+    );
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      column: 9,
+      lineNumber: 7,
+    });
+  });
+
   it("previews and reverts local editor changes from the gutter", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php\n$comment = 'new';\n",
@@ -899,6 +1003,7 @@ function createEditor(model: FakeModel): FakeEditor {
     deltaDecorations: vi.fn((_oldDecorations: string[], decorations: any[]) =>
       decorations.map((_, index) => `implementation-gutter-${index}`),
     ),
+    executeEdits: vi.fn(),
     focus: vi.fn(),
     getLayoutInfo: vi.fn(() => ({
       contentLeft: 80,
@@ -914,7 +1019,15 @@ function createEditor(model: FakeModel): FakeEditor {
     getScrollTop: vi.fn(() => 10),
     getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
     mouseDownHandler: null,
+    modelContentChangeHandler: null,
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChangeModelContent: vi.fn(
+      (handler: (event: { changes: Array<{ text: string }> }) => void) => {
+        editor.modelContentChangeHandler = handler;
+
+        return { dispose: vi.fn() };
+      },
+    ),
     onMouseDown: vi.fn((handler: (event: FakeMouseDownEvent) => void) => {
       editor.mouseDownHandler = handler;
 
