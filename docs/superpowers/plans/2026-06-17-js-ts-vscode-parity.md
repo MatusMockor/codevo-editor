@@ -116,6 +116,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript command-backed edits now also re-check the active workspace after `workspace/executeCommand` returns, so slow organize-imports or fix-all commands cannot apply edits after the user has switched project tabs.
 - TypeScript/JavaScript providers now re-check the active workspace after pending document sync flushes and require runtime status to belong to the requested workspace root, so a project-tab switch cannot send fresh completion/navigation/formatting requests through a stale background runtime.
 - `singleActive` background runtime policy now has regression coverage proving JavaScript/TypeScript services are stopped for every inactive project tab, not just the previous tab.
+- Saving the `singleActive` background runtime policy now has regression coverage proving inactive JavaScript/TypeScript services, PHP language servers, and terminal sessions are stopped immediately without stopping the active project.
 
 ## Full VS Code-Like Target
 

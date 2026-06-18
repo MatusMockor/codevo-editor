@@ -882,6 +882,57 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("stops every inactive project runtime when single-active policy is saved", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        runtimePolicy: "keepAlive",
+        workspaceTabs: ["/workspace-a", "/workspace-b", "/workspace-c"],
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          runtimePolicy: "singleActive",
+          workspaceTabs: ["/workspace-a", "/workspace-b", "/workspace-c"],
+        },
+        defaultWorkspaceSettings(),
+        null,
+      );
+    });
+    await flushAsyncTurns();
+
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-b",
+    );
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-c",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-b");
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-c");
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace-b",
+    );
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace-c",
+    );
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).not.toHaveBeenCalledWith("/workspace-a");
+  });
+
   it("restores cached editor state when switching back to an open project tab", async () => {
     const readTextFile = vi.fn(async (path: string) => `content:${path}`);
     const { getWorkbench } = renderController({
