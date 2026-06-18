@@ -797,6 +797,94 @@ class Comment
     ]);
   });
 
+  it("extracts Laravel relation targets from class-string relation arguments", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsToMany;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphToMany;
+
+class User
+{
+    public function roles(): BelongsToMany
+    {
+        return $this->belongsToMany('App\\\\Models\\\\Role');
+    }
+
+    public function tags(): MorphToMany
+    {
+        return $this->morphToMany(
+            related: '\\\\App\\\\Models\\\\Tag',
+            name: 'taggable',
+        );
+    }
+}
+`,
+        "User",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "User",
+        name: "roles",
+        parameters: "",
+        returnType: "BelongsToMany",
+      },
+      {
+        declaringClassName: "User",
+        name: "tags",
+        parameters: "",
+        returnType: "MorphToMany",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "roles",
+        parameters: "",
+        returnType: "App\\Models\\Role",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "tags",
+        parameters: "",
+        returnType: "App\\Models\\Tag",
+      },
+    ]);
+  });
+
+  it("does not infer non-class string relation arguments as model targets", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class User
+{
+    public function comments(): HasMany
+    {
+        return $this->hasMany('comments');
+    }
+}
+`,
+        "User",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "User",
+        name: "comments",
+        parameters: "",
+        returnType: "HasMany",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "comments",
+        parameters: "",
+        returnType: "mixed",
+      },
+    ]);
+  });
+
   it("extracts Laravel model attributes from fillable and casts", () => {
     expect(
       phpMethodCompletionsFromSource(

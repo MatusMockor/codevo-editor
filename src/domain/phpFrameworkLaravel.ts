@@ -1383,6 +1383,17 @@ function phpLaravelRelationTargetClassNameFromArguments(
     if (className) {
       return className;
     }
+
+    const stringClassName = phpStringLiteralValue(value)?.replace(/^\\+/, "");
+
+    if (
+      stringClassName &&
+      /^[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)+$/.test(
+        stringClassName,
+      )
+    ) {
+      return stringClassName;
+    }
   }
 
   return null;
