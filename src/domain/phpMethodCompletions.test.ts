@@ -411,6 +411,11 @@ class Comment
         return $this->hasMany(self::class);
     }
 
+    public function replies(): HasMany
+    {
+        return $this->hasMany(__CLASS__, 'parent_id');
+    }
+
     /** @return MorphTo<Post, self> */
     public function commentable(): MorphTo
     {
@@ -441,6 +446,12 @@ class Comment
       },
       {
         declaringClassName: "Comment",
+        name: "replies",
+        parameters: "",
+        returnType: "HasMany",
+      },
+      {
+        declaringClassName: "Comment",
         name: "commentable",
         parameters: "",
         returnType: "MorphTo<Post, self>",
@@ -463,6 +474,13 @@ class Comment
         declaringClassName: "Comment",
         kind: "property",
         name: "siblings",
+        parameters: "",
+        returnType: "Comment",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "replies",
         parameters: "",
         returnType: "Comment",
       },

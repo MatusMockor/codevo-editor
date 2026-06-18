@@ -779,7 +779,7 @@ function phpLaravelRelationTargetClassNameFromArguments(
   argumentsSource: string,
 ): string | null {
   const classNamePattern =
-    String.raw`(?:self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+    String.raw`(?:__CLASS__|self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
   const classNameReferencePattern = new RegExp(
     String.raw`^(` + classNamePattern + String.raw`)\s*::\s*class\b`,
   );
@@ -798,6 +798,10 @@ function phpLaravelRelationTargetClassNameFromArguments(
 
     if (!argumentName && index > 0) {
       continue;
+    }
+
+    if (/^__CLASS__\b/i.test(value)) {
+      return "__CLASS__";
     }
 
     const classNameMatch = classNameReferencePattern.exec(value);
@@ -830,7 +834,12 @@ function phpLaravelRelationTypeForDeclaringClass(
 ): string | null {
   const normalized = relationType?.trim().replace(/^\\+/, "").toLowerCase();
 
-  if (normalized === "self" || normalized === "static" || normalized === "$this") {
+  if (
+    normalized === "__class__" ||
+    normalized === "self" ||
+    normalized === "static" ||
+    normalized === "$this"
+  ) {
     return declaringClassName;
   }
 

@@ -9694,6 +9694,7 @@ function resolvePhpRelationTargetClassReference(
   const normalizedClassName = className.trim().replace(/^\\+/, "").toLowerCase();
 
   if (
+    normalizedClassName === "__class__" ||
     normalizedClassName === "self" ||
     normalizedClassName === "static" ||
     normalizedClassName === "$this"

@@ -4647,6 +4647,11 @@ class Comment
         return $this->hasMany(self::class, 'parent_id');
     }
 
+    public function replies(): HasMany
+    {
+        return $this->hasMany(__CLASS__, 'parent_id');
+    }
+
     public function namedChildren(): HasMany
     {
         return $this->hasMany(
@@ -4704,6 +4709,9 @@ class CommentController
 
         $sibling = $comment->siblings()->first();
         $sibling->get
+
+        $reply = $comment->replies()->first();
+        $reply->get
 
         $filteredChildFromProperty = $comment->children->filter()->first();
         $filteredChildFromProperty->get
@@ -4836,6 +4844,19 @@ class User
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$comment->parent->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$reply->get"),
       ),
     ).resolves.toEqual([
       {
