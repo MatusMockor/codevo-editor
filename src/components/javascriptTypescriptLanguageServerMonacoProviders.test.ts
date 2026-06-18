@@ -56,6 +56,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       "javascriptreact",
       "typescriptreact",
     ]);
+    expect(
+      (monaco.languages.registerCompletionItemProvider as any).mock.calls[0][1]
+        .triggerCharacters,
+    ).toEqual([".", "'", "\"", "/", "@", "<", "#"]);
 
     disposable.dispose();
 
