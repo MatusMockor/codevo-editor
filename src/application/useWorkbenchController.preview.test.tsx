@@ -3201,6 +3201,9 @@ class AlbumController
         $album = Album::query()->whereNull('parent_id')->first();
         $album->get
 
+        $trashedAlbum = Album::withTrashed()->whereNull('parent_id')->first();
+        $trashedAlbum->get
+
         $albumFromCollection = Album::query()->whereNull('parent_id')->get()->first();
         $albumFromCollection->get
 
@@ -3210,6 +3213,7 @@ class AlbumController
 
         $query = Album::query();
         $query->whereNull('parent_id')->ord
+        $query->withTrashed()->ord
 
         /** @var \\Illuminate\\Database\\Eloquent\\Builder<Album> $typedQuery */
         $typedQuery = Album::query();
@@ -3309,6 +3313,19 @@ class Builder
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$trashedAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$albumFromAssignedCollection->get"),
       ),
     ).resolves.toEqual([
@@ -3323,6 +3340,19 @@ class Builder
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$query->whereNull('parent_id')->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->withTrashed()->ord"),
       ),
     ).resolves.toEqual([
       {
