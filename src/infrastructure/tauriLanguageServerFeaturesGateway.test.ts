@@ -25,6 +25,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     ).resolves.toEqual(completionItem());
     await expect(gateway.definition("/project", position())).resolves.toEqual([]);
     await expect(
+      gateway.typeDefinition("/project", position()),
+    ).resolves.toEqual([]);
+    await expect(
       gateway.documentSymbols("/project", "/project/src/User.php"),
     ).resolves.toEqual([]);
     await expect(gateway.documentHighlights("/project", position())).resolves.toEqual(
@@ -58,6 +61,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         { character: 4, line: 10 },
       ]),
     ).resolves.toEqual([]);
+    await expect(
+      gateway.linkedEditingRanges("/project", position()),
+    ).resolves.toBeNull();
     await expect(
       gateway.semanticTokens("/project", "/project/src/User.php"),
     ).resolves.toBeNull();
@@ -251,6 +257,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         range: range(),
       },
     ];
+    const linkedEditingRanges = {
+      ranges: [range()],
+      wordPattern: "[A-Za-z]+",
+    };
     const semanticTokens = {
       data: [0, 6, 4, 8, 0],
       resultId: "semantic-1",
@@ -327,6 +337,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return selectionRanges;
       }
 
+      if (command === "text_document_linked_editing_ranges") {
+        return linkedEditingRanges;
+      }
+
       if (command === "text_document_semantic_tokens") {
         return semanticTokens;
       }
@@ -377,6 +391,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(gateway.implementation("/project", requestPosition)).resolves.toEqual(
       definition,
     );
+    await expect(gateway.typeDefinition("/project", requestPosition)).resolves.toEqual(
+      definition,
+    );
     await expect(gateway.references("/project", requestPosition)).resolves.toEqual(
       definition,
     );
@@ -385,6 +402,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         { character: 4, line: 10 },
       ]),
     ).resolves.toEqual(selectionRanges);
+    await expect(
+      gateway.linkedEditingRanges("/project", requestPosition),
+    ).resolves.toEqual(linkedEditingRanges);
     await expect(
       gateway.semanticTokens("/project", "/project/src/User.php"),
     ).resolves.toEqual(semanticTokens);
@@ -471,6 +491,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       position: requestPosition,
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_type_definition", {
+      position: requestPosition,
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_references", {
       position: requestPosition,
       rootPath: "/project",
@@ -480,6 +504,13 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       positions: [{ character: 4, line: 10 }],
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "text_document_linked_editing_ranges",
+      {
+        position: requestPosition,
+        rootPath: "/project",
+      },
+    );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_semantic_tokens", {
       path: "/project/src/User.php",
       rootPath: "/project",

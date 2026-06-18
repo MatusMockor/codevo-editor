@@ -254,6 +254,14 @@ pub struct LanguageServerSelectionRange {
     pub parent: Option<Box<LanguageServerSelectionRange>>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerLinkedEditingRanges {
+    pub ranges: Vec<LanguageServerRange>,
+    #[serde(default)]
+    pub word_pattern: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerSemanticTokens {
@@ -319,8 +327,13 @@ pub trait TextDocumentFeatureRequestFactory {
     fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest;
     fn workspace_symbols(&self, query: &str) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn type_definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn selection_ranges(&self, range: &TextDocumentSelectionRange) -> LanguageServerFeatureRequest;
+    fn linked_editing_ranges(
+        &self,
+        position: &TextDocumentPosition,
+    ) -> LanguageServerFeatureRequest;
     fn semantic_tokens(&self, path: &str) -> LanguageServerFeatureRequest;
     fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn prepare_rename(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
@@ -431,6 +444,10 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         request("textDocument/implementation", position)
     }
 
+    fn type_definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
+        request("textDocument/typeDefinition", position)
+    }
+
     fn references(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
         let mut request = request("textDocument/references", position);
         request.params["context"] = json!({ "includeDeclaration": true });
@@ -447,6 +464,13 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                 "positions": range.positions,
             }),
         }
+    }
+
+    fn linked_editing_ranges(
+        &self,
+        position: &TextDocumentPosition,
+    ) -> LanguageServerFeatureRequest {
+        request("textDocument/linkedEditingRange", position)
     }
 
     fn semantic_tokens(&self, path: &str) -> LanguageServerFeatureRequest {
@@ -1407,6 +1431,34 @@ mod tests {
         let request = factory.implementation(&position());
 
         assert_eq!(request.method, "textDocument/implementation");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn type_definition_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.type_definition(&position());
+
+        assert_eq!(request.method, "textDocument/typeDefinition");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn linked_editing_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.linked_editing_ranges(&position());
+
+        assert_eq!(request.method, "textDocument/linkedEditingRange");
         assert!(request.params["textDocument"]["uri"]
             .as_str()
             .expect("uri")

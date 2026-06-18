@@ -66,6 +66,7 @@ pub struct LanguageServerCapabilities {
     pub formatting: bool,
     pub implementation: bool,
     pub inlay_hint: bool,
+    pub linked_editing_range: bool,
     pub prepare_rename: bool,
     pub range_formatting: bool,
     pub references: bool,
@@ -73,6 +74,7 @@ pub struct LanguageServerCapabilities {
     pub selection_range: bool,
     pub semantic_tokens: bool,
     pub signature_help: bool,
+    pub type_definition: bool,
     pub workspace_symbol: bool,
 }
 
@@ -1560,6 +1562,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         formatting: is_capability_enabled(capabilities.get("documentFormattingProvider")),
         implementation: is_capability_enabled(capabilities.get("implementationProvider")),
         inlay_hint: is_capability_enabled(capabilities.get("inlayHintProvider")),
+        linked_editing_range: is_capability_enabled(capabilities.get("linkedEditingRangeProvider")),
         prepare_rename: capabilities
             .get("renameProvider")
             .and_then(|provider| provider.get("prepareProvider"))
@@ -1573,6 +1576,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         selection_range: is_capability_enabled(capabilities.get("selectionRangeProvider")),
         semantic_tokens: is_capability_enabled(capabilities.get("semanticTokensProvider")),
         signature_help: is_capability_enabled(capabilities.get("signatureHelpProvider")),
+        type_definition: is_capability_enabled(capabilities.get("typeDefinitionProvider")),
         workspace_symbol: is_capability_enabled(capabilities.get("workspaceSymbolProvider")),
     })
 }
@@ -1782,6 +1786,7 @@ mod tests {
                     formatting: false,
                     implementation: true,
                     inlay_hint: false,
+                    linked_editing_range: false,
                     prepare_rename: false,
                     range_formatting: false,
                     references: false,
@@ -1789,6 +1794,7 @@ mod tests {
                     selection_range: false,
                     semantic_tokens: false,
                     signature_help: false,
+                    type_definition: false,
                     workspace_symbol: false,
                 },
             }
@@ -1813,6 +1819,7 @@ mod tests {
                 formatting: true,
                 implementation: false,
                 inlay_hint: true,
+                linked_editing_range: true,
                 prepare_rename: true,
                 range_formatting: true,
                 references: true,
@@ -1820,6 +1827,7 @@ mod tests {
                 selection_range: true,
                 semantic_tokens: true,
                 signature_help: true,
+                type_definition: true,
                 workspace_symbol: true,
             },
         };
@@ -1840,6 +1848,7 @@ mod tests {
                     "formatting": true,
                     "implementation": false,
                     "inlayHint": true,
+                    "linkedEditingRange": true,
                     "prepareRename": true,
                     "rangeFormatting": true,
                     "references": true,
@@ -1847,6 +1856,7 @@ mod tests {
                     "selectionRange": true,
                     "semanticTokens": true,
                     "signatureHelp": true,
+                    "typeDefinition": true,
                     "workspaceSymbol": true,
                     "codeAction": true,
                 },
@@ -1876,6 +1886,7 @@ mod tests {
                     "foldingRangeProvider": true,
                     "implementationProvider": true,
                     "inlayHintProvider": true,
+                    "linkedEditingRangeProvider": true,
                     "referencesProvider": true,
                     "renameProvider": { "prepareProvider": true },
                     "selectionRangeProvider": true,
@@ -1887,6 +1898,7 @@ mod tests {
                         }
                     },
                     "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
+                    "typeDefinitionProvider": true,
                     "workspaceSymbolProvider": true,
                     "codeActionProvider": { "codeActionKinds": ["quickfix"] },
                     "documentFormattingProvider": true,
@@ -1910,6 +1922,7 @@ mod tests {
                 formatting: true,
                 implementation: true,
                 inlay_hint: true,
+                linked_editing_range: true,
                 prepare_rename: true,
                 range_formatting: true,
                 references: true,
@@ -1917,6 +1930,7 @@ mod tests {
                 selection_range: true,
                 semantic_tokens: true,
                 signature_help: true,
+                type_definition: true,
                 workspace_symbol: true,
             }
         );

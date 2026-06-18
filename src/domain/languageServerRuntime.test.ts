@@ -56,6 +56,7 @@ describe("languageServerCapabilities", () => {
       hover: true,
       implementation: true,
       inlayHint: true,
+      linkedEditingRange: true,
       prepareRename: true,
       rangeFormatting: true,
       references: true,
@@ -63,6 +64,7 @@ describe("languageServerCapabilities", () => {
       selectionRange: true,
       semanticTokens: true,
       signatureHelp: true,
+      typeDefinition: true,
       workspaceSymbol: true,
     });
     expect(languageServerCapabilities(status("starting"))).toEqual(
@@ -84,6 +86,7 @@ describe("languageServerCapabilities", () => {
       "folding",
       "implementation",
       "inlay hints",
+      "linked editing",
       "prepare rename",
       "range formatting",
       "references",
@@ -91,6 +94,7 @@ describe("languageServerCapabilities", () => {
       "smart selection",
       "semantic tokens",
       "signature help",
+      "type definition",
       "workspace symbols",
       "code actions",
       "formatting",
@@ -119,6 +123,7 @@ function status(
           hover: true,
           implementation: true,
           inlayHint: true,
+          linkedEditingRange: true,
           prepareRename: true,
           rangeFormatting: true,
           references: true,
@@ -126,6 +131,7 @@ function status(
           selectionRange: true,
           semanticTokens: true,
           signatureHelp: true,
+          typeDefinition: true,
           workspaceSymbol: true,
         },
       };

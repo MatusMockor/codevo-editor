@@ -14,6 +14,7 @@ import {
   type LanguageServerFeaturesGateway,
   type LanguageServerHover,
   type LanguageServerInlayHint,
+  type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
   type LanguageServerPosition,
   type LanguageServerPrepareRenameResult,
@@ -40,6 +41,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   completion: "text_document_completion",
   completionResolve: "text_document_completion_resolve",
   definition: "text_document_definition",
+  typeDefinition: "text_document_type_definition",
   documentHighlights: "text_document_document_highlights",
   documentLinkResolve: "text_document_document_link_resolve",
   documentLinks: "text_document_document_links",
@@ -50,6 +52,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   hover: "text_document_hover",
   implementation: "text_document_implementation",
   inlayHints: "text_document_inlay_hints",
+  linkedEditingRanges: "text_document_linked_editing_ranges",
   prepareRename: "text_document_prepare_rename",
   rangeFormatting: "text_document_range_formatting",
   references: "text_document_references",
@@ -66,6 +69,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   completion: "javascript_typescript_text_document_completion",
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   definition: "javascript_typescript_text_document_definition",
+  typeDefinition: "javascript_typescript_text_document_type_definition",
   documentHighlights: "javascript_typescript_text_document_document_highlights",
   documentLinkResolve: "javascript_typescript_text_document_document_link_resolve",
   documentLinks: "javascript_typescript_text_document_document_links",
@@ -76,6 +80,8 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   hover: "javascript_typescript_text_document_hover",
   implementation: "javascript_typescript_text_document_implementation",
   inlayHints: "javascript_typescript_text_document_inlay_hints",
+  linkedEditingRanges:
+    "javascript_typescript_text_document_linked_editing_ranges",
   prepareRename: "javascript_typescript_text_document_prepare_rename",
   rangeFormatting: "javascript_typescript_text_document_range_formatting",
   references: "javascript_typescript_text_document_references",
@@ -92,6 +98,7 @@ export interface TauriLanguageServerFeatureCommands {
   completion: string;
   completionResolve: string;
   definition: string;
+  typeDefinition: string;
   documentHighlights: string;
   documentLinkResolve: string;
   documentLinks: string;
@@ -102,6 +109,7 @@ export interface TauriLanguageServerFeatureCommands {
   hover: string;
   implementation: string;
   inlayHints: string;
+  linkedEditingRanges: string;
   prepareRename: string;
   rangeFormatting: string;
   references: string;
@@ -164,6 +172,17 @@ export class TauriLanguageServerFeaturesGateway
   ): Promise<LanguageServerLocation[]> {
     return this.invokeWhenAvailable(
       this.commands.implementation,
+      { position, rootPath },
+      [],
+    );
+  }
+
+  typeDefinition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLocation[]> {
+    return this.invokeWhenAvailable(
+      this.commands.typeDefinition,
       { position, rootPath },
       [],
     );
@@ -267,6 +286,17 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.selectionRanges,
       { path, positions, rootPath },
       [],
+    );
+  }
+
+  linkedEditingRanges(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLinkedEditingRanges | null> {
+    return this.invokeWhenAvailable(
+      this.commands.linkedEditingRanges,
+      { position, rootPath },
+      null,
     );
   }
 

@@ -943,6 +943,7 @@ function languageServerFeaturesGateway() {
     hover: vi.fn(),
     implementation: vi.fn(),
     inlayHints: vi.fn(async () => []),
+    linkedEditingRanges: vi.fn(async () => null),
     prepareRename: vi.fn(async () => null),
     rangeFormatting: vi.fn(async () => []),
     references: vi.fn(async () => []),
@@ -953,6 +954,7 @@ function languageServerFeaturesGateway() {
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
     signatureHelp: vi.fn(),
+    typeDefinition: vi.fn(async () => []),
     workspaceSymbols: vi.fn(async () => []),
   };
 }

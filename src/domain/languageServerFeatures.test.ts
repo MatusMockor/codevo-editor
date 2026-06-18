@@ -22,6 +22,7 @@ describe("canUseLanguageServerFeature", () => {
       hover: true,
       implementation: false,
       inlayHint: false,
+      linkedEditingRange: false,
       prepareRename: false,
       rangeFormatting: false,
       references: false,
@@ -29,6 +30,7 @@ describe("canUseLanguageServerFeature", () => {
       selectionRange: false,
       semanticTokens: false,
       signatureHelp: false,
+      typeDefinition: false,
       workspaceSymbol: false,
     };
 

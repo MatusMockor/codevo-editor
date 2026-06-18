@@ -402,6 +402,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "dynamicRegistration": false
                         },
                         "implementation": { "dynamicRegistration": false },
+                        "linkedEditingRange": { "dynamicRegistration": false },
                         "rangeFormatting": { "dynamicRegistration": false },
                         "publishDiagnostics": {
                             "relatedInformation": true,
@@ -465,7 +466,8 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "dynamicRegistration": false,
                             "willSave": false,
                             "willSaveWaitUntil": false
-                        }
+                        },
+                        "typeDefinition": { "dynamicRegistration": false }
                     },
                     "workspace": {
                         "configuration": true,
@@ -771,6 +773,15 @@ mod tests {
         assert_eq!(
             request.params["capabilities"]["textDocument"]["rangeFormatting"]
                 ["dynamicRegistration"],
+            false
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["linkedEditingRange"]
+                ["dynamicRegistration"],
+            false
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["typeDefinition"]["dynamicRegistration"],
             false
         );
         assert_eq!(

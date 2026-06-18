@@ -14,6 +14,7 @@ import {
   type LanguageServerFoldingRange,
   type LanguageServerFormattingOptions,
   type LanguageServerInlayHint,
+  type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
   type LanguageServerRange,
   type LanguageServerSelectionRange,
@@ -194,8 +195,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerSignatureHelpProvider) {
       disposables.push(
         registry.registerSignatureHelpProvider(language, {
-          signatureHelpRetriggerCharacters: [","],
-          signatureHelpTriggerCharacters: ["(", ","],
+          signatureHelpRetriggerCharacters: [",", ")"],
+          signatureHelpTriggerCharacters: ["(", ",", "<"],
           provideSignatureHelp: (model, position) =>
             provideSignatureHelp(monaco, context, model, position),
         }),
@@ -216,6 +217,15 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerImplementationProvider(language, {
           provideImplementation: (model, position) =>
             provideImplementation(monaco, context, model, position),
+        }),
+      );
+    }
+
+    if (registry.registerTypeDefinitionProvider) {
+      disposables.push(
+        registry.registerTypeDefinitionProvider(language, {
+          provideTypeDefinition: (model, position) =>
+            provideTypeDefinition(monaco, context, model, position),
         }),
       );
     }
@@ -328,6 +338,15 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerSelectionRangeProvider(language, {
           provideSelectionRanges: (model, positions) =>
             provideSelectionRanges(monaco, context, model, positions),
+        }),
+      );
+    }
+
+    if (registry.registerLinkedEditingRangeProvider) {
+      disposables.push(
+        registry.registerLinkedEditingRangeProvider(language, {
+          provideLinkedEditingRanges: (model, position) =>
+            provideLinkedEditingRanges(monaco, context, model, position),
         }),
       );
     }
@@ -500,6 +519,32 @@ async function provideImplementation(
   try {
     await context.flushPendingDocumentChange(request.path);
     const locations = await context.featuresGateway.implementation(
+      request.rootPath,
+      request.position,
+    );
+
+    return toMonacoLocations(monaco, locations);
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
+async function provideTypeDefinition(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Definition | null> {
+  const request = featureRequestContext(context, model, position, "typeDefinition");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const locations = await context.featuresGateway.typeDefinition(
       request.rootPath,
       request.position,
     );
@@ -761,6 +806,38 @@ async function provideDocumentSemanticTokens(
   }
 }
 
+async function provideLinkedEditingRanges(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.LinkedEditingRanges | null> {
+  const request = featureRequestContext(
+    context,
+    model,
+    position,
+    "linkedEditingRange",
+  );
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    return toMonacoLinkedEditingRanges(
+      monaco,
+      await context.featuresGateway.linkedEditingRanges(
+        request.rootPath,
+        request.position,
+      ),
+    );
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
 async function resolveRenameLocation(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -971,10 +1048,12 @@ function featureRequestContext(
     | "documentHighlight"
     | "hover"
     | "implementation"
+    | "linkedEditingRange"
     | "prepareRename"
     | "references"
     | "rename"
-    | "signatureHelp",
+    | "signatureHelp"
+    | "typeDefinition",
 ) {
   const status = context.getRuntimeStatus();
 
@@ -1152,6 +1231,30 @@ function toMonacoSemanticTokens(
     data: Uint32Array.from(tokens.data),
     ...(tokens.resultId ? { resultId: tokens.resultId } : {}),
   };
+}
+
+function toMonacoLinkedEditingRanges(
+  monaco: MonacoApi,
+  ranges: LanguageServerLinkedEditingRanges | null,
+): Monaco.languages.LinkedEditingRanges | null {
+  if (!ranges || ranges.ranges.length === 0) {
+    return null;
+  }
+
+  return {
+    ranges: ranges.ranges.map((range) => toMonacoRange(monaco, range)),
+    ...(ranges.wordPattern
+      ? { wordPattern: safeRegExp(ranges.wordPattern) }
+      : {}),
+  };
+}
+
+function safeRegExp(pattern: string): RegExp | undefined {
+  try {
+    return new RegExp(pattern);
+  } catch {
+    return undefined;
+  }
 }
 
 function toMonacoLocations(

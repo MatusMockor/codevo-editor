@@ -12,6 +12,7 @@ export interface LanguageServerCapabilities {
   formatting: boolean;
   implementation: boolean;
   inlayHint: boolean;
+  linkedEditingRange: boolean;
   prepareRename: boolean;
   rangeFormatting: boolean;
   references: boolean;
@@ -19,6 +20,7 @@ export interface LanguageServerCapabilities {
   selectionRange: boolean;
   semanticTokens: boolean;
   signatureHelp: boolean;
+  typeDefinition: boolean;
   workspaceSymbol: boolean;
 }
 
@@ -149,6 +151,10 @@ export function languageServerCapabilityLabels(
     labels.push("inlay hints");
   }
 
+  if (capabilities.linkedEditingRange) {
+    labels.push("linked editing");
+  }
+
   if (capabilities.prepareRename) {
     labels.push("prepare rename");
   }
@@ -175,6 +181,10 @@ export function languageServerCapabilityLabels(
 
   if (capabilities.signatureHelp) {
     labels.push("signature help");
+  }
+
+  if (capabilities.typeDefinition) {
+    labels.push("type definition");
   }
 
   if (capabilities.workspaceSymbol) {
@@ -205,6 +215,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     hover: false,
     implementation: false,
     inlayHint: false,
+    linkedEditingRange: false,
     prepareRename: false,
     rangeFormatting: false,
     references: false,
@@ -212,6 +223,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     selectionRange: false,
     semanticTokens: false,
     signatureHelp: false,
+    typeDefinition: false,
     workspaceSymbol: false,
   };
 }

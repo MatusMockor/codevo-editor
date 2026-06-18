@@ -63,13 +63,14 @@ use lsp_features::{
     LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCompletionItem,
     LanguageServerCompletionList, LanguageServerDocumentHighlight, LanguageServerDocumentLink,
     LanguageServerDocumentSymbol, LanguageServerFoldingRange, LanguageServerFormattingOptions,
-    LanguageServerHover, LanguageServerInlayHint, LanguageServerLocation, LanguageServerPosition,
-    LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
-    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerTextEdit,
-    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
-    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
-    TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
+    LanguageServerHover, LanguageServerInlayHint, LanguageServerLinkedEditingRanges,
+    LanguageServerLocation, LanguageServerPosition, LanguageServerPrepareRenameResult,
+    LanguageServerRange, LanguageServerSelectionRange, LanguageServerSemanticTokens,
+    LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
+    LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory,
+    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+    TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
+    TextDocumentSelectionRange,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1182,6 +1183,36 @@ fn javascript_typescript_text_document_implementation(
 }
 
 #[tauri::command]
+fn text_document_type_definition(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.type_definition(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_type_definition(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.type_definition(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
 fn text_document_references(
     root_path: String,
     position: TextDocumentPosition,
@@ -1700,6 +1731,44 @@ fn javascript_typescript_text_document_selection_ranges(
 }
 
 #[tauri::command]
+fn text_document_linked_editing_ranges(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerLinkedEditingRanges>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.linked_editing_ranges(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    serde_json::from_value::<LanguageServerLinkedEditingRanges>(result)
+        .map(Some)
+        .map_err(|error| {
+            format!("Language server returned malformed linked editing ranges: {error}")
+        })
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_linked_editing_ranges(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerLinkedEditingRanges>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.linked_editing_ranges(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    serde_json::from_value::<LanguageServerLinkedEditingRanges>(result)
+        .map(Some)
+        .map_err(|error| {
+            format!("Language server returned malformed linked editing ranges: {error}")
+        })
+}
+
+#[tauri::command]
 fn text_document_semantic_tokens(
     root_path: String,
     path: String,
@@ -1971,6 +2040,7 @@ pub fn run() {
             javascript_typescript_text_document_hover,
             javascript_typescript_text_document_implementation,
             javascript_typescript_text_document_inlay_hints,
+            javascript_typescript_text_document_linked_editing_ranges,
             javascript_typescript_text_document_prepare_rename,
             javascript_typescript_text_document_range_formatting,
             javascript_typescript_text_document_references,
@@ -1978,6 +2048,7 @@ pub fn run() {
             javascript_typescript_text_document_selection_ranges,
             javascript_typescript_text_document_semantic_tokens,
             javascript_typescript_text_document_signature_help,
+            javascript_typescript_text_document_type_definition,
             javascript_typescript_workspace_symbols,
             language_server_execute_command,
             text_document_code_action_resolve,
@@ -1998,6 +2069,7 @@ pub fn run() {
             text_document_hover,
             text_document_implementation,
             text_document_inlay_hints,
+            text_document_linked_editing_ranges,
             text_document_prepare_rename,
             text_document_range_formatting,
             text_document_references,
@@ -2005,6 +2077,7 @@ pub fn run() {
             text_document_selection_ranges,
             text_document_semantic_tokens,
             text_document_signature_help,
+            text_document_type_definition,
             upsert_workspace_index_file,
             workspace_symbols,
             write_terminal_input,

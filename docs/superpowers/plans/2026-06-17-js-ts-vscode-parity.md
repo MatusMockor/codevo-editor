@@ -96,6 +96,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - The managed TypeScript server configuration now sends VS Code-like completion/refactor preferences, inferred project defaults, and `formattingOptions` responses, so completion snippets, organize imports and file edits get the same client-side context that `typescript-language-server` expects from VS Code-style clients.
 - TypeScript/JavaScript completion now advertises and preserves VS Code-like label details, commit characters, preselect support and insert/replace completion ranges, so method/function suggestions keep richer signature context and more precise replacement behavior.
 - JS/TS document sync now sends VS Code-style language ids for React documents (`javascriptreact` and `typescriptreact`) while keeping editor model languages stable. The workspace, index and git language detectors also recognize Node/TypeScript module extensions (`.mjs`, `.cjs`, `.mts`, `.cts`), so those files no longer fall back to plaintext.
+- TypeScript/JavaScript type-definition navigation is now wired through the managed language server and Monaco provider. Linked editing ranges are also advertised and mapped, enabling VS Code-style paired JSX tag editing when the TypeScript server supports it. Signature help now listens to TypeScript's `<` trigger and `)` retrigger as well as function-call commas.
 
 ## Full VS Code-Like Target
 
@@ -156,6 +157,8 @@ Basic mode must support:
 - document highlights. Implemented through LSP-backed Monaco provider.
 - selection ranges / smart selection. Implemented through LSP-backed Monaco provider.
 - semantic tokens / semantic highlighting. Implemented through LSP-backed Monaco provider.
+- go to type definition. Implemented through LSP-backed Monaco provider.
+- linked editing for JSX/TSX paired ranges. Implemented when the TypeScript language server advertises support.
 - document symbols / file structure. Implemented for JS/TS through managed LSP-backed `Cmd+R`.
 - workspace symbols. Implemented for JS/TS-backed `Cmd+O` type search.
 - JS/TS version status. Implemented in the workspace status label for Bundled, Workspace, installed workspace version, and dependency-only fallback.

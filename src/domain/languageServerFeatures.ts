@@ -120,6 +120,11 @@ export interface LanguageServerSelectionRange {
   range: LanguageServerRange;
 }
 
+export interface LanguageServerLinkedEditingRanges {
+  ranges: LanguageServerRange[];
+  wordPattern: string | null;
+}
+
 export interface LanguageServerSemanticTokens {
   data: number[];
   resultId: string | null;
@@ -228,6 +233,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
+  typeDefinition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLocation[]>;
   inlayHints(
     rootPath: string,
     path: string,
@@ -266,6 +275,10 @@ export interface LanguageServerFeaturesGateway {
     path: string,
     positions: LanguageServerPosition[],
   ): Promise<LanguageServerSelectionRange[]>;
+  linkedEditingRanges(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLinkedEditingRanges | null>;
   semanticTokens(
     rootPath: string,
     path: string,

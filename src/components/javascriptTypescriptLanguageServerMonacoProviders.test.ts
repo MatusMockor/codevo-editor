@@ -25,6 +25,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerTypeDefinitionProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerSignatureHelpProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerReferenceProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerRenameProvider).toHaveBeenCalledTimes(2);
@@ -40,13 +41,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerLinkedEditingRangeProvider).toHaveBeenCalledTimes(2);
     expect(
       monaco.languages.registerDocumentSemanticTokensProvider,
     ).toHaveBeenCalledTimes(2);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(33);
+    expect(monaco.dispose).toHaveBeenCalledTimes(37);
   });
 
   it("maps TypeScript document links and lazy resolution", async () => {
@@ -107,6 +109,85 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         url: "file:///project/src/user.ts",
       }),
     );
+  });
+
+  it("maps TypeScript type definitions through the language server", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      typeDefinition: [
+        {
+          range: range(4, 2, 4, 10),
+          uri: "file:///project/src/types.ts",
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+    const position = { column: 4, lineNumber: 2 };
+
+    const provider = (monaco.languages.registerTypeDefinitionProvider as any).mock
+      .calls[0][1];
+    const locations = await provider.provideTypeDefinition(model, position);
+
+    expect(gateway.typeDefinition).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+    expect(locations).toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 11,
+          endLineNumber: 5,
+          startColumn: 3,
+          startLineNumber: 5,
+        }),
+        uri: { fsPath: "/project/src/types.ts", path: "/project/src/types.ts" },
+      },
+    ]);
+  });
+
+  it("maps TypeScript linked editing ranges for paired JSX tags", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: [range(1, 1, 1, 4), range(1, 8, 1, 11)],
+        wordPattern: "[A-Za-z][A-Za-z0-9]*",
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+    const position = { column: 3, lineNumber: 2 };
+
+    const provider = (
+      monaco.languages.registerLinkedEditingRangeProvider as any
+    ).mock.calls[0][1];
+    const linkedRanges = await provider.provideLinkedEditingRanges(model, position);
+
+    expect(gateway.linkedEditingRanges).toHaveBeenCalledWith("/project", {
+      character: 2,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+    expect(linkedRanges).toEqual({
+      ranges: [
+        expect.objectContaining({
+          endColumn: 5,
+          endLineNumber: 2,
+          startColumn: 2,
+          startLineNumber: 2,
+        }),
+        expect.objectContaining({
+          endColumn: 12,
+          endLineNumber: 2,
+          startColumn: 9,
+          startLineNumber: 2,
+        }),
+      ],
+      wordPattern: /[A-Za-z][A-Za-z0-9]*/,
+    });
   });
 
   it("maps TypeScript folding ranges through the language server", async () => {
@@ -997,6 +1078,9 @@ function featuresGateway(
       ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>
     >;
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
+    linkedEditingRanges: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>
+    >;
     prepareRename: Awaited<
       ReturnType<LanguageServerFeaturesGateway["prepareRename"]>
     >;
@@ -1016,6 +1100,9 @@ function featuresGateway(
     >;
     workspaceSymbols: Awaited<
       ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>
+    >;
+    typeDefinition: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["typeDefinition"]>
     >;
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
@@ -1049,6 +1136,9 @@ function featuresGateway(
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
+    linkedEditingRanges: vi.fn(
+      async () => responses.linkedEditingRanges ?? null,
+    ),
     prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
     references: vi.fn(async () => responses.references ?? []),
@@ -1056,6 +1146,7 @@ function featuresGateway(
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
     semanticTokens: vi.fn(async () => responses.semanticTokens ?? null),
     signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
+    typeDefinition: vi.fn(async () => responses.typeDefinition ?? []),
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(
       async (_rootPath, item) => responses.resolvedCompletionItem ?? item,
@@ -1085,6 +1176,7 @@ function runningStatus(
       hover: true,
       implementation: true,
       inlayHint: true,
+      linkedEditingRange: true,
       prepareRename: true,
       rangeFormatting: true,
       references: true,
@@ -1092,6 +1184,7 @@ function runningStatus(
       selectionRange: true,
       semanticTokens: true,
       signatureHelp: true,
+      typeDefinition: true,
       workspaceSymbol: true,
       ...capabilities,
     },
@@ -1235,11 +1328,13 @@ function createMonaco() {
       registerImplementationProvider: vi.fn(() => disposable()),
       registerInlayHintsProvider: vi.fn(() => disposable()),
       registerLinkProvider: vi.fn(() => disposable()),
+      registerLinkedEditingRangeProvider: vi.fn(() => disposable()),
       registerReferenceProvider: vi.fn(() => disposable()),
       registerRenameProvider: vi.fn(() => disposable()),
       registerSelectionRangeProvider: vi.fn(() => disposable()),
       registerDocumentSemanticTokensProvider: vi.fn(() => disposable()),
       registerSignatureHelpProvider: vi.fn(() => disposable()),
+      registerTypeDefinitionProvider: vi.fn(() => disposable()),
     },
     MarkerSeverity: {
       Error: 8,
