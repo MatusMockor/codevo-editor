@@ -377,7 +377,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
       completion: {
-        isIncomplete: false,
+        isIncomplete: true,
         items: [
           {
             additionalTextEdits: [
@@ -394,6 +394,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             insertTextFormat: 2,
             kind: 3,
             label: "loadUser",
+            preselect: true,
             sortText: "11",
             textEdit: {
               newText: "loadUser(${1:id})",
@@ -442,6 +443,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         insertTextRules: 4,
         kind: 3,
         label: "loadUser",
+        preselect: true,
         range: expect.objectContaining({
           endColumn: 6,
           endLineNumber: 2,
@@ -451,6 +453,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         sortText: "11",
       }),
     );
+    expect(result.incomplete).toBe(true);
   });
 
   it("resolves TypeScript completion items through the language server", async () => {

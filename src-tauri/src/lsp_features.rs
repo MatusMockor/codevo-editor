@@ -147,6 +147,8 @@ pub struct LanguageServerCompletionItem {
     pub insert_text: Option<String>,
     pub insert_text_format: Option<u32>,
     pub kind: Option<u32>,
+    #[serde(default)]
+    pub preselect: bool,
     pub sort_text: Option<String>,
     pub text_edit: Option<LanguageServerTextEdit>,
 }
@@ -651,6 +653,10 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
             .get("kind")
             .and_then(Value::as_u64)
             .map(|kind| kind as u32),
+        preselect: value
+            .get("preselect")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         sort_text: optional_string(value.get("sortText")),
         text_edit: value.get("textEdit").and_then(parse_completion_text_edit),
     })
@@ -1229,6 +1235,7 @@ mod tests {
                         "insertText": "User",
                         "insertTextFormat": 2,
                         "kind": 7,
+                        "preselect": true,
                         "sortText": "11",
                         "data": { "entryNames": ["User"] },
                         "commitCharacters": ["."],
@@ -1278,6 +1285,7 @@ mod tests {
                     insert_text: Some("User".to_string()),
                     insert_text_format: Some(2),
                     kind: Some(7),
+                    preselect: true,
                     sort_text: Some("11".to_string()),
                     text_edit: Some(LanguageServerTextEdit {
                         range: LanguageServerRange {
@@ -1318,6 +1326,7 @@ mod tests {
             insert_text: Some("User".to_string()),
             insert_text_format: None,
             kind: Some(7),
+            preselect: false,
             sort_text: None,
             text_edit: None,
         };

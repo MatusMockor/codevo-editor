@@ -33,6 +33,7 @@ export interface LanguageServerCompletionItem {
   insertText: string | null;
   insertTextFormat?: number | null;
   kind: number | null;
+  preselect?: boolean;
   sortText?: string | null;
   textEdit?: LanguageServerTextEdit | null;
 }

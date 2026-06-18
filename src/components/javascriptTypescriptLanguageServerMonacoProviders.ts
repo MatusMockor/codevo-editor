@@ -291,6 +291,7 @@ async function provideCompletionItems(
     };
 
     return {
+      ...(completion.isIncomplete ? { incomplete: true } : {}),
       suggestions: completion.items.map((item, index) => {
         return toMonacoCompletionItem(
           monaco,
@@ -1042,6 +1043,7 @@ function toMonacoCompletionItem(
     ...(insert.insertTextRules ? { insertTextRules: insert.insertTextRules } : {}),
     kind,
     label: item.label,
+    ...(item.preselect ? { preselect: true } : {}),
     range: item.textEdit ? toMonacoRange(monaco, item.textEdit.range) : fallbackRange,
     sortText: item.sortText ?? fallbackSortText,
   };

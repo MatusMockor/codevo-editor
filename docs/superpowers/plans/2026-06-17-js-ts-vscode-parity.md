@@ -71,6 +71,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript `source.organizeImports` and direct-edit quick fixes now flow through the same executable path as VS Code-style actions.
 - Server-initiated `workspace/applyEdit` requests now emit Tauri workspace-edit events and are applied to open Monaco models, which covers TypeScript command paths that do not return edits directly.
 - Completion items now preserve richer LSP metadata (`textEdit`, `additionalTextEdits`, `sortText`, `filterText`, `commitCharacters`, snippet format) so auto imports and exact replacement ranges are not dropped.
+- Completion lists now preserve LSP `isIncomplete`, and completion items preserve `preselect`, so Monaco can keep requesting narrowed suggestions and select the server-preferred item more like VS Code.
 - `completionItem/resolve` is wired through the JS/TS language-server gateway and Monaco provider, matching the VS Code pattern of lazily resolving documentation and import edits for focused suggestions.
 - `textDocument/inlayHint` is wired through the managed JS/TS language server and Monaco provider, giving light mode VS Code-style inline type/parameter hints when the server advertises support.
 - `textDocument/signatureHelp` is wired through the managed JS/TS language server and Monaco provider, so function calls can show VS Code-style active signatures and parameter documentation.
