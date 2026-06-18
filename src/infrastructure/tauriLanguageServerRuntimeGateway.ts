@@ -82,6 +82,10 @@ export class TauriLanguageServerRuntimeGateway
 
     const args: Record<string, unknown> = { rootPath };
 
+    if (options.autoImportsEnabled !== undefined) {
+      args.autoImportsEnabled = options.autoImportsEnabled;
+    }
+
     if (options.typeScriptVersionPreference) {
       args.typeScriptVersionPreference = options.typeScriptVersionPreference;
     }

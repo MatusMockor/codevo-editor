@@ -728,12 +728,14 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
     });
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
     });
@@ -782,12 +784,14 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
     });
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
     });
@@ -827,6 +831,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
     });

@@ -179,7 +179,7 @@ describe("SettingsDialog", () => {
     });
   });
 
-  it("persists JavaScript and TypeScript validation and inlay hint changes", async () => {
+  it("persists JavaScript and TypeScript validation, auto imports, and inlay hint changes", async () => {
     const onSave = vi.fn(async () => undefined);
 
     await act(async () => {
@@ -216,6 +216,23 @@ describe("SettingsDialog", () => {
     });
 
     await act(async () => {
+      javaScriptTypeScriptAutoImportsCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptValidation: false,
+      },
+    });
+
+    await act(async () => {
       javaScriptTypeScriptInlayHintsCheckbox().dispatchEvent(
         new MouseEvent("click", { bubbles: true }),
       );
@@ -227,6 +244,7 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: false,
         javaScriptTypeScriptInlayHints: false,
         javaScriptTypeScriptValidation: false,
       },
@@ -289,6 +307,10 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptValidationCheckbox(): HTMLInputElement {
     return checkboxWithLabel("JavaScript/TypeScript validation");
+  }
+
+  function javaScriptTypeScriptAutoImportsCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JavaScript/TypeScript auto imports");
   }
 
   function javaScriptTypeScriptInlayHintsCheckbox(): HTMLInputElement {

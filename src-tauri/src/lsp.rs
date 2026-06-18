@@ -172,12 +172,16 @@ pub struct TypeScriptLanguageServerPlanner<TFactory = TypeScriptInitializeReques
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TypeScriptLanguageServerSettings {
+    pub auto_imports: bool,
     pub inlay_hints: bool,
 }
 
 impl Default for TypeScriptLanguageServerSettings {
     fn default() -> Self {
-        Self { inlay_hints: true }
+        Self {
+            auto_imports: true,
+            inlay_hints: true,
+        }
     }
 }
 
@@ -205,6 +209,7 @@ where
         if let Some(typescript_server) = typescript_server {
             configure_typescript_server_path(&mut initialize_request, &typescript_server.path);
         }
+        configure_typescript_auto_imports(&mut initialize_request, settings.auto_imports);
         configure_typescript_inlay_hints(&mut initialize_request, settings.inlay_hints);
 
         LanguageServerPlan {
@@ -268,19 +273,7 @@ fn configure_typescript_server_path(request: &mut JsonRpcRequest, path: &str) {
 }
 
 fn configure_typescript_inlay_hints(request: &mut JsonRpcRequest, enabled: bool) {
-    let Some(params) = request.params.as_object_mut() else {
-        return;
-    };
-    let initialization_options = params
-        .entry("initializationOptions")
-        .or_insert_with(|| json!({}));
-    let Some(initialization_options) = initialization_options.as_object_mut() else {
-        return;
-    };
-    let preferences = initialization_options
-        .entry("preferences")
-        .or_insert_with(|| json!({}));
-    let Some(preferences) = preferences.as_object_mut() else {
+    let Some(preferences) = typescript_preferences_mut(request) else {
         return;
     };
 
@@ -303,6 +296,40 @@ fn configure_typescript_inlay_hints(request: &mut JsonRpcRequest, enabled: bool)
     ] {
         preferences.insert(key.to_string(), Value::Bool(enabled));
     }
+}
+
+fn configure_typescript_auto_imports(request: &mut JsonRpcRequest, enabled: bool) {
+    let Some(preferences) = typescript_preferences_mut(request) else {
+        return;
+    };
+
+    preferences.insert(
+        "includeCompletionsForImportStatements".to_string(),
+        Value::Bool(enabled),
+    );
+    preferences.insert(
+        "includeCompletionsForModuleExports".to_string(),
+        Value::Bool(enabled),
+    );
+    preferences.insert(
+        "includePackageJsonAutoImports".to_string(),
+        Value::String(if enabled { "auto" } else { "off" }.to_string()),
+    );
+}
+
+fn typescript_preferences_mut(
+    request: &mut JsonRpcRequest,
+) -> Option<&mut serde_json::Map<String, Value>> {
+    let params = request.params.as_object_mut()?;
+    let initialization_options = params
+        .entry("initializationOptions")
+        .or_insert_with(|| json!({}));
+    let initialization_options = initialization_options.as_object_mut()?;
+    let preferences = initialization_options
+        .entry("preferences")
+        .or_insert_with(|| json!({}));
+
+    preferences.as_object_mut()
 }
 
 pub struct TypeScriptInitializeRequestFactory;
@@ -617,18 +644,30 @@ mod tests {
             request.params["initializationOptions"]["preferences"]["includeInlayVariableTypeHints"],
             true
         );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["includeCompletionsForModuleExports"],
+            true
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["includePackageJsonAutoImports"],
+            "auto"
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
-    fn javascript_typescript_plan_can_disable_inlay_hint_preferences() {
-        let root = create_temp_dir("lsp-typescript-inlay-disabled");
+    fn javascript_typescript_plan_can_disable_completion_preferences() {
+        let root = create_temp_dir("lsp-typescript-completion-preferences-disabled");
         fs::write(root.join("package.json"), "{}").expect("write package.json");
         let planner = TypeScriptLanguageServerPlanner::new();
         let plan = planner.plan(
             &root,
             &tools_with_typescript_language_server(&root),
-            TypeScriptLanguageServerSettings { inlay_hints: false },
+            TypeScriptLanguageServerSettings {
+                auto_imports: false,
+                inlay_hints: false,
+            },
         );
 
         let request = plan.initialize_request.expect("initialize request");
@@ -640,6 +679,15 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]["includeInlayVariableTypeHints"],
             false
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]
+                ["includeCompletionsForModuleExports"],
+            false
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["includePackageJsonAutoImports"],
+            "off"
         );
         fs::remove_dir_all(root).expect("cleanup");
     }

@@ -810,6 +810,8 @@ export function useWorkbenchController(
           await languageServerGateway.planJavaScriptTypeScriptLanguageServer(
             rootPath,
             {
+              autoImportsEnabled:
+                workspaceSettingsRef.current.javaScriptTypeScriptAutoImports,
               inlayHintsEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptInlayHints,
               typeScriptVersionPreference,
@@ -5493,6 +5495,8 @@ export function useWorkbenchController(
         const shouldRestartJavaScriptTypeScriptRuntime =
           previousWorkspaceSettings.javaScriptTypeScriptVersion !==
             resolvedWorkspaceSettings.javaScriptTypeScriptVersion ||
+          previousWorkspaceSettings.javaScriptTypeScriptAutoImports !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
           previousWorkspaceSettings.javaScriptTypeScriptInlayHints !==
             resolvedWorkspaceSettings.javaScriptTypeScriptInlayHints;
 
@@ -6239,6 +6243,7 @@ export function useWorkbenchController(
     autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = workspaceRoot;
     javaScriptTypeScriptLanguageServerRuntimeGateway
       .start(workspaceRoot, {
+        autoImportsEnabled: workspaceSettings.javaScriptTypeScriptAutoImports,
         inlayHintsEnabled: workspaceSettings.javaScriptTypeScriptInlayHints,
         typeScriptVersionPreference:
           workspaceSettings.javaScriptTypeScriptVersion,
@@ -6251,6 +6256,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     reportError,
+    workspaceSettings.javaScriptTypeScriptAutoImports,
     workspaceSettings.javaScriptTypeScriptInlayHints,
     workspaceSettings.javaScriptTypeScriptService,
     workspaceSettings.javaScriptTypeScriptVersion,

@@ -219,6 +219,14 @@ export function SettingsDialog({
                       javaScriptTypeScriptService,
                     })
                   }
+                  onChangeJavaScriptTypeScriptAutoImports={(
+                    javaScriptTypeScriptAutoImports,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptAutoImports,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptInlayHints={(
                     javaScriptTypeScriptInlayHints,
                   ) =>
@@ -350,6 +358,7 @@ interface GeneralSettingsProps {
   onChangeJavaScriptTypeScriptService(
     mode: JavaScriptTypeScriptServiceMode,
   ): void;
+  onChangeJavaScriptTypeScriptAutoImports(enabled: boolean): void;
   onChangeJavaScriptTypeScriptInlayHints(enabled: boolean): void;
   onChangeJavaScriptTypeScriptValidation(enabled: boolean): void;
   onChangeJavaScriptTypeScriptVersion(
@@ -370,6 +379,7 @@ function GeneralSettings({
   hasWorkspace,
   onChangeAutoSave,
   onChangeIntelligenceMode,
+  onChangeJavaScriptTypeScriptAutoImports,
   onChangeJavaScriptTypeScriptInlayHints,
   onChangeJavaScriptTypeScriptService,
   onChangeJavaScriptTypeScriptValidation,
@@ -448,6 +458,18 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>JavaScript/TypeScript validation</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptAutoImports}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptAutoImports(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>JavaScript/TypeScript auto imports</span>
       </label>
 
       <label className="settings-toggle">
