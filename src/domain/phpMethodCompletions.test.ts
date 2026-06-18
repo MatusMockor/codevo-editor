@@ -536,6 +536,77 @@ class Comment extends Model
     ]);
   });
 
+  it("extracts Laravel accessor and appended attributes as properties", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use Illuminate\\Database\\Eloquent\\Casts\\Attribute;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class User extends Model
+{
+    protected $appends = [
+        'display_name',
+        'legacy_score',
+    ];
+
+    public function getFullNameAttribute(): string
+    {
+        return '';
+    }
+
+    /** @return Attribute<int, never> */
+    protected function legacyScore(): Attribute
+    {
+        return Attribute::make(get: fn () => 10);
+    }
+
+    protected function profileUrl(): Attribute
+    {
+        return Attribute::make(get: fn () => '');
+    }
+}
+`,
+        "User",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "User",
+        name: "getFullNameAttribute",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "display_name",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "legacy_score",
+        parameters: "",
+        returnType: "int",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "full_name",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "profile_url",
+        parameters: "",
+        returnType: "mixed",
+      },
+    ]);
+  });
+
   it("parses parameter names, types, defaults and optionality", () => {
     expect(
       phpMethodParameters(

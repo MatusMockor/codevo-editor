@@ -331,7 +331,15 @@ function phpLaravelModelAttributeCompletionsFromSource(
     attributes.set(attribute, "mixed");
   }
 
+  for (const attribute of phpLaravelAppendedAttributes(source)) {
+    attributes.set(attribute, "mixed");
+  }
+
   for (const [attribute, returnType] of phpLaravelCastAttributes(source)) {
+    attributes.set(attribute, returnType);
+  }
+
+  for (const [attribute, returnType] of phpLaravelAccessorAttributes(source)) {
     attributes.set(attribute, returnType);
   }
 
@@ -346,6 +354,14 @@ function phpLaravelModelAttributeCompletionsFromSource(
 
 function phpLaravelFillableAttributes(source: string): string[] {
   return phpArrayAssignmentBodies(source, "fillable").flatMap((body) =>
+    splitPhpParameterList(body)
+      .map((item) => phpStringLiteralValue(item))
+      .filter(isPhpAttributeName),
+  );
+}
+
+function phpLaravelAppendedAttributes(source: string): string[] {
+  return phpArrayAssignmentBodies(source, "appends").flatMap((body) =>
     splitPhpParameterList(body)
       .map((item) => phpStringLiteralValue(item))
       .filter(isPhpAttributeName),
@@ -375,6 +391,50 @@ function phpLaravelCastAttributes(source: string): Array<[string, string | null]
       ];
     }),
   );
+}
+
+function phpLaravelAccessorAttributes(
+  source: string,
+): Array<[string, string | null]> {
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?::\s*([^{;\n]+))?/g;
+  const attributes: Array<[string, string | null]> = [];
+
+  for (const match of masked.matchAll(pattern)) {
+    const modifiers = (match[1] ?? "").toLowerCase();
+
+    if (/\bprivate\b/.test(modifiers)) {
+      continue;
+    }
+
+    const name = match[2];
+
+    if (!name) {
+      continue;
+    }
+
+    const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
+    const docBlock = phpDocBlockBefore(source, functionOffset);
+    const declaredReturnType = normalizeReturnType(match[4] ?? null);
+    const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
+    const returnType = bestPhpReturnType(declaredReturnType, documentedReturnType);
+    const legacyAccessorName = phpLaravelLegacyAccessorAttributeName(name);
+
+    if (legacyAccessorName) {
+      attributes.push([legacyAccessorName, returnType ?? "mixed"]);
+      continue;
+    }
+
+    if (phpLaravelAttributeAccessorReturnType(returnType)) {
+      attributes.push([
+        phpCamelCaseToSnakeCase(name),
+        phpLaravelAttributeAccessorValueType(returnType) ?? "mixed",
+      ]);
+    }
+  }
+
+  return attributes;
 }
 
 function phpArrayAssignmentBodies(source: string, propertyName: string): string[] {
@@ -466,6 +526,48 @@ function phpLaravelCastReturnType(castExpression: string): string | null {
   }
 
   return "mixed";
+}
+
+function phpLaravelLegacyAccessorAttributeName(methodName: string): string | null {
+  const match = /^get([A-Z][A-Za-z0-9_]*)Attribute$/.exec(methodName);
+  const attributeName = match?.[1] ?? "";
+
+  return attributeName ? phpCamelCaseToSnakeCase(attributeName) : null;
+}
+
+function phpLaravelAttributeAccessorReturnType(returnType: string | null): boolean {
+  if (!returnType) {
+    return false;
+  }
+
+  const baseType = returnType
+    .trim()
+    .replace(/^\\+/, "")
+    .split("<")[0]
+    ?.split("\\")
+    .pop()
+    ?.toLowerCase();
+
+  return baseType === "attribute";
+}
+
+function phpLaravelAttributeAccessorValueType(
+  returnType: string | null,
+): string | null {
+  if (!returnType) {
+    return null;
+  }
+
+  const genericMatch = /<([^,>]+)/.exec(returnType);
+
+  return normalizeReturnType(genericMatch?.[1] ?? null);
+}
+
+function phpCamelCaseToSnakeCase(value: string): string {
+  return value
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase();
 }
 
 function topLevelArrayArrowIndex(source: string): number {

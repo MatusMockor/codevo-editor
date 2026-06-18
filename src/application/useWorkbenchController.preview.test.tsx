@@ -2797,15 +2797,19 @@ interface CommentRepositoryInterface
 `;
         }
 
-        if (path === commentPath) {
-          return `<?php
+if (path === commentPath) {
+  return `<?php
 namespace Kontentino\\Communication\\Models;
+
+use Illuminate\\Database\\Eloquent\\Casts\\Attribute;
 
 /**
  * @property string $body
  */
 class Comment
 {
+    protected $appends = ['summary'];
+
     protected $fillable = ['content'];
 
     protected array $casts = [
@@ -2816,9 +2820,15 @@ class Comment
     public string $status;
 
     public function getContent(): string {}
+
+    /** @return Attribute<string, never> */
+    protected function displayName(): Attribute
+    {
+        return Attribute::make(get: fn () => '');
+    }
 }
 `;
-        }
+}
 
         return `<?php\n// ${path}\n`;
       }),
@@ -2857,6 +2867,13 @@ class Comment
       },
       {
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "display_name",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
         name: "getContent",
         parameters: "",
         returnType: "string",
@@ -2881,6 +2898,13 @@ class Comment
         name: "status",
         parameters: "",
         returnType: "string",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "summary",
+        parameters: "",
+        returnType: "mixed",
       },
     ]);
   });
