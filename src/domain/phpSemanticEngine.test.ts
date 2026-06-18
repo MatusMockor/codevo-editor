@@ -136,6 +136,102 @@ class Comment extends Model
     ).toBe("Illuminate\\Support\\Carbon");
   });
 
+  it("resolves Laravel repository finder assignments from model return types", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+
+class AlbumRepository
+{
+    public function findOrFail(int $id): Album
+    {
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->findOrFail($id);
+
+        $album->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "$album",
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
+  it("resolves Laravel repository finder assignments from PHPDoc methods", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+
+/**
+ * @method Album findOrFail(int $id)
+ */
+class AlbumRepository
+{
+    public function show(int $id): void
+    {
+        $album = $this->findOrFail($id);
+
+        $album->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
+  it("does not infer finder assignment model types from non-repository receivers", () => {
+    const source = `<?php
+namespace App\\Services;
+
+use App\\Models\\Album;
+
+class AlbumFinder
+{
+    public function findOrFail(int $id): Album
+    {
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->findOrFail($id);
+
+        $album->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+      ),
+    ).toBeNull();
+  });
+
   it("extracts assignment expressions and expression types", () => {
     expect(
       phpAssignmentExpressionForVariableBefore(

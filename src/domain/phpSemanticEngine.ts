@@ -10,7 +10,10 @@ import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
   phpNormalizeReceiverExpression,
 } from "./phpReceiverExpressions";
-import { phpLaravelModelAttributeClassTypeFromSource } from "./phpFrameworkLaravel";
+import {
+  phpLaravelModelAttributeClassTypeFromSource,
+  phpLaravelRepositoryMethodModelReturnTypeFromSource,
+} from "./phpFrameworkLaravel";
 
 export interface PhpMethodCallExpression {
   methodName: string;
@@ -116,14 +119,19 @@ export function phpVariableTypeInSource(
   position: EditorPosition,
   variableName: string,
 ): string | null {
+  const assignmentExpression =
+    phpAssignmentExpressionForVariableBefore(source, position, variableName) ?? "";
+
   return (
     phpParameterTypeForVariable(source, position, variableName) ??
     phpDocTypeForVariableBefore(source, position, variableName) ??
-    phpNewExpressionClassName(
-      phpAssignmentExpressionForVariableBefore(source, position, variableName) ?? "",
-    ) ??
-    phpLaravelContainerExpressionClassName(
-      phpAssignmentExpressionForVariableBefore(source, position, variableName) ?? "",
+    phpNewExpressionClassName(assignmentExpression) ??
+    phpLaravelContainerExpressionClassName(assignmentExpression) ??
+    phpLaravelRepositoryAssignmentModelType(
+      source,
+      position,
+      variableName,
+      assignmentExpression,
     )
   );
 }
@@ -278,6 +286,37 @@ export function phpLaravelContainerBindingsFromSource(
   }
 
   return bindings;
+}
+
+function phpLaravelRepositoryAssignmentModelType(
+  source: string,
+  position: EditorPosition,
+  variableName: string,
+  assignmentExpression: string,
+): string | null {
+  const methodCall = phpMethodCallExpression(assignmentExpression);
+
+  if (!methodCall) {
+    return null;
+  }
+
+  if (
+    new RegExp(`^\\$${escapeRegExp(variableName)}\\b`).test(
+      methodCall.receiverExpression,
+    )
+  ) {
+    return null;
+  }
+
+  return phpLaravelRepositoryMethodModelReturnTypeFromSource(
+    source,
+    methodCall.methodName,
+    phpReceiverExpressionTypeInSource(
+      source,
+      position,
+      methodCall.receiverExpression,
+    ),
+  );
 }
 
 export function phpClassStringCallExpression(

@@ -288,6 +288,14 @@ const laravelCollectionFluentMethods = new Set([
   "wherenull",
 ]);
 
+const laravelRepositoryModelReturnMethods = new Set([
+  "find",
+  "findorfail",
+  "first",
+  "firstorfail",
+  "sole",
+]);
+
 const laravelEloquentRelationTypes = new Set([
   "belongsto",
   "belongstomany",
@@ -382,6 +390,37 @@ export function isLaravelEloquentBuilderMethodName(methodName: string): boolean 
     isLaravelEloquentBuilderTerminalModelMethod(methodName) ||
     isLaravelEloquentBuilderCollectionMethod(methodName)
   );
+}
+
+export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+): string | null {
+  if (
+    !laravelRepositoryModelReturnMethods.has(methodName.toLowerCase()) ||
+    !isLaravelRepositoryType(receiverType)
+  ) {
+    return null;
+  }
+
+  const receiverClassName = phpLaravelResolvedClassName(source, receiverType ?? "");
+  const returnTypes = [
+    ...phpLaravelRepositoryDeclaredMethodReturnTypes(
+      source,
+      methodName,
+      receiverClassName,
+    ),
+    ...phpLaravelRepositoryPhpDocMethodReturnTypes(
+      source,
+      methodName,
+      receiverClassName,
+    ),
+  ];
+
+  return returnTypes
+    .map((returnType) => phpLaravelModelTypeFromReturnType(source, returnType))
+    .find((returnType): returnType is string => Boolean(returnType)) ?? null;
 }
 
 export function phpLaravelScopeMethodName(scopeName: string): string | null {
@@ -621,6 +660,190 @@ function laravelLocalScopeName(methodName: string): string | null {
   }
 
   return `${scopeName[0]?.toLowerCase() ?? ""}${scopeName.slice(1)}`;
+}
+
+function phpLaravelRepositoryDeclaredMethodReturnTypes(
+  source: string,
+  methodName: string,
+  receiverClassName: string | null,
+): string[] {
+  return phpLaravelRepositoryTypeBodyRanges(source, receiverClassName).flatMap(
+    (range) => {
+      const body = maskPhpStringsAndComments(
+        source.slice(range.bodyStart, range.bodyEnd),
+      );
+      const pattern = new RegExp(
+        `(?:^|\\n)\\s*((?:(?:abstract|final|private|protected|public|static)\\s+)*)function\\s+&?\\s*${escapeRegExp(
+          methodName,
+        )}\\s*\\(([^)]*)\\)\\s*(?::\\s*([^;{\\n]+))?`,
+        "g",
+      );
+      const returnTypes: string[] = [];
+
+      for (const match of body.matchAll(pattern)) {
+        const modifiers = (match[1] ?? "").toLowerCase();
+
+        if (/\b(?:private|protected|static)\b/.test(modifiers)) {
+          continue;
+        }
+
+        const functionOffset =
+          range.bodyStart + (match.index ?? 0) + match[0].lastIndexOf("function");
+        const docBlock = phpDocBlockBefore(source, functionOffset);
+        const declaredReturnType = normalizeReturnType(match[3] ?? null);
+        const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
+        const returnType = bestPhpReturnType(
+          declaredReturnType,
+          documentedReturnType,
+        );
+
+        if (returnType) {
+          returnTypes.push(returnType);
+        }
+      }
+
+      return returnTypes;
+    },
+  );
+}
+
+function phpLaravelRepositoryPhpDocMethodReturnTypes(
+  source: string,
+  methodName: string,
+  receiverClassName: string | null,
+): string[] {
+  return phpLaravelRepositoryTypeDocBlocks(source, receiverClassName).flatMap(
+    (docBlock) => {
+      const returnTypes: string[] = [];
+      const pattern = new RegExp(
+        `@method\\s+(?:static\\s+)?([^\\s(]+)\\s+${escapeRegExp(
+          methodName,
+        )}\\s*\\(`,
+        "g",
+      );
+
+      for (const match of docBlock.matchAll(pattern)) {
+        const returnType = normalizeReturnType(match[1] ?? null);
+
+        if (returnType) {
+          returnTypes.push(returnType);
+        }
+      }
+
+      return returnTypes;
+    },
+  );
+}
+
+function phpLaravelRepositoryTypeBodyRanges(
+  source: string,
+  receiverClassName: string | null,
+): Array<{ bodyEnd: number; bodyStart: number }> {
+  const ranges: Array<{ bodyEnd: number; bodyStart: number }> = [];
+  const masked = maskPhpStringsAndComments(source);
+  const pattern = /\b(?:class|interface|trait)\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\{/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const className = match[1] ?? "";
+    const openOffset = (match.index ?? 0) + match[0].lastIndexOf("{");
+    const closeOffset = matchingPairOffset(source, openOffset, "{", "}");
+
+    if (
+      closeOffset === null ||
+      !phpLaravelRepositoryTypeMatches(source, className, receiverClassName)
+    ) {
+      continue;
+    }
+
+    ranges.push({
+      bodyEnd: closeOffset,
+      bodyStart: openOffset + 1,
+    });
+  }
+
+  return ranges;
+}
+
+function phpLaravelRepositoryTypeDocBlocks(
+  source: string,
+  receiverClassName: string | null,
+): string[] {
+  const docBlocks: string[] = [];
+  const masked = maskPhpStringsAndComments(source);
+  const pattern = /\b(?:class|interface|trait)\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const className = match[1] ?? "";
+
+    if (!phpLaravelRepositoryTypeMatches(source, className, receiverClassName)) {
+      continue;
+    }
+
+    const docBlock = phpDocBlockBefore(source, match.index ?? 0);
+
+    if (docBlock) {
+      docBlocks.push(docBlock);
+    }
+  }
+
+  return docBlocks;
+}
+
+function phpLaravelRepositoryTypeMatches(
+  source: string,
+  className: string,
+  receiverClassName: string | null,
+): boolean {
+  const resolvedClassName = phpLaravelResolvedClassName(source, className);
+  const normalizedReceiver = normalizedLaravelClassName(receiverClassName ?? "");
+
+  if (!resolvedClassName || !normalizedReceiver) {
+    return isLaravelRepositoryType(resolvedClassName ?? className);
+  }
+
+  return normalizedLaravelClassName(resolvedClassName) === normalizedReceiver;
+}
+
+function phpLaravelModelTypeFromReturnType(
+  source: string,
+  returnType: string | null,
+): string | null {
+  const candidate = phpDeclaredTypeCandidate(returnType ?? "");
+  const resolvedClassName = phpLaravelResolvedClassName(source, candidate ?? "");
+
+  if (!candidate || !resolvedClassName) {
+    return null;
+  }
+
+  return isLaravelModelType(resolvedClassName) ? resolvedClassName : null;
+}
+
+function phpLaravelResolvedClassName(
+  source: string,
+  className: string,
+): string | null {
+  const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+  if (!normalizedClassName) {
+    return null;
+  }
+
+  if (normalizedClassName.includes("\\")) {
+    return normalizedClassName;
+  }
+
+  return resolvePhpClassName(source, normalizedClassName)?.replace(/^\\+/, "") ?? null;
+}
+
+function isLaravelRepositoryType(className: string | null): boolean {
+  return Boolean(className && /repository\b/i.test(className));
+}
+
+function isLaravelModelType(className: string): boolean {
+  const normalized = className.trim().replace(/^\\+/, "");
+  const shortName = normalized.split("\\").pop() ?? normalized;
+
+  return normalized.includes("\\Models\\") || /Model$/.test(shortName);
 }
 
 interface PhpLaravelDynamicWhereAttributeOccurrence {
@@ -1335,6 +1558,10 @@ function phpStringLiteralValue(expression: string): string | null {
   }
 
   return (match[2] ?? "").replace(/\\(['"\\])/g, "$1");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isPhpAttributeName(value: string | null): value is string {
