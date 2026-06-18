@@ -1,6 +1,10 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
-  PHP_MEMBER_RECEIVER_PATTERN,
+  firstPhpDocTypeToken,
+  phpDocClassStringReturnTemplate,
+} from "./phpDocTemplates";
+import {
+  PHP_EXPRESSION_RECEIVER_PATTERN,
   phpNormalizeReceiverExpression,
   phpSimpleVariableName,
 } from "./phpReceiverExpressions";
@@ -12,6 +16,7 @@ export interface PhpMemberAccessCompletionContext {
 }
 
 export interface PhpMethodCompletion {
+  classStringTemplate?: string;
   declaringClassName: string;
   isStatic?: boolean;
   kind?: "property";
@@ -55,7 +60,7 @@ export function phpMemberAccessCompletionContextAt(
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
   const match = new RegExp(
-    `(${PHP_MEMBER_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)?$`,
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)?$`,
   ).exec(lineUntilCursor);
 
   if (!match?.[1]) {
@@ -101,7 +106,7 @@ export function phpMethodSignatureContextAt(
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
   const memberMatch = new RegExp(
-    `(${PHP_MEMBER_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)$`,
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)$`,
   ).exec(lineUntilCursor);
 
   if (memberMatch?.[1] && memberMatch[2]) {
@@ -161,8 +166,10 @@ export function phpMethodCompletionsFromSource(
     const parameters = phpFunctionParametersAt(source, functionOffset) ?? match[3] ?? "";
     const declaredReturnType = normalizeReturnType(match[4] ?? null);
     const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
+    const classStringTemplate = phpDocClassStringReturnTemplate(docBlock);
 
     members.push({
+      ...(classStringTemplate ? { classStringTemplate } : {}),
       declaringClassName,
       name,
       parameters: enrichParametersFromPhpDoc(
@@ -387,31 +394,6 @@ function phpDocReturnTypeFromBlock(docBlock: string | null): string | null {
   const returnMatch = /@return\s+([^\r\n*]+)/.exec(docBlock ?? "");
 
   return normalizeReturnType(firstPhpDocTypeToken(returnMatch?.[1] ?? null));
-}
-
-function firstPhpDocTypeToken(typeAndDescription: string | null): string | null {
-  const value = typeAndDescription?.trim() ?? "";
-  let genericDepth = 0;
-
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index] || "";
-
-    if (character === "<") {
-      genericDepth += 1;
-      continue;
-    }
-
-    if (character === ">") {
-      genericDepth = Math.max(0, genericDepth - 1);
-      continue;
-    }
-
-    if (/\s/.test(character) && genericDepth === 0) {
-      return value.slice(0, index);
-    }
-  }
-
-  return value || null;
 }
 
 function enrichParametersFromPhpDoc(

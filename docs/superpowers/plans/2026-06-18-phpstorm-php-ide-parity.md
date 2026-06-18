@@ -23,11 +23,11 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `Container::getInstance()->make(Service::class)`
 - Method completion and signature help now resolve those Laravel container receivers.
 - Cmd+B / Go to Definition now recognizes methods called on Laravel container receivers and opens the concrete method target.
+- Completion, signature help, navigation, and semantic type resolution now share one PHP receiver grammar.
+- IDE Mode now understands PHPDoc generic class-string helpers when the target method/function declares `@template T`, `@param class-string<T>`, and `@return T`. This feeds completions for assigned variables and direct chains like `$locator->get(Service::class)->...`, `ServiceLocator::get(Service::class)->...`, and same-file helper functions.
 
 ## Next Tasks
 
-- Share one PHP receiver grammar between completion, signature help, and navigation instead of duplicating regex fragments.
-- Add `class-string<T>` and generic container helper inference.
 - Resolve Laravel container interface bindings where the project exposes enough information.
 - Improve PHPDoc inheritance and trait host-context diagnostics to reduce false positives without hiding app bugs.
 - Add more model relation return inference for `hasOne`, `hasMany`, `belongsTo`, `morph*`, and collection chains.

@@ -2010,6 +2010,115 @@ class CommentService
     });
   });
 
+  it("uses generic class-string helpers for method completions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const locatorPath = "/workspace/app/Support/ServiceLocator.php";
+    const servicePath = "/workspace/app/Services/CommentService.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Services\\CommentService;
+use App\\Support\\ServiceLocator;
+
+/**
+ * @template T of object
+ * @param class-string<T> $className
+ * @return T
+ */
+function service(string $className): object {}
+
+class CommentController
+{
+    public function __construct(
+        private readonly ServiceLocator $locator,
+    ) {}
+
+    public function store(): void
+    {
+        $service = $this->locator->get(CommentService::class);
+        $service->cre
+        $this->locator->get(CommentService::class)->cre
+        ServiceLocator::get(CommentService::class)->cre
+        service(CommentService::class)->cre
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === locatorPath) {
+          return `<?php
+namespace App\\Support;
+
+class ServiceLocator
+{
+    /**
+     * @template T of object
+     * @param class-string<T> $className
+     * @return T
+     */
+    public static function get(string $className): object {}
+}
+`;
+        }
+
+        if (path === servicePath) {
+          return `<?php
+namespace App\\Services;
+
+class CommentService
+{
+    public function createWithAttachments(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    const expectedCompletion = [
+      {
+        declaringClassName: "App\\Services\\CommentService",
+        name: "createWithAttachments",
+        parameters: "",
+        returnType: "string",
+      },
+    ];
+
+    for (const needle of [
+      "$service->cre",
+      "$this->locator->get(CommentService::class)->cre",
+      "ServiceLocator::get(CommentService::class)->cre",
+      "service(CommentService::class)->cre",
+    ]) {
+      await expect(
+        getWorkbench().providePhpMethodCompletions(
+          controllerSource,
+          positionAfter(controllerSource, needle),
+        ),
+      ).resolves.toEqual(expectedCompletion);
+    }
+  });
+
   it("opens Laravel container receiver method definitions", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const servicePath = "/workspace/app/Services/CommentService.php";

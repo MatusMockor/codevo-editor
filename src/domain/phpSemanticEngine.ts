@@ -1,5 +1,6 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import { phpParameterTypeForVariable } from "./phpNavigation";
+import { phpDocClassStringReturnTemplate } from "./phpDocTemplates";
 import {
   PHP_CLASS_NAME_CAPTURE_PATTERN,
   PHP_EXPRESSION_RECEIVER_PATTERN,
@@ -20,6 +21,25 @@ export interface PhpPropertyAccessExpression {
   propertyName: string;
   receiverExpression: string;
 }
+
+export type PhpClassStringCallExpression =
+  | {
+      argumentClassName: string;
+      functionName: string;
+      kind: "functionCall";
+    }
+  | {
+      argumentClassName: string;
+      kind: "methodCall";
+      methodName: string;
+      receiverExpression: string;
+    }
+  | {
+      argumentClassName: string;
+      className: string;
+      kind: "staticCall";
+      methodName: string;
+    };
 
 export function phpCurrentClassName(source: string): string | null {
   const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
@@ -138,6 +158,54 @@ export function phpLaravelContainerExpressionClassName(
   return match?.[1]?.replace(/^\\+/, "") ?? null;
 }
 
+export function phpClassStringCallExpression(
+  expression: string,
+): PhpClassStringCallExpression | null {
+  const normalized = expression.trim();
+  const argumentMatch = new RegExp(
+    `\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
+  ).exec(normalized);
+  const argumentClassName = argumentMatch?.[1]?.replace(/^\\+/, "");
+
+  if (!argumentClassName) {
+    return null;
+  }
+
+  const methodCall = phpMethodCallExpression(normalized);
+
+  if (methodCall) {
+    return {
+      argumentClassName,
+      kind: "methodCall",
+      methodName: methodCall.methodName,
+      receiverExpression: methodCall.receiverExpression,
+    };
+  }
+
+  const staticCall = phpStaticCallExpression(normalized);
+
+  if (staticCall) {
+    return {
+      argumentClassName,
+      className: staticCall.className,
+      kind: "staticCall",
+      methodName: staticCall.methodName,
+    };
+  }
+
+  const functionMatch = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(normalized);
+
+  if (!functionMatch?.[1]) {
+    return null;
+  }
+
+  return {
+    argumentClassName,
+    functionName: functionMatch[1],
+    kind: "functionCall",
+  };
+}
+
 export function phpMethodCallExpression(
   expression: string,
 ): PhpMethodCallExpression | null {
@@ -211,6 +279,27 @@ export function phpMethodReturnExpressions(
   }
 
   return expressions;
+}
+
+export function phpFunctionReturnsClassStringArgument(
+  source: string,
+  functionName: string,
+): boolean {
+  const pattern = new RegExp(
+    `\\bfunction\\s+&?\\s*${escapeRegExp(functionName)}\\s*\\(`,
+    "g",
+  );
+
+  for (const match of source.matchAll(pattern)) {
+    const functionOffset = match.index ?? 0;
+    const docBlock = phpDocBlockBefore(source, functionOffset);
+
+    if (phpDocClassStringReturnTemplate(docBlock)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function phpStaticCallExpression(
@@ -357,6 +446,24 @@ function phpDocTypeForProperty(
   }
 
   return typeName;
+}
+
+function phpDocBlockBefore(source: string, offset: number): string | null {
+  const beforeOffset = source.slice(0, offset);
+  const docStart = beforeOffset.lastIndexOf("/**");
+  const docEnd = beforeOffset.lastIndexOf("*/");
+
+  if (docStart < 0 || docEnd < docStart) {
+    return null;
+  }
+
+  const betweenDocAndOffset = beforeOffset.slice(docEnd + 2).trim();
+
+  if (betweenDocAndOffset) {
+    return null;
+  }
+
+  return beforeOffset.slice(docStart, docEnd + 2);
 }
 
 function splitPhpList(parameters: string): string[] {

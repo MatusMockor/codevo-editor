@@ -134,6 +134,34 @@ class Controller
     }
   });
 
+  it("detects static and function call receiver completion contexts", () => {
+    const source = `<?php
+ServiceLocator::get(CommentService::class)->cre
+service(CommentService::class)->cre
+`;
+
+    expect(
+      phpMemberAccessCompletionContextAt(
+        source,
+        positionAfter(source, "ServiceLocator::get(CommentService::class)->cre"),
+      ),
+    ).toEqual({
+      prefix: "cre",
+      receiverExpression: "ServiceLocator::get(CommentService::class)",
+      variableName: null,
+    });
+    expect(
+      phpMemberAccessCompletionContextAt(
+        source,
+        positionAfter(source, "service(CommentService::class)->cre"),
+      ),
+    ).toEqual({
+      prefix: "cre",
+      receiverExpression: "service(CommentService::class)",
+      variableName: null,
+    });
+  });
+
   it("detects static access completion context", () => {
     expect(
       phpStaticAccessCompletionContextAt("<?php\nCommentFactory::ma", {
@@ -236,6 +264,30 @@ class Request
         name: "make",
         parameters: "",
         returnType: "Comment",
+      },
+    ]);
+  });
+
+  it("marks methods returning their class-string template argument", () => {
+    const source = `<?php
+class Container
+{
+    /**
+     * @template T of object
+     * @param class-string<T> $className
+     * @return T
+     */
+    public function get(string $className): object {}
+}
+`;
+
+    expect(phpMethodCompletionsFromSource(source, "Container")).toEqual([
+      {
+        classStringTemplate: "T",
+        declaringClassName: "Container",
+        name: "get",
+        parameters: "string $className",
+        returnType: "object",
       },
     ]);
   });

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   phpAssignmentExpressionForVariableBefore,
+  phpClassStringCallExpression,
   phpCurrentClassName,
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
+  phpFunctionReturnsClassStringArgument,
   phpLaravelContainerExpressionClassName,
   phpMethodCallExpression,
   phpMethodReturnExpressions,
@@ -158,6 +160,54 @@ class CommentController
       className: "CommentFactory",
       methodName: "make",
     });
+  });
+
+  it("detects calls that pass class-string arguments", () => {
+    expect(
+      phpClassStringCallExpression("$this->container->get(CommentService::class)"),
+    ).toEqual({
+      argumentClassName: "CommentService",
+      kind: "methodCall",
+      methodName: "get",
+      receiverExpression: "$this->container",
+    });
+    expect(
+      phpClassStringCallExpression("ServiceLocator::get(CommentService::class)"),
+    ).toEqual({
+      argumentClassName: "CommentService",
+      className: "ServiceLocator",
+      kind: "staticCall",
+      methodName: "get",
+    });
+    expect(phpClassStringCallExpression("service(CommentService::class)")).toEqual(
+      {
+        argumentClassName: "CommentService",
+        functionName: "service",
+        kind: "functionCall",
+      },
+    );
+  });
+
+  it("detects generic functions that return their class-string argument", () => {
+    expect(
+      phpFunctionReturnsClassStringArgument(
+        `<?php
+/**
+ * @template T of object
+ * @param class-string<T> $className
+ * @return T
+ */
+function service(string $className): object {}
+`,
+        "service",
+      ),
+    ).toBe(true);
+    expect(
+      phpFunctionReturnsClassStringArgument(
+        "<?php\n/** @return object */\nfunction service(string $className): object {}\n",
+        "service",
+      ),
+    ).toBe(false);
   });
 
   it("normalizes generic PHPDoc type candidates", () => {

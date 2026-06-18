@@ -133,6 +133,7 @@ import {
 } from "../domain/phpMethodCompletions";
 import {
   phpAssignmentExpressionForVariableBefore,
+  phpClassStringCallExpression,
   phpCurrentClassName,
   phpDeclaredTypeCandidate,
   phpLaravelContainerExpressionClassName,
@@ -144,6 +145,7 @@ import {
   phpStaticCallExpression,
   phpDeclaredGenericTypeCandidates,
   phpDocRawTypeForVariableBefore,
+  phpFunctionReturnsClassStringArgument,
 } from "../domain/phpSemanticEngine";
 import {
   phpClassPathCandidates,
@@ -4271,6 +4273,20 @@ export function useWorkbenchController(
     [resolvePhpClassReference, resolvePhpEloquentBuilderModelType],
   );
 
+  const phpClassMethodReturnsClassStringArgument = useCallback(
+    async (className: string, methodName: string): Promise<boolean> => {
+      const methods = await collectPhpMethodsForClass(className);
+
+      return methods.some(
+        (method) =>
+          method.kind !== "property" &&
+          method.name.toLowerCase() === methodName.toLowerCase() &&
+          Boolean(method.classStringTemplate),
+      );
+    },
+    [collectPhpMethodsForClass],
+  );
+
   const resolvePhpExpressionType = useCallback(
     async (
       source: string,
@@ -4322,6 +4338,55 @@ export function useWorkbenchController(
 
       if (constructedClassName) {
         return resolvePhpClassReference(source, constructedClassName);
+      }
+
+      const classStringCall = phpClassStringCallExpression(expression);
+
+      if (classStringCall) {
+        const argumentType = resolvePhpClassReference(
+          source,
+          classStringCall.argumentClassName,
+        );
+        let returnsArgumentType = false;
+
+        if (classStringCall.kind === "functionCall") {
+          returnsArgumentType = phpFunctionReturnsClassStringArgument(
+            source,
+            classStringCall.functionName,
+          );
+        }
+
+        if (classStringCall.kind === "staticCall") {
+          const ownerType = resolvePhpClassReference(
+            source,
+            classStringCall.className,
+          );
+          returnsArgumentType = ownerType
+            ? await phpClassMethodReturnsClassStringArgument(
+                ownerType,
+                classStringCall.methodName,
+              )
+            : false;
+        }
+
+        if (classStringCall.kind === "methodCall") {
+          const receiverType = await resolvePhpExpressionType(
+            source,
+            position,
+            classStringCall.receiverExpression,
+            depth + 1,
+          );
+          returnsArgumentType = receiverType
+            ? await phpClassMethodReturnsClassStringArgument(
+                receiverType,
+                classStringCall.methodName,
+              )
+            : false;
+        }
+
+        if (returnsArgumentType && argumentType) {
+          return argumentType;
+        }
       }
 
       const propertyAccess = phpPropertyAccessExpression(expression);
@@ -4496,6 +4561,7 @@ export function useWorkbenchController(
       resolvePhpLaravelCollectionModelType,
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
+      phpClassMethodReturnsClassStringArgument,
       resolvePhpMethodReturnType,
     ],
   );
