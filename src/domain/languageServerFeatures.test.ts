@@ -24,6 +24,7 @@ describe("canUseLanguageServerFeature", () => {
       implementation: false,
       inlayHint: false,
       linkedEditingRange: false,
+      onTypeFormatting: false,
       prepareRename: false,
       rangeFormatting: false,
       references: false,

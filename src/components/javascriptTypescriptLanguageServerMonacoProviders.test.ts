@@ -36,6 +36,9 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(
       monaco.languages.registerDocumentRangeFormattingEditProvider,
     ).toHaveBeenCalledTimes(4);
+    expect(
+      monaco.languages.registerOnTypeFormattingEditProvider,
+    ).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(4);
@@ -63,7 +66,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(77);
+    expect(monaco.dispose).toHaveBeenCalledTimes(81);
   });
 
   it("requests TypeScript language-server completions for TSX documents", async () => {
@@ -552,6 +555,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           range: range(3, 0, 3, 2),
         },
       ],
+      onTypeFormatting: [
+        {
+          newText: "\n  ",
+          range: range(4, 0, 4, 0),
+        },
+      ],
       inlayHints: [
         {
           kind: 1,
@@ -840,6 +849,50 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           startLineNumber: 4,
         }),
         text: "    ",
+      },
+    ]);
+
+    const onTypeFormattingProvider = (
+      monaco.languages.registerOnTypeFormattingEditProvider as any
+    ).mock.calls[0][1];
+    expect(onTypeFormattingProvider.autoFormatTriggerCharacters).toEqual([
+      "}",
+      ";",
+      "\n",
+    ]);
+    const onTypeFormatting =
+      await onTypeFormattingProvider.provideOnTypeFormattingEdits(
+        model,
+        { column: 1, lineNumber: 5 },
+        "\n",
+        {
+          insertSpaces: true,
+          tabSize: 2,
+        },
+      );
+
+    expect(gateway.onTypeFormatting).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      {
+        character: 0,
+        line: 4,
+      },
+      "\n",
+      {
+        insertSpaces: true,
+        tabSize: 2,
+      },
+    );
+    expect(onTypeFormatting).toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 1,
+          endLineNumber: 5,
+          startColumn: 1,
+          startLineNumber: 5,
+        }),
+        text: "\n  ",
       },
     ]);
 
@@ -1239,6 +1292,9 @@ function featuresGateway(
     prepareRename: Awaited<
       ReturnType<LanguageServerFeaturesGateway["prepareRename"]>
     >;
+    onTypeFormatting: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>
+    >;
     references: Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>;
     rangeFormatting: Awaited<
       ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>
@@ -1300,6 +1356,7 @@ function featuresGateway(
     linkedEditingRanges: vi.fn(
       async () => responses.linkedEditingRanges ?? null,
     ),
+    onTypeFormatting: vi.fn(async () => responses.onTypeFormatting ?? []),
     prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
     references: vi.fn(async () => responses.references ?? []),
@@ -1343,6 +1400,7 @@ function runningStatus(
       implementation: true,
       inlayHint: true,
       linkedEditingRange: true,
+      onTypeFormatting: true,
       prepareRename: true,
       rangeFormatting: true,
       references: true,
@@ -1500,6 +1558,7 @@ function createMonaco() {
       registerInlayHintsProvider: vi.fn(() => disposable()),
       registerLinkProvider: vi.fn(() => disposable()),
       registerLinkedEditingRangeProvider: vi.fn(() => disposable()),
+      registerOnTypeFormattingEditProvider: vi.fn(() => disposable()),
       registerReferenceProvider: vi.fn(() => disposable()),
       registerRenameProvider: vi.fn(() => disposable()),
       registerSelectionRangeProvider: vi.fn(() => disposable()),

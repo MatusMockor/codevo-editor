@@ -14,6 +14,7 @@ export interface LanguageServerCapabilities {
   implementation: boolean;
   inlayHint: boolean;
   linkedEditingRange: boolean;
+  onTypeFormatting: boolean;
   prepareRename: boolean;
   rangeFormatting: boolean;
   references: boolean;
@@ -158,6 +159,10 @@ export function languageServerCapabilityLabels(
     labels.push("linked editing");
   }
 
+  if (capabilities.onTypeFormatting) {
+    labels.push("on-type formatting");
+  }
+
   if (capabilities.prepareRename) {
     labels.push("prepare rename");
   }
@@ -228,6 +233,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     implementation: false,
     inlayHint: false,
     linkedEditingRange: false,
+    onTypeFormatting: false,
     prepareRename: false,
     rangeFormatting: false,
     references: false,

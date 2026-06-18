@@ -71,9 +71,9 @@ use lsp_features::{
     LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerTextEdit,
     LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
-    TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
-    WorkspaceFileChange, WorkspaceFileRename,
+    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentOnTypeFormatting,
+    TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
+    TextDocumentSelectionRange, WorkspaceFileChange, WorkspaceFileRename,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1593,6 +1593,52 @@ fn javascript_typescript_text_document_formatting(
 }
 
 #[tauri::command]
+fn text_document_on_type_formatting(
+    root_path: String,
+    path: String,
+    position: LanguageServerPosition,
+    ch: String,
+    options: LanguageServerFormattingOptions,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTextEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.on_type_formatting(&TextDocumentOnTypeFormatting {
+        path,
+        position,
+        ch,
+        options,
+    });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_formatting_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_on_type_formatting(
+    root_path: String,
+    path: String,
+    position: LanguageServerPosition,
+    ch: String,
+    options: LanguageServerFormattingOptions,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTextEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.on_type_formatting(&TextDocumentOnTypeFormatting {
+        path,
+        position,
+        ch,
+        options,
+    });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_formatting_result(&result)
+}
+
+#[tauri::command]
 fn text_document_range_formatting(
     root_path: String,
     path: String,
@@ -2336,6 +2382,7 @@ pub fn run() {
             javascript_typescript_text_document_implementation,
             javascript_typescript_text_document_inlay_hints,
             javascript_typescript_text_document_linked_editing_ranges,
+            javascript_typescript_text_document_on_type_formatting,
             javascript_typescript_text_document_prepare_rename,
             javascript_typescript_text_document_range_formatting,
             javascript_typescript_text_document_references,
@@ -2367,6 +2414,7 @@ pub fn run() {
             text_document_implementation,
             text_document_inlay_hints,
             text_document_linked_editing_ranges,
+            text_document_on_type_formatting,
             text_document_prepare_rename,
             text_document_range_formatting,
             text_document_references,

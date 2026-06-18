@@ -115,6 +115,18 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       }),
     ).resolves.toEqual([]);
     await expect(
+      gateway.onTypeFormatting(
+        "/project",
+        "/project/src/User.php",
+        { character: 4, line: 10 },
+        ";",
+        {
+          insertSpaces: true,
+          tabSize: 2,
+        },
+      ),
+    ).resolves.toEqual([]);
+    await expect(
       gateway.rangeFormatting("/project", "/project/src/User.php", range(), {
         insertSpaces: true,
         tabSize: 2,
@@ -197,6 +209,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         range: {
           end: { character: 4, line: 4 },
           start: { character: 0, line: 4 },
+        },
+      },
+    ];
+    const onTypeFormatting = [
+      {
+        newText: "\n  ",
+        range: {
+          end: { character: 0, line: 5 },
+          start: { character: 0, line: 5 },
         },
       },
     ];
@@ -358,6 +379,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
 
       if (command === "text_document_range_formatting") {
         return rangeFormatting;
+      }
+
+      if (command === "text_document_on_type_formatting") {
+        return onTypeFormatting;
       }
 
       if (command === "text_document_inlay_hints") {
@@ -523,6 +548,18 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       }),
     ).resolves.toEqual(rangeFormatting);
     await expect(
+      gateway.onTypeFormatting(
+        "/project",
+        "/project/src/User.php",
+        { character: 1, line: 5 },
+        "\n",
+        {
+          insertSpaces: true,
+          tabSize: 2,
+        },
+      ),
+    ).resolves.toEqual(onTypeFormatting);
+    await expect(
       gateway.inlayHints("/project", "/project/src/User.php", range()),
     ).resolves.toEqual(inlayHints);
     await expect(
@@ -673,6 +710,16 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       },
       path: "/project/src/User.php",
       range: range(),
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_on_type_formatting", {
+      ch: "\n",
+      options: {
+        insertSpaces: true,
+        tabSize: 2,
+      },
+      path: "/project/src/User.php",
+      position: { character: 1, line: 5 },
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_inlay_hints", {

@@ -5139,6 +5139,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     implementation: vi.fn(async () => []),
     inlayHints: vi.fn(async () => []),
     linkedEditingRanges: vi.fn(async () => null),
+    onTypeFormatting: vi.fn(async () => []),
     prepareRename: vi.fn(async () => null),
     rangeFormatting: vi.fn(async () => []),
     references: vi.fn(async () => []),

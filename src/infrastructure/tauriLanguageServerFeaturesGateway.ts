@@ -59,6 +59,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   implementation: "text_document_implementation",
   inlayHints: "text_document_inlay_hints",
   linkedEditingRanges: "text_document_linked_editing_ranges",
+  onTypeFormatting: "text_document_on_type_formatting",
   prepareRename: "text_document_prepare_rename",
   rangeFormatting: "text_document_range_formatting",
   references: "text_document_references",
@@ -94,6 +95,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   inlayHints: "javascript_typescript_text_document_inlay_hints",
   linkedEditingRanges:
     "javascript_typescript_text_document_linked_editing_ranges",
+  onTypeFormatting: "javascript_typescript_text_document_on_type_formatting",
   prepareRename: "javascript_typescript_text_document_prepare_rename",
   rangeFormatting: "javascript_typescript_text_document_range_formatting",
   references: "javascript_typescript_text_document_references",
@@ -127,6 +129,7 @@ export interface TauriLanguageServerFeatureCommands {
   implementation: string;
   inlayHints: string;
   linkedEditingRanges: string;
+  onTypeFormatting: string;
   prepareRename: string;
   rangeFormatting: string;
   references: string;
@@ -460,6 +463,20 @@ export class TauriLanguageServerFeaturesGateway
     return this.invokeWhenAvailable(
       this.commands.formatting,
       { options, path, rootPath },
+      [],
+    );
+  }
+
+  onTypeFormatting(
+    rootPath: string,
+    path: string,
+    position: LanguageServerPosition,
+    ch: string,
+    options: LanguageServerFormattingOptions,
+  ): Promise<LanguageServerTextEdit[]> {
+    return this.invokeWhenAvailable(
+      this.commands.onTypeFormatting,
+      { ch, options, path, position, rootPath },
       [],
     );
   }

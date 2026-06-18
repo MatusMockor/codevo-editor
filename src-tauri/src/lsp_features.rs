@@ -171,6 +171,15 @@ pub struct TextDocumentRangeFormatting {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TextDocumentOnTypeFormatting {
+    pub path: String,
+    pub position: LanguageServerPosition,
+    pub ch: String,
+    pub options: LanguageServerFormattingOptions,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TextDocumentInlayHintRange {
     pub path: String,
     pub range: LanguageServerRange,
@@ -378,6 +387,10 @@ pub trait TextDocumentFeatureRequestFactory {
         context: &LanguageServerCodeActionContext,
     ) -> LanguageServerFeatureRequest;
     fn formatting(&self, formatting: &TextDocumentFormatting) -> LanguageServerFeatureRequest;
+    fn on_type_formatting(
+        &self,
+        formatting: &TextDocumentOnTypeFormatting,
+    ) -> LanguageServerFeatureRequest;
     fn range_formatting(
         &self,
         formatting: &TextDocumentRangeFormatting,
@@ -590,6 +603,23 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                     "uri": file_uri(Path::new(&formatting.path)),
                 },
                 "range": formatting.range,
+                "options": formatting.options,
+            }),
+        }
+    }
+
+    fn on_type_formatting(
+        &self,
+        formatting: &TextDocumentOnTypeFormatting,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/onTypeFormatting".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(&formatting.path)),
+                },
+                "position": formatting.position,
+                "ch": formatting.ch,
                 "options": formatting.options,
             }),
         }
@@ -1526,8 +1556,8 @@ mod tests {
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
         LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-        TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition,
-        TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
+        TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentOnTypeFormatting,
+        TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
         TextDocumentSelectionRange, WorkspaceFileChange, WorkspaceFileChangeType,
         WorkspaceFileRename,
     };
@@ -1823,6 +1853,34 @@ mod tests {
         assert_eq!(request.params["range"], json!(selected));
         assert_eq!(request.params["options"]["tabSize"], 4);
         assert_eq!(request.params["options"]["insertSpaces"], false);
+    }
+
+    #[test]
+    fn on_type_formatting_request_contains_position_trigger_and_options() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.on_type_formatting(&TextDocumentOnTypeFormatting {
+            path: "/tmp/User.ts".to_string(),
+            position: LanguageServerPosition {
+                line: 5,
+                character: 2,
+            },
+            ch: "}".to_string(),
+            options: LanguageServerFormattingOptions {
+                tab_size: 2,
+                insert_spaces: true,
+            },
+        });
+
+        assert_eq!(request.method, "textDocument/onTypeFormatting");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["position"]["line"], 5);
+        assert_eq!(request.params["position"]["character"], 2);
+        assert_eq!(request.params["ch"], "}");
+        assert_eq!(request.params["options"]["tabSize"], 2);
+        assert_eq!(request.params["options"]["insertSpaces"], true);
     }
 
     #[test]

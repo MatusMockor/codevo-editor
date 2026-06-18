@@ -322,6 +322,23 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       );
     }
 
+    if (registry.registerOnTypeFormattingEditProvider) {
+      disposables.push(
+        registry.registerOnTypeFormattingEditProvider(language, {
+          autoFormatTriggerCharacters: ["}", ";", "\n"],
+          provideOnTypeFormattingEdits: (model, position, ch, options) =>
+            provideOnTypeFormattingEdits(
+              monaco,
+              context,
+              model,
+              position,
+              ch,
+              options,
+            ),
+        }),
+      );
+    }
+
     if (registry.registerInlayHintsProvider) {
       disposables.push(
         registry.registerInlayHintsProvider(language, {
@@ -1093,6 +1110,40 @@ async function provideDocumentRangeFormattingEdits(
   }
 }
 
+async function provideOnTypeFormattingEdits(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  ch: string,
+  options: Monaco.languages.FormattingOptions,
+): Promise<Monaco.languages.TextEdit[]> {
+  const request = documentRequestContext(context, model, "onTypeFormatting");
+
+  if (!request) {
+    return [];
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const edits = await context.featuresGateway.onTypeFormatting(
+      request.rootPath,
+      request.path,
+      {
+        character: Math.max(0, position.column - 1),
+        line: Math.max(0, position.lineNumber - 1),
+      },
+      ch,
+      toLanguageServerFormattingOptions(options),
+    );
+
+    return edits.map((edit) => toMonacoTextEdit(monaco, edit));
+  } catch (error) {
+    context.reportError(error);
+    return [];
+  }
+}
+
 async function provideInlayHints(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -1181,6 +1232,7 @@ function documentRequestContext(
     | "foldingRange"
     | "formatting"
     | "inlayHint"
+    | "onTypeFormatting"
     | "rangeFormatting"
     | "selectionRange"
     | "semanticTokens",

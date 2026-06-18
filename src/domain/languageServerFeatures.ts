@@ -352,6 +352,13 @@ export interface LanguageServerFeaturesGateway {
     path: string,
     options: LanguageServerFormattingOptions,
   ): Promise<LanguageServerTextEdit[]>;
+  onTypeFormatting(
+    rootPath: string,
+    path: string,
+    position: LanguageServerPosition,
+    ch: string,
+    options: LanguageServerFormattingOptions,
+  ): Promise<LanguageServerTextEdit[]>;
   rangeFormatting(
     rootPath: string,
     path: string,

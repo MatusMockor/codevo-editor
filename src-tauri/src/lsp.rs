@@ -417,6 +417,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         },
                         "implementation": { "dynamicRegistration": false },
                         "linkedEditingRange": { "dynamicRegistration": false },
+                        "onTypeFormatting": { "dynamicRegistration": false },
                         "rangeFormatting": { "dynamicRegistration": false },
                         "publishDiagnostics": {
                             "relatedInformation": true,
@@ -800,6 +801,11 @@ mod tests {
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["rangeFormatting"]
+                ["dynamicRegistration"],
+            false
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["onTypeFormatting"]
                 ["dynamicRegistration"],
             false
         );

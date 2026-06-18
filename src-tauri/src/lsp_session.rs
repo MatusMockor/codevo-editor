@@ -68,6 +68,7 @@ pub struct LanguageServerCapabilities {
     pub implementation: bool,
     pub inlay_hint: bool,
     pub linked_editing_range: bool,
+    pub on_type_formatting: bool,
     pub prepare_rename: bool,
     pub range_formatting: bool,
     pub references: bool,
@@ -1575,6 +1576,9 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         implementation: is_capability_enabled(capabilities.get("implementationProvider")),
         inlay_hint: is_capability_enabled(capabilities.get("inlayHintProvider")),
         linked_editing_range: is_capability_enabled(capabilities.get("linkedEditingRangeProvider")),
+        on_type_formatting: is_capability_enabled(
+            capabilities.get("documentOnTypeFormattingProvider"),
+        ),
         prepare_rename: capabilities
             .get("renameProvider")
             .and_then(|provider| provider.get("prepareProvider"))
@@ -1805,6 +1809,7 @@ mod tests {
                     implementation: true,
                     inlay_hint: false,
                     linked_editing_range: false,
+                    on_type_formatting: false,
                     prepare_rename: false,
                     range_formatting: false,
                     references: false,
@@ -1840,6 +1845,7 @@ mod tests {
                 implementation: false,
                 inlay_hint: true,
                 linked_editing_range: true,
+                on_type_formatting: true,
                 prepare_rename: true,
                 range_formatting: true,
                 references: true,
@@ -1870,6 +1876,7 @@ mod tests {
                     "implementation": false,
                     "inlayHint": true,
                     "linkedEditingRange": true,
+                    "onTypeFormatting": true,
                     "prepareRename": true,
                     "rangeFormatting": true,
                     "references": true,
@@ -1924,6 +1931,10 @@ mod tests {
                     "implementationProvider": true,
                     "inlayHintProvider": true,
                     "linkedEditingRangeProvider": true,
+                    "documentOnTypeFormattingProvider": {
+                        "firstTriggerCharacter": "}",
+                        "moreTriggerCharacter": [";", "\n"]
+                    },
                     "referencesProvider": true,
                     "renameProvider": { "prepareProvider": true },
                     "selectionRangeProvider": true,
@@ -1967,6 +1978,7 @@ mod tests {
                 implementation: true,
                 inlay_hint: true,
                 linked_editing_range: true,
+                on_type_formatting: true,
                 prepare_rename: true,
                 range_formatting: true,
                 references: true,
