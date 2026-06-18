@@ -558,9 +558,7 @@ function phpLaravelAttributeAccessorValueType(
     return null;
   }
 
-  const genericMatch = /<([^,>]+)/.exec(returnType);
-
-  return normalizeReturnType(genericMatch?.[1] ?? null);
+  return normalizeReturnType(firstPhpGenericTypeArgument(returnType));
 }
 
 function phpCamelCaseToSnakeCase(value: string): string {
@@ -568,6 +566,40 @@ function phpCamelCaseToSnakeCase(value: string): string {
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase();
+}
+
+function firstPhpGenericTypeArgument(typeName: string): string | null {
+  const start = typeName.indexOf("<");
+
+  if (start < 0) {
+    return null;
+  }
+
+  let depth = 0;
+
+  for (let index = start + 1; index < typeName.length; index += 1) {
+    const character = typeName[index] || "";
+
+    if (character === "<") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ">") {
+      if (depth === 0) {
+        return typeName.slice(start + 1, index).trim();
+      }
+
+      depth -= 1;
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      return typeName.slice(start + 1, index).trim();
+    }
+  }
+
+  return null;
 }
 
 function topLevelArrayArrowIndex(source: string): number {

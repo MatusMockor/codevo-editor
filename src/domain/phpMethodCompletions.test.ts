@@ -561,6 +561,12 @@ class User extends Model
         return Attribute::make(get: fn () => 10);
     }
 
+    /** @return Attribute<array<string, mixed>, never> */
+    protected function options(): Attribute
+    {
+        return Attribute::make(get: fn () => []);
+    }
+
     protected function profileUrl(): Attribute
     {
         return Attribute::make(get: fn () => '');
@@ -596,6 +602,13 @@ class User extends Model
         name: "full_name",
         parameters: "",
         returnType: "string",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "options",
+        parameters: "",
+        returnType: "array<string, mixed>",
       },
       {
         declaringClassName: "User",
