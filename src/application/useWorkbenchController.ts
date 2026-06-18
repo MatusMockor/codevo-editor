@@ -175,6 +175,7 @@ import {
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
   phpDocGenericInheritances,
+  phpDocGenericMixins,
   phpDocRawTypeForVariableBefore,
   phpDocTemplateNames,
   phpLaravelContainerExpressionClassName,
@@ -4502,43 +4503,44 @@ export function useWorkbenchController(
     ],
   );
 
-  const resolvePhpGenericTemplateTypesForInheritedClass = useCallback(
+  const resolvePhpTemplateTypesForGenericReferences = useCallback(
     async (
       source: string,
-      inheritedClassName: string,
+      targetClassName: string,
+      genericReferences: ReturnType<typeof phpDocGenericInheritances>,
     ): Promise<ReadonlyMap<string, string>> => {
-      const normalizedInheritedClassName = inheritedClassName
+      const normalizedTargetClassName = targetClassName
         .trim()
         .replace(/^\\+/, "")
         .toLowerCase();
 
-      if (!normalizedInheritedClassName) {
+      if (!normalizedTargetClassName) {
         return new Map();
       }
 
-      for (const inheritance of phpDocGenericInheritances(source)) {
-        const resolvedInheritedClassName = resolvePhpClassReference(
+      for (const genericReference of genericReferences) {
+        const resolvedTargetClassName = resolvePhpClassReference(
           source,
-          inheritance.className,
+          genericReference.className,
         );
 
         if (
-          resolvedInheritedClassName?.toLowerCase() !==
-          normalizedInheritedClassName
+          resolvedTargetClassName?.toLowerCase() !==
+          normalizedTargetClassName
         ) {
           continue;
         }
 
         for (const path of await resolvePhpClassSourcePaths(
-          resolvedInheritedClassName,
+          resolvedTargetClassName,
         )) {
           try {
-            const inheritedSource = await readNavigationFileContent(path);
-            const templateNames = phpDocTemplateNames(inheritedSource);
+            const targetSource = await readNavigationFileContent(path);
+            const templateNames = phpDocTemplateNames(targetSource);
             const templateTypes = new Map<string, string>();
 
             templateNames.forEach((templateName, index) => {
-              const genericType = inheritance.genericTypes[index];
+              const genericType = genericReference.genericTypes[index];
               const resolvedGenericType = genericType
                 ? resolvePhpClassReference(source, genericType)
                 : null;
@@ -4567,6 +4569,32 @@ export function useWorkbenchController(
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
     ],
+  );
+
+  const resolvePhpGenericTemplateTypesForInheritedClass = useCallback(
+    async (
+      source: string,
+      inheritedClassName: string,
+    ): Promise<ReadonlyMap<string, string>> =>
+      resolvePhpTemplateTypesForGenericReferences(
+        source,
+        inheritedClassName,
+        phpDocGenericInheritances(source),
+      ),
+    [resolvePhpTemplateTypesForGenericReferences],
+  );
+
+  const resolvePhpGenericTemplateTypesForMixinClass = useCallback(
+    async (
+      source: string,
+      mixinClassName: string,
+    ): Promise<ReadonlyMap<string, string>> =>
+      resolvePhpTemplateTypesForGenericReferences(
+        source,
+        mixinClassName,
+        phpDocGenericMixins(source),
+      ),
+    [resolvePhpTemplateTypesForGenericReferences],
   );
 
   const readPhpClassMembersFromPath = useCallback(
@@ -4664,7 +4692,13 @@ export function useWorkbenchController(
               const resolvedMixinName = resolvePhpClassName(content, mixinName);
 
               if (resolvedMixinName) {
-                await collectMethods(resolvedMixinName);
+                await collectMethods(
+                  resolvedMixinName,
+                  await resolvePhpGenericTemplateTypesForMixinClass(
+                    content,
+                    resolvedMixinName,
+                  ),
+                );
               }
             }
 
@@ -4705,6 +4739,7 @@ export function useWorkbenchController(
       readPhpClassMembersFromPath,
       resolvePhpLaravelBoundConcrete,
       resolvePhpGenericTemplateTypesForInheritedClass,
+      resolvePhpGenericTemplateTypesForMixinClass,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
@@ -5320,12 +5355,19 @@ export function useWorkbenchController(
 
           for (const mixinName of phpMixinClassNames(content)) {
             const resolvedMixinName = resolvePhpClassReference(content, mixinName);
+            const mixinTemplateTypes = resolvedMixinName
+              ? await resolvePhpGenericTemplateTypesForMixinClass(
+                  content,
+                  resolvedMixinName,
+                )
+              : new Map<string, string>();
             const mixinReturnType = resolvedMixinName
               ? await resolvePhpMethodReturnType(
                   resolvedMixinName,
                   methodName,
                   visitedClassNames,
                   normalizedLateStaticClassName || normalizedClassName,
+                  mixinTemplateTypes,
                 )
               : null;
 
@@ -5373,6 +5415,7 @@ export function useWorkbenchController(
       resolvePhpMethodDeclaredReturnType,
       resolvePhpClassSourcePaths,
       resolvePhpGenericTemplateTypesForInheritedClass,
+      resolvePhpGenericTemplateTypesForMixinClass,
       workspaceDescriptor,
       workspaceRoot,
     ],

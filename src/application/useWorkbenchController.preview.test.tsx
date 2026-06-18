@@ -4438,6 +4438,150 @@ class Comment
     ]);
   });
 
+  it("resolves generic mixin method returns through PHPDoc mixin", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
+    const mixinPath = "/workspace/app/Support/RepositoryMixin.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\CommentRepository;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepository $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $comment = $this->commentRepository->findForDisplay(1);
+        $comment->get
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Repositories\\CommentRepository",
+          kind: "class",
+          lineNumber: 10,
+          name: "CommentRepository",
+          path: repositoryPath,
+          relativePath: "app/Repositories/CommentRepository.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Support\\RepositoryMixin",
+          kind: "class",
+          lineNumber: 7,
+          name: "RepositoryMixin",
+          path: mixinPath,
+          relativePath: "app/Support/RepositoryMixin.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 5,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryPath) {
+          return `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Comment;
+use App\\Support\\RepositoryMixin;
+
+/**
+ * @mixin RepositoryMixin<Comment>
+ */
+class CommentRepository
+{
+}
+`;
+        }
+
+        if (path === mixinPath) {
+          return `<?php
+namespace App\\Support;
+
+/**
+ * @template TModel of object
+ */
+class RepositoryMixin
+{
+    /** @return TModel */
+    public function findForDisplay(int $id) {}
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$this->commentRepository->find"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Support\\RepositoryMixin",
+        name: "findForDisplay",
+        parameters: "int $id",
+        returnType: "App\\Models\\Comment",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("uses Laravel container bindings to infer interface implementation return types", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const providerPath = "/workspace/app/Providers/AppServiceProvider.php";

@@ -6,6 +6,7 @@ import {
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
   phpDocGenericInheritances,
+  phpDocGenericMixins,
   phpDocTemplateNames,
   phpDocRawTypeForVariableBefore,
   phpFunctionReturnsClassStringArgument,
@@ -378,6 +379,34 @@ class CommentRepository extends BaseRepository implements SearchRepository
       },
       {
         className: "FindsModels",
+        genericTypes: ["Comment"],
+      },
+    ]);
+  });
+
+  it("extracts PHPDoc generic mixin declarations", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use App\\Support\\IdeHelper;
+use App\\Models\\Comment;
+
+/**
+ * @mixin IdeHelper<Comment>
+ * @mixin \\Illuminate\\Database\\Eloquent\\Builder<Comment>
+ */
+class CommentModel
+{
+}
+`;
+
+    expect(phpDocGenericMixins(source)).toEqual([
+      {
+        className: "IdeHelper",
+        genericTypes: ["Comment"],
+      },
+      {
+        className: "Illuminate\\Database\\Eloquent\\Builder",
         genericTypes: ["Comment"],
       },
     ]);

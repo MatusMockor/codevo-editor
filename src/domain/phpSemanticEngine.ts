@@ -541,6 +541,26 @@ export function phpDocGenericInheritances(
   return inheritances;
 }
 
+export function phpDocGenericMixins(source: string): PhpDocGenericInheritance[] {
+  const mixins: PhpDocGenericInheritance[] = [];
+
+  for (const match of source.matchAll(/@mixin\s+([^\r\n*]+)/g)) {
+    const typeName = firstPhpDocTypeToken(match[1] ?? "");
+    const className = typeName ? phpDeclaredTypeCandidate(typeName) : null;
+
+    if (!typeName || !className) {
+      continue;
+    }
+
+    mixins.push({
+      className,
+      genericTypes: phpDeclaredGenericTypeCandidates(typeName),
+    });
+  }
+
+  return mixins;
+}
+
 function phpPromotedPropertyType(
   source: string,
   propertyName: string,
