@@ -41,6 +41,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       kind: "running",
       sessionId: 1,
       capabilities: {
+      callHierarchy: true,
         codeAction: true,
         codeLens: true,
         completion: true,
@@ -103,6 +104,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
   it("passes TypeScript version preference to JavaScript and TypeScript start command", async () => {
     const running: LanguageServerRuntimeStatus = {
       capabilities: {
+      callHierarchy: true,
         codeAction: false,
         codeLens: true,
         completion: true,

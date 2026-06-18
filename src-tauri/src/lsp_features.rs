@@ -130,6 +130,33 @@ pub struct LanguageServerCodeLens {
     pub data: Option<Value>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerCallHierarchyItem {
+    pub name: String,
+    pub kind: u32,
+    pub tags: Option<Vec<u32>>,
+    pub detail: Option<String>,
+    pub uri: String,
+    pub range: LanguageServerRange,
+    pub selection_range: LanguageServerRange,
+    pub data: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerIncomingCall {
+    pub from: LanguageServerCallHierarchyItem,
+    pub from_ranges: Vec<LanguageServerRange>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerOutgoingCall {
+    pub to: LanguageServerCallHierarchyItem,
+    pub from_ranges: Vec<LanguageServerRange>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextDocumentRange {
@@ -416,6 +443,18 @@ pub trait TextDocumentFeatureRequestFactory {
     ) -> LanguageServerFeatureRequest;
     fn code_lenses(&self, path: &str) -> LanguageServerFeatureRequest;
     fn resolve_code_lens(&self, lens: &LanguageServerCodeLens) -> LanguageServerFeatureRequest;
+    fn prepare_call_hierarchy(
+        &self,
+        position: &TextDocumentPosition,
+    ) -> LanguageServerFeatureRequest;
+    fn incoming_calls(
+        &self,
+        item: &LanguageServerCallHierarchyItem,
+    ) -> LanguageServerFeatureRequest;
+    fn outgoing_calls(
+        &self,
+        item: &LanguageServerCallHierarchyItem,
+    ) -> LanguageServerFeatureRequest;
     fn execute_command(
         &self,
         command: &LanguageServerCodeActionCommand,
@@ -683,6 +722,33 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         LanguageServerFeatureRequest {
             method: "codeLens/resolve".to_string(),
             params: json!(lens),
+        }
+    }
+
+    fn prepare_call_hierarchy(
+        &self,
+        position: &TextDocumentPosition,
+    ) -> LanguageServerFeatureRequest {
+        request("textDocument/prepareCallHierarchy", position)
+    }
+
+    fn incoming_calls(
+        &self,
+        item: &LanguageServerCallHierarchyItem,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "callHierarchy/incomingCalls".to_string(),
+            params: json!({ "item": item }),
+        }
+    }
+
+    fn outgoing_calls(
+        &self,
+        item: &LanguageServerCallHierarchyItem,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "callHierarchy/outgoingCalls".to_string(),
+            params: json!({ "item": item }),
         }
     }
 
@@ -955,6 +1021,71 @@ pub fn parse_workspace_symbols_result(
     };
 
     Ok(items.iter().filter_map(parse_workspace_symbol).collect())
+}
+
+pub fn parse_call_hierarchy_items_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerCallHierarchyItem>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed call hierarchy items.".to_string());
+    };
+
+    items
+        .iter()
+        .map(|item| {
+            serde_json::from_value::<LanguageServerCallHierarchyItem>(item.clone()).map_err(
+                |error| {
+                    format!("Language server returned a malformed call hierarchy item: {error}")
+                },
+            )
+        })
+        .collect()
+}
+
+pub fn parse_incoming_calls_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerIncomingCall>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed incoming calls.".to_string());
+    };
+
+    items
+        .iter()
+        .map(|item| {
+            serde_json::from_value::<LanguageServerIncomingCall>(item.clone()).map_err(|error| {
+                format!("Language server returned a malformed incoming call: {error}")
+            })
+        })
+        .collect()
+}
+
+pub fn parse_outgoing_calls_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerOutgoingCall>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed outgoing calls.".to_string());
+    };
+
+    items
+        .iter()
+        .map(|item| {
+            serde_json::from_value::<LanguageServerOutgoingCall>(item.clone()).map_err(|error| {
+                format!("Language server returned a malformed outgoing call: {error}")
+            })
+        })
+        .collect()
 }
 
 pub fn parse_signature_help_result(
@@ -1573,16 +1704,17 @@ struct LanguageServerLocationLink {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_code_action_result, parse_completion_result, parse_definition_result,
-        parse_document_highlights_result, parse_document_links_result,
+        parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_result,
+        parse_definition_result, parse_document_highlights_result, parse_document_links_result,
         parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
-        parse_hover_result, parse_inlay_hints_result, parse_optional_workspace_edit_result,
+        parse_hover_result, parse_incoming_calls_result, parse_inlay_hints_result,
+        parse_optional_workspace_edit_result, parse_outgoing_calls_result,
         parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
         parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
-        LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-        LanguageServerCodeLens, LanguageServerCompletionContext, LanguageServerCompletionItem,
-        LanguageServerCompletionItemLabelDetails, LanguageServerCompletionList,
-        LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
+        LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+        LanguageServerCodeActionContext, LanguageServerCodeLens, LanguageServerCompletionContext,
+        LanguageServerCompletionItem, LanguageServerCompletionItemLabelDetails,
+        LanguageServerCompletionList, LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
         LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
@@ -2079,6 +2211,41 @@ mod tests {
             resolve.params["command"]["command"],
             "editor.action.showReferences"
         );
+    }
+
+    #[test]
+    fn prepare_call_hierarchy_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.prepare_call_hierarchy(&position());
+
+        assert_eq!(request.method, "textDocument/prepareCallHierarchy");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn incoming_call_request_serializes_call_hierarchy_item() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.incoming_calls(&call_hierarchy_item("renderUser"));
+
+        assert_eq!(request.method, "callHierarchy/incomingCalls");
+        assert_eq!(request.params["item"]["name"], "renderUser");
+        assert_eq!(request.params["item"]["uri"], "file:///tmp/User.ts");
+        assert_eq!(request.params["item"]["data"]["symbolId"], "renderUser");
+    }
+
+    #[test]
+    fn outgoing_call_request_serializes_call_hierarchy_item() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.outgoing_calls(&call_hierarchy_item("renderUser"));
+
+        assert_eq!(request.method, "callHierarchy/outgoingCalls");
+        assert_eq!(request.params["item"]["name"], "renderUser");
+        assert_eq!(request.params["item"]["selectionRange"]["start"]["line"], 2);
     }
 
     #[test]
@@ -2913,6 +3080,55 @@ mod tests {
         assert!(parse_semantic_tokens_result(&json!({ "data": ["bad"] })).is_err());
     }
 
+    #[test]
+    fn parses_call_hierarchy_items_and_calls() {
+        let item = json!({
+            "name": "renderUser",
+            "kind": 12,
+            "tags": [1],
+            "detail": "src/User.ts",
+            "uri": "file:///tmp/User.ts",
+            "range": json!(range(2, 0, 2, 24)),
+            "selectionRange": json!(range(2, 9, 2, 19)),
+            "data": { "symbolId": "renderUser" },
+        });
+
+        let items = parse_call_hierarchy_items_result(&json!([item.clone()]))
+            .expect("call hierarchy items");
+        let incoming = parse_incoming_calls_result(&json!([{
+            "from": item.clone(),
+            "fromRanges": [json!(range(8, 4, 8, 14))]
+        }]))
+        .expect("incoming calls");
+        let outgoing = parse_outgoing_calls_result(&json!([{
+            "to": item,
+            "fromRanges": [json!(range(10, 2, 10, 16))]
+        }]))
+        .expect("outgoing calls");
+
+        assert_eq!(items[0].name, "renderUser");
+        assert_eq!(items[0].selection_range.start.character, 9);
+        assert_eq!(incoming[0].from.name, "renderUser");
+        assert_eq!(incoming[0].from_ranges[0].start.line, 8);
+        assert_eq!(outgoing[0].to.name, "renderUser");
+        assert_eq!(outgoing[0].from_ranges[0].end.character, 16);
+        assert_eq!(
+            parse_call_hierarchy_items_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
+        assert_eq!(
+            parse_incoming_calls_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
+        assert_eq!(
+            parse_outgoing_calls_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
+        assert!(parse_call_hierarchy_items_result(&json!({})).is_err());
+        assert!(parse_incoming_calls_result(&json!({})).is_err());
+        assert!(parse_outgoing_calls_result(&json!({})).is_err());
+    }
+
     fn position() -> TextDocumentPosition {
         TextDocumentPosition {
             path: "/tmp/User.php".to_string(),
@@ -2956,6 +3172,19 @@ mod tests {
                 "globalId": 1,
                 "providerId": 2,
             })),
+        }
+    }
+
+    fn call_hierarchy_item(name: &str) -> LanguageServerCallHierarchyItem {
+        LanguageServerCallHierarchyItem {
+            name: name.to_string(),
+            kind: 12,
+            tags: Some(vec![1]),
+            detail: Some("src/User.ts".to_string()),
+            uri: "file:///tmp/User.ts".to_string(),
+            range: range(2, 0, 2, 24),
+            selection_range: range(2, 9, 2, 19),
+            data: Some(json!({ "symbolId": name })),
         }
     }
 }

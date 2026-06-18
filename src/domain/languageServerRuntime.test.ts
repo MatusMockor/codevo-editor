@@ -45,6 +45,7 @@ describe("isLanguageServerActive", () => {
 describe("languageServerCapabilities", () => {
   it("returns running capabilities or an empty registry", () => {
     expect(languageServerCapabilities(status("running"))).toEqual({
+      callHierarchy: true,
       codeAction: true,
       codeLens: true,
       completion: true,
@@ -80,6 +81,7 @@ describe("languageServerCapabilities", () => {
 
   it("returns labels for enabled capabilities", () => {
     expect(languageServerCapabilityLabels(status("running"))).toEqual([
+      "call hierarchy",
       "hover",
       "completion",
       "definition",
@@ -118,6 +120,7 @@ function status(
         kind,
         sessionId: 1,
         capabilities: {
+          callHierarchy: true,
           codeAction: true,
           codeLens: true,
           completion: true,

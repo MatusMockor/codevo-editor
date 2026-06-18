@@ -11,6 +11,7 @@ import type { LanguageServerCapabilities } from "./languageServerRuntime";
 describe("canUseLanguageServerFeature", () => {
   it("reads a feature flag from the provider capability registry", () => {
     const capabilities: LanguageServerCapabilities = {
+      callHierarchy: false,
       codeAction: false,
       codeLens: false,
       completion: false,

@@ -234,6 +234,27 @@ export interface LanguageServerCodeLens {
   range: LanguageServerRange;
 }
 
+export interface LanguageServerCallHierarchyItem {
+  data?: unknown;
+  detail: string | null;
+  kind: number;
+  name: string;
+  range: LanguageServerRange;
+  selectionRange: LanguageServerRange;
+  tags?: number[];
+  uri: string;
+}
+
+export interface LanguageServerIncomingCall {
+  from: LanguageServerCallHierarchyItem;
+  fromRanges: LanguageServerRange[];
+}
+
+export interface LanguageServerOutgoingCall {
+  fromRanges: LanguageServerRange[];
+  to: LanguageServerCallHierarchyItem;
+}
+
 export interface LanguageServerFormattingOptions {
   insertSpaces: boolean;
   tabSize: number;
@@ -339,6 +360,18 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     lens: LanguageServerCodeLens,
   ): Promise<LanguageServerCodeLens>;
+  prepareCallHierarchy(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerCallHierarchyItem[]>;
+  incomingCalls(
+    rootPath: string,
+    item: LanguageServerCallHierarchyItem,
+  ): Promise<LanguageServerIncomingCall[]>;
+  outgoingCalls(
+    rootPath: string,
+    item: LanguageServerCallHierarchyItem,
+  ): Promise<LanguageServerOutgoingCall[]>;
   executeCommand(
     rootPath: string,
     command: LanguageServerCodeActionCommand,

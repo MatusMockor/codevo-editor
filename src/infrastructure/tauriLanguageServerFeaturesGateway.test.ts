@@ -84,6 +84,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.resolveCodeLens("/project", codeLens()),
     ).resolves.toEqual(codeLens());
     await expect(
+      gateway.prepareCallHierarchy("/project", position()),
+    ).resolves.toEqual([]);
+    await expect(
+      gateway.incomingCalls("/project", callHierarchyItem()),
+    ).resolves.toEqual([]);
+    await expect(
+      gateway.outgoingCalls("/project", callHierarchyItem()),
+    ).resolves.toEqual([]);
+    await expect(
       gateway.executeCommand("/project", command()),
     ).resolves.toBeNull();
     await expect(
@@ -197,6 +206,19 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         command: command(),
         data: { kind: "references" },
         range: range(),
+      },
+    ];
+    const callHierarchyItems = [callHierarchyItem()];
+    const incomingCalls = [
+      {
+        from: callHierarchyItem("renderUser"),
+        fromRanges: [range()],
+      },
+    ];
+    const outgoingCalls = [
+      {
+        fromRanges: [range()],
+        to: callHierarchyItem("loadUser"),
       },
     ];
     const formatting = [
@@ -362,6 +384,18 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return codeLenses[0];
       }
 
+      if (command === "text_document_prepare_call_hierarchy") {
+        return callHierarchyItems;
+      }
+
+      if (command === "text_document_incoming_calls") {
+        return incomingCalls;
+      }
+
+      if (command === "text_document_outgoing_calls") {
+        return outgoingCalls;
+      }
+
       if (command === "language_server_execute_command") {
         return rename;
       }
@@ -520,6 +554,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.resolveCodeLens("/project", codeLens()),
     ).resolves.toEqual(codeLenses[0]);
+    await expect(
+      gateway.prepareCallHierarchy("/project", requestPosition),
+    ).resolves.toEqual(callHierarchyItems);
+    await expect(
+      gateway.incomingCalls("/project", callHierarchyItems[0]),
+    ).resolves.toEqual(incomingCalls);
+    await expect(
+      gateway.outgoingCalls("/project", callHierarchyItems[0]),
+    ).resolves.toEqual(outgoingCalls);
     await expect(
       gateway.executeCommand("/project", command()),
     ).resolves.toEqual(rename);
@@ -688,6 +731,21 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       lens: codeLens(),
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "text_document_prepare_call_hierarchy",
+      {
+        position: requestPosition,
+        rootPath: "/project",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_incoming_calls", {
+      item: callHierarchyItems[0],
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_outgoing_calls", {
+      item: callHierarchyItems[0],
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("language_server_execute_command", {
       command: command(),
       rootPath: "/project",
@@ -809,6 +867,19 @@ function codeLens() {
     command: null,
     data: { kind: "references" },
     range: range(),
+  };
+}
+
+function callHierarchyItem(name = "handleClick") {
+  return {
+    data: { id: name },
+    detail: "src/User.php",
+    kind: 12,
+    name,
+    range: range(),
+    selectionRange: range(),
+    tags: [1],
+    uri: "file:///project/src/User.php",
   };
 }
 

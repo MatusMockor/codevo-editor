@@ -893,10 +893,13 @@ function featuresGateway(
     foldingRanges: vi.fn(async () => []),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => responses.hover ?? null),
+    incomingCalls: vi.fn(async () => []),
     implementation: vi.fn(async () => []),
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     linkedEditingRanges: vi.fn(async () => null),
     onTypeFormatting: vi.fn(async () => []),
+    outgoingCalls: vi.fn(async () => []),
+    prepareCallHierarchy: vi.fn(async () => []),
     prepareRename: vi.fn(async () => null),
     rangeFormatting: vi.fn(async () => []),
     references: vi.fn(async () => responses.references ?? []),
@@ -919,6 +922,7 @@ function runningStatus(
 ): LanguageServerRuntimeStatus {
   return {
     capabilities: {
+      callHierarchy: true,
       codeAction: true,
       codeLens: true,
       completion: true,

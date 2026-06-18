@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   emptyLanguageServerCompletionList,
+  type LanguageServerCallHierarchyItem,
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
@@ -16,9 +17,11 @@ import {
   type LanguageServerFormattingOptions,
   type LanguageServerFeaturesGateway,
   type LanguageServerHover,
+  type LanguageServerIncomingCall,
   type LanguageServerInlayHint,
   type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
+  type LanguageServerOutgoingCall,
   type LanguageServerPosition,
   type LanguageServerPrepareRenameResult,
   type LanguageServerRange,
@@ -59,10 +62,13 @@ const DEFAULT_FEATURE_COMMANDS = {
   foldingRanges: "text_document_folding_ranges",
   formatting: "text_document_formatting",
   hover: "text_document_hover",
+  incomingCalls: "text_document_incoming_calls",
   implementation: "text_document_implementation",
   inlayHints: "text_document_inlay_hints",
   linkedEditingRanges: "text_document_linked_editing_ranges",
   onTypeFormatting: "text_document_on_type_formatting",
+  outgoingCalls: "text_document_outgoing_calls",
+  prepareCallHierarchy: "text_document_prepare_call_hierarchy",
   prepareRename: "text_document_prepare_rename",
   rangeFormatting: "text_document_range_formatting",
   references: "text_document_references",
@@ -96,11 +102,15 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   foldingRanges: "javascript_typescript_text_document_folding_ranges",
   formatting: "javascript_typescript_text_document_formatting",
   hover: "javascript_typescript_text_document_hover",
+  incomingCalls: "javascript_typescript_text_document_incoming_calls",
   implementation: "javascript_typescript_text_document_implementation",
   inlayHints: "javascript_typescript_text_document_inlay_hints",
   linkedEditingRanges:
     "javascript_typescript_text_document_linked_editing_ranges",
   onTypeFormatting: "javascript_typescript_text_document_on_type_formatting",
+  outgoingCalls: "javascript_typescript_text_document_outgoing_calls",
+  prepareCallHierarchy:
+    "javascript_typescript_text_document_prepare_call_hierarchy",
   prepareRename: "javascript_typescript_text_document_prepare_rename",
   rangeFormatting: "javascript_typescript_text_document_range_formatting",
   references: "javascript_typescript_text_document_references",
@@ -132,10 +142,13 @@ export interface TauriLanguageServerFeatureCommands {
   foldingRanges: string;
   formatting: string;
   hover: string;
+  incomingCalls: string;
   implementation: string;
   inlayHints: string;
   linkedEditingRanges: string;
   onTypeFormatting: string;
+  outgoingCalls: string;
+  prepareCallHierarchy: string;
   prepareRename: string;
   rangeFormatting: string;
   references: string;
@@ -413,6 +426,39 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.codeLensResolve,
       { lens, rootPath },
       lens,
+    );
+  }
+
+  prepareCallHierarchy(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerCallHierarchyItem[]> {
+    return this.invokeWhenAvailable(
+      this.commands.prepareCallHierarchy,
+      { position, rootPath },
+      [],
+    );
+  }
+
+  incomingCalls(
+    rootPath: string,
+    item: LanguageServerCallHierarchyItem,
+  ): Promise<LanguageServerIncomingCall[]> {
+    return this.invokeWhenAvailable(
+      this.commands.incomingCalls,
+      { item, rootPath },
+      [],
+    );
+  }
+
+  outgoingCalls(
+    rootPath: string,
+    item: LanguageServerCallHierarchyItem,
+  ): Promise<LanguageServerOutgoingCall[]> {
+    return this.invokeWhenAvailable(
+      this.commands.outgoingCalls,
+      { item, rootPath },
+      [],
     );
   }
 

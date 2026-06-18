@@ -55,6 +55,7 @@ pub enum LanguageServerRuntimeStatus {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerCapabilities {
+    pub call_hierarchy: bool,
     pub code_action: bool,
     pub code_lens: bool,
     pub hover: bool,
@@ -1633,6 +1634,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
     }
 
     Ok(LanguageServerCapabilities {
+        call_hierarchy: is_capability_enabled(capabilities.get("callHierarchyProvider")),
         code_action: is_capability_enabled(capabilities.get("codeActionProvider")),
         code_lens: is_capability_enabled(capabilities.get("codeLensProvider")),
         hover: is_capability_enabled(capabilities.get("hoverProvider")),
@@ -1989,6 +1991,7 @@ mod tests {
             LanguageServerRuntimeStatus::Running {
                 session_id: 1,
                 capabilities: LanguageServerCapabilities {
+                    call_hierarchy: false,
                     code_action: false,
                     code_lens: false,
                     hover: true,
@@ -2025,6 +2028,7 @@ mod tests {
         let status = LanguageServerRuntimeStatus::Running {
             session_id: 1,
             capabilities: LanguageServerCapabilities {
+                call_hierarchy: true,
                 code_action: true,
                 code_lens: true,
                 hover: true,
@@ -2058,6 +2062,7 @@ mod tests {
                 "kind": "running",
                 "sessionId": 1,
                 "capabilities": {
+                    "callHierarchy": true,
                     "hover": true,
                     "completion": false,
                     "definition": true,
@@ -2121,6 +2126,7 @@ mod tests {
                     "documentLinkProvider": { "resolveProvider": true },
                     "documentSymbolProvider": true,
                     "foldingRangeProvider": true,
+                    "callHierarchyProvider": true,
                     "implementationProvider": true,
                     "inlayHintProvider": true,
                     "linkedEditingRangeProvider": true,
@@ -2158,6 +2164,7 @@ mod tests {
         assert_eq!(
             capabilities,
             LanguageServerCapabilities {
+                call_hierarchy: true,
                 code_action: true,
                 code_lens: true,
                 hover: false,

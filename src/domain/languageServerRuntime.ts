@@ -1,6 +1,7 @@
 import type { JavaScriptTypeScriptVersionPreference } from "./settings";
 
 export interface LanguageServerCapabilities {
+  callHierarchy: boolean;
   codeAction: boolean;
   codeLens: boolean;
   hover: boolean;
@@ -120,6 +121,10 @@ export function languageServerCapabilityLabels(
   const capabilities = languageServerCapabilities(status);
   const labels: string[] = [];
 
+  if (capabilities.callHierarchy) {
+    labels.push("call hierarchy");
+  }
+
   if (capabilities.hover) {
     labels.push("hover");
   }
@@ -221,6 +226,7 @@ export function languageServerCapabilityLabels(
 
 export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
   return {
+    callHierarchy: false,
     codeAction: false,
     codeLens: false,
     completion: false,
