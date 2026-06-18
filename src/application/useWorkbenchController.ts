@@ -2210,6 +2210,7 @@ export function useWorkbenchController(
 
         delete workspaceStateCacheRef.current[path];
         delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
+        await closeSyncedJavaScriptTypeScriptDocumentsForRoot(path);
         await stopProjectRuntimes(path);
 
         try {
@@ -2239,6 +2240,10 @@ export function useWorkbenchController(
 
       delete workspaceStateCacheRef.current[path];
       delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
+      await Promise.allSettled([
+        closeSyncedLanguageServerDocumentsForRoot(path),
+        closeSyncedJavaScriptTypeScriptDocumentsForRoot(path),
+      ]);
       await stopProjectRuntimes(path);
 
       try {
@@ -2261,6 +2266,8 @@ export function useWorkbenchController(
     },
     [
       clearActiveWorkspace,
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+      closeSyncedLanguageServerDocumentsForRoot,
       dirtyCount,
       openWorkspacePath,
       persistAppSettings,
