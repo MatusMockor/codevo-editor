@@ -117,6 +117,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript providers now re-check the active workspace after pending document sync flushes and require runtime status to belong to the requested workspace root, so a project-tab switch cannot send fresh completion/navigation/formatting requests through a stale background runtime.
 - `singleActive` background runtime policy now has regression coverage proving JavaScript/TypeScript services are stopped for every inactive project tab, not just the previous tab.
 - Saving the `singleActive` background runtime policy now has regression coverage proving inactive JavaScript/TypeScript services, PHP language servers, and terminal sessions are stopped immediately without stopping the active project.
+- Managed JS/TS LSP sessions now answer `workspace/workspaceFolders` with the session root folder instead of `null`, giving TypeScript-language-server a VS Code-like workspace context per project tab.
 
 ## Full VS Code-Like Target
 
@@ -168,6 +169,7 @@ Basic mode must support:
 - quick fixes
 - organize imports
 - workspace/configuration response. Implemented for managed JS/TS LSP preferences.
+- workspace/workspaceFolders response. Implemented with the current managed session root.
 - formatting
 - range formatting / format selection. Implemented through LSP-backed Monaco provider.
 - document links. Implemented through LSP-backed Monaco provider with resolve support.

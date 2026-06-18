@@ -1,4 +1,4 @@
-use crate::lsp::{JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
+use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
 use crate::lsp_diagnostics::{parse_publish_diagnostics, LanguageServerDiagnosticEvent};
 use crate::lsp_features::{parse_workspace_edit_result, LanguageServerWorkspaceEdit};
 use crate::lsp_transport::{read_message, write_message};
@@ -723,6 +723,7 @@ impl LanguageServerSupervisor {
 
         let (handshake_tx, handshake_rx) = mpsc::channel();
         let server_configuration = server_configuration_from_initialize_request(initialize_request);
+        let workspace_root = command.working_directory.clone();
         let mut reader = Some(spawn_reader(
             spawned.stdout,
             Arc::clone(&stdin),
@@ -737,6 +738,7 @@ impl LanguageServerSupervisor {
             session_id,
             self.server_label,
             server_configuration,
+            workspace_root,
         ));
 
         if !self.attach_reader(&stop_requested, &mut reader)? {
@@ -1254,6 +1256,7 @@ fn spawn_reader(
     session_id: u64,
     server_label: &'static str,
     server_configuration: Value,
+    workspace_root: String,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -1277,6 +1280,7 @@ fn spawn_reader(
                             workspace_edit_sink.as_ref(),
                             session_id,
                             &server_configuration,
+                            &workspace_root,
                         )
                         .is_ok()
                         {
@@ -1351,6 +1355,7 @@ fn respond_to_server_request(
     workspace_edit_sink: &dyn WorkspaceEditSink,
     session_id: u64,
     server_configuration: &Value,
+    workspace_root: &str,
 ) -> Result<(), ()> {
     let Some(id) = value.get("id").cloned() else {
         return Err(());
@@ -1365,6 +1370,7 @@ fn respond_to_server_request(
         workspace_edit_sink,
         session_id,
         server_configuration,
+        workspace_root,
     );
     let response = json!({
         "jsonrpc": "2.0",
@@ -1384,16 +1390,33 @@ fn server_request_result(
     workspace_edit_sink: &dyn WorkspaceEditSink,
     session_id: u64,
     server_configuration: &Value,
+    workspace_root: &str,
 ) -> Value {
     match method {
         "workspace/configuration" => workspace_configuration_result(params, server_configuration),
-        "workspace/workspaceFolders" => Value::Null,
+        "workspace/workspaceFolders" => workspace_folders_result(workspace_root),
         "workspace/applyEdit" => {
             workspace_apply_edit_result(params, workspace_edit_sink, session_id)
         }
         "client/registerCapability" | "client/unregisterCapability" => Value::Null,
         _ => Value::Null,
     }
+}
+
+fn workspace_folders_result(workspace_root: &str) -> Value {
+    let root_path = PathBuf::from(workspace_root);
+    let name = root_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(workspace_root);
+
+    json!([
+        {
+            "uri": file_uri(&root_path),
+            "name": name,
+        }
+    ])
 }
 
 fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequest) -> Value {
@@ -1826,8 +1849,7 @@ mod tests {
             .any(|message| message["method"] == "textDocument/didSave"));
         assert!(captured_messages(&capture_b).iter().any(|message| {
             message["method"] == "textDocument/didSave"
-                && message["params"]["textDocument"]["uri"]
-                    == "file:///tmp/workspace-b/src/App.ts"
+                && message["params"]["textDocument"]["uri"] == "file:///tmp/workspace-b/src/App.ts"
         }));
     }
 
@@ -2343,6 +2365,46 @@ mod tests {
         assert_eq!(response["result"][6]["module"], 99);
         assert_eq!(response["result"][6]["target"], 11);
         assert_eq!(response["result"][7], json!({}));
+    }
+
+    #[test]
+    fn workspace_folder_requests_return_the_session_root() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, status_rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+        let command = LanguageServerCommand {
+            executable: "typescript-language-server".to_string(),
+            args: vec!["--stdio".to_string()],
+            working_directory: "/tmp/workspace-a".to_string(),
+        };
+
+        supervisor
+            .start(
+                &command,
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 44,
+                "method": "workspace/workspaceFolders",
+                "params": null
+            }),
+        );
+
+        let response = wait_for_captured_response(&capture, 44);
+
+        assert_eq!(response["result"][0]["uri"], "file:///tmp/workspace-a");
+        assert_eq!(response["result"][0]["name"], "workspace-a");
     }
 
     #[test]
