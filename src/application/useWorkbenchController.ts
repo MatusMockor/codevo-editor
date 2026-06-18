@@ -78,6 +78,7 @@ import {
   toLanguageServerTextDocumentPosition,
   type EditorPosition,
   type EditorRevealTarget,
+  type LanguageServerConfigurationSettings,
   type LanguageServerFeature,
   type LanguageServerDocumentSymbol,
   type LanguageServerFeaturesGateway,
@@ -7306,7 +7307,8 @@ export function useWorkbenchController(
         };
         const shouldRestartJavaScriptTypeScriptRuntime =
           previousWorkspaceSettings.javaScriptTypeScriptVersion !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptVersion ||
+          resolvedWorkspaceSettings.javaScriptTypeScriptVersion;
+        const shouldNotifyJavaScriptTypeScriptConfiguration =
           previousWorkspaceSettings.javaScriptTypeScriptAutoImports !==
             resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
           previousWorkspaceSettings.javaScriptTypeScriptCodeLens !==
@@ -7321,6 +7323,20 @@ export function useWorkbenchController(
         intelligenceModeRef.current = nextMode;
         await persistWorkspaceSettings(workspaceRoot, resolvedWorkspaceSettings);
         setIntelligenceMode(nextMode);
+
+        if (
+          shouldNotifyJavaScriptTypeScriptConfiguration &&
+          !shouldRestartJavaScriptTypeScriptRuntime &&
+          resolvedWorkspaceSettings.javaScriptTypeScriptService === "auto" &&
+          isLanguageServerActive(javaScriptTypeScriptLanguageServerRuntimeStatus)
+        ) {
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration(
+            workspaceRoot,
+            javaScriptTypeScriptLanguageServerConfiguration(
+              resolvedWorkspaceSettings,
+            ),
+          );
+        }
 
         if (shouldRestartJavaScriptTypeScriptRuntime) {
           autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
@@ -7372,6 +7388,7 @@ export function useWorkbenchController(
       clearWorkspaceIndex,
       persistAppSettings,
       persistWorkspaceSettings,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       refreshLanguageServerPlan,
       refreshJavaScriptTypeScriptLanguageServerPlan,
@@ -10067,6 +10084,72 @@ function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
 
 function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
+}
+
+function javaScriptTypeScriptLanguageServerConfiguration(
+  settings: WorkspaceSettings,
+): LanguageServerConfigurationSettings {
+  const autoImportsEnabled = settings.javaScriptTypeScriptAutoImports;
+  const codeLensEnabled = settings.javaScriptTypeScriptCodeLens;
+  const inlayHintsEnabled = settings.javaScriptTypeScriptInlayHints;
+  const parameterNameHints = inlayHintsEnabled ? "literals" : "none";
+  const preferences = {
+    includeAutomaticOptionalChainCompletions: true,
+    includeCompletionsForImportStatements: autoImportsEnabled,
+    includeCompletionsForModuleExports: autoImportsEnabled,
+    includeInlayEnumMemberValueHints: inlayHintsEnabled,
+    includeInlayFunctionLikeReturnTypeHints: inlayHintsEnabled,
+    includeInlayFunctionParameterTypeHints: inlayHintsEnabled,
+    includeInlayParameterNameHints: parameterNameHints,
+    includeInlayParameterNameHintsWhenArgumentMatchesName: false,
+    includeInlayPropertyDeclarationTypeHints: inlayHintsEnabled,
+    includeInlayVariableTypeHints: inlayHintsEnabled,
+    includeInlayVariableTypeHintsWhenTypeMatchesName: false,
+    mockorCodeLensEnabled: codeLensEnabled,
+  };
+
+  return {
+    formattingOptions: {
+      insertSpaces: true,
+      tabSize: 2,
+    },
+    implicitProjectConfiguration: {
+      checkJs: false,
+      experimentalDecorators: false,
+      module: 99,
+      strict: true,
+      strictFunctionTypes: true,
+      strictNullChecks: true,
+      target: 11,
+    },
+    implementationsCodeLens: { enabled: codeLensEnabled },
+    inlayHints: {
+      enumMemberValues: { enabled: inlayHintsEnabled },
+      functionLikeReturnTypes: { enabled: inlayHintsEnabled },
+      parameterNames: {
+        enabled: parameterNameHints,
+        suppressWhenArgumentMatchesName: false,
+      },
+      parameterTypes: { enabled: inlayHintsEnabled },
+      propertyDeclarationTypes: { enabled: inlayHintsEnabled },
+      variableTypes: {
+        enabled: inlayHintsEnabled,
+        suppressWhenTypeMatchesName: false,
+      },
+    },
+    preferences,
+    referencesCodeLens: {
+      enabled: codeLensEnabled,
+      showOnAllFunctions: false,
+    },
+    suggest: {
+      autoImports: autoImportsEnabled,
+      completeFunctionCalls: true,
+      includeAutomaticOptionalChainCompletions: true,
+      includeCompletionsForImportStatements: autoImportsEnabled,
+      includeCompletionsForModuleExports: autoImportsEnabled,
+    },
+  };
 }
 
 function isJavaScriptTypeScriptPath(path: string): boolean {

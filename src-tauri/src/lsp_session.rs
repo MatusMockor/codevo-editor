@@ -370,6 +370,7 @@ struct RunningSession {
     killer: Box<dyn ProcessKiller>,
     pending_requests: PendingRequests,
     reader: Option<JoinHandle<()>>,
+    server_configuration: Arc<Mutex<Value>>,
     status_sink: Arc<dyn StatusSink>,
     stop_requested: Arc<AtomicBool>,
 }
@@ -523,6 +524,18 @@ impl LanguageServerRegistry {
         };
 
         supervisor.send_notification(notification)
+    }
+
+    pub fn update_server_configuration(
+        &self,
+        root_path: &str,
+        server_configuration: Value,
+    ) -> Result<(), String> {
+        let Some(supervisor) = self.existing_supervisor(root_path) else {
+            return Ok(());
+        };
+
+        supervisor.update_server_configuration(server_configuration)
     }
 
     pub fn send_request(
@@ -686,12 +699,16 @@ impl LanguageServerSupervisor {
         let stderr_reader = spawned
             .stderr
             .map(|stderr| spawn_stderr_reader(stderr, Arc::clone(&self.log)));
+        let server_configuration = Arc::new(Mutex::new(
+            server_configuration_from_initialize_request(initialize_request),
+        ));
         let mut session = Some(RunningSession {
             stderr_reader,
             stdin: Arc::clone(&stdin),
             killer: spawned.killer,
             pending_requests: Arc::clone(&pending_requests),
             reader: None,
+            server_configuration: Arc::clone(&server_configuration),
             status_sink: Arc::clone(&status_sink),
             stop_requested: Arc::clone(&stop_requested),
         });
@@ -722,7 +739,6 @@ impl LanguageServerSupervisor {
         }
 
         let (handshake_tx, handshake_rx) = mpsc::channel();
-        let server_configuration = server_configuration_from_initialize_request(initialize_request);
         let workspace_root = command.working_directory.clone();
         let mut reader = Some(spawn_reader(
             spawned.stdout,
@@ -837,6 +853,18 @@ impl LanguageServerSupervisor {
 
         write_with_session_stdin(&stdin, &bytes)
             .map_err(|error| format!("Failed to send LSP notification: {error}"))
+    }
+
+    pub fn update_server_configuration(&self, server_configuration: Value) -> Result<(), String> {
+        let Some(session_configuration) = self.session_server_configuration() else {
+            return Ok(());
+        };
+
+        let mut current = session_configuration
+            .lock()
+            .map_err(|error| error.to_string())?;
+        *current = server_configuration;
+        Ok(())
     }
 
     pub fn send_request(&self, method: &str, params: Value) -> Result<Option<Value>, String> {
@@ -1026,6 +1054,14 @@ impl LanguageServerSupervisor {
                 Arc::clone(&session.pending_requests),
             )
         })
+    }
+
+    fn session_server_configuration(&self) -> Option<Arc<Mutex<Value>>> {
+        self.session
+            .lock()
+            .ok()?
+            .as_ref()
+            .map(|session| Arc::clone(&session.server_configuration))
     }
 
     #[cfg(test)]
@@ -1255,7 +1291,7 @@ fn spawn_reader(
     init_id: u64,
     session_id: u64,
     server_label: &'static str,
-    server_configuration: Value,
+    server_configuration: Arc<Mutex<Value>>,
     workspace_root: String,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
@@ -1354,7 +1390,7 @@ fn respond_to_server_request(
     value: &Value,
     workspace_edit_sink: &dyn WorkspaceEditSink,
     session_id: u64,
-    server_configuration: &Value,
+    server_configuration: &Arc<Mutex<Value>>,
     workspace_root: &str,
 ) -> Result<(), ()> {
     let Some(id) = value.get("id").cloned() else {
@@ -1364,12 +1400,16 @@ fn respond_to_server_request(
         return Err(());
     };
 
+    let configuration = server_configuration
+        .lock()
+        .map(|configuration| configuration.clone())
+        .unwrap_or_else(|_| json!({}));
     let result = server_request_result(
         method,
         value.get("params"),
         workspace_edit_sink,
         session_id,
-        server_configuration,
+        &configuration,
         workspace_root,
     );
     let response = json!({
@@ -2365,6 +2405,70 @@ mod tests {
         assert_eq!(response["result"][6]["module"], 99);
         assert_eq!(response["result"][6]["target"], 11);
         assert_eq!(response["result"][7], json!({}));
+    }
+
+    #[test]
+    fn workspace_configuration_requests_use_updated_session_settings() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, status_rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        supervisor
+            .update_server_configuration(json!({
+                "suggest": {
+                    "autoImports": false,
+                    "completeFunctionCalls": true,
+                },
+                "preferences": {
+                    "includeCompletionsForModuleExports": false,
+                    "mockorCodeLensEnabled": true,
+                },
+                "referencesCodeLens": {
+                    "enabled": true,
+                    "showOnAllFunctions": false,
+                },
+            }))
+            .expect("update configuration");
+
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 45,
+                "method": "workspace/configuration",
+                "params": {
+                    "items": [
+                        { "section": "typescript.suggest" },
+                        { "section": "javascript.preferences" },
+                        { "section": "typescript.referencesCodeLens" }
+                    ]
+                }
+            }),
+        );
+
+        let response = wait_for_captured_response(&capture, 45);
+
+        assert_eq!(response["result"][0]["autoImports"], false);
+        assert_eq!(response["result"][0]["completeFunctionCalls"], true);
+        assert_eq!(
+            response["result"][1]["includeCompletionsForModuleExports"],
+            false
+        );
+        assert_eq!(response["result"][1]["mockorCodeLensEnabled"], true);
+        assert_eq!(response["result"][2]["enabled"], true);
     }
 
     #[test]

@@ -109,6 +109,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       ]),
     ).resolves.toBeUndefined();
     await expect(
+      gateway.didChangeConfiguration("/project", {
+        suggest: { autoImports: false },
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
       gateway.formatting("/project", "/project/src/User.php", {
         insertSpaces: true,
         tabSize: 2,
@@ -373,6 +378,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return undefined;
       }
 
+      if (command === "workspace_did_change_configuration") {
+        return undefined;
+      }
+
       if (command === "text_document_formatting") {
         return formatting;
       }
@@ -541,6 +550,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       ]),
     ).resolves.toBeUndefined();
     await expect(
+      gateway.didChangeConfiguration("/project", {
+        suggest: { autoImports: false },
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
       gateway.formatting("/project", "/project/src/User.php", {
         insertSpaces: true,
         tabSize: 2,
@@ -702,6 +716,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
           },
         ],
         rootPath: "/project",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "workspace_did_change_configuration",
+      {
+        rootPath: "/project",
+        settings: {
+          suggest: { autoImports: false },
+        },
       },
     );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_formatting", {

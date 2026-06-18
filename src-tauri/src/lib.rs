@@ -90,7 +90,7 @@ use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
     ffi::OsString,
@@ -1608,6 +1608,26 @@ fn javascript_typescript_workspace_did_change_watched_files(
 }
 
 #[tauri::command]
+fn javascript_typescript_workspace_did_change_configuration(
+    root_path: String,
+    settings: Value,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<(), String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.did_change_configuration(settings.clone());
+
+    registry.update_server_configuration(&root_path, settings)?;
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: request.method,
+            params: request.params,
+        },
+    )
+}
+
+#[tauri::command]
 fn text_document_formatting(
     root_path: String,
     path: String,
@@ -2414,6 +2434,7 @@ pub fn run() {
             javascript_typescript_document_did_open,
             javascript_typescript_document_did_save,
             javascript_typescript_language_server_execute_command,
+            javascript_typescript_workspace_did_change_configuration,
             javascript_typescript_workspace_did_change_watched_files,
             javascript_typescript_workspace_did_rename_files,
             javascript_typescript_workspace_will_rename_files,

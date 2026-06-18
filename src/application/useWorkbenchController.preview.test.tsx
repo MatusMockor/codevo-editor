@@ -578,6 +578,9 @@ describe("useWorkbenchController preview tabs", () => {
       readTextFile: vi.fn(async (requestedPath: string) => `// ${requestedPath}\n`),
     });
     await flushAsyncTurns(24);
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).mockClear();
 
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
@@ -2338,6 +2341,102 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
     ).toHaveBeenCalledWith("/workspace");
+  });
+
+  it("notifies the running JavaScript and TypeScript language service when workspace settings change", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 15,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: true,
+        javaScriptTypeScriptCodeLens: false,
+        javaScriptTypeScriptInlayHints: true,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        {
+          ...defaultWorkspaceSettings(),
+          javaScriptTypeScriptAutoImports: false,
+          javaScriptTypeScriptCodeLens: true,
+          javaScriptTypeScriptInlayHints: false,
+        },
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        implementationsCodeLens: { enabled: true },
+        referencesCodeLens: {
+          enabled: true,
+          showOnAllFunctions: false,
+        },
+        suggest: expect.objectContaining({
+          autoImports: false,
+          includeCompletionsForImportStatements: false,
+          includeCompletionsForModuleExports: false,
+        }),
+      }),
+    );
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        inlayHints: expect.objectContaining({
+          parameterNames: {
+            enabled: "none",
+            suppressWhenArgumentMatchesName: false,
+          },
+        }),
+      }),
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).not.toHaveBeenCalled();
   });
 
   it("restarts JavaScript and TypeScript language service with current settings", async () => {
@@ -7587,6 +7686,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
       items: [],
     })),
     definition: vi.fn(async () => []),
+    didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(async () => []),

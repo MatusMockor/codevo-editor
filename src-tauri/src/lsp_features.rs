@@ -425,6 +425,7 @@ pub trait TextDocumentFeatureRequestFactory {
         &self,
         changes: &[WorkspaceFileChange],
     ) -> LanguageServerFeatureRequest;
+    fn did_change_configuration(&self, settings: Value) -> LanguageServerFeatureRequest;
 }
 
 pub struct LspTextDocumentFeatureRequestFactory;
@@ -731,6 +732,15 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                         })
                     })
                     .collect::<Vec<_>>(),
+            }),
+        }
+    }
+
+    fn did_change_configuration(&self, settings: Value) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/didChangeConfiguration".to_string(),
+            params: json!({
+                "settings": settings,
             }),
         }
     }
@@ -2026,6 +2036,19 @@ mod tests {
             "file:///tmp/src/Old.ts"
         );
         assert_eq!(request.params["changes"][2]["type"], 3);
+    }
+
+    #[test]
+    fn did_change_configuration_request_contains_settings() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.did_change_configuration(json!({
+            "suggest": {
+                "autoImports": false,
+            },
+        }));
+
+        assert_eq!(request.method, "workspace/didChangeConfiguration");
+        assert_eq!(request.params["settings"]["suggest"]["autoImports"], false);
     }
 
     #[test]

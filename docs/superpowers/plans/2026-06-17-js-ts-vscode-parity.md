@@ -118,6 +118,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - `singleActive` background runtime policy now has regression coverage proving JavaScript/TypeScript services are stopped for every inactive project tab, not just the previous tab.
 - Saving the `singleActive` background runtime policy now has regression coverage proving inactive JavaScript/TypeScript services, PHP language servers, and terminal sessions are stopped immediately without stopping the active project.
 - Managed JS/TS LSP sessions now answer `workspace/workspaceFolders` with the session root folder instead of `null`, giving TypeScript-language-server a VS Code-like workspace context per project tab.
+- Managed JS/TS LSP sessions now receive `workspace/didChangeConfiguration` when per-workspace JS/TS settings change, and the backend updates that session's configuration cache before answering later `workspace/configuration` requests. This keeps auto-import, inlay hint, and CodeLens settings scoped to the active project runtime instead of relying only on process restart.
 
 ## Full VS Code-Like Target
 

@@ -177,6 +177,8 @@ export interface LanguageServerWorkspaceFileChange {
   changeType: LanguageServerWorkspaceFileChangeType;
 }
 
+export type LanguageServerConfigurationSettings = Record<string, unknown>;
+
 export interface LanguageServerPrepareRenameResult {
   defaultBehavior: boolean;
   placeholder: string | null;
@@ -354,6 +356,10 @@ export interface LanguageServerFeaturesGateway {
   didChangeWatchedFiles(
     rootPath: string,
     changes: LanguageServerWorkspaceFileChange[],
+  ): Promise<void>;
+  didChangeConfiguration(
+    rootPath: string,
+    settings: LanguageServerConfigurationSettings,
   ): Promise<void>;
   formatting(
     rootPath: string,
