@@ -87,6 +87,20 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.executeCommand("/project", command()),
     ).resolves.toBeNull();
     await expect(
+      gateway.willRenameFiles(
+        "/project",
+        "/project/src/User.ts",
+        "/project/src/Account.ts",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      gateway.didRenameFiles(
+        "/project",
+        "/project/src/User.ts",
+        "/project/src/Account.ts",
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
       gateway.formatting("/project", "/project/src/User.php", {
         insertSpaces: true,
         tabSize: 2,
@@ -318,6 +332,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return rename;
       }
 
+      if (command === "text_document_will_rename_files") {
+        return rename;
+      }
+
+      if (command === "workspace_did_rename_files") {
+        return undefined;
+      }
+
       if (command === "text_document_formatting") {
         return formatting;
       }
@@ -451,6 +473,20 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.executeCommand("/project", command()),
     ).resolves.toEqual(rename);
     await expect(
+      gateway.willRenameFiles(
+        "/project",
+        "/project/src/User.ts",
+        "/project/src/Account.ts",
+      ),
+    ).resolves.toEqual(rename);
+    await expect(
+      gateway.didRenameFiles(
+        "/project",
+        "/project/src/User.ts",
+        "/project/src/Account.ts",
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
       gateway.formatting("/project", "/project/src/User.php", {
         insertSpaces: true,
         tabSize: 2,
@@ -570,6 +606,16 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     });
     expect(invokeCommand).toHaveBeenCalledWith("language_server_execute_command", {
       command: command(),
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_will_rename_files", {
+      newPath: "/project/src/Account.ts",
+      oldPath: "/project/src/User.ts",
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("workspace_did_rename_files", {
+      newPath: "/project/src/Account.ts",
+      oldPath: "/project/src/User.ts",
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_formatting", {

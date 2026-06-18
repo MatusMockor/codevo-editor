@@ -32,6 +32,7 @@ describe("canUseLanguageServerFeature", () => {
       semanticTokens: false,
       signatureHelp: false,
       typeDefinition: false,
+      willRenameFiles: false,
       workspaceSymbol: false,
     };
 

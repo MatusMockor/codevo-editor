@@ -132,6 +132,13 @@ pub struct TextDocumentRename {
     pub new_name: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFileRename {
+    pub old_path: String,
+    pub new_path: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextDocumentFormatting {
@@ -367,6 +374,7 @@ pub trait TextDocumentFeatureRequestFactory {
         &self,
         command: &LanguageServerCodeActionCommand,
     ) -> LanguageServerFeatureRequest;
+    fn will_rename_files(&self, files: &[WorkspaceFileRename]) -> LanguageServerFeatureRequest;
 }
 
 pub struct LspTextDocumentFeatureRequestFactory;
@@ -613,6 +621,23 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
             params: json!({
                 "command": command.command,
                 "arguments": command.arguments.clone().unwrap_or_default(),
+            }),
+        }
+    }
+
+    fn will_rename_files(&self, files: &[WorkspaceFileRename]) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/willRenameFiles".to_string(),
+            params: json!({
+                "files": files
+                    .iter()
+                    .map(|file| {
+                        json!({
+                            "oldUri": file_uri(Path::new(&file.old_path)),
+                            "newUri": file_uri(Path::new(&file.new_path)),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
             }),
         }
     }
@@ -1436,7 +1461,7 @@ mod tests {
         LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
         TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition,
         TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
-        TextDocumentSelectionRange,
+        TextDocumentSelectionRange, WorkspaceFileRename,
     };
     use serde_json::json;
 
@@ -1778,6 +1803,25 @@ mod tests {
         });
 
         assert_eq!(execute_without_arguments.params["arguments"], json!([]));
+    }
+
+    #[test]
+    fn will_rename_files_request_contains_old_and_new_file_uris() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.will_rename_files(&[WorkspaceFileRename {
+            old_path: "/tmp/src/User.ts".to_string(),
+            new_path: "/tmp/src/Account.ts".to_string(),
+        }]);
+
+        assert_eq!(request.method, "workspace/willRenameFiles");
+        assert_eq!(
+            request.params["files"][0]["oldUri"],
+            "file:///tmp/src/User.ts"
+        );
+        assert_eq!(
+            request.params["files"][0]["newUri"],
+            "file:///tmp/src/Account.ts"
+        );
     }
 
     #[test]

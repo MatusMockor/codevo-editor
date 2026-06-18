@@ -44,8 +44,8 @@ use index_scan::{
     WorkspaceReindexMode, METADATA_SCAN_COMPLETED_EVENT,
 };
 use lsp::{
-    JavaScriptTypeScriptLanguageServerPlanner, JsonRpcRequest, LanguageServerCommand,
-    LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
+    file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
+    LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
     PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
     TypeScriptLanguageServerSettings,
 };
@@ -71,6 +71,7 @@ use lsp_features::{
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
     TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
     TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
+    WorkspaceFileRename,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -86,6 +87,7 @@ use php_tree::PhpTree;
 use project::{ComposerWorkspaceDetector, WorkspaceDescriptor, WorkspaceDetector};
 use search::{RipgrepTextSearcher, TextSearchResult, TextSearcher};
 use serde::Serialize;
+use serde_json::json;
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
     ffi::OsString,
@@ -109,7 +111,8 @@ use tools::{
 };
 use trust::{WorkspaceTrustService, WorkspaceTrustState};
 use workspace::{
-    FileEntry, FileSearchResult, LocalWorkspaceFileRepository, WorkspaceFileRepository,
+    apply_text_edits_to_files, FileEntry, FileSearchResult, LocalWorkspaceFileRepository,
+    WorkspaceFileRepository, WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
 };
 
 const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
@@ -1481,6 +1484,46 @@ fn javascript_typescript_language_server_execute_command(
 }
 
 #[tauri::command]
+fn javascript_typescript_workspace_will_rename_files(
+    root_path: String,
+    old_path: String,
+    new_path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.will_rename_files(&[WorkspaceFileRename { old_path, new_path }]);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_optional_workspace_edit_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_workspace_did_rename_files(
+    root_path: String,
+    old_path: String,
+    new_path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<(), String> {
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "workspace/didRenameFiles".to_string(),
+            params: json!({
+                "files": [
+                    {
+                        "oldUri": file_uri(Path::new(&old_path)),
+                        "newUri": file_uri(Path::new(&new_path)),
+                    }
+                ],
+            }),
+        },
+    )
+}
+
+#[tauri::command]
 fn text_document_formatting(
     root_path: String,
     path: String,
@@ -1906,9 +1949,102 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn apply_workspace_edit(
+    edit: LanguageServerWorkspaceEdit,
+    skipped_paths: Vec<String>,
+) -> Result<usize, String> {
+    let repository = LocalWorkspaceFileRepository;
+    let edits = workspace_text_edits_from_language_server(edit)?;
+
+    apply_text_edits_to_files(&repository, &edits, &skipped_paths)
+        .map_err(|error| error.to_string())
+}
+
+fn workspace_text_edits_from_language_server(
+    edit: LanguageServerWorkspaceEdit,
+) -> Result<Vec<WorkspaceTextEdit>, String> {
+    let mut edits = Vec::new();
+
+    for (uri, uri_edits) in edit.changes {
+        let Some(path) = path_from_file_uri(&uri) else {
+            continue;
+        };
+
+        for text_edit in uri_edits {
+            edits.push(WorkspaceTextEdit {
+                path: path.clone(),
+                range: WorkspaceTextRange {
+                    start: WorkspaceTextPosition {
+                        line: text_edit.range.start.line,
+                        character: text_edit.range.start.character,
+                    },
+                    end: WorkspaceTextPosition {
+                        line: text_edit.range.end.line,
+                        character: text_edit.range.end.character,
+                    },
+                },
+                new_text: text_edit.new_text,
+            });
+        }
+    }
+
+    Ok(edits)
+}
+
+fn path_from_file_uri(uri: &str) -> Option<String> {
+    let path = uri.strip_prefix("file://")?;
+    let path = path.strip_prefix("localhost").unwrap_or(path);
+    let path = percent_decode(path)?;
+
+    if path.is_empty() || !path.starts_with('/') {
+        return None;
+    }
+
+    Some(path)
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+
+        let high = *bytes.get(index + 1)?;
+        let low = *bytes.get(index + 2)?;
+        decoded.push(hex_value(high)? * 16 + hex_value(low)?);
+        index += 3;
+    }
+
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ensure_path_in_workspace, normalize_path};
+    use super::{
+        ensure_path_in_workspace, normalize_path, path_from_file_uri,
+        workspace_text_edits_from_language_server,
+    };
+    use crate::lsp_features::{
+        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LanguageServerWorkspaceEdit,
+    };
+    use std::collections::BTreeMap;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1943,6 +2079,51 @@ mod tests {
 
         assert!(ensure_path_in_workspace(&root, &path_string(&sibling.join("User.php"))).is_err());
         assert!(ensure_path_in_workspace(&root, "../outside/User.php").is_err());
+    }
+
+    #[test]
+    fn file_uri_paths_are_decoded_for_workspace_edits() {
+        assert_eq!(
+            path_from_file_uri("file:///tmp/My%20Project/%C4%8Dlovek.ts"),
+            Some("/tmp/My Project/človek.ts".to_string()),
+        );
+        assert_eq!(
+            path_from_file_uri("file://localhost/tmp/User.ts"),
+            Some("/tmp/User.ts".to_string()),
+        );
+        assert_eq!(path_from_file_uri("file://server/tmp/User.ts"), None);
+        assert_eq!(path_from_file_uri("https://example.com/User.ts"), None);
+    }
+
+    #[test]
+    fn language_server_workspace_edits_are_converted_to_file_edits() {
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            "file:///tmp/User.ts".to_string(),
+            vec![LanguageServerTextEdit {
+                range: LanguageServerRange {
+                    start: LanguageServerPosition {
+                        line: 1,
+                        character: 2,
+                    },
+                    end: LanguageServerPosition {
+                        line: 1,
+                        character: 5,
+                    },
+                },
+                new_text: "Account".to_string(),
+            }],
+        );
+
+        let edits =
+            workspace_text_edits_from_language_server(LanguageServerWorkspaceEdit { changes })
+                .expect("workspace edits");
+
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].path, "/tmp/User.ts");
+        assert_eq!(edits[0].new_text, "Account");
+        assert_eq!(edits[0].range.start.line, 1);
+        assert_eq!(edits[0].range.end.character, 5);
     }
 
     #[cfg(unix)]
@@ -2050,6 +2231,7 @@ pub fn run() {
             create_directory,
             create_text_file,
             delete_path,
+            apply_workspace_edit,
             install_managed_phpactor,
             detect_php_tools,
             detect_workspace,
@@ -2096,6 +2278,8 @@ pub fn run() {
             javascript_typescript_document_did_open,
             javascript_typescript_document_did_save,
             javascript_typescript_language_server_execute_command,
+            javascript_typescript_workspace_did_rename_files,
+            javascript_typescript_workspace_will_rename_files,
             javascript_typescript_text_document_code_action_resolve,
             javascript_typescript_text_document_code_actions,
             javascript_typescript_text_document_code_lens_resolve,

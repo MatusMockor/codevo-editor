@@ -76,6 +76,9 @@ import {
   type LanguageServerDocumentSymbol,
   type LanguageServerFeaturesGateway,
   type LanguageServerLocation,
+  type LanguageServerPosition,
+  type LanguageServerTextEdit,
+  type LanguageServerWorkspaceEdit,
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import {
@@ -461,6 +464,7 @@ export function useWorkbenchController(
   );
   const phpLaravelBindingCacheRef = useRef<Record<string, string | null>>({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
+  const documentsRef = useRef<Record<string, EditorDocument>>({});
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
   const workspaceStateCacheRef = useRef<
@@ -487,6 +491,10 @@ export function useWorkbenchController(
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
   }, [activeDocument]);
+
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
 
   useEffect(() => {
     intelligenceModeRef.current = intelligenceMode;
@@ -2959,6 +2967,135 @@ export function useWorkbenchController(
       });
     },
     [openFile],
+  );
+
+  const applyWorkspaceEditToOpenDocuments = useCallback(
+    (edit: LanguageServerWorkspaceEdit): string[] => {
+      const editedPaths = changedOpenDocumentPathsForWorkspaceEdit(
+        edit,
+        documentsRef.current,
+      );
+
+      setDocuments((current) => {
+        let changed = false;
+        const next = { ...current };
+
+        for (const [uri, textEdits] of Object.entries(edit.changes)) {
+          const path = pathFromLanguageServerUri(uri);
+
+          if (!path) {
+            continue;
+          }
+
+          const document = current[path];
+
+          if (!document) {
+            continue;
+          }
+
+          const nextContent = applyLanguageServerTextEdits(
+            document.content,
+            textEdits,
+          );
+
+          if (nextContent === document.content) {
+            continue;
+          }
+
+          next[path] = {
+            ...document,
+            content: nextContent,
+          };
+          changed = true;
+        }
+
+        return changed ? next : current;
+      });
+
+      return editedPaths;
+    },
+    [],
+  );
+
+  const applyJavaScriptTypeScriptRenameEdits = useCallback(
+    async (oldPath: string, newPath: string) => {
+      if (
+        !workspaceRoot ||
+        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running" ||
+        !canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "willRenameFiles",
+        )
+      ) {
+        return;
+      }
+
+      try {
+        const edit =
+          await javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles(
+            workspaceRoot,
+            oldPath,
+            newPath,
+          );
+
+        if (!edit) {
+          return;
+        }
+
+        const openDocumentPaths = Object.keys(documentsRef.current);
+        const editedOpenPaths = applyWorkspaceEditToOpenDocuments(edit);
+        const changedClosedFiles = await workspaceFiles.applyWorkspaceEdit(
+          edit,
+          openDocumentPaths,
+        );
+        const changedFiles = changedClosedFiles + editedOpenPaths.length;
+
+        if (changedFiles > 0) {
+          setMessage(`Updated ${changedFiles} import path${changedFiles === 1 ? "" : "s"}.`);
+        }
+      } catch (error) {
+        reportError("JavaScript/TypeScript Rename", error);
+      }
+    },
+    [
+      applyWorkspaceEditToOpenDocuments,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      reportError,
+      workspaceFiles,
+      workspaceRoot,
+    ],
+  );
+
+  const notifyJavaScriptTypeScriptFileRenamed = useCallback(
+    async (oldPath: string, newPath: string) => {
+      if (
+        !workspaceRoot ||
+        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running" ||
+        !canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "willRenameFiles",
+        )
+      ) {
+        return;
+      }
+
+      try {
+        await javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles(
+          workspaceRoot,
+          oldPath,
+          newPath,
+        );
+      } catch (error) {
+        reportError("JavaScript/TypeScript Rename", error);
+      }
+    },
+    [
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      reportError,
+      workspaceRoot,
+    ],
   );
 
   const saveActiveDocument = useCallback(async () => {
@@ -5618,17 +5755,25 @@ export function useWorkbenchController(
     const nextPath = joinWorkspacePath(parentPath, nextName);
 
     try {
+      if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+        await applyJavaScriptTypeScriptRenameEdits(activeDocument.path, nextPath);
+      }
+
       await workspaceFiles.renamePath(activeDocument.path, nextPath);
+      if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+        await notifyJavaScriptTypeScriptFileRenamed(activeDocument.path, nextPath);
+      }
       await syncClosedDocument(activeDocument);
       await syncClosedJavaScriptTypeScriptDocument(activeDocument);
-      const renamedDocument = {
-        ...activeDocument,
-        language: detectLanguage(nextPath),
-        name: nextName,
-        path: nextPath,
-      };
 
       setDocuments((current) => {
+        const currentDocument = current[activeDocument.path] ?? activeDocument;
+        const renamedDocument = {
+          ...currentDocument,
+          language: detectLanguage(nextPath),
+          name: nextName,
+          path: nextPath,
+        };
         const next = { ...current };
         delete next[activeDocument.path];
         next[nextPath] = renamedDocument;
@@ -5645,6 +5790,8 @@ export function useWorkbenchController(
     }
   }, [
     activeDocument,
+    applyJavaScriptTypeScriptRenameEdits,
+    notifyJavaScriptTypeScriptFileRenamed,
     prompter,
     refreshDirectory,
     reportError,
@@ -8253,6 +8400,97 @@ function phpLaravelRelationTargetClassNameFromExpression(
 
 function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;
+}
+
+function applyLanguageServerTextEdits(
+  content: string,
+  edits: LanguageServerTextEdit[],
+): string {
+  const indexedEdits = edits
+    .map((edit) => ({
+      end: byteOffsetForLanguageServerPosition(content, edit.range.end),
+      newText: edit.newText,
+      start: byteOffsetForLanguageServerPosition(content, edit.range.start),
+    }))
+    .sort((left, right) => right.start - left.start || right.end - left.end);
+  let nextContent = content;
+  let previousStart = content.length;
+
+  for (const edit of indexedEdits) {
+    if (edit.start > edit.end || edit.end > previousStart) {
+      throw new Error("Workspace edit ranges overlap or are invalid.");
+    }
+
+    nextContent =
+      nextContent.slice(0, edit.start) +
+      edit.newText +
+      nextContent.slice(edit.end);
+    previousStart = edit.start;
+  }
+
+  return nextContent;
+}
+
+function changedOpenDocumentPathsForWorkspaceEdit(
+  edit: LanguageServerWorkspaceEdit,
+  documents: Record<string, EditorDocument>,
+): string[] {
+  return Object.entries(edit.changes).flatMap(([uri, textEdits]) => {
+    const path = pathFromLanguageServerUri(uri);
+
+    if (!path) {
+      return [];
+    }
+
+    const document = documents[path];
+
+    if (!document) {
+      return [];
+    }
+
+    return applyLanguageServerTextEdits(document.content, textEdits) ===
+      document.content
+      ? []
+      : [path];
+  });
+}
+
+function byteOffsetForLanguageServerPosition(
+  content: string,
+  position: LanguageServerPosition,
+): number {
+  let line = 0;
+  let character = 0;
+
+  for (let index = 0; index < content.length; ) {
+    if (line === position.line && character === position.character) {
+      return index;
+    }
+
+    const codePoint = content.codePointAt(index);
+
+    if (codePoint === undefined) {
+      break;
+    }
+
+    const value = String.fromCodePoint(codePoint);
+
+    if (value === "\n") {
+      line += 1;
+      character = 0;
+      index += value.length;
+      continue;
+    }
+
+    character += value.length;
+    index += value.length;
+  }
+
+  if (line === position.line && character === position.character) {
+    return content.length;
+  }
+
+  throw new Error("Workspace edit position is outside of the document.");
 }
 
 function reindexStartMessage(mode: WorkspaceReindexMode): string {

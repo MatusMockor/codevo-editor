@@ -835,6 +835,80 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("asks the JavaScript TypeScript service for import edits before renaming a file", async () => {
+    const oldPath = "/workspace/src/User.ts";
+    const newPath = "/workspace/src/Account.ts";
+    const consumerPath = "/workspace/src/Consumer.ts";
+    const edit = {
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).mockResolvedValue(edit);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 24,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith(edit, [oldPath]);
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+    ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+  });
+
   it("does not start JavaScript and TypeScript language service when disabled", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
@@ -4379,6 +4453,7 @@ function createControllerDependencies({
       searchFiles,
     },
     files: {
+      applyWorkspaceEdit: vi.fn(async () => 0),
       createDirectory: vi.fn(async () => undefined),
       createTextFile: vi.fn(async () => undefined),
       deletePath: vi.fn(async () => undefined),
@@ -4546,6 +4621,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
       items: [],
     })),
     definition: vi.fn(async () => []),
+    didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(async () => []),
     documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => []),
@@ -4564,6 +4640,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     semanticTokens: vi.fn(async () => null),
     signatureHelp: vi.fn(async () => null),
     typeDefinition: vi.fn(async () => []),
+    willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
@@ -4610,6 +4687,24 @@ function phpWorkspaceDescriptor(): WorkspaceDescriptor {
   return {
     javaScriptTypeScript: null,
     php: phpProjectDescriptor(),
+    rootPath: "/workspace",
+  };
+}
+
+function javaScriptTypeScriptWorkspaceDescriptor(): WorkspaceDescriptor {
+  return {
+    javaScriptTypeScript: {
+      frameworks: [],
+      hasJsconfig: false,
+      hasPackageJson: true,
+      hasTsconfig: true,
+      packageManager: "npm",
+      packageName: "app",
+      typeScriptDependencyVersion: "^5.0.0",
+      usesTypeScript: true,
+      workspaceTypeScriptVersion: "5.0.0",
+    },
+    php: null,
     rootPath: "/workspace",
   };
 }

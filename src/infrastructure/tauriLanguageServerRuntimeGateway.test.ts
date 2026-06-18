@@ -62,6 +62,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         semanticTokens: true,
         signatureHelp: true,
         typeDefinition: true,
+        willRenameFiles: true,
         workspaceSymbol: true,
       },
     };
@@ -122,6 +123,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         semanticTokens: true,
         signatureHelp: true,
         typeDefinition: true,
+        willRenameFiles: true,
         workspaceSymbol: true,
       },
       kind: "running",

@@ -11,6 +11,7 @@ import type {
   WorkspaceDetectionGateway,
   WorkspaceFileGateway,
 } from "../domain/workspace";
+import type { LanguageServerWorkspaceEdit } from "../domain/languageServerFeatures";
 
 export class TauriWorkspaceGateway
   implements
@@ -20,6 +21,13 @@ export class TauriWorkspaceGateway
     WorkspaceDetectionGateway,
     WorkspaceFileGateway
 {
+  applyWorkspaceEdit(
+    edit: LanguageServerWorkspaceEdit,
+    skippedPaths: string[],
+  ): Promise<number> {
+    return invoke<number>("apply_workspace_edit", { edit, skippedPaths });
+  }
+
   createDirectory(path: string): Promise<void> {
     return invoke<void>("create_directory", { path });
   }

@@ -1,6 +1,7 @@
 use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{self, Write},
     path::Path,
@@ -29,6 +30,28 @@ pub struct FileSearchResult {
     pub relative_path: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTextPosition {
+    pub line: u32,
+    pub character: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTextRange {
+    pub start: WorkspaceTextPosition,
+    pub end: WorkspaceTextPosition,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTextEdit {
+    pub path: String,
+    pub range: WorkspaceTextRange,
+    pub new_text: String,
+}
+
 pub trait WorkspaceFileRepository {
     fn create_directory(&self, path: &Path) -> io::Result<()>;
     fn create_text_file(&self, path: &Path) -> io::Result<()>;
@@ -43,6 +66,46 @@ pub trait WorkspaceFileRepository {
         limit: usize,
     ) -> io::Result<Vec<FileSearchResult>>;
     fn write_text_file(&self, path: &Path, content: &str) -> io::Result<()>;
+}
+
+pub fn apply_text_edits_to_files(
+    repository: &dyn WorkspaceFileRepository,
+    edits: &[WorkspaceTextEdit],
+    skipped_paths: &[String],
+) -> io::Result<usize> {
+    let skipped_paths: BTreeSet<String> = skipped_paths
+        .iter()
+        .map(|path| normalize_path_string(path))
+        .collect();
+    let mut edits_by_path: BTreeMap<String, Vec<WorkspaceTextEdit>> = BTreeMap::new();
+
+    for edit in edits {
+        let normalized_path = normalize_path_string(&edit.path);
+
+        if skipped_paths.contains(&normalized_path) {
+            continue;
+        }
+
+        edits_by_path
+            .entry(normalized_path)
+            .or_default()
+            .push(edit.clone());
+    }
+
+    let mut changed_files = 0;
+
+    for (path, edits) in edits_by_path {
+        let path = Path::new(&path);
+        let content = repository.read_text_file(path)?;
+        let next_content = apply_text_edits_to_content(&content, &edits)?;
+
+        if next_content != content {
+            repository.write_text_file(path, &next_content)?;
+            changed_files += 1;
+        }
+    }
+
+    Ok(changed_files)
 }
 
 pub struct LocalWorkspaceFileRepository;
@@ -302,9 +365,85 @@ fn score_result(relative_path: &str, query: &str) -> usize {
     lower_path.find(query).unwrap_or(usize::MAX - 1) + 2
 }
 
+fn apply_text_edits_to_content(content: &str, edits: &[WorkspaceTextEdit]) -> io::Result<String> {
+    let mut indexed_edits = edits
+        .iter()
+        .map(|edit| {
+            let start = byte_offset_for_utf16_position(content, &edit.range.start)?;
+            let end = byte_offset_for_utf16_position(content, &edit.range.end)?;
+
+            if start > end {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Workspace edit range starts after it ends",
+                ));
+            }
+
+            Ok((start, end, edit.new_text.as_str()))
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+
+    indexed_edits.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+
+    let mut next_content = content.to_string();
+    let mut previous_start = content.len();
+
+    for (start, end, new_text) in indexed_edits {
+        if end > previous_start {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Workspace edit ranges overlap",
+            ));
+        }
+
+        next_content.replace_range(start..end, new_text);
+        previous_start = start;
+    }
+
+    Ok(next_content)
+}
+
+fn byte_offset_for_utf16_position(
+    content: &str,
+    position: &WorkspaceTextPosition,
+) -> io::Result<usize> {
+    let mut line = 0_u32;
+    let mut character = 0_u32;
+
+    for (byte_index, value) in content.char_indices() {
+        if line == position.line && character == position.character {
+            return Ok(byte_index);
+        }
+
+        if value == '\n' {
+            line += 1;
+            character = 0;
+            continue;
+        }
+
+        character += value.len_utf16() as u32;
+    }
+
+    if line == position.line && character == position.character {
+        return Ok(content.len());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "Workspace edit position is outside of the document",
+    ))
+}
+
+fn normalize_path_string(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LocalWorkspaceFileRepository, WorkspaceFileRepository};
+    use super::{
+        apply_text_edits_to_files, LocalWorkspaceFileRepository, WorkspaceFileRepository,
+        WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
+    };
     use std::{fs, time::SystemTime};
 
     #[test]
@@ -427,6 +566,42 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[test]
+    fn apply_text_edits_to_files_updates_closed_files_and_skips_open_paths() {
+        let root = create_temp_dir("workspace-text-edits");
+        let closed_path = root.join("closed.ts");
+        let open_path = root.join("open.ts");
+        let repository = LocalWorkspaceFileRepository;
+        fs::write(
+            &closed_path,
+            "const label = \"žena\";\nconsole.log(label);\n",
+        )
+        .expect("write closed");
+        fs::write(&open_path, "const value = 1;\n").expect("write open");
+
+        let changed = apply_text_edits_to_files(
+            &repository,
+            &[
+                edit(&closed_path.to_string_lossy(), 0, 14, 0, 20, "\"človek\""),
+                edit(&closed_path.to_string_lossy(), 1, 12, 1, 17, "name"),
+                edit(&open_path.to_string_lossy(), 0, 14, 0, 15, "2"),
+            ],
+            &[open_path.to_string_lossy().to_string()],
+        )
+        .expect("apply edits");
+
+        assert_eq!(changed, 1);
+        assert_eq!(
+            fs::read_to_string(&closed_path).expect("read closed"),
+            "const label = \"človek\";\nconsole.log(name);\n",
+        );
+        assert_eq!(
+            fs::read_to_string(&open_path).expect("read open"),
+            "const value = 1;\n",
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     fn create_temp_dir(prefix: &str) -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -435,5 +610,29 @@ mod tests {
         let path = std::env::temp_dir().join(format!("{prefix}-{nanos}"));
         fs::create_dir_all(&path).expect("create temp dir");
         path
+    }
+
+    fn edit(
+        path: &str,
+        start_line: u32,
+        start_character: u32,
+        end_line: u32,
+        end_character: u32,
+        new_text: &str,
+    ) -> WorkspaceTextEdit {
+        WorkspaceTextEdit {
+            path: path.to_string(),
+            range: WorkspaceTextRange {
+                start: WorkspaceTextPosition {
+                    line: start_line,
+                    character: start_character,
+                },
+                end: WorkspaceTextPosition {
+                    line: end_line,
+                    character: end_character,
+                },
+            },
+            new_text: new_text.to_string(),
+        }
     }
 }

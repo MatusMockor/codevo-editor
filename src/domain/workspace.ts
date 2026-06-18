@@ -1,3 +1,5 @@
+import type { LanguageServerWorkspaceEdit } from "./languageServerFeatures";
+
 export type FileEntryKind = "directory" | "file";
 
 export interface FileEntry {
@@ -152,6 +154,10 @@ export interface EditorDocument {
 export type IntelligenceMode = "basic" | "lightSmart" | "fullSmart";
 
 export interface WorkspaceFileGateway {
+  applyWorkspaceEdit(
+    edit: LanguageServerWorkspaceEdit,
+    skippedPaths: string[],
+  ): Promise<number>;
   createDirectory(path: string): Promise<void>;
   createTextFile(path: string): Promise<void>;
   deletePath(path: string): Promise<void>;

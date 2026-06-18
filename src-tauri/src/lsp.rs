@@ -491,6 +491,11 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         "workspaceEdit": {
                             "documentChanges": true
                         },
+                        "fileOperations": {
+                            "didRename": true,
+                            "dynamicRegistration": false,
+                            "willRename": true
+                        },
                         "workspaceFolders": true
                     }
                 },
@@ -817,6 +822,14 @@ mod tests {
         );
         assert_eq!(
             request.params["capabilities"]["workspace"]["codeLens"]["refreshSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["fileOperations"]["willRename"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["fileOperations"]["didRename"],
             true
         );
         fs::remove_dir_all(root).expect("cleanup");

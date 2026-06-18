@@ -1211,6 +1211,7 @@ function featuresGateway(
         },
     ),
     definition: vi.fn(async () => []),
+    didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(
       async () => responses.documentHighlights ?? [],
     ),
@@ -1233,6 +1234,7 @@ function featuresGateway(
     semanticTokens: vi.fn(async () => responses.semanticTokens ?? null),
     signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
     typeDefinition: vi.fn(async () => responses.typeDefinition ?? []),
+    willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(
       async (_rootPath, item) => responses.resolvedCompletionItem ?? item,
@@ -1275,6 +1277,7 @@ function runningStatus(
       semanticTokens: true,
       signatureHelp: true,
       typeDefinition: true,
+      willRenameFiles: true,
       workspaceSymbol: true,
       ...capabilities,
     },

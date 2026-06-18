@@ -66,6 +66,7 @@ describe("languageServerCapabilities", () => {
       semanticTokens: true,
       signatureHelp: true,
       typeDefinition: true,
+      willRenameFiles: true,
       workspaceSymbol: true,
     });
     expect(languageServerCapabilities(status("starting"))).toEqual(
@@ -96,6 +97,7 @@ describe("languageServerCapabilities", () => {
       "semantic tokens",
       "signature help",
       "type definition",
+      "file rename edits",
       "workspace symbols",
       "code actions",
       "code lens",
@@ -135,6 +137,7 @@ function status(
           semanticTokens: true,
           signatureHelp: true,
           typeDefinition: true,
+          willRenameFiles: true,
           workspaceSymbol: true,
         },
       };

@@ -22,6 +22,7 @@ export interface LanguageServerCapabilities {
   semanticTokens: boolean;
   signatureHelp: boolean;
   typeDefinition: boolean;
+  willRenameFiles: boolean;
   workspaceSymbol: boolean;
 }
 
@@ -189,6 +190,10 @@ export function languageServerCapabilityLabels(
     labels.push("type definition");
   }
 
+  if (capabilities.willRenameFiles) {
+    labels.push("file rename edits");
+  }
+
   if (capabilities.workspaceSymbol) {
     labels.push("workspace symbols");
   }
@@ -231,6 +236,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     semanticTokens: false,
     signatureHelp: false,
     typeDefinition: false,
+    willRenameFiles: false,
     workspaceSymbol: false,
   };
 }

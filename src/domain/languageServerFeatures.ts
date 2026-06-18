@@ -321,6 +321,16 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     command: LanguageServerCodeActionCommand,
   ): Promise<LanguageServerWorkspaceEdit | null>;
+  willRenameFiles(
+    rootPath: string,
+    oldPath: string,
+    newPath: string,
+  ): Promise<LanguageServerWorkspaceEdit | null>;
+  didRenameFiles(
+    rootPath: string,
+    oldPath: string,
+    newPath: string,
+  ): Promise<void>;
   formatting(
     rootPath: string,
     path: string,

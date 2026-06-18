@@ -44,6 +44,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   completion: "text_document_completion",
   completionResolve: "text_document_completion_resolve",
   definition: "text_document_definition",
+  didRenameFiles: "workspace_did_rename_files",
   typeDefinition: "text_document_type_definition",
   documentHighlights: "text_document_document_highlights",
   documentLinkResolve: "text_document_document_link_resolve",
@@ -63,6 +64,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   selectionRanges: "text_document_selection_ranges",
   semanticTokens: "text_document_semantic_tokens",
   signatureHelp: "text_document_signature_help",
+  willRenameFiles: "text_document_will_rename_files",
   workspaceSymbols: "workspace_symbols",
 };
 
@@ -74,6 +76,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   completion: "javascript_typescript_text_document_completion",
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   definition: "javascript_typescript_text_document_definition",
+  didRenameFiles: "javascript_typescript_workspace_did_rename_files",
   typeDefinition: "javascript_typescript_text_document_type_definition",
   documentHighlights: "javascript_typescript_text_document_document_highlights",
   documentLinkResolve: "javascript_typescript_text_document_document_link_resolve",
@@ -94,6 +97,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   selectionRanges: "javascript_typescript_text_document_selection_ranges",
   semanticTokens: "javascript_typescript_text_document_semantic_tokens",
   signatureHelp: "javascript_typescript_text_document_signature_help",
+  willRenameFiles: "javascript_typescript_workspace_will_rename_files",
   workspaceSymbols: "javascript_typescript_workspace_symbols",
 };
 
@@ -105,6 +109,7 @@ export interface TauriLanguageServerFeatureCommands {
   completion: string;
   completionResolve: string;
   definition: string;
+  didRenameFiles: string;
   typeDefinition: string;
   documentHighlights: string;
   documentLinkResolve: string;
@@ -124,6 +129,7 @@ export interface TauriLanguageServerFeatureCommands {
   selectionRanges: string;
   semanticTokens: string;
   signatureHelp: string;
+  willRenameFiles: string;
   workspaceSymbols: string;
 }
 
@@ -403,6 +409,30 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.executeCommand,
       { command, rootPath },
       null,
+    );
+  }
+
+  willRenameFiles(
+    rootPath: string,
+    oldPath: string,
+    newPath: string,
+  ): Promise<LanguageServerWorkspaceEdit | null> {
+    return this.invokeWhenAvailable(
+      this.commands.willRenameFiles,
+      { newPath, oldPath, rootPath },
+      null,
+    );
+  }
+
+  didRenameFiles(
+    rootPath: string,
+    oldPath: string,
+    newPath: string,
+  ): Promise<void> {
+    return this.invokeWhenAvailable(
+      this.commands.didRenameFiles,
+      { newPath, oldPath, rootPath },
+      undefined,
     );
   }
 

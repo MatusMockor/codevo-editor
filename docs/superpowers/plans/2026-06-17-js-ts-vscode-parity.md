@@ -97,6 +97,8 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript completion now advertises and preserves VS Code-like label details, commit characters, preselect support and insert/replace completion ranges, so method/function suggestions keep richer signature context and more precise replacement behavior.
 - JS/TS document sync now sends VS Code-style language ids for React documents (`javascriptreact` and `typescriptreact`) while keeping editor model languages stable. The workspace, index and git language detectors also recognize Node/TypeScript module extensions (`.mjs`, `.cjs`, `.mts`, `.cts`), so those files no longer fall back to plaintext.
 - TypeScript/JavaScript type-definition navigation is now wired through the managed language server and Monaco provider. Linked editing ranges are also advertised and mapped, enabling VS Code-style paired JSX tag editing when the TypeScript server supports it. Signature help now listens to TypeScript's `<` trigger and `)` retrigger as well as function-call commas.
+- TypeScript/JavaScript CodeLens is wired through the managed language server and Monaco provider. References/implementations CodeLens is disabled by default and can be enabled per workspace in settings.
+- TypeScript/JavaScript file rename edits now use `workspace/willRenameFiles` before local file rename and `workspace/didRenameFiles` after local file rename. Closed-file import edits are written to disk through the workspace layer, while open-file edits are applied to editor buffers.
 
 ## Full VS Code-Like Target
 
@@ -159,6 +161,8 @@ Basic mode must support:
 - semantic tokens / semantic highlighting. Implemented through LSP-backed Monaco provider.
 - go to type definition. Implemented through LSP-backed Monaco provider.
 - linked editing for JSX/TSX paired ranges. Implemented when the TypeScript language server advertises support.
+- code lenses for references/implementations. Implemented through LSP-backed Monaco provider when enabled in workspace settings.
+- update imports on file rename. Implemented through managed TypeScript LSP file-operation requests.
 - document symbols / file structure. Implemented for JS/TS through managed LSP-backed `Cmd+R`.
 - workspace symbols. Implemented for JS/TS-backed `Cmd+O` type search.
 - JS/TS version status. Implemented in the workspace status label for Bundled, Workspace, installed workspace version, and dependency-only fallback.
@@ -183,6 +187,7 @@ Add settings:
 - Inlay hints on/off. Done.
 - Restart JS/TS service. Done.
 - Open JS/TS service log. Done.
+- CodeLens on/off. Done.
 
 ## Tests
 
