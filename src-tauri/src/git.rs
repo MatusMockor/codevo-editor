@@ -424,28 +424,27 @@ fn apply_staged_change_to_temp_index(
     temp_index: &Path,
     change: &GitChangedFile,
 ) -> io::Result<()> {
-    if change.status == GitChangeStatus::Conflicted {
+    if has_unmerged_index_entries(root, &change.relative_path)? {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Conflicted files cannot be committed from the commit panel.",
         ));
     }
 
-    if change.status == GitChangeStatus::Renamed {
-        let Some(old_relative_path) = change.old_relative_path.as_deref() else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Renamed Git file is missing its old path.",
-            ));
-        };
+    if let Some(old_relative_path) = cached_rename_old_path(root, &change.relative_path)? {
         run_git_vec_with_env(
             root,
-            vec!["update-index", "--force-remove", "--", old_relative_path],
+            vec![
+                "update-index",
+                "--force-remove",
+                "--",
+                old_relative_path.as_str(),
+            ],
             Some(temp_index),
         )?;
     }
 
-    if change.status == GitChangeStatus::Deleted {
+    if is_cached_deletion(root, &change.relative_path)? {
         run_git_vec_with_env(
             root,
             vec![
@@ -517,6 +516,39 @@ fn apply_staged_change_to_temp_index(
         vec!["update-index", "--add", "--cacheinfo", cacheinfo.as_str()],
         Some(temp_index),
     )
+}
+
+fn cached_name_status_records(root: &Path) -> io::Result<Vec<Vec<String>>> {
+    let output = git_output_vec(root, vec!["diff", "--cached", "--name-status", "-M"])?;
+    Ok(output
+        .lines()
+        .map(|line| line.split('\t').map(str::to_string).collect())
+        .collect())
+}
+
+fn cached_rename_old_path(root: &Path, relative_path: &str) -> io::Result<Option<String>> {
+    for fields in cached_name_status_records(root)? {
+        if fields.first().is_some_and(|status| status.starts_with('R'))
+            && fields.get(2).is_some_and(|path| path == relative_path)
+        {
+            return Ok(fields.get(1).cloned());
+        }
+    }
+
+    Ok(None)
+}
+
+fn is_cached_deletion(root: &Path, relative_path: &str) -> io::Result<bool> {
+    Ok(cached_name_status_records(root)?.iter().any(|fields| {
+        fields.first().is_some_and(|status| status == "D")
+            && fields.get(1).is_some_and(|path| path == relative_path)
+    }))
+}
+
+fn has_unmerged_index_entries(root: &Path, relative_path: &str) -> io::Result<bool> {
+    let output = git_output_vec(root, vec!["ls-files", "-u", "--", relative_path])?;
+
+    Ok(!output.trim().is_empty())
 }
 
 struct TempGitIndex {
@@ -715,6 +747,57 @@ mod tests {
 
         assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
         assert_eq!(repo.read("file.txt"), "three\n");
+    }
+
+    #[test]
+    fn does_not_trust_deleted_payload_when_index_has_staged_content() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+        repo.write("file.txt", "three\n");
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway
+            .commit(
+                repo.path(),
+                "selected",
+                &[git_changed_file("file.txt", true, GitChangeStatus::Deleted)],
+            )
+            .expect("commit");
+
+        assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "two\n");
+        assert_eq!(repo.read("file.txt"), "three\n");
+    }
+
+    #[test]
+    fn derives_staged_rename_from_git_index() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("old.txt", "one\n");
+        repo.run(["add", "old.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["mv", "old.txt", "new.txt"]);
+
+        let gateway = CommandGitRepositoryGateway;
+        gateway
+            .commit(
+                repo.path(),
+                "rename",
+                &[git_changed_file("new.txt", true, GitChangeStatus::Modified)],
+            )
+            .expect("commit");
+
+        assert_eq!(repo.git_output(["show", "HEAD:new.txt"]), "one\n");
+        assert!(repo
+            .git_output(["ls-tree", "--name-only", "HEAD"])
+            .lines()
+            .all(|path| path != "old.txt"));
     }
 
     #[test]

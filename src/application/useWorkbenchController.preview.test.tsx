@@ -5,7 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import { emptyGitStatus, type GitGateway } from "../domain/git";
+import { emptyGitStatus, gitChangeKey, type GitGateway } from "../domain/git";
 import {
   useWorkbenchController,
   type WorkbenchWorkspaceGateways,
@@ -1207,6 +1207,61 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("keeps staged and unstaged commit selection separate for the same file", async () => {
+    const staged = gitChangedFile("src/User.php", true);
+    const unstaged = gitChangedFile("src/User.php", false);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [staged, unstaged],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().includedGitChangePaths.has(gitChangeKey(staged))).toBe(true);
+    expect(getWorkbench().includedGitChangePaths.has(gitChangeKey(unstaged))).toBe(false);
+
+    act(() => {
+      getWorkbench().toggleGitChangeIncluded(unstaged);
+      getWorkbench().setGitCommitMessage("feat: selected side");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().commitGitChanges();
+    });
+
+    expect(gitGateway.commit).toHaveBeenCalledWith(
+      "/workspace",
+      "feat: selected side",
+      [staged, unstaged],
+    );
+  });
+
   it("stages included unversioned files before committing them", async () => {
     const unversioned = {
       ...gitChangedFile("docs/new-note.md", false),
@@ -1323,6 +1378,59 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(gitGateway.push).toHaveBeenCalledWith("/workspace");
     expect(getWorkbench().gitCommitMessage).toBe("");
+  });
+
+  it("resets Git operation UI state when switching workspaces", async () => {
+    const change = gitChangedFile("src/User.php", true);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: rootPath === "/workspace-a" ? [change] : [],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().setGitCommitMessage("feat: workspace a");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().includedGitChangePaths.has(gitChangeKey(change))).toBe(true);
+    expect(getWorkbench().gitCommitMessage).toBe("feat: workspace a");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().gitOperationLoading).toBe(false);
+    expect(getWorkbench().gitCommitMessage).toBe("");
+    expect(getWorkbench().includedGitChangePaths.size).toBe(0);
   });
 
   it("keeps post-commit status visible and reports when push fails", async () => {

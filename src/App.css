@@ -589,14 +589,34 @@ button {
   white-space: nowrap;
 }
 
-.git-change-row {
+.git-change-row-wrapper {
   box-sizing: border-box;
-  grid-template-columns: 14px 18px minmax(48px, 1fr) minmax(0, 36%) 18px;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
   gap: 6px;
   margin: 1px 6px 1px 28px;
-  padding: 0 6px 0 0;
   overflow: hidden;
   width: calc(100% - 34px);
+}
+
+.git-change-row-wrapper.active .git-change-row {
+  background: var(--color-accent-soft);
+  color: var(--color-active-text);
+}
+
+.git-change-row-wrapper.active .git-change-row small {
+  color: var(--color-active-text);
+}
+
+.git-change-row {
+  box-sizing: border-box;
+  grid-template-columns: 18px minmax(48px, 1fr) minmax(0, 36%) 18px;
+  gap: 6px;
+  margin: 0;
+  padding: 0 6px 0 0;
+  overflow: hidden;
+  width: 100%;
 }
 
 .git-commit-panel {
@@ -735,7 +755,7 @@ button {
   height: 1px;
   margin: -1px;
   border: 0;
-  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   overflow: hidden;
   padding: 0;
 }

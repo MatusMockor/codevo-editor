@@ -9,6 +9,7 @@ import {
   Undo2,
 } from "lucide-react";
 import {
+  gitChangeKey,
   groupGitChanges,
   gitStatusLabel,
   gitStatusTitle,
@@ -106,7 +107,7 @@ export function GitChangesPanel({
   }
 
   const selectedChanges = status.changes.filter((change) =>
-    includedChangePaths.has(change.relativePath),
+    includedChangePaths.has(gitChangeKey(change)),
   );
   const groups = groupGitChanges(status.changes);
   const canCommit =
@@ -279,7 +280,7 @@ function GitChangeGroupView({
   onToggleCollapsed,
 }: GitChangeGroupViewProps) {
   const selectedChanges = group.changes.filter((change) =>
-    includedChangePaths.has(change.relativePath),
+    includedChangePaths.has(gitChangeKey(change)),
   );
   const allIncluded = selectedChanges.length === group.changes.length;
 
@@ -311,7 +312,7 @@ function GitChangeGroupView({
             allIncluded
               ? selectedChanges.forEach(onToggleChangeIncluded)
               : group.changes
-                  .filter((change) => !includedChangePaths.has(change.relativePath))
+                  .filter((change) => !includedChangePaths.has(gitChangeKey(change)))
                   .forEach(onToggleChangeIncluded)
           }
         />
@@ -319,56 +320,63 @@ function GitChangeGroupView({
           {group.title} {group.changes.length}
         </span>
       </div>
-      {isCollapsed ? null : group.changes.map((change) => (
-        <button
-          className={
-            activeChange?.path === change.path
-              ? "tree-row git-change-row active"
-              : "tree-row git-change-row"
-          }
-          key={`${change.status}:${change.path}:${change.oldPath || ""}`}
-          disabled={disabled}
-          onClick={(event) => {
-            if (disabled) {
-              return;
-            }
+      {isCollapsed ? null : group.changes.map((change) => {
+        const changeKey = gitChangeKey(change);
+        const isIncluded = includedChangePaths.has(changeKey);
 
-            if (event.detail > 1) {
-              return;
+        return (
+          <div
+            className={
+              activeChange && gitChangeKey(activeChange) === changeKey
+                ? "git-change-row-wrapper active"
+                : "git-change-row-wrapper"
             }
-
-            onPreviewChange(change);
-          }}
-          onDoubleClick={() => {
-            if (!disabled) {
-              onOpenChange(change);
-            }
-          }}
-          title={gitStatusTitle(change.status)}
-          type="button"
-        >
-          <ThemedCheckbox
-            checked={includedChangePaths.has(change.relativePath)}
-            className="git-change-checkbox"
-            disabled={disabled}
-            label={`${includedChangePaths.has(change.relativePath) ? "Exclude" : "Include"} ${
-              change.relativePath
-            }`}
-            onChange={() => onToggleChangeIncluded(change)}
-          />
-          <TreeEntryIcon kind="file" />
-          <span className="git-change-name">{fileName(change.relativePath)}</span>
-          <small className="git-change-directory">
-            {directoryName(change.relativePath)}
-          </small>
-          <span
-            aria-label={gitStatusTitle(change.status)}
-            className={getTreeGitStatusClassName(change.status)}
+            key={`${change.status}:${change.path}:${change.oldPath || ""}:${change.isStaged}`}
           >
-            {gitStatusLabel(change.status)}
-          </span>
-        </button>
-      ))}
+            <ThemedCheckbox
+              checked={isIncluded}
+              className="git-change-checkbox"
+              disabled={disabled}
+              label={`${isIncluded ? "Exclude" : "Include"} ${change.relativePath}`}
+              onChange={() => onToggleChangeIncluded(change)}
+            />
+            <button
+              className="tree-row git-change-row"
+              disabled={disabled}
+              onClick={(event) => {
+                if (disabled) {
+                  return;
+                }
+
+                if (event.detail > 1) {
+                  return;
+                }
+
+                onPreviewChange(change);
+              }}
+              onDoubleClick={() => {
+                if (!disabled) {
+                  onOpenChange(change);
+                }
+              }}
+              title={gitStatusTitle(change.status)}
+              type="button"
+            >
+              <TreeEntryIcon kind="file" />
+              <span className="git-change-name">{fileName(change.relativePath)}</span>
+              <small className="git-change-directory">
+                {directoryName(change.relativePath)}
+              </small>
+              <span
+                aria-label={gitStatusTitle(change.status)}
+                className={getTreeGitStatusClassName(change.status)}
+              >
+                {gitStatusLabel(change.status)}
+              </span>
+            </button>
+          </div>
+        );
+      })}
     </section>
   );
 }

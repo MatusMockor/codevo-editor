@@ -50,6 +50,10 @@ export interface GitGateway {
   unstageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
 }
 
+export function gitChangeKey(change: GitChangedFile): string {
+  return `${change.isStaged ? "staged" : "worktree"}:${change.relativePath}`;
+}
+
 export function emptyGitStatus(rootPath: string | null = null): GitStatus {
   return {
     branch: null,

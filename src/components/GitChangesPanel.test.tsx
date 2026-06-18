@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitChangedFile, GitStatus } from "../domain/git";
+import { gitChangeKey, type GitChangedFile, type GitStatus } from "../domain/git";
 import { GitChangesPanel } from "./GitChangesPanel";
 
 describe("GitChangesPanel", () => {
@@ -45,9 +45,10 @@ describe("GitChangesPanel", () => {
   });
 
   it("enables commit for included unstaged files when a message is present", async () => {
+    const change = gitChange("modified", "src/User.php", false);
     await renderPanel({
-      includedChangePaths: new Set(["src/User.php"]),
-      status: gitStatus([gitChange("modified", "src/User.php", false)]),
+      includedChangePaths: new Set([gitChangeKey(change)]),
+      status: gitStatus([change]),
     });
 
     expect(
@@ -136,12 +137,21 @@ describe("GitChangesPanel", () => {
     expect(host.querySelector<HTMLInputElement>(".git-themed-checkbox input")).not.toBeNull();
   });
 
+  it("keeps checkbox inputs outside Git change row buttons", async () => {
+    await renderPanel({
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    });
+
+    expect(host.querySelector(".git-change-row .git-themed-checkbox")).toBeNull();
+    expect(host.querySelector(".git-change-row-wrapper .git-themed-checkbox")).not.toBeNull();
+  });
+
   it("toggles commit inclusion from file checkboxes without staging immediately", async () => {
     const staged = gitChange("modified", "src/Staged.php", true);
     const unstaged = gitChange("modified", "src/Unstaged.php", false);
     const onToggleChangeIncluded = vi.fn();
     await renderPanel({
-      includedChangePaths: new Set(["src/Staged.php"]),
+      includedChangePaths: new Set([gitChangeKey(staged)]),
       onToggleChangeIncluded,
       status: gitStatus([staged, unstaged]),
     });
@@ -167,7 +177,7 @@ describe("GitChangesPanel", () => {
     const untracked = gitChange("untracked", "notes.txt", false);
     const onStageChanges = vi.fn();
     await renderPanel({
-      includedChangePaths: new Set(["notes.txt"]),
+      includedChangePaths: new Set([gitChangeKey(untracked)]),
       onStageChanges,
       status: gitStatus([untracked]),
     });
@@ -248,7 +258,10 @@ describe("GitChangesPanel", () => {
           activeChange={props.activeChange ?? null}
           commitMessage={props.commitMessage ?? "feat: update"}
           gitOperationLoading={props.gitOperationLoading ?? false}
-          includedChangePaths={props.includedChangePaths ?? new Set(["src/User.php"])}
+          includedChangePaths={
+            props.includedChangePaths ??
+            new Set([gitChangeKey(gitChange("modified", "src/User.php", true))])
+          }
           isLoading={props.isLoading ?? false}
           onCommit={props.onCommit ?? vi.fn()}
           onCommitAndPush={props.onCommitAndPush ?? vi.fn()}
