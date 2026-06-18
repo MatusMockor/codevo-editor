@@ -2375,6 +2375,86 @@ class CommentFactory
     ]);
   });
 
+  it("keeps late-static fluent return types bound to the receiver class", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const baseCommentPath = "/workspace/app/Models/BaseComment.php";
+    const specialCommentPath = "/workspace/app/Models/SpecialComment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\SpecialComment;
+
+class CommentController
+{
+    public function show(SpecialComment $comment): void
+    {
+        $comment->fluent()->spec
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === baseCommentPath) {
+          return `<?php
+namespace App\\Models;
+
+class BaseComment
+{
+    /** @return static */
+    public function fluent() {}
+}
+`;
+        }
+
+        if (path === specialCommentPath) {
+          return `<?php
+namespace App\\Models;
+
+class SpecialComment extends BaseComment
+{
+    public function specialOnly(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->fluent()->spec"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\SpecialComment",
+        name: "specialOnly",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("uses Laravel container receivers for method completions and signatures", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const servicePath = "/workspace/app/Services/CommentService.php";

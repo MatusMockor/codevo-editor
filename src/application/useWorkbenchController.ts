@@ -3778,6 +3778,21 @@ export function useWorkbenchController(
     [resolvePhpClassReference],
   );
 
+  const resolvePhpMethodDeclaredReturnType = useCallback(
+    (
+      source: string,
+      typeName: string | null,
+      lateStaticClassName: string,
+    ): string | null => {
+      if (phpReturnTypeIncludesLateStatic(typeName)) {
+        return lateStaticClassName || null;
+      }
+
+      return resolvePhpDeclaredType(source, typeName);
+    },
+    [resolvePhpDeclaredType],
+  );
+
   const resolvePhpLaravelBoundConcrete = useCallback(
     async (className: string): Promise<string | null> => {
       if (!workspaceRoot) {
@@ -4356,6 +4371,7 @@ export function useWorkbenchController(
       className: string,
       methodName: string,
       visitedClassNames = new Set<string>(),
+      lateStaticClassName = className,
     ): Promise<string | null> => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
         return null;
@@ -4363,6 +4379,9 @@ export function useWorkbenchController(
 
       const normalizedClassName = className.trim().replace(/^\\+/, "");
       const visitedKey = normalizedClassName.toLowerCase();
+      const normalizedLateStaticClassName = lateStaticClassName
+        .trim()
+        .replace(/^\\+/, "");
 
       if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
         return null;
@@ -4377,6 +4396,7 @@ export function useWorkbenchController(
           facadeTargetClassName,
           methodName,
           visitedClassNames,
+          facadeTargetClassName,
         );
       }
 
@@ -4395,6 +4415,7 @@ export function useWorkbenchController(
           boundConcreteClassName,
           methodName,
           visitedClassNames,
+          boundConcreteClassName,
         );
       };
 
@@ -4465,7 +4486,13 @@ export function useWorkbenchController(
             (candidate) =>
               candidate.name.toLowerCase() === methodName.toLowerCase(),
           );
-          const returnType = resolvePhpDeclaredType(content, method?.returnType ?? null);
+          const returnType = method
+            ? resolvePhpMethodDeclaredReturnType(
+                content,
+                method.returnType,
+                normalizedLateStaticClassName || normalizedClassName,
+              )
+            : null;
 
           if (returnType) {
             return returnType;
@@ -4494,6 +4521,7 @@ export function useWorkbenchController(
                   resolvedTraitName,
                   methodName,
                   visitedClassNames,
+                  normalizedLateStaticClassName || normalizedClassName,
                 )
               : null;
 
@@ -4509,6 +4537,7 @@ export function useWorkbenchController(
                   resolvedMixinName,
                   methodName,
                   visitedClassNames,
+                  normalizedLateStaticClassName || normalizedClassName,
                 )
               : null;
 
@@ -4527,6 +4556,7 @@ export function useWorkbenchController(
               resolvedParentClassName,
               methodName,
               visitedClassNames,
+              normalizedLateStaticClassName || normalizedClassName,
             );
 
             if (parentReturnType) {
@@ -4546,7 +4576,7 @@ export function useWorkbenchController(
       readPhpClassMembersFromPath,
       resolvePhpLaravelBoundConcrete,
       resolvePhpClassReference,
-      resolvePhpDeclaredType,
+      resolvePhpMethodDeclaredReturnType,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
@@ -8702,6 +8732,20 @@ function phpSourceSignature(source: string): string {
   }
 
   return `${source.length}:${hash >>> 0}`;
+}
+
+function phpReturnTypeIncludesLateStatic(typeName: string | null): boolean {
+  return Boolean(
+    typeName
+      ?.trim()
+      .replace(/^\?/, "")
+      .split(/[|&]/)
+      .some((part) => {
+        const normalized = part.trim().replace(/^\\+/, "").toLowerCase();
+
+        return normalized === "static" || normalized === "$this";
+      }),
+  );
 }
 
 function laravelFacadeTargetClassName(className: string): string | null {
