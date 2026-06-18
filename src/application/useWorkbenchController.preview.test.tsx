@@ -4468,6 +4468,57 @@ class CommentIdeHelper
     const commentPath =
       "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
     const userPath = "/workspace/app/Models/User.php";
+    const commentModelSource = `<?php
+namespace Kontentino\\Communication\\Models;
+
+use App\\Models\\User;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphedByMany;
+use Illuminate\\Database\\Eloquent\\Model;
+
+/** @property-read \\Illuminate\\Database\\Eloquent\\Collection<int, User> $reviewers */
+class Comment
+{
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(Comment::class, 'parent_id');
+    }
+
+    public function children(): HasMany
+    {
+        return $this->hasMany(Comment::class, 'parent_id');
+    }
+
+    public function namedChildren(): HasMany
+    {
+        return $this->hasMany(
+            foreignKey: 'parent_id',
+            related: Comment::class,
+        );
+    }
+
+    /** @return BelongsTo<Comment, self> */
+    public function documentedParent(): BelongsTo
+    {
+        return $this->belongsTo();
+    }
+
+    /** @return MorphTo<Model, User> */
+    public function documentedOwner(): MorphTo
+    {
+        return $this->morphTo();
+    }
+
+    public function likers(): MorphedByMany
+    {
+        return $this->morphedByMany(User::class, 'likeable');
+    }
+
+    public function getContent(): string {}
+}
+`;
     const controllerSource = `<?php
 namespace App\\Http\\Controllers\\communication;
 
@@ -4500,6 +4551,9 @@ class CommentController
 
         $reviewer = $comment->reviewers->first();
         $reviewer->get
+
+        $owner = $comment->documentedOwner;
+        $owner->get
 
         $documentedParent = $comment->documentedParent()->first();
         $documentedParent->get
@@ -4570,49 +4624,7 @@ interface CommentRepositoryInterface
         }
 
         if (path === commentPath) {
-          return `<?php
-namespace Kontentino\\Communication\\Models;
-
-use App\\Models\\User;
-use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
-use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
-use Illuminate\\Database\\Eloquent\\Relations\\MorphedByMany;
-
-/** @property-read \\Illuminate\\Database\\Eloquent\\Collection<int, User> $reviewers */
-class Comment
-{
-    public function parent(): BelongsTo
-    {
-        return $this->belongsTo(Comment::class, 'parent_id');
-    }
-
-    public function children(): HasMany
-    {
-        return $this->hasMany(Comment::class, 'parent_id');
-    }
-
-    public function namedChildren(): HasMany
-    {
-        return $this->hasMany(
-            foreignKey: 'parent_id',
-            related: Comment::class,
-        );
-    }
-
-    /** @return BelongsTo<Comment, self> */
-    public function documentedParent(): BelongsTo
-    {
-        return $this->belongsTo();
-    }
-
-    public function likers(): MorphedByMany
-    {
-        return $this->morphedByMany(User::class, 'likeable');
-    }
-
-    public function getContent(): string {}
-}
-`;
+          return commentModelSource;
         }
 
         if (path === userPath) {
@@ -4742,6 +4754,19 @@ class User
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$owner->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        name: "getName",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$child->get"),
       ),
     ).resolves.toEqual([
@@ -4795,7 +4820,7 @@ class User
       path: commentPath,
       position: {
         column: 21,
-        lineNumber: 41,
+        lineNumber: lineNumberOf(commentModelSource, "getContent"),
       },
     });
   });
@@ -7271,4 +7296,8 @@ function positionAfter(source: string, needle: string): EditorPosition {
     column: (lines[lines.length - 1] ?? "").length + 1,
     lineNumber: lines.length,
   };
+}
+
+function lineNumberOf(source: string, needle: string): number {
+  return positionAfter(source, needle).lineNumber;
 }

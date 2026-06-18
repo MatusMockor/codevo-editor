@@ -9568,7 +9568,9 @@ function resolvePhpLaravelRelationModelType(
     return null;
   }
 
-  const [relatedModelType] = phpDeclaredGenericTypeCandidates(returnType);
+  const relatedModelType = phpDeclaredGenericTypeCandidates(returnType).find(
+    (candidate) => !isGenericPhpPlaceholder(candidate),
+  );
 
   return relatedModelType ? resolvePhpClassName(source, relatedModelType) : null;
 }
@@ -9662,6 +9664,8 @@ function isGenericPhpPlaceholder(typeName: string): boolean {
     normalized === "self" ||
     normalized === "static" ||
     normalized === "$this" ||
+    normalized === "illuminate\\database\\eloquent\\model" ||
+    normalized === "model" ||
     /^t[A-Z_]/.test(typeName)
   );
 }
