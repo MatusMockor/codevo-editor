@@ -3791,6 +3791,113 @@ trait SoftDeletes
     );
   });
 
+  it("suppresses static local-scope diagnostics only when the model defines the scope", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::published()->first();
+        Album::missingMagic()->first();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 12,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Album
+{
+    public function scopePublished(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 16,
+            line: 9,
+            message: "Method App\\Models\\Album::published() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            character: 16,
+            line: 10,
+            message: "Method App\\Models\\Album::missingMagic() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        character: 16,
+        line: 10,
+        message: "Method App\\Models\\Album::missingMagic() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("keeps Laravel Eloquent builder generics through fluent chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumPath = "/workspace/app/Models/Album.php";

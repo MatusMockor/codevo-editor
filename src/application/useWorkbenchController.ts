@@ -50,8 +50,10 @@ import {
 } from "../domain/languageServerDiagnostics";
 import {
   filterPhpLanguageServerDiagnostics,
+  phpMethodDiagnosticKey,
   phpTraitHostMethodDiagnosticContext,
   phpTraitHostMethodDiagnosticKey,
+  phpUnresolvedStaticMethodDiagnosticContext,
 } from "../domain/phpLanguageServerDiagnosticFilters";
 import {
   createLanguageServerTextDocument,
@@ -4208,41 +4210,78 @@ export function useWorkbenchController(
       }
 
       const contextualTraitHostMethods = new Set<string>();
+      const contextualExistingMethods = new Set<string>();
 
       for (const diagnostic of diagnostics) {
-        const context = phpTraitHostMethodDiagnosticContext(source, diagnostic);
+        const staticMethodContext = phpUnresolvedStaticMethodDiagnosticContext(
+          source,
+          diagnostic,
+        );
 
-        if (!context) {
+        if (staticMethodContext) {
+          const resolvedClassName = resolvePhpClassReference(
+            source,
+            staticMethodContext.className,
+          );
+          const scopeMethodName = phpLaravelScopeMethodName(
+            staticMethodContext.methodName,
+          );
+          const hasContextualScopeMethod =
+            resolvedClassName && scopeMethodName
+              ? await phpClassHierarchyHasMethod(
+                  resolvedClassName,
+                  scopeMethodName,
+                )
+              : false;
+
+          if (hasContextualScopeMethod) {
+            contextualExistingMethods.add(
+              phpMethodDiagnosticKey(
+                staticMethodContext.className,
+                staticMethodContext.methodName,
+              ),
+            );
+          }
+        }
+
+        const traitContext = phpTraitHostMethodDiagnosticContext(
+          source,
+          diagnostic,
+        );
+
+        if (!traitContext) {
           continue;
         }
 
-        const normalizedTraitName = context.traitName.replace(/^\\+/, "");
+        const normalizedTraitName = traitContext.traitName.replace(/^\\+/, "");
         const traitClassName = normalizedTraitName.includes("\\")
           ? normalizedTraitName
-          : (resolvePhpClassReference(source, context.traitName) ??
+          : (resolvePhpClassReference(source, traitContext.traitName) ??
             normalizedTraitName);
 
         if (
           await phpTraitHostMethodExists(
             traitClassName,
-            context.methodName,
+            traitContext.methodName,
           )
         ) {
           contextualTraitHostMethods.add(
             phpTraitHostMethodDiagnosticKey(
               traitClassName,
-              context.methodName,
+              traitContext.methodName,
             ),
           );
         }
       }
 
       return filterPhpLanguageServerDiagnostics(source, diagnostics, {
+        contextualExistingMethods,
         contextualTraitHostMethods,
         path,
       });
     },
     [
+      phpClassHierarchyHasMethod,
       phpTraitHostMethodExists,
       readNavigationFileContent,
       resolvePhpClassReference,
@@ -4772,13 +4811,27 @@ export function useWorkbenchController(
       }
 
       const staticCall = phpStaticCallExpression(normalizedExpression);
+      const staticCallClassName = staticCall
+        ? resolvePhpClassReference(source, staticCall.className)
+        : null;
+
+      if (
+        staticCall &&
+        staticCallClassName &&
+        (await phpClassHasLaravelLocalScope(
+          staticCallClassName,
+          staticCall.methodName,
+        ))
+      ) {
+        return staticCallClassName;
+      }
 
       if (
         staticCall &&
         (isLaravelEloquentStaticBuilderMethod(staticCall.methodName) ||
           isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName))
       ) {
-        return resolvePhpClassReference(source, staticCall.className);
+        return staticCallClassName;
       }
 
       return null;
@@ -5206,6 +5259,13 @@ export function useWorkbenchController(
         }
 
         if (className && isLaravelEloquentStaticBuilderMethod(staticCall.methodName)) {
+          return "Illuminate\\Database\\Eloquent\\Builder";
+        }
+
+        if (
+          className &&
+          (await phpClassHasLaravelLocalScope(className, staticCall.methodName))
+        ) {
           return "Illuminate\\Database\\Eloquent\\Builder";
         }
 

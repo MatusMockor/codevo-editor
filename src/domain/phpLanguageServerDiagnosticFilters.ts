@@ -6,6 +6,11 @@ export interface PhpTraitHostMethodDiagnosticContext {
   traitName: string;
 }
 
+export interface PhpStaticMethodDiagnosticContext {
+  className: string;
+  methodName: string;
+}
+
 const ignoredPhpactorDocblockDiagnosticCodes = new Set([
   "worse.docblock_missing_param",
   "worse.docblock_missing_return_type",
@@ -14,13 +19,14 @@ const ignoredPhpactorDocblockDiagnosticCodes = new Set([
 const unresolvedMethodDiagnosticPattern =
   /\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b.*\bmethod\b|\bmethod\b.*\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b/i;
 const staticMethodCallPattern =
-  /\b[A-Z_][A-Za-z0-9_]*(?:\\[A-Z_][A-Za-z0-9_]*)*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  /\b((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
 export function filterPhpLanguageServerDiagnostics(
   source: string,
   diagnostics: LanguageServerDiagnostic[],
   options: {
     allowDependencyTraitFallback?: boolean;
+    contextualExistingMethods?: ReadonlySet<string>;
     contextualTraitHostMethods?: ReadonlySet<string>;
     path?: string | null;
   } = {},
@@ -30,6 +36,11 @@ export function filterPhpLanguageServerDiagnostics(
       !isIgnoredPhpactorDocblockDiagnostic(diagnostic) &&
       !isPhpactorKeywordMethodDiagnostic(source, diagnostic) &&
       !isPhpactorStaleReturnParseDiagnostic(source, diagnostic) &&
+      !isContextualExistingMethodDiagnostic(
+        source,
+        diagnostic,
+        options.contextualExistingMethods,
+      ) &&
       !isPhpactorTraitHostMethodDiagnostic(
         source,
         diagnostic,
@@ -61,33 +72,31 @@ function isLaravelEloquentStaticBuilderDiagnostic(
   source: string,
   diagnostic: LanguageServerDiagnostic,
 ): boolean {
-  if (!unresolvedMethodDiagnosticPattern.test(diagnostic.message)) {
+  const context = phpUnresolvedStaticMethodDiagnosticContext(source, diagnostic);
+
+  return Boolean(
+    context && isLaravelEloquentBuilderMethodName(context.methodName),
+  );
+}
+
+function isContextualExistingMethodDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  contextualExistingMethods: ReadonlySet<string> | undefined,
+): boolean {
+  if (!contextualExistingMethods?.size) {
     return false;
   }
 
-  const line = lineAt(source, diagnostic.line);
+  const context = phpUnresolvedStaticMethodDiagnosticContext(source, diagnostic);
 
-  if (!line) {
+  if (!context) {
     return false;
   }
 
-  for (const call of line.matchAll(staticMethodCallPattern)) {
-    const method = call[1] || "";
-
-    if (!isLaravelEloquentBuilderMethodName(method)) {
-      continue;
-    }
-
-    const callStart = call.index ?? 0;
-    const methodStart = callStart + call[0].indexOf(method);
-    const methodEnd = methodStart + method.length;
-
-    if (diagnosticTouchesMethod(diagnostic, method, methodStart, methodEnd)) {
-      return true;
-    }
-  }
-
-  return false;
+  return contextualExistingMethods.has(
+    phpMethodDiagnosticKey(context.className, context.methodName),
+  );
 }
 
 function isPhpactorKeywordMethodDiagnostic(
@@ -191,11 +200,57 @@ export function phpTraitHostMethodDiagnosticContext(
   };
 }
 
+export function phpUnresolvedStaticMethodDiagnosticContext(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): PhpStaticMethodDiagnosticContext | null {
+  if (!unresolvedMethodDiagnosticPattern.test(diagnostic.message)) {
+    return null;
+  }
+
+  const line = lineAt(source, diagnostic.line);
+
+  if (!line) {
+    return null;
+  }
+
+  for (const call of line.matchAll(staticMethodCallPattern)) {
+    const className = call[1]?.replace(/^\\+/, "") ?? "";
+    const methodName = call[2] ?? "";
+
+    if (!className || !methodName) {
+      continue;
+    }
+
+    const callStart = call.index ?? 0;
+    const methodStart = callStart + call[0].lastIndexOf(methodName);
+    const methodEnd = methodStart + methodName.length;
+
+    if (diagnosticTouchesMethod(diagnostic, methodName, methodStart, methodEnd)) {
+      return {
+        className,
+        methodName,
+      };
+    }
+  }
+
+  return null;
+}
+
 export function phpTraitHostMethodDiagnosticKey(
   traitName: string,
   methodName: string,
 ): string {
   return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#${methodName
+    .trim()
+    .toLowerCase()}`;
+}
+
+export function phpMethodDiagnosticKey(
+  className: string,
+  methodName: string,
+): string {
+  return `${className.trim().replace(/^\\+/, "").toLowerCase()}#${methodName
     .trim()
     .toLowerCase()}`;
 }
