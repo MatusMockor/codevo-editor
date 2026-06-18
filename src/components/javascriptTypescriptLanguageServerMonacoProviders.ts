@@ -68,6 +68,15 @@ interface ExecuteCommandPayload {
   rootPath: string;
 }
 
+const JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS = [
+  "javascript",
+  "typescript",
+  "javascriptreact",
+  "typescriptreact",
+];
+const JAVASCRIPT_TYPESCRIPT_LANGUAGE_ID_SET = new Set<string>(
+  JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS,
+);
 const EXECUTE_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.javascriptTypeScript.executeLanguageServerCommand";
 const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
@@ -123,7 +132,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
 ): Disposable {
-  const languages = ["javascript", "typescript"];
+  const languages = JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS;
   const registry = monaco.languages as Partial<typeof monaco.languages>;
   const disposables: Disposable[] = [];
   let workspaceEditUnsubscribe: (() => void) | null = null;
@@ -1941,7 +1950,7 @@ function modelPath(model: MonacoModel): string {
 }
 
 function isJavaScriptTypeScriptDocument(document: EditorDocument): boolean {
-  return document.language === "javascript" || document.language === "typescript";
+  return JAVASCRIPT_TYPESCRIPT_LANGUAGE_ID_SET.has(document.language);
 }
 
 function escapeRegExp(value: string): string {

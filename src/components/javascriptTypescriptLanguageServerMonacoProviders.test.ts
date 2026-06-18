@@ -21,35 +21,102 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       providerContext(),
     );
 
-    expect(monaco.languages.registerHoverProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerTypeDefinitionProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerSignatureHelpProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerReferenceProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerRenameProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerHoverProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerTypeDefinitionProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerSignatureHelpProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerReferenceProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerRenameProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerCodeActionProvider).toHaveBeenCalledTimes(4);
     expect(
       monaco.languages.registerDocumentFormattingEditProvider,
-    ).toHaveBeenCalledTimes(2);
+    ).toHaveBeenCalledTimes(4);
     expect(
       monaco.languages.registerDocumentRangeFormattingEditProvider,
-    ).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerLinkedEditingRangeProvider).toHaveBeenCalledTimes(2);
-    expect(monaco.languages.registerCodeLensProvider).toHaveBeenCalledTimes(2);
+    ).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerLinkedEditingRangeProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerCodeLensProvider).toHaveBeenCalledTimes(4);
     expect(
       monaco.languages.registerDocumentSemanticTokensProvider,
-    ).toHaveBeenCalledTimes(2);
+    ).toHaveBeenCalledTimes(4);
+    expect(
+      (monaco.languages.registerCompletionItemProvider as any).mock.calls.map(
+        ([language]: [string]) => language,
+      ),
+    ).toEqual([
+      "javascript",
+      "typescript",
+      "javascriptreact",
+      "typescriptreact",
+    ]);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(39);
+    expect(monaco.dispose).toHaveBeenCalledTimes(77);
+  });
+
+  it("requests TypeScript language-server completions for TSX documents", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "function useUser(): User",
+            documentation: "Loads the current user.",
+            insertText: "useUser",
+            kind: 3,
+            label: "useUser",
+          },
+        ],
+      },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      getActiveDocument: () => ({
+        ...document(),
+        language: "typescriptreact",
+        name: "App.tsx",
+        path: "/project/src/App.tsx",
+      }),
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = {
+      ...textModel(),
+      uri: {
+        fsPath: "/project/src/App.tsx",
+        path: "/project/src/App.tsx",
+      },
+    };
+    const position = { column: 4, lineNumber: 2 };
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[3][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      model,
+      position,
+    );
+
+    expect(gateway.completion).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/App.tsx",
+    });
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "useUser()$0",
+        kind: 3,
+        label: "useUser",
+      }),
+    );
   });
 
   it("maps TypeScript document links and lazy resolution", async () => {
