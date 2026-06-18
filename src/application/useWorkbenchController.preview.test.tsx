@@ -3818,6 +3818,11 @@ class AlbumController
         $trashedAlbum = Album::withTrashed()->whereNull('parent_id')->first();
         $trashedAlbum->get
 
+        Album::withR
+        Album::withRelations(
+        Album::pub
+        Album::published(
+
         $albumWithRelations = Album::withRelations()->findOrFail(1);
         $albumWithRelations->get
 
@@ -3881,6 +3886,7 @@ class Album
     public function getTitle(): string {}
 
     public function scopePublished($query, bool $strict = true): void {}
+    public function scopeWithRelations(Builder $query): Builder {}
 }
 `;
         }
@@ -4010,6 +4016,74 @@ class Builder
         returnType: "string",
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Album::withR"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "withRelations",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        controllerSource,
+        positionAfter(controllerSource, "Album::withRelations("),
+      ),
+    ).resolves.toEqual({
+      argumentIndex: 0,
+      method: {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "withRelations",
+        parameters: "",
+        returnType: "Builder",
+      },
+      parameters: [],
+    });
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Album::pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        controllerSource,
+        positionAfter(controllerSource, "Album::published("),
+      ),
+    ).resolves.toEqual({
+      argumentIndex: 0,
+      method: {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      parameters: [
+        {
+          defaultValue: "true",
+          name: "$strict",
+          optional: true,
+          raw: "bool $strict = true",
+          type: "bool",
+        },
+      ],
+    });
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,

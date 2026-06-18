@@ -284,6 +284,15 @@ export function phpLaravelLocalScopeCompletionsFromMethods(
   );
 }
 
+export function phpLaravelStaticLocalScopeCompletionsFromMethods(
+  methods: PhpMethodCompletion[],
+): PhpMethodCompletion[] {
+  return phpLaravelLocalScopeCompletionsFromMethods(methods).map((method) => ({
+    ...method,
+    isStatic: true,
+  }));
+}
+
 export function phpLaravelModelAttributeCompletionsFromSource(
   source: string,
   declaringClassName: string,

@@ -145,6 +145,7 @@ import {
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentStaticBuilderMethod,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
 import {
   phpAssignmentExpressionForVariableBefore,
@@ -5274,9 +5275,14 @@ export function useWorkbenchController(
         facadeTargetClassName ?? resolvedClassName,
       );
 
-      return facadeTargetClassName
-        ? methods
-        : methods.filter((method) => method.isStatic);
+      if (facadeTargetClassName) {
+        return methods;
+      }
+
+      return mergePhpMethodCompletions(
+        methods.filter((method) => method.isStatic),
+        phpLaravelStaticLocalScopeCompletionsFromMethods(methods),
+      );
     },
     [collectPhpMethodsForClass, resolvePhpClassReference],
   );

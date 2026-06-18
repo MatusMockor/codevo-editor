@@ -8,7 +8,10 @@ import {
   phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
 } from "./phpMethodCompletions";
-import { phpLaravelLocalScopeCompletionsFromMethods } from "./phpFrameworkLaravel";
+import {
+  phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelStaticLocalScopeCompletionsFromMethods,
+} from "./phpFrameworkLaravel";
 
 function positionAfter(source: string, needle: string) {
   const offset = source.indexOf(needle);
@@ -281,6 +284,30 @@ class Comment
         name: "recentlyCreated",
         parameters: "int $days = 7",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+  });
+
+  it("maps Laravel local scopes to static model completions", () => {
+    const methods = phpMethodCompletionsFromSource(
+      `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Comment
+{
+    public function scopeWithRelations(Builder $query): Builder {}
+}
+`,
+      "Comment",
+    );
+
+    expect(phpLaravelStaticLocalScopeCompletionsFromMethods(methods)).toEqual([
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "withRelations",
+        parameters: "",
+        returnType: "Builder",
       },
     ]);
   });
