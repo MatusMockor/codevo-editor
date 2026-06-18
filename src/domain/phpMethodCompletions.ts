@@ -187,6 +187,50 @@ export function phpMethodCompletionsFromSource(
   return dedupePhpMembers(members);
 }
 
+export function phpLaravelLocalScopeCompletionsFromMethods(
+  methods: PhpMethodCompletion[],
+): PhpMethodCompletion[] {
+  return dedupePhpMembers(
+    methods.flatMap((method) => {
+      if (method.kind === "property" || method.isStatic) {
+        return [];
+      }
+
+      const scopeName = laravelLocalScopeName(method.name);
+
+      if (!scopeName) {
+        return [];
+      }
+
+      return [
+        {
+          declaringClassName: method.declaringClassName,
+          name: scopeName,
+          parameters: phpMethodParameters(method.parameters)
+            .slice(1)
+            .map((parameter) => parameter.raw)
+            .join(", "),
+          returnType:
+            method.returnType === "void" || method.returnType === "never"
+              ? "Illuminate\\Database\\Eloquent\\Builder"
+              : method.returnType,
+        },
+      ];
+    }),
+  );
+}
+
+function laravelLocalScopeName(methodName: string): string | null {
+  const match = /^scope([A-Z][A-Za-z0-9_]*)$/.exec(methodName);
+  const scopeName = match?.[1];
+
+  if (!scopeName) {
+    return null;
+  }
+
+  return `${scopeName[0]?.toLowerCase() ?? ""}${scopeName.slice(1)}`;
+}
+
 function phpDocMethodCompletionsFromSource(
   source: string,
   declaringClassName: string,

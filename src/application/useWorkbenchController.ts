@@ -123,6 +123,7 @@ import {
 } from "../domain/phpTree";
 import {
   phpMemberAccessCompletionContextAt,
+  phpLaravelLocalScopeCompletionsFromMethods,
   phpMethodCompletionsFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
@@ -4242,6 +4243,20 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpClassHasLaravelLocalScope = useCallback(
+    async (className: string, scopeName: string): Promise<boolean> => {
+      const scopeLookup = scopeName.toLowerCase();
+      const scopeCompletions = phpLaravelLocalScopeCompletionsFromMethods(
+        await collectPhpMethodsForClass(className),
+      );
+
+      return scopeCompletions.some(
+        (scope) => scope.name.toLowerCase() === scopeLookup,
+      );
+    },
+    [collectPhpMethodsForClass],
+  );
+
   const resolvePhpEloquentBuilderModelType = useCallback(
     async (
       source: string,
@@ -4305,6 +4320,25 @@ export function useWorkbenchController(
         );
       }
 
+      if (methodCall) {
+        const receiverModelType = await resolvePhpEloquentBuilderModelType(
+          source,
+          position,
+          methodCall.receiverExpression,
+          depth + 1,
+        );
+
+        if (
+          receiverModelType &&
+          (await phpClassHasLaravelLocalScope(
+            receiverModelType,
+            methodCall.methodName,
+          ))
+        ) {
+          return receiverModelType;
+        }
+      }
+
       const staticCall = phpStaticCallExpression(normalizedExpression);
 
       if (
@@ -4317,7 +4351,7 @@ export function useWorkbenchController(
 
       return null;
     },
-    [resolvePhpClassReference],
+    [phpClassHasLaravelLocalScope, resolvePhpClassReference],
   );
 
   const resolvePhpLaravelCollectionModelType = useCallback(
@@ -4647,6 +4681,23 @@ export function useWorkbenchController(
           }
         }
 
+        const localScopeModelType = await resolvePhpEloquentBuilderModelType(
+          source,
+          position,
+          methodCall.receiverExpression,
+          depth + 1,
+        );
+
+        if (
+          localScopeModelType &&
+          (await phpClassHasLaravelLocalScope(
+            localScopeModelType,
+            methodCall.methodName,
+          ))
+        ) {
+          return "Illuminate\\Database\\Eloquent\\Builder";
+        }
+
         const receiverType = await resolvePhpExpressionType(
           source,
           position,
@@ -4688,6 +4739,7 @@ export function useWorkbenchController(
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
       phpClassMethodReturnsClassStringArgument,
+      phpClassHasLaravelLocalScope,
       resolvePhpMethodReturnType,
     ],
   );
@@ -4703,12 +4755,27 @@ export function useWorkbenchController(
         position,
         receiverExpression,
       );
-
-      return resolvedReceiverType
-        ? collectPhpMethodsForClass(resolvedReceiverType)
+      const receiverMethods = resolvedReceiverType
+        ? await collectPhpMethodsForClass(resolvedReceiverType)
         : [];
+      const builderModelType = await resolvePhpEloquentBuilderModelType(
+        source,
+        position,
+        receiverExpression,
+      );
+      const localScopeMethods = builderModelType
+        ? phpLaravelLocalScopeCompletionsFromMethods(
+            await collectPhpMethodsForClass(builderModelType),
+          )
+        : [];
+
+      return mergePhpMethodCompletions(receiverMethods, localScopeMethods);
     },
-    [collectPhpMethodsForClass, resolvePhpExpressionType],
+    [
+      collectPhpMethodsForClass,
+      resolvePhpEloquentBuilderModelType,
+      resolvePhpExpressionType,
+    ],
   );
 
   const resolvePhpStaticMethodCompletions = useCallback(
@@ -8077,6 +8144,24 @@ function resolvePhpLaravelRelationModelType(
   const [relatedModelType] = phpDeclaredGenericTypeCandidates(returnType);
 
   return relatedModelType ? resolvePhpClassName(source, relatedModelType) : null;
+}
+
+function mergePhpMethodCompletions(
+  ...groups: PhpMethodCompletion[][]
+): PhpMethodCompletion[] {
+  const completions = new Map<string, PhpMethodCompletion>();
+
+  for (const group of groups) {
+    for (const completion of group) {
+      const key = `${completion.kind ?? "method"}:${completion.name.toLowerCase()}`;
+
+      if (!completions.has(key)) {
+        completions.set(key, completion);
+      }
+    }
+  }
+
+  return Array.from(completions.values());
 }
 
 function isLaravelEloquentRelationType(

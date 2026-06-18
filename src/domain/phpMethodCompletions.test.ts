@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   phpMemberAccessCompletionContextAt,
+  phpLaravelLocalScopeCompletionsFromMethods,
   phpMethodCompletionsFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
@@ -247,6 +248,38 @@ class Request
         name: "get",
         parameters: "string $key, mixed $default = null",
         returnType: "mixed",
+      },
+    ]);
+  });
+
+  it("maps Laravel local scopes to builder-style completions", () => {
+    const methods = phpMethodCompletionsFromSource(
+      `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Comment
+{
+    public function scopePublished(Builder $query, bool $strict = true): Builder {}
+    public function scopeRecentlyCreated($query, int $days = 7): void {}
+    public static function scopeGlobalOnly($query): void {}
+    public function normalMethod(): void {}
+}
+`,
+      "Comment",
+    );
+
+    expect(phpLaravelLocalScopeCompletionsFromMethods(methods)).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Builder",
+      },
+      {
+        declaringClassName: "Comment",
+        name: "recentlyCreated",
+        parameters: "int $days = 7",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
       },
     ]);
   });

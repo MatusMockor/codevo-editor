@@ -3214,6 +3214,11 @@ class AlbumController
         $query = Album::query();
         $query->whereNull('parent_id')->ord
         $query->withTrashed()->ord
+        $query->pub
+        $query->published()->ord
+
+        $scopedAlbum = Album::query()->published()->first();
+        $scopedAlbum->get
 
         /** @var \\Illuminate\\Database\\Eloquent\\Builder<Album> $typedQuery */
         $typedQuery = Album::query();
@@ -3246,6 +3251,8 @@ class Album
     public string $title;
 
     public function getTitle(): string {}
+
+    public function scopePublished($query, bool $strict = true): void {}
 }
 `;
         }
@@ -3360,6 +3367,45 @@ class Builder
         name: "orderBy",
         parameters: "$column, $direction = 'asc'",
         returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$query->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$scopedAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
       },
     ]);
     await expect(
