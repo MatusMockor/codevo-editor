@@ -743,7 +743,12 @@ export function useWorkbenchController(
         return;
       }
 
-      const currentVersion = documentVersionsByUriRef.current[event.uri];
+      const diagnosticsRootPath = event.rootPath ?? currentWorkspaceRootRef.current;
+      const currentVersion = diagnosticsRootPath
+        ? documentVersionsByUriRef.current[
+            languageServerUriSyncKey(diagnosticsRootPath, event.uri)
+          ]
+        : undefined;
 
       if (
         !shouldApplyLanguageServerDiagnostics(
@@ -765,7 +770,11 @@ export function useWorkbenchController(
               event.diagnostics,
             )
           : event.diagnostics;
-        const latestVersion = documentVersionsByUriRef.current[event.uri];
+        const latestVersion = diagnosticsRootPath
+          ? documentVersionsByUriRef.current[
+              languageServerUriSyncKey(diagnosticsRootPath, event.uri)
+            ]
+          : undefined;
 
         if (
           !shouldApplyLanguageServerDiagnostics(
@@ -1170,10 +1179,13 @@ export function useWorkbenchController(
     [clearIndexWorkspaceState, indexProgressGateway, reportError],
   );
 
-  const nextDocumentVersion = useCallback((path: string): number => {
-    const next = (documentVersionsRef.current[path] || 0) + 1;
-    documentVersionsRef.current[path] = next;
-    documentVersionsByUriRef.current[fileUriFromPath(path)] = next;
+  const nextDocumentVersion = useCallback((rootPath: string, path: string): number => {
+    const key = languageServerDocumentSyncKey(rootPath, path);
+    const next = (documentVersionsRef.current[key] || 0) + 1;
+    documentVersionsRef.current[key] = next;
+    documentVersionsByUriRef.current[
+      languageServerUriSyncKey(rootPath, fileUriFromPath(path))
+    ] = next;
     return next;
   }, []);
 
@@ -1192,15 +1204,15 @@ export function useWorkbenchController(
     [],
   );
 
-  const clearDocumentChangeTimer = useCallback((path: string) => {
-    const timer = documentChangeTimersRef.current[path];
+  const clearDocumentChangeTimer = useCallback((key: string) => {
+    const timer = documentChangeTimersRef.current[key];
 
     if (!timer) {
       return;
     }
 
     window.clearTimeout(timer);
-    delete documentChangeTimersRef.current[path];
+    delete documentChangeTimersRef.current[key];
   }, []);
 
   const clearJavaScriptTypeScriptDocumentChangeTimer = useCallback(
@@ -1409,22 +1421,24 @@ export function useWorkbenchController(
         return;
       }
 
-      if (syncedDocumentPathsRef.current.has(document.path)) {
+      const syncKey = languageServerDocumentSyncKey(rootPath, document.path);
+
+      if (syncedDocumentPathsRef.current.has(syncKey)) {
         return;
       }
 
-      const version = nextDocumentVersion(document.path);
+      const version = nextDocumentVersion(rootPath, document.path);
       const syncedDocument = createLanguageServerTextDocument(document, version);
-      syncedDocumentPathsRef.current.add(document.path);
-      syncedDocumentContentRef.current[document.path] = document.content;
+      syncedDocumentPathsRef.current.add(syncKey);
+      syncedDocumentContentRef.current[syncKey] = document.content;
 
       try {
-        await enqueueDocumentSync(document.path, () =>
+        await enqueueDocumentSync(syncKey, () =>
           languageServerDocumentSyncGateway.didOpen(rootPath, syncedDocument),
         );
       } catch (error) {
-        syncedDocumentPathsRef.current.delete(document.path);
-        delete syncedDocumentContentRef.current[document.path];
+        syncedDocumentPathsRef.current.delete(syncKey);
+        delete syncedDocumentContentRef.current[syncKey];
         reportLanguageServerError(error);
       }
     },
@@ -1547,30 +1561,34 @@ export function useWorkbenchController(
         return;
       }
 
-      if (!rootPath || !syncedDocumentPathsRef.current.has(document.path)) {
+      const syncKey = rootPath
+        ? languageServerDocumentSyncKey(rootPath, document.path)
+        : null;
+
+      if (!rootPath || !syncKey || !syncedDocumentPathsRef.current.has(syncKey)) {
         return;
       }
 
-      if (syncedDocumentContentRef.current[document.path] === document.content) {
+      if (syncedDocumentContentRef.current[syncKey] === document.content) {
         return;
       }
 
-      clearDocumentChangeTimer(document.path);
-      syncedDocumentContentRef.current[document.path] = document.content;
+      clearDocumentChangeTimer(syncKey);
+      syncedDocumentContentRef.current[syncKey] = document.content;
 
-      const version = nextDocumentVersion(document.path);
+      const version = nextDocumentVersion(rootPath, document.path);
       const syncedDocument = createLanguageServerTextDocument(document, version);
-      pendingDocumentChangesRef.current[document.path] = syncedDocument;
-      documentChangeTimersRef.current[document.path] = window.setTimeout(() => {
-        const pendingDocument = pendingDocumentChangesRef.current[document.path];
-        delete documentChangeTimersRef.current[document.path];
-        delete pendingDocumentChangesRef.current[document.path];
+      pendingDocumentChangesRef.current[syncKey] = syncedDocument;
+      documentChangeTimersRef.current[syncKey] = window.setTimeout(() => {
+        const pendingDocument = pendingDocumentChangesRef.current[syncKey];
+        delete documentChangeTimersRef.current[syncKey];
+        delete pendingDocumentChangesRef.current[syncKey];
 
         if (!pendingDocument) {
           return;
         }
 
-        void enqueueDocumentSync(document.path, () =>
+        void enqueueDocumentSync(syncKey, () =>
           languageServerDocumentSyncGateway.didChange(rootPath, pendingDocument),
         )
           .catch(reportLanguageServerError);
@@ -1656,16 +1674,21 @@ export function useWorkbenchController(
   const flushPendingDocumentChange = useCallback(
     async (path: string) => {
       const rootPath = currentWorkspaceRootRef.current;
-      const pendingDocument = pendingDocumentChangesRef.current[path];
+      const syncKey = rootPath
+        ? languageServerDocumentSyncKey(rootPath, path)
+        : null;
+      const pendingDocument = syncKey
+        ? pendingDocumentChangesRef.current[syncKey]
+        : null;
 
-      if (!rootPath || !pendingDocument) {
+      if (!rootPath || !syncKey || !pendingDocument) {
         return;
       }
 
-      clearDocumentChangeTimer(path);
-      delete pendingDocumentChangesRef.current[path];
+      clearDocumentChangeTimer(syncKey);
+      delete pendingDocumentChangesRef.current[syncKey];
 
-      await enqueueDocumentSync(path, () =>
+      await enqueueDocumentSync(syncKey, () =>
         languageServerDocumentSyncGateway.didChange(rootPath, pendingDocument),
       );
     },
@@ -1710,8 +1733,11 @@ export function useWorkbenchController(
   const syncSavedDocument = useCallback(
     async (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
+      const syncKey = rootPath
+        ? languageServerDocumentSyncKey(rootPath, document.path)
+        : null;
 
-      if (!rootPath || !syncedDocumentPathsRef.current.has(document.path)) {
+      if (!rootPath || !syncKey || !syncedDocumentPathsRef.current.has(syncKey)) {
         return;
       }
 
@@ -1721,12 +1747,12 @@ export function useWorkbenchController(
 
       try {
         await flushPendingDocumentChange(document.path);
-        await enqueueDocumentSync(document.path, () =>
+        await enqueueDocumentSync(syncKey, () =>
           languageServerDocumentSyncGateway.didSave(
             rootPath,
             createLanguageServerTextDocument(
               document,
-              documentVersionsRef.current[document.path] || 0,
+              documentVersionsRef.current[syncKey] || 0,
             ),
           ),
         );
@@ -1786,20 +1812,25 @@ export function useWorkbenchController(
   const syncClosedDocument = useCallback(
     async (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
+      const syncKey = rootPath
+        ? languageServerDocumentSyncKey(rootPath, document.path)
+        : null;
 
-      if (!rootPath || !syncedDocumentPathsRef.current.has(document.path)) {
+      if (!rootPath || !syncKey || !syncedDocumentPathsRef.current.has(syncKey)) {
         return;
       }
 
-      clearDocumentChangeTimer(document.path);
-      syncedDocumentPathsRef.current.delete(document.path);
-      delete syncedDocumentContentRef.current[document.path];
-      delete pendingDocumentChangesRef.current[document.path];
-      delete documentVersionsRef.current[document.path];
-      delete documentVersionsByUriRef.current[fileUriFromPath(document.path)];
+      clearDocumentChangeTimer(syncKey);
+      syncedDocumentPathsRef.current.delete(syncKey);
+      delete syncedDocumentContentRef.current[syncKey];
+      delete pendingDocumentChangesRef.current[syncKey];
+      delete documentVersionsRef.current[syncKey];
+      delete documentVersionsByUriRef.current[
+        languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
+      ];
 
       try {
-        await enqueueDocumentSync(document.path, () =>
+        await enqueueDocumentSync(syncKey, () =>
           languageServerDocumentSyncGateway.didClose(rootPath, document.path),
         );
       } catch (error) {
@@ -1859,19 +1890,27 @@ export function useWorkbenchController(
 
   const closeSyncedLanguageServerDocumentsForRoot = useCallback(
     async (rootPath: string) => {
-      const syncedPaths = Array.from(syncedDocumentPathsRef.current);
+      const syncedDocuments = Array.from(syncedDocumentPathsRef.current).flatMap(
+        (key) => {
+          const path = languageServerPathFromDocumentSyncKey(rootPath, key);
+
+          return path ? [{ key, path }] : [];
+        },
+      );
 
       await Promise.all(
-        syncedPaths.map(async (path) => {
-          clearDocumentChangeTimer(path);
-          syncedDocumentPathsRef.current.delete(path);
-          delete syncedDocumentContentRef.current[path];
-          delete pendingDocumentChangesRef.current[path];
-          delete documentVersionsRef.current[path];
-          delete documentVersionsByUriRef.current[fileUriFromPath(path)];
+        syncedDocuments.map(async ({ key, path }) => {
+          clearDocumentChangeTimer(key);
+          syncedDocumentPathsRef.current.delete(key);
+          delete syncedDocumentContentRef.current[key];
+          delete pendingDocumentChangesRef.current[key];
+          delete documentVersionsRef.current[key];
+          delete documentVersionsByUriRef.current[
+            languageServerUriSyncKey(rootPath, fileUriFromPath(path))
+          ];
 
           try {
-            await enqueueDocumentSync(path, () =>
+            await enqueueDocumentSync(key, () =>
               languageServerDocumentSyncGateway.didClose(rootPath, path),
             );
           } catch (error) {
@@ -1880,7 +1919,9 @@ export function useWorkbenchController(
         }),
       );
 
-      resetLanguageServerDocuments();
+      if (syncedDocumentPathsRef.current.size === 0) {
+        resetLanguageServerDocuments();
+      }
     },
     [
       clearDocumentChangeTimer,
