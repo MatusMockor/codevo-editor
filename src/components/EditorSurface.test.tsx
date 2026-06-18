@@ -941,6 +941,7 @@ function languageServerFeaturesGateway() {
     hover: vi.fn(),
     implementation: vi.fn(),
     inlayHints: vi.fn(async () => []),
+    rangeFormatting: vi.fn(async () => []),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
     selectionRanges: vi.fn(async () => []),

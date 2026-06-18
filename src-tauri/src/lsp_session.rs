@@ -62,6 +62,7 @@ pub struct LanguageServerCapabilities {
     pub formatting: bool,
     pub implementation: bool,
     pub inlay_hint: bool,
+    pub range_formatting: bool,
     pub references: bool,
     pub rename: bool,
     pub selection_range: bool,
@@ -1446,6 +1447,9 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         formatting: is_capability_enabled(capabilities.get("documentFormattingProvider")),
         implementation: is_capability_enabled(capabilities.get("implementationProvider")),
         inlay_hint: is_capability_enabled(capabilities.get("inlayHintProvider")),
+        range_formatting: is_capability_enabled(
+            capabilities.get("documentRangeFormattingProvider"),
+        ),
         references: is_capability_enabled(capabilities.get("referencesProvider")),
         rename: is_capability_enabled(capabilities.get("renameProvider")),
         selection_range: is_capability_enabled(capabilities.get("selectionRangeProvider")),
@@ -1633,6 +1637,7 @@ mod tests {
                     formatting: false,
                     implementation: true,
                     inlay_hint: false,
+                    range_formatting: false,
                     references: false,
                     rename: false,
                     selection_range: false,
@@ -1659,6 +1664,7 @@ mod tests {
                 formatting: true,
                 implementation: false,
                 inlay_hint: true,
+                range_formatting: true,
                 references: true,
                 rename: true,
                 selection_range: true,
@@ -1681,6 +1687,7 @@ mod tests {
                     "formatting": true,
                     "implementation": false,
                     "inlayHint": true,
+                    "rangeFormatting": true,
                     "references": true,
                     "rename": true,
                     "selectionRange": true,
@@ -1719,6 +1726,7 @@ mod tests {
                     "workspaceSymbolProvider": true,
                     "codeActionProvider": { "codeActionKinds": ["quickfix"] },
                     "documentFormattingProvider": true,
+                    "documentRangeFormattingProvider": true,
                 }
             }
         }))
@@ -1736,6 +1744,7 @@ mod tests {
                 formatting: true,
                 implementation: true,
                 inlay_hint: true,
+                range_formatting: true,
                 references: true,
                 rename: true,
                 selection_range: true,

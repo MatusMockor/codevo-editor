@@ -393,6 +393,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "dynamicRegistration": false
                         },
                         "implementation": { "dynamicRegistration": false },
+                        "rangeFormatting": { "dynamicRegistration": false },
                         "publishDiagnostics": {
                             "relatedInformation": true,
                             "versionSupport": true
@@ -662,6 +663,11 @@ mod tests {
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["selectionRange"]["dynamicRegistration"],
+            false
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["rangeFormatting"]
+                ["dynamicRegistration"],
             false
         );
         fs::remove_dir_all(root).expect("cleanup");

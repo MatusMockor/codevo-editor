@@ -65,6 +65,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         tabSize: 2,
       }),
     ).resolves.toEqual([]);
+    await expect(
+      gateway.rangeFormatting("/project", "/project/src/User.php", range(), {
+        insertSpaces: true,
+        tabSize: 2,
+      }),
+    ).resolves.toEqual([]);
     expect(invokeCommand).not.toHaveBeenCalled();
   });
 
@@ -126,6 +132,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         range: {
           end: { character: 0, line: 2 },
           start: { character: 0, line: 2 },
+        },
+      },
+    ];
+    const rangeFormatting = [
+      {
+        newText: "    ",
+        range: {
+          end: { character: 4, line: 4 },
+          start: { character: 0, line: 4 },
         },
       },
     ];
@@ -231,6 +246,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return formatting;
       }
 
+      if (command === "text_document_range_formatting") {
+        return rangeFormatting;
+      }
+
       if (command === "text_document_inlay_hints") {
         return inlayHints;
       }
@@ -314,6 +333,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       }),
     ).resolves.toEqual(formatting);
     await expect(
+      gateway.rangeFormatting("/project", "/project/src/User.php", range(), {
+        insertSpaces: true,
+        tabSize: 4,
+      }),
+    ).resolves.toEqual(rangeFormatting);
+    await expect(
       gateway.inlayHints("/project", "/project/src/User.php", range()),
     ).resolves.toEqual(inlayHints);
     await expect(
@@ -388,6 +413,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         tabSize: 2,
       },
       path: "/project/src/User.php",
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_range_formatting", {
+      options: {
+        insertSpaces: true,
+        tabSize: 4,
+      },
+      path: "/project/src/User.php",
+      range: range(),
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_inlay_hints", {

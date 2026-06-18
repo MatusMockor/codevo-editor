@@ -66,7 +66,7 @@ use lsp_features::{
     LanguageServerTextEdit, LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
     TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
-    TextDocumentRename, TextDocumentSelectionRange,
+    TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1324,6 +1324,48 @@ fn javascript_typescript_text_document_formatting(
 }
 
 #[tauri::command]
+fn text_document_range_formatting(
+    root_path: String,
+    path: String,
+    range: LanguageServerRange,
+    options: LanguageServerFormattingOptions,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTextEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.range_formatting(&TextDocumentRangeFormatting {
+        path,
+        range,
+        options,
+    });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_formatting_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_range_formatting(
+    root_path: String,
+    path: String,
+    range: LanguageServerRange,
+    options: LanguageServerFormattingOptions,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTextEdit>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.range_formatting(&TextDocumentRangeFormatting {
+        path,
+        range,
+        options,
+    });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_formatting_result(&result)
+}
+
+#[tauri::command]
 fn text_document_inlay_hints(
     root_path: String,
     path: String,
@@ -1715,6 +1757,7 @@ pub fn run() {
             javascript_typescript_text_document_hover,
             javascript_typescript_text_document_implementation,
             javascript_typescript_text_document_inlay_hints,
+            javascript_typescript_text_document_range_formatting,
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
             javascript_typescript_text_document_selection_ranges,
@@ -1736,6 +1779,7 @@ pub fn run() {
             text_document_hover,
             text_document_implementation,
             text_document_inlay_hints,
+            text_document_range_formatting,
             text_document_references,
             text_document_rename,
             text_document_selection_ranges,

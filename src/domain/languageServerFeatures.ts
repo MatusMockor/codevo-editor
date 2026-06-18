@@ -243,6 +243,12 @@ export interface LanguageServerFeaturesGateway {
     path: string,
     options: LanguageServerFormattingOptions,
   ): Promise<LanguageServerTextEdit[]>;
+  rangeFormatting(
+    rootPath: string,
+    path: string,
+    range: LanguageServerRange,
+    options: LanguageServerFormattingOptions,
+  ): Promise<LanguageServerTextEdit[]>;
 }
 
 export function canUseLanguageServerFeature(

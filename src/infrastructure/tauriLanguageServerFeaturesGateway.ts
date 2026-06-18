@@ -43,6 +43,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   hover: "text_document_hover",
   implementation: "text_document_implementation",
   inlayHints: "text_document_inlay_hints",
+  rangeFormatting: "text_document_range_formatting",
   references: "text_document_references",
   rename: "text_document_rename",
   selectionRanges: "text_document_selection_ranges",
@@ -63,6 +64,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   hover: "javascript_typescript_text_document_hover",
   implementation: "javascript_typescript_text_document_implementation",
   inlayHints: "javascript_typescript_text_document_inlay_hints",
+  rangeFormatting: "javascript_typescript_text_document_range_formatting",
   references: "javascript_typescript_text_document_references",
   rename: "javascript_typescript_text_document_rename",
   selectionRanges: "javascript_typescript_text_document_selection_ranges",
@@ -83,6 +85,7 @@ export interface TauriLanguageServerFeatureCommands {
   hover: string;
   implementation: string;
   inlayHints: string;
+  rangeFormatting: string;
   references: string;
   rename: string;
   selectionRanges: string;
@@ -281,6 +284,19 @@ export class TauriLanguageServerFeaturesGateway
     return this.invokeWhenAvailable(
       this.commands.formatting,
       { options, path, rootPath },
+      [],
+    );
+  }
+
+  rangeFormatting(
+    rootPath: string,
+    path: string,
+    range: LanguageServerRange,
+    options: LanguageServerFormattingOptions,
+  ): Promise<LanguageServerTextEdit[]> {
+    return this.invokeWhenAvailable(
+      this.commands.rangeFormatting,
+      { options, path, range, rootPath },
       [],
     );
   }

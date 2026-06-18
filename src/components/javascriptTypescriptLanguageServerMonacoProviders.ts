@@ -223,6 +223,21 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       );
     }
 
+    if (registry.registerDocumentRangeFormattingEditProvider) {
+      disposables.push(
+        registry.registerDocumentRangeFormattingEditProvider(language, {
+          provideDocumentRangeFormattingEdits: (model, range, options) =>
+            provideDocumentRangeFormattingEdits(
+              monaco,
+              context,
+              model,
+              range,
+              options,
+            ),
+        }),
+      );
+    }
+
     if (registry.registerInlayHintsProvider) {
       disposables.push(
         registry.registerInlayHintsProvider(language, {
@@ -670,6 +685,35 @@ async function provideDocumentFormattingEdits(
   }
 }
 
+async function provideDocumentRangeFormattingEdits(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+  options: Monaco.languages.FormattingOptions,
+): Promise<Monaco.languages.TextEdit[]> {
+  const request = documentRequestContext(context, model, "rangeFormatting");
+
+  if (!request) {
+    return [];
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const edits = await context.featuresGateway.rangeFormatting(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
+      toLanguageServerFormattingOptions(options),
+    );
+
+    return edits.map((edit) => toMonacoTextEdit(monaco, edit));
+  } catch (error) {
+    context.reportError(error);
+    return [];
+  }
+}
+
 async function provideInlayHints(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -748,7 +792,12 @@ function featureRequestContext(
 function documentRequestContext(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
-  feature: "codeAction" | "formatting" | "inlayHint" | "selectionRange",
+  feature:
+    | "codeAction"
+    | "formatting"
+    | "inlayHint"
+    | "rangeFormatting"
+    | "selectionRange",
 ) {
   const status = context.getRuntimeStatus();
 

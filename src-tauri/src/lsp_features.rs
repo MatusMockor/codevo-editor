@@ -114,6 +114,14 @@ pub struct TextDocumentFormatting {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TextDocumentRangeFormatting {
+    pub path: String,
+    pub range: LanguageServerRange,
+    pub options: LanguageServerFormattingOptions,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TextDocumentInlayHintRange {
     pub path: String,
     pub range: LanguageServerRange,
@@ -258,6 +266,10 @@ pub trait TextDocumentFeatureRequestFactory {
         context: &LanguageServerCodeActionContext,
     ) -> LanguageServerFeatureRequest;
     fn formatting(&self, formatting: &TextDocumentFormatting) -> LanguageServerFeatureRequest;
+    fn range_formatting(
+        &self,
+        formatting: &TextDocumentRangeFormatting,
+    ) -> LanguageServerFeatureRequest;
     fn inlay_hints(&self, range: &TextDocumentInlayHintRange) -> LanguageServerFeatureRequest;
     fn resolve_code_action(
         &self,
@@ -385,6 +397,22 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                 "textDocument": {
                     "uri": file_uri(Path::new(&formatting.path)),
                 },
+                "options": formatting.options,
+            }),
+        }
+    }
+
+    fn range_formatting(
+        &self,
+        formatting: &TextDocumentRangeFormatting,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/rangeFormatting".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(&formatting.path)),
+                },
+                "range": formatting.range,
                 "options": formatting.options,
             }),
         }
@@ -1105,7 +1133,8 @@ mod tests {
         LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
         LanguageServerTextEdit, LspTextDocumentFeatureRequestFactory,
         TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-        TextDocumentPosition, TextDocumentRange, TextDocumentRename, TextDocumentSelectionRange,
+        TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
+        TextDocumentSelectionRange,
     };
     use serde_json::json;
 
@@ -1282,6 +1311,29 @@ mod tests {
         assert_eq!(request.method, "textDocument/formatting");
         assert_eq!(request.params["options"]["tabSize"], 2);
         assert_eq!(request.params["options"]["insertSpaces"], true);
+    }
+
+    #[test]
+    fn range_formatting_request_contains_range_and_options() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let selected = range(2, 0, 5, 8);
+        let request = factory.range_formatting(&TextDocumentRangeFormatting {
+            path: "/tmp/User.ts".to_string(),
+            range: selected.clone(),
+            options: LanguageServerFormattingOptions {
+                tab_size: 4,
+                insert_spaces: false,
+            },
+        });
+
+        assert_eq!(request.method, "textDocument/rangeFormatting");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["range"], json!(selected));
+        assert_eq!(request.params["options"]["tabSize"], 4);
+        assert_eq!(request.params["options"]["insertSpaces"], false);
     }
 
     #[test]

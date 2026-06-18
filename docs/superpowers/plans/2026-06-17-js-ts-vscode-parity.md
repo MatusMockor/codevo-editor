@@ -86,6 +86,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - The managed LSP supervisor now answers TypeScript/JavaScript `workspace/configuration` requests with the runtime preferences derived from initialize settings, keeping tsserver-wrapper behavior aligned with service settings instead of returning empty configuration.
 - TypeScript/JavaScript document highlights are now served by the managed language server in Basic mode, so symbol reads/writes under the cursor can be highlighted like VS Code.
 - TypeScript/JavaScript selection ranges are now served by the managed language server in Basic mode, giving smart expand-selection data from tsserver instead of only word-based selection.
+- TypeScript/JavaScript range formatting is now served by the managed language server in Basic mode, so formatting a selection uses the same LSP path as full document formatting.
 
 ## Full VS Code-Like Target
 
@@ -137,6 +138,7 @@ Basic mode must support:
 - organize imports
 - workspace/configuration response. Implemented for managed JS/TS LSP preferences.
 - formatting
+- range formatting / format selection. Implemented through LSP-backed Monaco provider.
 - inlay hints. Implemented through LSP-backed Monaco provider.
 - signature help. Implemented through LSP-backed Monaco provider.
 - document highlights. Implemented through LSP-backed Monaco provider.

@@ -10,6 +10,7 @@ export interface LanguageServerCapabilities {
   formatting: boolean;
   implementation: boolean;
   inlayHint: boolean;
+  rangeFormatting: boolean;
   references: boolean;
   rename: boolean;
   selectionRange: boolean;
@@ -135,6 +136,10 @@ export function languageServerCapabilityLabels(
     labels.push("inlay hints");
   }
 
+  if (capabilities.rangeFormatting) {
+    labels.push("range formatting");
+  }
+
   if (capabilities.references) {
     labels.push("references");
   }
@@ -177,6 +182,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     hover: false,
     implementation: false,
     inlayHint: false,
+    rangeFormatting: false,
     references: false,
     rename: false,
     selectionRange: false,

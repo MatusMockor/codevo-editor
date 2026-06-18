@@ -32,13 +32,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(
       monaco.languages.registerDocumentFormattingEditProvider,
     ).toHaveBeenCalledTimes(2);
+    expect(
+      monaco.languages.registerDocumentRangeFormattingEditProvider,
+    ).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(2);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(25);
+    expect(monaco.dispose).toHaveBeenCalledTimes(27);
   });
 
   it("maps TypeScript document highlights and smart selection ranges", async () => {
@@ -168,6 +171,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         {
           newText: "  ",
           range: range(2, 0, 2, 4),
+        },
+      ],
+      rangeFormatting: [
+        {
+          newText: "    ",
+          range: range(3, 0, 3, 2),
         },
       ],
       inlayHints: [
@@ -399,6 +408,40 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           startLineNumber: 3,
         }),
         text: "  ",
+      },
+    ]);
+
+    const rangeFormattingProvider = (
+      monaco.languages.registerDocumentRangeFormattingEditProvider as any
+    ).mock.calls[0][1];
+    const rangeFormatting =
+      await rangeFormattingProvider.provideDocumentRangeFormattingEdits(
+        model,
+        new monaco.Range(4, 1, 4, 10),
+        {
+          insertSpaces: true,
+          tabSize: 4,
+        },
+      );
+
+    expect(gateway.rangeFormatting).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      range(3, 0, 3, 9),
+      {
+        insertSpaces: true,
+        tabSize: 4,
+      },
+    );
+    expect(rangeFormatting).toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 3,
+          endLineNumber: 4,
+          startColumn: 1,
+          startLineNumber: 4,
+        }),
+        text: "    ",
       },
     ]);
 
@@ -711,6 +754,9 @@ function featuresGateway(
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     references: Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>;
+    rangeFormatting: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>
+    >;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
     selectionRanges: Awaited<
       ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>
@@ -748,6 +794,7 @@ function featuresGateway(
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
+    rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
@@ -776,6 +823,7 @@ function runningStatus(
       hover: true,
       implementation: true,
       inlayHint: true,
+      rangeFormatting: true,
       references: true,
       rename: true,
       selectionRange: true,
@@ -908,6 +956,7 @@ function createMonaco() {
       registerDefinitionProvider: vi.fn(() => disposable()),
       registerDocumentHighlightProvider: vi.fn(() => disposable()),
       registerDocumentFormattingEditProvider: vi.fn(() => disposable()),
+      registerDocumentRangeFormattingEditProvider: vi.fn(() => disposable()),
       registerHoverProvider: vi.fn(() => disposable()),
       registerImplementationProvider: vi.fn(() => disposable()),
       registerInlayHintsProvider: vi.fn(() => disposable()),
