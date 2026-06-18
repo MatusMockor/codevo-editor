@@ -2303,7 +2303,12 @@ export function useWorkbenchController(
       let changed = false;
 
       for (const directory of directories) {
-        if (manuallyCollapsedDirectories.has(directory)) {
+        if (
+          isBlockedByManuallyCollapsedDirectory(
+            directory,
+            manuallyCollapsedDirectories,
+          )
+        ) {
           continue;
         }
 
@@ -2320,7 +2325,10 @@ export function useWorkbenchController(
 
     for (const directory of directories) {
       if (
-        manuallyCollapsedDirectories.has(directory) ||
+        isBlockedByManuallyCollapsedDirectory(
+          directory,
+          manuallyCollapsedDirectories,
+        ) ||
         entriesByDirectory[directory] ||
         loadingDirectories.has(directory)
       ) {
@@ -8462,6 +8470,27 @@ function parentDirectoriesInWorkspace(rootPath: string, path: string): string[] 
   }
 
   return directories;
+}
+
+function isBlockedByManuallyCollapsedDirectory(
+  directory: string,
+  manuallyCollapsedDirectories: Set<string>,
+): boolean {
+  const normalizedDirectory = normalizedSessionPath(directory);
+
+  for (const collapsedDirectory of manuallyCollapsedDirectories) {
+    const normalizedCollapsedDirectory =
+      normalizedSessionPath(collapsedDirectory);
+
+    if (
+      normalizedDirectory === normalizedCollapsedDirectory ||
+      normalizedDirectory.startsWith(`${normalizedCollapsedDirectory}/`)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function bestIndexedSymbolMatch(

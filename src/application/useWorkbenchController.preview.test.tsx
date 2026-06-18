@@ -333,6 +333,67 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
   });
 
+  it("does not reveal an active file inside a manually collapsed directory subtree", async () => {
+    const readDirectory = vi.fn(async (path: string): Promise<FileEntry[]> => {
+      if (path === "/workspace") {
+        return [{ kind: "directory", name: "src", path: "/workspace/src" }];
+      }
+
+      if (path === "/workspace/src") {
+        return [
+          {
+            kind: "directory",
+            name: "components",
+            path: "/workspace/src/components",
+          },
+        ];
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        session: {
+          activePath: null,
+          bottomPanelView: "problems",
+          openPaths: [],
+          sidebarView: "files",
+        },
+      },
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setActivePath("/workspace/src/Initial.php");
+    });
+    await flushAsyncTurns();
+    expect(getWorkbench().expandedDirectories.has("/workspace/src")).toBe(true);
+
+    await act(async () => {
+      await getWorkbench().toggleDirectory("/workspace/src");
+    });
+    readDirectory.mockClear();
+
+    act(() => {
+      getWorkbench().setActivePath("/workspace/src/components/Button.php");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().expandedDirectories.has("/workspace/src")).toBe(false);
+    expect(
+      getWorkbench().expandedDirectories.has("/workspace/src/components"),
+    ).toBe(false);
+    expect(readDirectory).not.toHaveBeenCalledWith(
+      "/workspace/src/components",
+    );
+  });
+
   it("suspends the previous project runtimes when background engines are disabled", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -4922,6 +4983,7 @@ final class FacebookAdapterService extends BaseAdapter
     languageServerDiagnosticsGateway,
     languageServerFeaturesGateway,
     projectSymbols = [],
+    readDirectory,
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
     runtimeStatus = { kind: "stopped" as const },
     searchFiles = vi.fn(async () => []),
@@ -4940,6 +5002,7 @@ final class FacebookAdapterService extends BaseAdapter
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     projectSymbols?: ProjectSymbolSearchResult[];
+    readDirectory?: (path: string) => Promise<FileEntry[]>;
     readTextFile?: (path: string) => Promise<string>;
     runtimeStatus?: LanguageServerRuntimeStatus;
     searchFiles?: (
@@ -4968,6 +5031,7 @@ final class FacebookAdapterService extends BaseAdapter
       languageServerDiagnosticsGateway,
       languageServerFeaturesGateway,
       projectSymbols,
+      readDirectory,
       readTextFile,
       runtimeStatus,
       searchFiles,
@@ -5046,6 +5110,7 @@ function createControllerDependencies({
   languageServerFeaturesGateway,
   languageServerDiagnosticsGateway,
   projectSymbols,
+  readDirectory,
   readTextFile,
   runtimeStatus,
   searchFiles,
@@ -5064,6 +5129,7 @@ function createControllerDependencies({
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   projectSymbols: ProjectSymbolSearchResult[];
+  readDirectory?: (path: string) => Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
   runtimeStatus: LanguageServerRuntimeStatus;
   searchFiles(
@@ -5102,7 +5168,7 @@ function createControllerDependencies({
       createDirectory: vi.fn(async () => undefined),
       createTextFile: vi.fn(async () => undefined),
       deletePath: vi.fn(async () => undefined),
-      readDirectory: vi.fn(async () => []),
+      readDirectory: vi.fn(readDirectory ?? (async () => [])),
       readTextFile,
       renamePath: vi.fn(async () => undefined),
       writeTextFile: vi.fn(async () => undefined),
