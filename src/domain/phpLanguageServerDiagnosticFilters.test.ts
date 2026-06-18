@@ -10,6 +10,7 @@ describe("filterPhpLanguageServerDiagnostics", () => {
     const source = `<?php
 
 $queryBuilder = Album::whereNull('parent_id');
+$album = Album::withRelations()->findOrFail($id);
 `;
 
     expect(
@@ -18,6 +19,11 @@ $queryBuilder = Album::whereNull('parent_id');
           character: 23,
           line: 2,
           message: "Method App\\Models\\Album::whereNull() does not exist",
+        }),
+        diagnostic({
+          character: 16,
+          line: 3,
+          message: "Method App\\Models\\Album::withRelations() does not exist",
         }),
       ]),
     ).toEqual([]);

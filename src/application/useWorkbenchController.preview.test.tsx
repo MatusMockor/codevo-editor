@@ -2910,7 +2910,16 @@ class Comment
 {
     protected $appends = ['summary'];
 
-    protected $fillable = ['content'];
+    protected $fillable = [
+        'account_id',
+        'user_id',
+        'model_name',
+        'model_id',
+        'parent_id',
+        'content',
+        'type',
+        'thread',
+    ];
 
     protected array $casts = [
         'is_pinned' => 'bool',
@@ -2951,6 +2960,13 @@ class Comment
         positionAfter(controllerSource, "$comment->"),
       ),
     ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "account_id",
+        parameters: "",
+        returnType: "mixed",
+      },
       {
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",
         kind: "property",
@@ -2995,6 +3011,27 @@ class Comment
       {
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",
         kind: "property",
+        name: "model_id",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "model_name",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "parent_id",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
         name: "status",
         parameters: "",
         returnType: "string",
@@ -3003,6 +3040,27 @@ class Comment
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",
         kind: "property",
         name: "summary",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "thread",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "type",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "user_id",
         parameters: "",
         returnType: "mixed",
       },
@@ -3597,6 +3655,9 @@ class AlbumController
         $trashedAlbum = Album::withTrashed()->whereNull('parent_id')->first();
         $trashedAlbum->get
 
+        $albumWithRelations = Album::withRelations()->findOrFail(1);
+        $albumWithRelations->get
+
         $albumFromCollection = Album::query()->whereNull('parent_id')->get()->first();
         $albumFromCollection->get
 
@@ -3738,6 +3799,19 @@ class Builder
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$trashedAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$albumWithRelations->get"),
       ),
     ).resolves.toEqual([
       {

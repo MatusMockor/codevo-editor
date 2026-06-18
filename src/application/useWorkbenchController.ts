@@ -127,7 +127,6 @@ import {
 } from "../domain/phpTree";
 import {
   phpMemberAccessCompletionContextAt,
-  phpLaravelLocalScopeCompletionsFromMethods,
   phpMethodCompletionsFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
@@ -136,6 +135,15 @@ import {
   type PhpMethodCompletion,
   type PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
+import {
+  isLaravelCollectionFluentMethod,
+  isLaravelCollectionTerminalModelMethod,
+  isLaravelEloquentBuilderCollectionMethod,
+  isLaravelEloquentBuilderFluentMethod,
+  isLaravelEloquentBuilderTerminalModelMethod,
+  isLaravelEloquentStaticBuilderMethod,
+  phpLaravelLocalScopeCompletionsFromMethods,
+} from "../domain/phpFrameworkLaravel";
 import {
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
@@ -936,6 +944,7 @@ export function useWorkbenchController(
       pendingIndexScanRef.current = false;
       activeIndexRootRef.current = event.rootPath;
       phpClassSourcePathCacheRef.current = {};
+      phpClassMemberCacheRef.current = {};
       phpLaravelBindingCacheRef.current = {};
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
@@ -8338,166 +8347,6 @@ function laravelFacadeTargetClassName(className: string): string | null {
   };
 
   return targets[normalizedClassName] ?? null;
-}
-
-const laravelEloquentStaticBuilderMethods = new Set([
-  "doesnthave",
-  "has",
-  "latest",
-  "oldest",
-  "onlytrashed",
-  "orwhere",
-  "orwherebelongsto",
-  "orwheredoesnthave",
-  "orwherehas",
-  "orwherein",
-  "orwherenotin",
-  "orwherenotnull",
-  "orwherenull",
-  "orderby",
-  "query",
-  "wherebetween",
-  "where",
-  "wherebelongsto",
-  "wheredoesnthave",
-  "wheredate",
-  "whereday",
-  "wherehas",
-  "wherein",
-  "wherejsoncontains",
-  "wherekey",
-  "wherekeynot",
-  "wheremonth",
-  "wherenotin",
-  "wherenotnull",
-  "wherenull",
-  "whereyear",
-  "with",
-  "withcount",
-  "withexists",
-  "withtrashed",
-  "without",
-  "withouttrashed",
-]);
-
-const laravelEloquentBuilderFluentMethods = new Set([
-  "doesnthave",
-  "has",
-  "latest",
-  "limit",
-  "offset",
-  "oldest",
-  "onlytrashed",
-  "orwhere",
-  "orwherebelongsto",
-  "orwheredoesnthave",
-  "orwherehas",
-  "orwherein",
-  "orwherenotin",
-  "orwherenotnull",
-  "orwherenull",
-  "orderby",
-  "select",
-  "take",
-  "tap",
-  "unless",
-  "when",
-  "where",
-  "wherebelongsto",
-  "wherebetween",
-  "wheredoesnthave",
-  "wheredate",
-  "whereday",
-  "wherehas",
-  "wherein",
-  "wherejsoncontains",
-  "wherekey",
-  "wherekeynot",
-  "wheremonth",
-  "wherenotin",
-  "wherenotnull",
-  "wherenull",
-  "whereyear",
-  "with",
-  "withcount",
-  "withexists",
-  "withtrashed",
-  "without",
-  "withouttrashed",
-]);
-
-const laravelEloquentBuilderTerminalModelMethods = new Set([
-  "create",
-  "find",
-  "findorfail",
-  "first",
-  "firstor",
-  "firstorcreate",
-  "firstorfail",
-  "sole",
-  "updateorcreate",
-]);
-
-const laravelEloquentBuilderCollectionMethods = new Set([
-  "all",
-  "cursor",
-  "get",
-]);
-
-const laravelCollectionTerminalModelMethods = new Set([
-  "find",
-  "first",
-  "firstwhere",
-  "last",
-  "sole",
-]);
-
-const laravelCollectionFluentMethods = new Set([
-  "filter",
-  "forpage",
-  "keyby",
-  "only",
-  "reject",
-  "reverse",
-  "skip",
-  "slice",
-  "sort",
-  "sortby",
-  "sortbydesc",
-  "take",
-  "unique",
-  "values",
-  "where",
-  "wherebetween",
-  "wherein",
-  "whereinstanceof",
-  "wherenotin",
-  "wherenotnull",
-  "wherenull",
-]);
-
-function isLaravelEloquentStaticBuilderMethod(methodName: string): boolean {
-  return laravelEloquentStaticBuilderMethods.has(methodName.toLowerCase());
-}
-
-function isLaravelEloquentBuilderFluentMethod(methodName: string): boolean {
-  return laravelEloquentBuilderFluentMethods.has(methodName.toLowerCase());
-}
-
-function isLaravelEloquentBuilderTerminalModelMethod(methodName: string): boolean {
-  return laravelEloquentBuilderTerminalModelMethods.has(methodName.toLowerCase());
-}
-
-function isLaravelEloquentBuilderCollectionMethod(methodName: string): boolean {
-  return laravelEloquentBuilderCollectionMethods.has(methodName.toLowerCase());
-}
-
-function isLaravelCollectionTerminalModelMethod(methodName: string): boolean {
-  return laravelCollectionTerminalModelMethods.has(methodName.toLowerCase());
-}
-
-function isLaravelCollectionFluentMethod(methodName: string): boolean {
-  return laravelCollectionFluentMethods.has(methodName.toLowerCase());
 }
 
 function resolvePhpLaravelRelationModelType(

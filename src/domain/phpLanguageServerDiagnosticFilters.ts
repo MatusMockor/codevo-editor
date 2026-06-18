@@ -1,72 +1,11 @@
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
+import { isLaravelEloquentBuilderMethodName } from "./phpFrameworkLaravel";
 
 export interface PhpTraitHostMethodDiagnosticContext {
   methodName: string;
   traitName: string;
 }
 
-const laravelEloquentBuilderMethods = new Set([
-  "chunk",
-  "count",
-  "create",
-  "doesntExist",
-  "doesntHave",
-  "exists",
-  "find",
-  "findOrFail",
-  "first",
-  "firstOrCreate",
-  "firstOrFail",
-  "forceDelete",
-  "get",
-  "groupBy",
-  "having",
-  "insert",
-  "join",
-  "latest",
-  "leftJoin",
-  "limit",
-  "offset",
-  "oldest",
-  "onlyTrashed",
-  "orderBy",
-  "orWhere",
-  "orWhereBetween",
-  "orWhereDate",
-  "orWhereHas",
-  "orWhereIn",
-  "orWhereNotIn",
-  "orWhereNotNull",
-  "orWhereNull",
-  "paginate",
-  "pluck",
-  "query",
-  "restore",
-  "rightJoin",
-  "select",
-  "simplePaginate",
-  "skip",
-  "take",
-  "updateOrCreate",
-  "where",
-  "whereBetween",
-  "whereDate",
-  "whereHas",
-  "whereIn",
-  "whereMonth",
-  "whereNotBetween",
-  "whereNotIn",
-  "whereNotNull",
-  "whereNull",
-  "whereRelation",
-  "whereTime",
-  "whereYear",
-  "with",
-  "withCount",
-  "withTrashed",
-  "without",
-  "withoutTrashed",
-]);
 const ignoredPhpactorDocblockDiagnosticCodes = new Set([
   "worse.docblock_missing_param",
   "worse.docblock_missing_return_type",
@@ -135,7 +74,7 @@ function isLaravelEloquentStaticBuilderDiagnostic(
   for (const call of line.matchAll(staticMethodCallPattern)) {
     const method = call[1] || "";
 
-    if (!laravelEloquentBuilderMethods.has(method)) {
+    if (!isLaravelEloquentBuilderMethodName(method)) {
       continue;
     }
 

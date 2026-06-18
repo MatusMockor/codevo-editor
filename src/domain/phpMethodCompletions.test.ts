@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   phpMemberAccessCompletionContextAt,
-  phpLaravelLocalScopeCompletionsFromMethods,
   phpMethodCompletionsFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
   phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
 } from "./phpMethodCompletions";
+import { phpLaravelLocalScopeCompletionsFromMethods } from "./phpFrameworkLaravel";
 
 function positionAfter(source: string, needle: string) {
   const offset = source.indexOf(needle);
