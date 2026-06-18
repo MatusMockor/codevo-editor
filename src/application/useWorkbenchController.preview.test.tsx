@@ -868,6 +868,12 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
       "/workspace-c",
     );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-c");
     expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
       "/workspace-a",
     );
