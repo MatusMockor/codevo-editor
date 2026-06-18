@@ -24,6 +24,7 @@ export interface LanguageServerCapabilities {
   semanticTokens: boolean;
   signatureHelp: boolean;
   typeDefinition: boolean;
+  typeHierarchy: boolean;
   willRenameFiles: boolean;
   workspaceSymbol: boolean;
 }
@@ -201,6 +202,10 @@ export function languageServerCapabilityLabels(
     labels.push("type definition");
   }
 
+  if (capabilities.typeHierarchy) {
+    labels.push("type hierarchy");
+  }
+
   if (capabilities.willRenameFiles) {
     labels.push("file rename edits");
   }
@@ -249,6 +254,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     semanticTokens: false,
     signatureHelp: false,
     typeDefinition: false,
+    typeHierarchy: false,
     willRenameFiles: false,
     workspaceSymbol: false,
   };

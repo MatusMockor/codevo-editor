@@ -1244,6 +1244,7 @@ function languageServerFeaturesGateway() {
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),
     prepareRename: vi.fn(async () => null),
+    prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => []),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
@@ -1255,6 +1256,8 @@ function languageServerFeaturesGateway() {
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
     signatureHelp: vi.fn(),
     typeDefinition: vi.fn(async () => []),
+    typeHierarchySubtypes: vi.fn(async () => []),
+    typeHierarchySupertypes: vi.fn(async () => []),
     willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => []),
   };

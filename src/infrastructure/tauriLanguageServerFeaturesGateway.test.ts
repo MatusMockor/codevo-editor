@@ -93,6 +93,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.outgoingCalls("/project", callHierarchyItem()),
     ).resolves.toEqual([]);
     await expect(
+      gateway.prepareTypeHierarchy("/project", position()),
+    ).resolves.toEqual([]);
+    await expect(
+      gateway.typeHierarchySupertypes("/project", typeHierarchyItem()),
+    ).resolves.toEqual([]);
+    await expect(
+      gateway.typeHierarchySubtypes("/project", typeHierarchyItem()),
+    ).resolves.toEqual([]);
+    await expect(
       gateway.executeCommand("/project", command()),
     ).resolves.toBeNull();
     await expect(
@@ -221,6 +230,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         to: callHierarchyItem("loadUser"),
       },
     ];
+    const typeHierarchyItems = [typeHierarchyItem()];
+    const supertypes = [typeHierarchyItem("BaseUser")];
+    const subtypes = [typeHierarchyItem("AdminUser")];
     const formatting = [
       {
         newText: "  ",
@@ -396,6 +408,18 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return outgoingCalls;
       }
 
+      if (command === "text_document_prepare_type_hierarchy") {
+        return typeHierarchyItems;
+      }
+
+      if (command === "text_document_type_hierarchy_supertypes") {
+        return supertypes;
+      }
+
+      if (command === "text_document_type_hierarchy_subtypes") {
+        return subtypes;
+      }
+
       if (command === "language_server_execute_command") {
         return rename;
       }
@@ -563,6 +587,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.outgoingCalls("/project", callHierarchyItems[0]),
     ).resolves.toEqual(outgoingCalls);
+    await expect(
+      gateway.prepareTypeHierarchy("/project", requestPosition),
+    ).resolves.toEqual(typeHierarchyItems);
+    await expect(
+      gateway.typeHierarchySupertypes("/project", typeHierarchyItems[0]),
+    ).resolves.toEqual(supertypes);
+    await expect(
+      gateway.typeHierarchySubtypes("/project", typeHierarchyItems[0]),
+    ).resolves.toEqual(subtypes);
     await expect(
       gateway.executeCommand("/project", command()),
     ).resolves.toEqual(rename);
@@ -746,6 +779,27 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       item: callHierarchyItems[0],
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "text_document_prepare_type_hierarchy",
+      {
+        position: requestPosition,
+        rootPath: "/project",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "text_document_type_hierarchy_supertypes",
+      {
+        item: typeHierarchyItems[0],
+        rootPath: "/project",
+      },
+    );
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "text_document_type_hierarchy_subtypes",
+      {
+        item: typeHierarchyItems[0],
+        rootPath: "/project",
+      },
+    );
     expect(invokeCommand).toHaveBeenCalledWith("language_server_execute_command", {
       command: command(),
       rootPath: "/project",
@@ -875,6 +929,19 @@ function callHierarchyItem(name = "handleClick") {
     data: { id: name },
     detail: "src/User.php",
     kind: 12,
+    name,
+    range: range(),
+    selectionRange: range(),
+    tags: [1],
+    uri: "file:///project/src/User.php",
+  };
+}
+
+function typeHierarchyItem(name = "User") {
+  return {
+    data: { id: name },
+    detail: "src/User.php",
+    kind: 5,
     name,
     range: range(),
     selectionRange: range(),

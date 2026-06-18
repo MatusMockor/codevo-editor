@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { emptyGitStatus, gitChangeKey, type GitGateway } from "../domain/git";
 import { callHierarchyRows } from "../domain/callHierarchy";
+import { typeHierarchyRows } from "../domain/typeHierarchy";
 import {
   useWorkbenchController,
   type WorkbenchWorkspaceGateways,
@@ -2854,6 +2855,112 @@ describe("useWorkbenchController preview tabs", () => {
       position: {
         column: 3,
         lineNumber: 6,
+      },
+    });
+  });
+
+  it("opens JavaScript and TypeScript type hierarchy from command palette actions", async () => {
+    const path = "/workspace/src/user.ts";
+    const subtypePath = "/workspace/src/adminUser.ts";
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      sessionId: 13,
+    };
+    const item = {
+      data: { symbolId: "User" },
+      detail: "src/user.ts",
+      kind: 5,
+      name: "User",
+      range: range(0, 0, 4, 1),
+      selectionRange: range(0, 13, 0, 17),
+      tags: [],
+      uri: "file:///workspace/src/user.ts",
+    };
+    const subtype = {
+      data: { symbolId: "AdminUser" },
+      detail: "src/adminUser.ts",
+      kind: 5,
+      name: "AdminUser",
+      range: range(2, 0, 5, 1),
+      selectionRange: range(2, 13, 2, 22),
+      tags: [],
+      uri: "file:///workspace/src/adminUser.ts",
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockResolvedValue([item]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySupertypes,
+    ).mockResolvedValue([]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySubtypes,
+    ).mockResolvedValue([subtype]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === subtypePath) {
+          return "import { User } from './user';\nexport class AdminUser extends User {}\n";
+        }
+
+        return "export class User {}\n";
+      }),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "user.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 15,
+        lineNumber: 1,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showTypeHierarchy")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareTypeHierarchy,
+    ).toHaveBeenCalledWith("/workspace", {
+      character: 14,
+      line: 0,
+      path,
+    });
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySubtypes,
+    ).toHaveBeenCalledWith("/workspace", item);
+    expect(getWorkbench().typeHierarchyView?.item.name).toBe("User");
+    expect(getWorkbench().typeHierarchyView?.subtypes).toHaveLength(1);
+
+    const [row] = typeHierarchyRows(getWorkbench().typeHierarchyView!);
+
+    await act(async () => {
+      await getWorkbench().openTypeHierarchyRow(row);
+    });
+
+    expect(getWorkbench().typeHierarchyView).toBe(null);
+    expect(getWorkbench().activePath).toBe(subtypePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: subtypePath,
+      position: {
+        column: 14,
+        lineNumber: 3,
       },
     });
   });
@@ -8425,6 +8532,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),
     prepareRename: vi.fn(async () => null),
+    prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => []),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
@@ -8432,6 +8540,8 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     semanticTokens: vi.fn(async () => null),
     signatureHelp: vi.fn(async () => null),
     typeDefinition: vi.fn(async () => []),
+    typeHierarchySubtypes: vi.fn(async () => []),
+    typeHierarchySupertypes: vi.fn(async () => []),
     willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),

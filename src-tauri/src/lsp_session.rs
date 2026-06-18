@@ -78,6 +78,7 @@ pub struct LanguageServerCapabilities {
     pub semantic_tokens: bool,
     pub signature_help: bool,
     pub type_definition: bool,
+    pub type_hierarchy: bool,
     pub will_rename_files: bool,
     pub workspace_symbol: bool,
 }
@@ -1665,6 +1666,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         semantic_tokens: is_capability_enabled(capabilities.get("semanticTokensProvider")),
         signature_help: is_capability_enabled(capabilities.get("signatureHelpProvider")),
         type_definition: is_capability_enabled(capabilities.get("typeDefinitionProvider")),
+        type_hierarchy: is_capability_enabled(capabilities.get("typeHierarchyProvider")),
         will_rename_files: capabilities
             .get("workspace")
             .and_then(|workspace| workspace.get("fileOperations"))
@@ -2014,6 +2016,7 @@ mod tests {
                     semantic_tokens: false,
                     signature_help: false,
                     type_definition: false,
+                    type_hierarchy: false,
                     will_rename_files: false,
                     workspace_symbol: false,
                 },
@@ -2051,6 +2054,7 @@ mod tests {
                 semantic_tokens: true,
                 signature_help: true,
                 type_definition: true,
+                type_hierarchy: true,
                 will_rename_files: true,
                 workspace_symbol: true,
             },
@@ -2083,6 +2087,7 @@ mod tests {
                     "semanticTokens": true,
                     "signatureHelp": true,
                     "typeDefinition": true,
+                    "typeHierarchy": true,
                     "willRenameFiles": true,
                     "workspaceSymbol": true,
                     "codeAction": true,
@@ -2146,6 +2151,7 @@ mod tests {
                     },
                     "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
                     "typeDefinitionProvider": true,
+                    "typeHierarchyProvider": true,
                     "codeLensProvider": {},
                     "workspaceSymbolProvider": true,
                     "codeActionProvider": { "codeActionKinds": ["quickfix"] },
@@ -2187,6 +2193,7 @@ mod tests {
                 semantic_tokens: true,
                 signature_help: true,
                 type_definition: true,
+                type_hierarchy: true,
                 will_rename_files: true,
                 workspace_symbol: true,
             }

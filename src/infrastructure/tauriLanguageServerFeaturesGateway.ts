@@ -30,6 +30,7 @@ import {
   type LanguageServerSignatureHelp,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
+  type LanguageServerTypeHierarchyItem,
   type LanguageServerWorkspaceFileChange,
   type LanguageServerWorkspaceSymbol,
   type LanguageServerWorkspaceEdit,
@@ -70,12 +71,15 @@ const DEFAULT_FEATURE_COMMANDS = {
   outgoingCalls: "text_document_outgoing_calls",
   prepareCallHierarchy: "text_document_prepare_call_hierarchy",
   prepareRename: "text_document_prepare_rename",
+  prepareTypeHierarchy: "text_document_prepare_type_hierarchy",
   rangeFormatting: "text_document_range_formatting",
   references: "text_document_references",
   rename: "text_document_rename",
   selectionRanges: "text_document_selection_ranges",
   semanticTokens: "text_document_semantic_tokens",
   signatureHelp: "text_document_signature_help",
+  typeHierarchySubtypes: "text_document_type_hierarchy_subtypes",
+  typeHierarchySupertypes: "text_document_type_hierarchy_supertypes",
   willRenameFiles: "text_document_will_rename_files",
   workspaceSymbols: "workspace_symbols",
 };
@@ -112,12 +116,18 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   prepareCallHierarchy:
     "javascript_typescript_text_document_prepare_call_hierarchy",
   prepareRename: "javascript_typescript_text_document_prepare_rename",
+  prepareTypeHierarchy:
+    "javascript_typescript_text_document_prepare_type_hierarchy",
   rangeFormatting: "javascript_typescript_text_document_range_formatting",
   references: "javascript_typescript_text_document_references",
   rename: "javascript_typescript_text_document_rename",
   selectionRanges: "javascript_typescript_text_document_selection_ranges",
   semanticTokens: "javascript_typescript_text_document_semantic_tokens",
   signatureHelp: "javascript_typescript_text_document_signature_help",
+  typeHierarchySubtypes:
+    "javascript_typescript_text_document_type_hierarchy_subtypes",
+  typeHierarchySupertypes:
+    "javascript_typescript_text_document_type_hierarchy_supertypes",
   willRenameFiles: "javascript_typescript_workspace_will_rename_files",
   workspaceSymbols: "javascript_typescript_workspace_symbols",
 };
@@ -150,12 +160,15 @@ export interface TauriLanguageServerFeatureCommands {
   outgoingCalls: string;
   prepareCallHierarchy: string;
   prepareRename: string;
+  prepareTypeHierarchy: string;
   rangeFormatting: string;
   references: string;
   rename: string;
   selectionRanges: string;
   semanticTokens: string;
   signatureHelp: string;
+  typeHierarchySubtypes: string;
+  typeHierarchySupertypes: string;
   willRenameFiles: string;
   workspaceSymbols: string;
 }
@@ -457,6 +470,39 @@ export class TauriLanguageServerFeaturesGateway
   ): Promise<LanguageServerOutgoingCall[]> {
     return this.invokeWhenAvailable(
       this.commands.outgoingCalls,
+      { item, rootPath },
+      [],
+    );
+  }
+
+  prepareTypeHierarchy(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerTypeHierarchyItem[]> {
+    return this.invokeWhenAvailable(
+      this.commands.prepareTypeHierarchy,
+      { position, rootPath },
+      [],
+    );
+  }
+
+  typeHierarchySupertypes(
+    rootPath: string,
+    item: LanguageServerTypeHierarchyItem,
+  ): Promise<LanguageServerTypeHierarchyItem[]> {
+    return this.invokeWhenAvailable(
+      this.commands.typeHierarchySupertypes,
+      { item, rootPath },
+      [],
+    );
+  }
+
+  typeHierarchySubtypes(
+    rootPath: string,
+    item: LanguageServerTypeHierarchyItem,
+  ): Promise<LanguageServerTypeHierarchyItem[]> {
+    return this.invokeWhenAvailable(
+      this.commands.typeHierarchySubtypes,
       { item, rootPath },
       [],
     );

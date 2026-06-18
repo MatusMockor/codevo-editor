@@ -30,6 +30,7 @@ import { QuickOpen } from "./components/QuickOpen";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
+import { TypeHierarchy } from "./components/TypeHierarchy";
 import {
   languageServerCapabilityLabels,
   languageServerStatusLabel,
@@ -813,6 +814,13 @@ function App() {
         onClose={workbench.closeCallHierarchy}
         onOpen={workbench.openCallHierarchyRow}
         view={workbench.callHierarchyView}
+      />
+
+      <TypeHierarchy
+        isOpen={Boolean(workbench.typeHierarchyView)}
+        onClose={workbench.closeTypeHierarchy}
+        onOpen={workbench.openTypeHierarchyRow}
+        view={workbench.typeHierarchyView}
       />
 
       <LanguageServerSetup

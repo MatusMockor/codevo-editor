@@ -103,6 +103,8 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript file create/delete operations now notify the managed language server through `workspace/didChangeWatchedFiles`, so editor-originated file changes update the TypeScript project graph without requiring a service restart.
 - TypeScript/JavaScript call hierarchy requests are now wired through the shared LSP gateway and backend commands (`textDocument/prepareCallHierarchy`, incoming calls, outgoing calls).
 - TypeScript/JavaScript Call Hierarchy is now exposed as a command-palette action and modal. It prepares the symbol under the cursor, loads incoming/outgoing calls from the managed language server, and opens selected callers/callees through normal navigation history.
+- TypeScript/JavaScript type hierarchy requests are now wired through the shared LSP gateway and backend commands (`textDocument/prepareTypeHierarchy`, supertypes, subtypes).
+- TypeScript/JavaScript Type Hierarchy is now exposed as a command-palette action and modal. It prepares the type under the cursor, loads parent/child types from the managed language server, and opens selected types through normal navigation history.
 - TypeScript/JavaScript service startup now also starts a per-workspace filesystem watcher. External JS/TS/config file creates, changes, deletes and renames are translated into `workspace/didChangeWatchedFiles`; stopping the service, stopping all services, or quitting the app stops the watcher sessions.
 - TypeScript/JavaScript completions now trigger on `#` as well as standard member/import/JSX trigger characters, so private class fields and methods go through the managed language-server completion path.
 - TypeScript/JavaScript completions now also trigger on backticks, matching VS Code-style TypeScript completions in template string contexts.
@@ -191,6 +193,7 @@ Basic mode must support:
 - document symbols / file structure. Implemented for JS/TS through managed LSP-backed `Cmd+R`.
 - workspace symbols. Implemented for JS/TS-backed `Cmd+O` type search.
 - call hierarchy. Implemented through LSP-backed command-palette action and modal for incoming/outgoing calls.
+- type hierarchy. Implemented through LSP-backed command-palette action and modal for supertypes/subtypes when the server advertises support.
 - JS/TS version status. Implemented in the workspace status label for Bundled, Workspace, installed workspace version, and dependency-only fallback.
 
 ### Isolation

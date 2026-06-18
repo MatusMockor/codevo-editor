@@ -11,6 +11,7 @@ import {
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { CallHierarchyRow, CallHierarchyView } from "../domain/callHierarchy";
+import type { TypeHierarchyRow, TypeHierarchyView } from "../domain/typeHierarchy";
 import {
   shouldIndexWorkspace,
   shouldStartLanguageServer,
@@ -449,6 +450,8 @@ export function useWorkbenchController(
   } | null>(null);
   const [callHierarchyView, setCallHierarchyView] =
     useState<CallHierarchyView | null>(null);
+  const [typeHierarchyView, setTypeHierarchyView] =
+    useState<TypeHierarchyView | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
   const [appSettings, setAppSettings] =
@@ -3539,6 +3542,7 @@ export function useWorkbenchController(
     setTextSearchOpen(false);
     setSettingsOpen(false);
     setCallHierarchyView(null);
+    setTypeHierarchyView(null);
 
     if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
       if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
@@ -7550,7 +7554,30 @@ export function useWorkbenchController(
         return;
       }
 
-      await openNavigationTarget(path, toEditorPosition(row.range.start), row.label);
+      await openNavigationTarget(
+        path,
+        toEditorPosition(row.range.start),
+        row.label,
+      );
+    },
+    [openNavigationTarget],
+  );
+
+  const openTypeHierarchyRow = useCallback(
+    async (row: TypeHierarchyRow) => {
+      setTypeHierarchyView(null);
+      const path = pathFromLanguageServerUri(row.item.uri);
+
+      if (!path) {
+        setMessage("Could not open type hierarchy target.");
+        return;
+      }
+
+      await openNavigationTarget(
+        path,
+        toEditorPosition(row.range.start),
+        row.label,
+      );
     },
     [openNavigationTarget],
   );
@@ -7570,7 +7597,9 @@ export function useWorkbenchController(
     }
 
     if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
-      setMessage("JavaScript/TypeScript service is starting. Try call hierarchy again in a moment.");
+      setMessage(
+        "JavaScript/TypeScript service is starting. Try call hierarchy again in a moment.",
+      );
       return;
     }
 
@@ -7602,6 +7631,7 @@ export function useWorkbenchController(
     setFileStructureOpen(false);
     setImplementationChooser(null);
     setCallHierarchyView(null);
+    setTypeHierarchyView(null);
 
     try {
       await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
@@ -7643,6 +7673,109 @@ export function useWorkbenchController(
       setMessage(null);
     } catch (error) {
       reportError("Call Hierarchy", error);
+    }
+  }, [
+    activeDocument,
+    flushPendingJavaScriptTypeScriptDocumentChange,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    reportError,
+    workspaceRoot,
+  ]);
+
+  const openTypeHierarchy = useCallback(async () => {
+    if (!activeDocument) {
+      setMessage("Open a JavaScript or TypeScript file to show type hierarchy.");
+      return;
+    }
+
+    if (
+      !workspaceRoot ||
+      !isJavaScriptTypeScriptLanguageServerDocument(activeDocument)
+    ) {
+      setMessage("Type hierarchy is available for JavaScript and TypeScript files.");
+      return;
+    }
+
+    if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+      setMessage(
+        "JavaScript/TypeScript service is starting. Try type hierarchy again in a moment.",
+      );
+      return;
+    }
+
+    if (
+      !canUseLanguageServerFeature(
+        javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+        "typeHierarchy",
+      )
+    ) {
+      setMessage(
+        "JavaScript/TypeScript service does not provide type hierarchy.",
+      );
+      return;
+    }
+
+    const editorPosition = activeEditorPositionRef.current;
+
+    if (!editorPosition) {
+      setMessage("Place the cursor on a type to show type hierarchy.");
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    const requestedPath = activeDocument.path;
+
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setTextSearchOpen(false);
+    setSettingsOpen(false);
+    setFileStructureOpen(false);
+    setImplementationChooser(null);
+    setCallHierarchyView(null);
+    setTypeHierarchyView(null);
+
+    try {
+      await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
+      const [item] =
+        await javaScriptTypeScriptLanguageServerFeaturesGateway.prepareTypeHierarchy(
+          requestedRoot,
+          toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
+        );
+
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      if (!item) {
+        setMessage("No type hierarchy available for this symbol.");
+        return;
+      }
+
+      const [supertypes, subtypes] = await Promise.all([
+        javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySupertypes(
+          requestedRoot,
+          item,
+        ),
+        javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySubtypes(
+          requestedRoot,
+          item,
+        ),
+      ]);
+
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      setTypeHierarchyView({
+        item,
+        subtypes,
+        supertypes,
+      });
+      setMessage(null);
+    } catch (error) {
+      reportError("Type Hierarchy", error);
     }
   }, [
     activeDocument,
@@ -8213,10 +8346,16 @@ export function useWorkbenchController(
     setLanguageServerSetupOpen(false);
     setFileStructureOpen(false);
     setCallHierarchyView(null);
+    setTypeHierarchyView(null);
     setSettingsOpen(true);
   }, []);
 
   const closeFloatingSurface = useCallback((): boolean => {
+    if (typeHierarchyView) {
+      setTypeHierarchyView(null);
+      return true;
+    }
+
     if (callHierarchyView) {
       setCallHierarchyView(null);
       return true;
@@ -8281,6 +8420,7 @@ export function useWorkbenchController(
     selectedGitChange,
     settingsOpen,
     textSearchOpen,
+    typeHierarchyView,
   ]);
 
   const commandRegistry = useMemo(() => {
@@ -8471,6 +8611,24 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.showTypeHierarchy",
+      title: "Show Type Hierarchy",
+      category: "Editor",
+      isEnabled: () =>
+        Boolean(activeDocument) &&
+        Boolean(
+          activeDocument &&
+            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
+        ) &&
+        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+        canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "typeHierarchy",
+        ),
+      run: openTypeHierarchy,
+    });
+
+    registry.register({
       id: "commands.show",
       title: "Show Commands",
       category: "Workbench",
@@ -8653,6 +8811,7 @@ export function useWorkbenchController(
     navigateForwardInHistory,
     openCallHierarchy,
     openFileStructure,
+    openTypeHierarchy,
     openSettingsPanel,
     navigationHistory,
     openWorkspace,
@@ -9758,12 +9917,14 @@ export function useWorkbenchController(
     appSettings,
     activateWorkspaceTab,
     callHierarchyView,
+    typeHierarchyView,
     classOpenLoading,
     classOpenOpen,
     classOpenQuery,
     classOpenResults,
     closeImplementationChooser: () => setImplementationChooser(null),
     closeCallHierarchy: () => setCallHierarchyView(null),
+    closeTypeHierarchy: () => setTypeHierarchyView(null),
     closeDocument,
     closeGitDiffPreview,
     closeWorkspaceTab,
@@ -9814,6 +9975,8 @@ export function useWorkbenchController(
     openFile,
     openCallHierarchy,
     openCallHierarchyRow,
+    openTypeHierarchy,
+    openTypeHierarchyRow,
     openGitChange,
     openFileStructure,
     openImplementationTarget,

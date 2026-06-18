@@ -157,6 +157,19 @@ pub struct LanguageServerOutgoingCall {
     pub from_ranges: Vec<LanguageServerRange>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerTypeHierarchyItem {
+    pub name: String,
+    pub kind: u32,
+    pub tags: Option<Vec<u32>>,
+    pub detail: Option<String>,
+    pub uri: String,
+    pub range: LanguageServerRange,
+    pub selection_range: LanguageServerRange,
+    pub data: Option<Value>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextDocumentRange {
@@ -455,6 +468,18 @@ pub trait TextDocumentFeatureRequestFactory {
         &self,
         item: &LanguageServerCallHierarchyItem,
     ) -> LanguageServerFeatureRequest;
+    fn prepare_type_hierarchy(
+        &self,
+        position: &TextDocumentPosition,
+    ) -> LanguageServerFeatureRequest;
+    fn type_hierarchy_supertypes(
+        &self,
+        item: &LanguageServerTypeHierarchyItem,
+    ) -> LanguageServerFeatureRequest;
+    fn type_hierarchy_subtypes(
+        &self,
+        item: &LanguageServerTypeHierarchyItem,
+    ) -> LanguageServerFeatureRequest;
     fn execute_command(
         &self,
         command: &LanguageServerCodeActionCommand,
@@ -752,6 +777,33 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         }
     }
 
+    fn prepare_type_hierarchy(
+        &self,
+        position: &TextDocumentPosition,
+    ) -> LanguageServerFeatureRequest {
+        request("textDocument/prepareTypeHierarchy", position)
+    }
+
+    fn type_hierarchy_supertypes(
+        &self,
+        item: &LanguageServerTypeHierarchyItem,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "typeHierarchy/supertypes".to_string(),
+            params: json!({ "item": item }),
+        }
+    }
+
+    fn type_hierarchy_subtypes(
+        &self,
+        item: &LanguageServerTypeHierarchyItem,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "typeHierarchy/subtypes".to_string(),
+            params: json!({ "item": item }),
+        }
+    }
+
     fn execute_command(
         &self,
         command: &LanguageServerCodeActionCommand,
@@ -1040,6 +1092,29 @@ pub fn parse_call_hierarchy_items_result(
             serde_json::from_value::<LanguageServerCallHierarchyItem>(item.clone()).map_err(
                 |error| {
                     format!("Language server returned a malformed call hierarchy item: {error}")
+                },
+            )
+        })
+        .collect()
+}
+
+pub fn parse_type_hierarchy_items_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed type hierarchy items.".to_string());
+    };
+
+    items
+        .iter()
+        .map(|item| {
+            serde_json::from_value::<LanguageServerTypeHierarchyItem>(item.clone()).map_err(
+                |error| {
+                    format!("Language server returned a malformed type hierarchy item: {error}")
                 },
             )
         })
@@ -1710,18 +1785,20 @@ mod tests {
         parse_hover_result, parse_incoming_calls_result, parse_inlay_hints_result,
         parse_optional_workspace_edit_result, parse_outgoing_calls_result,
         parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
-        parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
+        parse_signature_help_result, parse_type_hierarchy_items_result,
+        parse_workspace_edit_result, parse_workspace_symbols_result,
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
         LanguageServerCodeActionContext, LanguageServerCodeLens, LanguageServerCompletionContext,
         LanguageServerCompletionItem, LanguageServerCompletionItemLabelDetails,
         LanguageServerCompletionList, LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
-        LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
-        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-        TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
-        TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
-        WorkspaceFileChange, WorkspaceFileChangeType, WorkspaceFileRename,
+        LanguageServerTypeHierarchyItem, LspTextDocumentFeatureRequestFactory,
+        TextDocumentCompletion, TextDocumentFeatureRequestFactory, TextDocumentFormatting,
+        TextDocumentInlayHintRange, TextDocumentOnTypeFormatting, TextDocumentPosition,
+        TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
+        TextDocumentSelectionRange, WorkspaceFileChange, WorkspaceFileChangeType,
+        WorkspaceFileRename,
     };
     use serde_json::json;
 
@@ -2246,6 +2323,37 @@ mod tests {
         assert_eq!(request.method, "callHierarchy/outgoingCalls");
         assert_eq!(request.params["item"]["name"], "renderUser");
         assert_eq!(request.params["item"]["selectionRange"]["start"]["line"], 2);
+    }
+
+    #[test]
+    fn prepare_type_hierarchy_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.prepare_type_hierarchy(&position());
+
+        assert_eq!(request.method, "textDocument/prepareTypeHierarchy");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn type_hierarchy_requests_serialize_type_hierarchy_item() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let item = type_hierarchy_item("BaseView");
+        let supertypes = factory.type_hierarchy_supertypes(&item);
+        let subtypes = factory.type_hierarchy_subtypes(&item);
+
+        assert_eq!(supertypes.method, "typeHierarchy/supertypes");
+        assert_eq!(supertypes.params["item"]["name"], "BaseView");
+        assert_eq!(supertypes.params["item"]["uri"], "file:///tmp/View.ts");
+        assert_eq!(subtypes.method, "typeHierarchy/subtypes");
+        assert_eq!(
+            subtypes.params["item"]["selectionRange"]["start"]["line"],
+            3
+        );
     }
 
     #[test]
@@ -3129,6 +3237,31 @@ mod tests {
         assert!(parse_outgoing_calls_result(&json!({})).is_err());
     }
 
+    #[test]
+    fn parses_type_hierarchy_items() {
+        let item = json!({
+            "name": "BaseView",
+            "kind": 5,
+            "tags": [1],
+            "detail": "src/View.ts",
+            "uri": "file:///tmp/View.ts",
+            "range": json!(range(3, 0, 3, 24)),
+            "selectionRange": json!(range(3, 6, 3, 14)),
+            "data": { "symbolId": "BaseView" },
+        });
+
+        let items =
+            parse_type_hierarchy_items_result(&json!([item])).expect("type hierarchy items");
+
+        assert_eq!(items[0].name, "BaseView");
+        assert_eq!(items[0].selection_range.start.character, 6);
+        assert_eq!(
+            parse_type_hierarchy_items_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
+        assert!(parse_type_hierarchy_items_result(&json!({})).is_err());
+    }
+
     fn position() -> TextDocumentPosition {
         TextDocumentPosition {
             path: "/tmp/User.php".to_string(),
@@ -3184,6 +3317,19 @@ mod tests {
             uri: "file:///tmp/User.ts".to_string(),
             range: range(2, 0, 2, 24),
             selection_range: range(2, 9, 2, 19),
+            data: Some(json!({ "symbolId": name })),
+        }
+    }
+
+    fn type_hierarchy_item(name: &str) -> LanguageServerTypeHierarchyItem {
+        LanguageServerTypeHierarchyItem {
+            name: name.to_string(),
+            kind: 5,
+            tags: Some(vec![1]),
+            detail: Some("src/View.ts".to_string()),
+            uri: "file:///tmp/View.ts".to_string(),
+            range: range(3, 0, 3, 24),
+            selection_range: range(3, 6, 3, 14),
             data: Some(json!({ "symbolId": name })),
         }
     }

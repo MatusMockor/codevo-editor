@@ -62,16 +62,17 @@ use lsp_features::{
     parse_hover_result, parse_incoming_calls_result, parse_inlay_hints_result,
     parse_optional_workspace_edit_result, parse_outgoing_calls_result, parse_prepare_rename_result,
     parse_selection_ranges_result, parse_semantic_tokens_result, parse_signature_help_result,
-    parse_workspace_edit_result, parse_workspace_symbols_result, LanguageServerCallHierarchyItem,
-    LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-    LanguageServerCodeLens, LanguageServerCompletionContext, LanguageServerCompletionItem,
-    LanguageServerCompletionList, LanguageServerDocumentHighlight, LanguageServerDocumentLink,
-    LanguageServerDocumentSymbol, LanguageServerFoldingRange, LanguageServerFormattingOptions,
-    LanguageServerHover, LanguageServerIncomingCall, LanguageServerInlayHint,
-    LanguageServerLinkedEditingRanges, LanguageServerLocation, LanguageServerOutgoingCall,
-    LanguageServerPosition, LanguageServerPrepareRenameResult, LanguageServerRange,
-    LanguageServerSelectionRange, LanguageServerSemanticTokens, LanguageServerSignatureHelp,
-    LanguageServerTextEdit, LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
+    parse_type_hierarchy_items_result, parse_workspace_edit_result, parse_workspace_symbols_result,
+    LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+    LanguageServerCodeActionContext, LanguageServerCodeLens, LanguageServerCompletionContext,
+    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
+    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFoldingRange,
+    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerIncomingCall,
+    LanguageServerInlayHint, LanguageServerLinkedEditingRanges, LanguageServerLocation,
+    LanguageServerOutgoingCall, LanguageServerPosition, LanguageServerPrepareRenameResult,
+    LanguageServerRange, LanguageServerSelectionRange, LanguageServerSemanticTokens,
+    LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
+    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
     LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
     TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
     TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
@@ -1617,6 +1618,96 @@ fn javascript_typescript_text_document_outgoing_calls(
 }
 
 #[tauri::command]
+fn text_document_prepare_type_hierarchy(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.prepare_type_hierarchy(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_type_hierarchy_items_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_prepare_type_hierarchy(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.prepare_type_hierarchy(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_type_hierarchy_items_result(&result)
+}
+
+#[tauri::command]
+fn text_document_type_hierarchy_supertypes(
+    root_path: String,
+    item: LanguageServerTypeHierarchyItem,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.type_hierarchy_supertypes(&item);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_type_hierarchy_items_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_type_hierarchy_supertypes(
+    root_path: String,
+    item: LanguageServerTypeHierarchyItem,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.type_hierarchy_supertypes(&item);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_type_hierarchy_items_result(&result)
+}
+
+#[tauri::command]
+fn text_document_type_hierarchy_subtypes(
+    root_path: String,
+    item: LanguageServerTypeHierarchyItem,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.type_hierarchy_subtypes(&item);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_type_hierarchy_items_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_type_hierarchy_subtypes(
+    root_path: String,
+    item: LanguageServerTypeHierarchyItem,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.type_hierarchy_subtypes(&item);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_type_hierarchy_items_result(&result)
+}
+
+#[tauri::command]
 fn language_server_execute_command(
     root_path: String,
     command: LanguageServerCodeActionCommand,
@@ -2558,12 +2649,15 @@ pub fn run() {
             javascript_typescript_text_document_outgoing_calls,
             javascript_typescript_text_document_prepare_call_hierarchy,
             javascript_typescript_text_document_prepare_rename,
+            javascript_typescript_text_document_prepare_type_hierarchy,
             javascript_typescript_text_document_range_formatting,
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
             javascript_typescript_text_document_selection_ranges,
             javascript_typescript_text_document_semantic_tokens,
             javascript_typescript_text_document_signature_help,
+            javascript_typescript_text_document_type_hierarchy_subtypes,
+            javascript_typescript_text_document_type_hierarchy_supertypes,
             javascript_typescript_text_document_type_definition,
             javascript_typescript_workspace_symbols,
             language_server_execute_command,
@@ -2593,12 +2687,15 @@ pub fn run() {
             text_document_outgoing_calls,
             text_document_prepare_call_hierarchy,
             text_document_prepare_rename,
+            text_document_prepare_type_hierarchy,
             text_document_range_formatting,
             text_document_references,
             text_document_rename,
             text_document_selection_ranges,
             text_document_semantic_tokens,
             text_document_signature_help,
+            text_document_type_hierarchy_subtypes,
+            text_document_type_hierarchy_supertypes,
             text_document_type_definition,
             upsert_workspace_index_file,
             workspace_symbols,

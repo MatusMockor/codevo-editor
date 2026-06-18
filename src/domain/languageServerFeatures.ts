@@ -255,6 +255,17 @@ export interface LanguageServerOutgoingCall {
   to: LanguageServerCallHierarchyItem;
 }
 
+export interface LanguageServerTypeHierarchyItem {
+  data?: unknown;
+  detail: string | null;
+  kind: number;
+  name: string;
+  range: LanguageServerRange;
+  selectionRange: LanguageServerRange;
+  tags?: number[];
+  uri: string;
+}
+
 export interface LanguageServerFormattingOptions {
   insertSpaces: boolean;
   tabSize: number;
@@ -372,6 +383,18 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     item: LanguageServerCallHierarchyItem,
   ): Promise<LanguageServerOutgoingCall[]>;
+  prepareTypeHierarchy(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerTypeHierarchyItem[]>;
+  typeHierarchySupertypes(
+    rootPath: string,
+    item: LanguageServerTypeHierarchyItem,
+  ): Promise<LanguageServerTypeHierarchyItem[]>;
+  typeHierarchySubtypes(
+    rootPath: string,
+    item: LanguageServerTypeHierarchyItem,
+  ): Promise<LanguageServerTypeHierarchyItem[]>;
   executeCommand(
     rootPath: string,
     command: LanguageServerCodeActionCommand,

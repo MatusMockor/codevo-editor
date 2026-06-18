@@ -68,6 +68,7 @@ describe("languageServerCapabilities", () => {
       semanticTokens: true,
       signatureHelp: true,
       typeDefinition: true,
+      typeHierarchy: true,
       willRenameFiles: true,
       workspaceSymbol: true,
     });
@@ -101,6 +102,7 @@ describe("languageServerCapabilities", () => {
       "semantic tokens",
       "signature help",
       "type definition",
+      "type hierarchy",
       "file rename edits",
       "workspace symbols",
       "code actions",
@@ -143,6 +145,7 @@ function status(
           semanticTokens: true,
           signatureHelp: true,
           typeDefinition: true,
+          typeHierarchy: true,
           willRenameFiles: true,
           workspaceSymbol: true,
         },
