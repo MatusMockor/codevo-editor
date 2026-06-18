@@ -8,6 +8,23 @@ import {
   phpTraitClassNames,
 } from "./phpMethodCompletions";
 
+function positionAfter(source: string, needle: string) {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing test needle: ${needle}`);
+  }
+
+  const before = source.slice(0, offset + needle.length);
+  const lines = before.split("\n");
+  const lastLine = lines[lines.length - 1] ?? "";
+
+  return {
+    column: lastLine.length + 1,
+    lineNumber: lines.length,
+  };
+}
+
 describe("phpMethodCompletions", () => {
   it("detects member access completion context", () => {
     const source = `<?php
@@ -78,6 +95,45 @@ class Controller
     });
   });
 
+  it("detects Laravel container receiver completion contexts", () => {
+    const sources = [
+      {
+        expectedReceiver: "app(CommentService::class)",
+        source: "<?php\napp(CommentService::class)->cre",
+      },
+      {
+        expectedReceiver: "resolve(CommentService::class)",
+        source: "<?php\nresolve(CommentService::class)->cre",
+      },
+      {
+        expectedReceiver: "app()->make(CommentService::class)",
+        source: "<?php\napp()->make(CommentService::class)->cre",
+      },
+      {
+        expectedReceiver: "App::make(CommentService::class)",
+        source: "<?php\nApp::make(CommentService::class)->cre",
+      },
+      {
+        expectedReceiver: "Container::getInstance()->make(CommentService::class)",
+        source:
+          "<?php\nContainer::getInstance()->make(CommentService::class)->cre",
+      },
+    ];
+
+    for (const { expectedReceiver, source } of sources) {
+      expect(
+        phpMemberAccessCompletionContextAt(
+          source,
+          positionAfter(source, "->cre"),
+        ),
+      ).toEqual({
+        prefix: "cre",
+        receiverExpression: expectedReceiver,
+        variableName: null,
+      });
+    }
+  });
+
   it("detects static access completion context", () => {
     expect(
       phpStaticAccessCompletionContextAt("<?php\nCommentFactory::ma", {
@@ -112,6 +168,23 @@ class Controller
       methodName: "get",
       receiverExpression: "$request",
       variableName: "request",
+    });
+  });
+
+  it("detects Laravel container receiver method signature contexts", () => {
+    const source = "<?php\napp(CommentService::class)->create(";
+
+    expect(
+      phpMethodSignatureContextAt(
+        source,
+        positionAfter(source, "app(CommentService::class)->create("),
+      ),
+    ).toEqual({
+      argumentIndex: 0,
+      className: null,
+      methodName: "create",
+      receiverExpression: "app(CommentService::class)",
+      variableName: null,
     });
   });
 

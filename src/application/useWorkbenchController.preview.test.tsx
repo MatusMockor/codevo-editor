@@ -1875,6 +1875,119 @@ class CommentFactory
     ]);
   });
 
+  it("uses Laravel container receivers for method completions and signatures", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const servicePath = "/workspace/app/Services/CommentService.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Services\\CommentService;
+
+class CommentController
+{
+    public function store(): void
+    {
+        app(CommentService::class)->cre
+        App::make(CommentService::class)->cre
+        Container::getInstance()->make(CommentService::class)->cre
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === servicePath) {
+          return `<?php
+namespace App\\Services;
+
+class CommentService
+{
+    public function createWithAttachments(array $attachments = []): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    const expectedCompletion = [
+      {
+        declaringClassName: "App\\Services\\CommentService",
+        name: "createWithAttachments",
+        parameters: "array $attachments = []",
+        returnType: "string",
+      },
+    ];
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "app(CommentService::class)->cre"),
+      ),
+    ).resolves.toEqual(expectedCompletion);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "App::make(CommentService::class)->cre"),
+      ),
+    ).resolves.toEqual(expectedCompletion);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(
+          controllerSource,
+          "Container::getInstance()->make(CommentService::class)->cre",
+        ),
+      ),
+    ).resolves.toEqual(expectedCompletion);
+
+    const signatureSource = controllerSource.replace(
+      "app(CommentService::class)->cre",
+      "app(CommentService::class)->createWithAttachments(",
+    );
+
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        signatureSource,
+        positionAfter(
+          signatureSource,
+          "app(CommentService::class)->createWithAttachments(",
+        ),
+      ),
+    ).resolves.toEqual({
+      argumentIndex: 0,
+      method: expectedCompletion[0],
+      parameters: [
+        {
+          defaultValue: "[]",
+          name: "$attachments",
+          optional: true,
+          raw: "array $attachments = []",
+          type: "array",
+        },
+      ],
+    });
+  });
+
   it("infers assigned variable completions from indexed interface method return types", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

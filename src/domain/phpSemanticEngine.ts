@@ -122,11 +122,12 @@ export function phpLaravelContainerExpressionClassName(
   expression: string,
 ): string | null {
   const normalized = expression.trim();
+  const classNamePattern =
+    String.raw`((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)`;
   const match =
-    /^(?:app|resolve|make)\s*\(\s*((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)::class\b/.exec(
+    new RegExp(`^(?:app|resolve|make)\\s*\\(\\s*${classNamePattern}::class\\b`).exec(
       normalized,
-    ) ??
-    /->make\s*\(\s*((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)::class\b/.exec(
+    ) ?? new RegExp(`(?:->|::)make\\s*\\(\\s*${classNamePattern}::class\\b`).exec(
       normalized,
     );
 
@@ -138,8 +139,10 @@ export function phpMethodCallExpression(
 ): PhpMethodCallExpression | null {
   const classNamePattern =
     String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+  const containerCallPattern =
+    String.raw`(?:(?:app|resolve|make)\s*\(\s*${classNamePattern}::class\s*\)|app\s*\(\s*\)\s*->\s*make\s*\(\s*${classNamePattern}::class\s*\)|${classNamePattern}\s*::\s*make\s*\(\s*${classNamePattern}::class\s*\)|${classNamePattern}\s*::\s*getInstance\s*\(\s*\)\s*->\s*make\s*\(\s*${classNamePattern}::class\s*\))`;
   const baseReceiverPattern =
-    String.raw`(?:new\s+${classNamePattern}\s*\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$this|${classNamePattern}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
+    String.raw`(?:new\s+${classNamePattern}\s*\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$this|${containerCallPattern}|${classNamePattern}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
   const match =
     new RegExp(
       `^(${baseReceiverPattern}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,

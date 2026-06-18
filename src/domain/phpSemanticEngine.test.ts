@@ -89,6 +89,24 @@ class CommentController
     expect(phpLaravelContainerExpressionClassName("app(CommentRepository::class)")).toBe(
       "CommentRepository",
     );
+    expect(
+      phpLaravelContainerExpressionClassName("resolve(CommentRepository::class)"),
+    ).toBe("CommentRepository");
+    expect(
+      phpLaravelContainerExpressionClassName(
+        "app()->make(CommentRepository::class)",
+      ),
+    ).toBe("CommentRepository");
+    expect(
+      phpLaravelContainerExpressionClassName(
+        "App::make(CommentRepository::class)",
+      ),
+    ).toBe("CommentRepository");
+    expect(
+      phpLaravelContainerExpressionClassName(
+        "Container::getInstance()->make(CommentRepository::class)",
+      ),
+    ).toBe("CommentRepository");
   });
 
   it("detects method and static call expressions", () => {
@@ -113,6 +131,18 @@ class CommentController
     ).toEqual({
       methodName: "first",
       receiverExpression: "Album::query()->whereNull('parent_id')",
+    });
+    expect(phpMethodCallExpression("app(CommentService::class)->create()")).toEqual(
+      {
+        methodName: "create",
+        receiverExpression: "app(CommentService::class)",
+      },
+    );
+    expect(
+      phpMethodCallExpression("App::make(CommentService::class)->create()"),
+    ).toEqual({
+      methodName: "create",
+      receiverExpression: "App::make(CommentService::class)",
     });
     expect(phpPropertyAccessExpression("$comment->parent")).toEqual({
       propertyName: "parent",

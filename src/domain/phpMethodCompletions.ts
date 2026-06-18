@@ -42,6 +42,10 @@ export interface PhpMethodSignature {
   parameters: PhpMethodParameter[];
 }
 
+const PHP_CLASS_NAME_PATTERN = String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+const PHP_CONTAINER_CALL_PATTERN = String.raw`(?:(?:app|resolve|make)\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|app\s*\(\s*\)\s*->\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|${PHP_CLASS_NAME_PATTERN}\s*::\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\)|${PHP_CLASS_NAME_PATTERN}\s*::\s*getInstance\s*\(\s*\)\s*->\s*make\s*\(\s*${PHP_CLASS_NAME_PATTERN}::class\s*\))`;
+const PHP_MEMBER_RECEIVER_PATTERN = String.raw`(?:\$[A-Za-z_][A-Za-z0-9_]*|\$this|${PHP_CONTAINER_CALL_PATTERN})`;
+
 export function phpMemberAccessCompletionContextAt(
   source: string,
   position: EditorPosition,
@@ -49,10 +53,9 @@ export function phpMemberAccessCompletionContextAt(
   const offset = offsetAtPosition(source, position);
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
-  const match =
-    /((?:\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
-      lineUntilCursor,
-    );
+  const match = new RegExp(
+    `(${PHP_MEMBER_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)?$`,
+  ).exec(lineUntilCursor);
 
   if (!match?.[1]) {
     return null;
@@ -96,10 +99,9 @@ export function phpMethodSignatureContextAt(
   const offset = offsetAtPosition(source, position);
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
-  const memberMatch =
-    /((?:\$[A-Za-z_][A-Za-z0-9_]*|\$this)(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)$/.exec(
-      lineUntilCursor,
-    );
+  const memberMatch = new RegExp(
+    `(${PHP_MEMBER_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)$`,
+  ).exec(lineUntilCursor);
 
   if (memberMatch?.[1] && memberMatch[2]) {
     const receiverExpression = normalizeReceiverExpression(memberMatch[1]);
