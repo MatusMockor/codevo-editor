@@ -44,6 +44,11 @@ describe("configureShikiLanguageFeatures", () => {
         decreaseIndentPattern: RegExp;
         increaseIndentPattern: RegExp;
       };
+      onEnterRules?: Array<{
+        action: { indentAction: number };
+        afterText?: RegExp;
+        beforeText: RegExp;
+      }>;
     }
 
     const calls: Array<[string, TestLanguageConfiguration]> = [];
@@ -73,6 +78,30 @@ describe("configureShikiLanguageFeatures", () => {
     ).toBe(true);
     expect(
       phpConfiguration.indentationRules?.decreaseIndentPattern.test("    }"),
+    ).toBe(true);
+    expect(
+      phpConfiguration.onEnterRules?.some(
+        (rule) =>
+          rule.beforeText.test("    public function getOne() {") &&
+          rule.afterText?.test("    }") &&
+          rule.action.indentAction === 2,
+      ),
+    ).toBe(true);
+    expect(
+      phpConfiguration.onEnterRules?.some(
+        (rule) =>
+          rule.beforeText.test("        $items = [") &&
+          rule.afterText?.test("        ]") &&
+          rule.action.indentAction === 2,
+      ),
+    ).toBe(true);
+    expect(
+      phpConfiguration.onEnterRules?.some(
+        (rule) =>
+          rule.beforeText.test("        $service->call(") &&
+          rule.afterText?.test("        )") &&
+          rule.action.indentAction === 2,
+      ),
     ).toBe(true);
   });
 });

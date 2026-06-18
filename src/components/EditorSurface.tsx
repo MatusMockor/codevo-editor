@@ -36,7 +36,10 @@ import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
 import { registerJavaScriptTypeScriptLanguageServerMonacoProviders } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
-import { setupShikiTokenization } from "../infrastructure/shikiHighlighter";
+import {
+  configureShikiLanguageFeatures,
+  setupShikiTokenization,
+} from "../infrastructure/shikiHighlighter";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
 
@@ -1263,6 +1266,7 @@ function isIdentifierCharacter(character: string | undefined): boolean {
 
 function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
   configureTypescriptJavascriptDefaults(monaco);
+  configureShikiLanguageFeatures(monaco);
   setupShikiTokenization(monaco, theme).catch((error) => {
     console.error("Shiki tokenization setup failed", error);
   });

@@ -193,6 +193,16 @@ interface MonacoLanguageConfiguration {
     decreaseIndentPattern: RegExp;
     increaseIndentPattern: RegExp;
   };
+  onEnterRules?: Array<{
+    action: {
+      appendText?: string;
+      indentAction: number;
+      removeText?: number;
+    };
+    afterText?: RegExp;
+    beforeText: RegExp;
+    previousLineText?: RegExp;
+  }>;
   surroundingPairs?: Array<{
     open: string;
     close: string;
@@ -211,6 +221,11 @@ interface MonacoLanguageHost {
 }
 
 interface MonacoForShiki extends MonacoLanguageHost {}
+
+const MONACO_INDENT_ACTION = {
+  Indent: 1,
+  IndentOutdent: 2,
+} as const;
 
 const PHP_LIKE_LANGUAGE_CONFIGURATION: MonacoLanguageConfiguration = {
   comments: {
@@ -243,6 +258,31 @@ const PHP_LIKE_LANGUAGE_CONFIGURATION: MonacoLanguageConfiguration = {
       /^.*(?:\{[^}"'`]*|\([^)"'`]*|\[[^\]"'`]*)$/,
     decreaseIndentPattern: /^\s*[\}\]\)].*$/,
   },
+  onEnterRules: [
+    {
+      beforeText: /^.*\{\s*$/,
+      afterText: /^\s*\}.*$/,
+      action: { indentAction: MONACO_INDENT_ACTION.IndentOutdent },
+    },
+    {
+      beforeText: /^.*\(\s*$/,
+      afterText: /^\s*\).*$/,
+      action: { indentAction: MONACO_INDENT_ACTION.IndentOutdent },
+    },
+    {
+      beforeText: /^.*\[\s*$/,
+      afterText: /^\s*\].*$/,
+      action: { indentAction: MONACO_INDENT_ACTION.IndentOutdent },
+    },
+    {
+      beforeText: /^.*\{\s*$/,
+      action: { indentAction: MONACO_INDENT_ACTION.Indent },
+    },
+    {
+      beforeText: /^.*(?:\(|\[)\s*$/,
+      action: { indentAction: MONACO_INDENT_ACTION.Indent },
+    },
+  ],
 };
 
 export function configureShikiLanguageFeatures(
