@@ -2185,6 +2185,13 @@ class AlbumController
         $album = Album::query()->whereNull('parent_id')->first();
         $album->get
 
+        $albumFromCollection = Album::query()->whereNull('parent_id')->get()->first();
+        $albumFromCollection->get
+
+        $albums = Album::query()->get();
+        $albumFromAssignedCollection = $albums->first();
+        $albumFromAssignedCollection->get
+
         $query = Album::query();
         $query->whereNull('parent_id')->ord
 
@@ -2192,6 +2199,11 @@ class AlbumController
         $typedQuery = Album::query();
         $typed = $typedQuery->first();
         $typed->get
+
+        /** @var \\Illuminate\\Database\\Eloquent\\Collection<int, Album> $typedAlbums */
+        $typedAlbums = Album::query()->get();
+        $typedAlbum = $typedAlbums->first();
+        $typedAlbum->get
     }
 }
 `;
@@ -2230,6 +2242,9 @@ class Builder
     /** @return static */
     public function orderBy($column, $direction = 'asc') {}
 
+    /** @return \\Illuminate\\Database\\Eloquent\\Collection<int, TModel> */
+    public function get($columns = ['*']) {}
+
     /** @return TModel|null */
     public function first($columns = ['*']) {}
 }
@@ -2265,6 +2280,32 @@ class Builder
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$albumFromCollection->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$albumFromAssignedCollection->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$query->whereNull('parent_id')->ord"),
       ),
     ).resolves.toEqual([
@@ -2273,6 +2314,19 @@ class Builder
         name: "orderBy",
         parameters: "$column, $direction = 'asc'",
         returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$typedAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
       },
     ]);
     await expect(

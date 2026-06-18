@@ -4043,6 +4043,85 @@ export function useWorkbenchController(
     [resolvePhpClassReference],
   );
 
+  const resolvePhpLaravelCollectionModelType = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+      expression: string,
+      depth = 0,
+    ): Promise<string | null> => {
+      if (depth > 5) {
+        return null;
+      }
+
+      const normalizedExpression = expression.trim();
+      const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
+        normalizedExpression,
+      );
+
+      if (variableMatch?.[1]) {
+        const phpDocType = phpDocRawTypeForVariableBefore(
+          source,
+          position,
+          variableMatch[1],
+        );
+        const phpDocGenericModelType = phpDocType
+          ? phpDeclaredGenericTypeCandidates(phpDocType)
+              .map((candidate) => resolvePhpClassReference(source, candidate))
+              .find((candidate): candidate is string => Boolean(candidate))
+          : null;
+
+        if (phpDocGenericModelType) {
+          return phpDocGenericModelType;
+        }
+
+        const assignmentExpression = phpAssignmentExpressionForVariableBefore(
+          source,
+          position,
+          variableMatch[1],
+        );
+
+        if (assignmentExpression) {
+          return resolvePhpLaravelCollectionModelType(
+            source,
+            position,
+            assignmentExpression,
+            depth + 1,
+          );
+        }
+      }
+
+      const methodCall = phpMethodCallExpression(normalizedExpression);
+
+      if (
+        methodCall &&
+        isLaravelCollectionTerminalModelMethod(methodCall.methodName)
+      ) {
+        return resolvePhpLaravelCollectionModelType(
+          source,
+          position,
+          methodCall.receiverExpression,
+          depth + 1,
+        );
+      }
+
+      if (
+        methodCall &&
+        isLaravelEloquentBuilderCollectionMethod(methodCall.methodName)
+      ) {
+        return resolvePhpEloquentBuilderModelType(
+          source,
+          position,
+          methodCall.receiverExpression,
+          depth + 1,
+        );
+      }
+
+      return null;
+    },
+    [resolvePhpClassReference, resolvePhpEloquentBuilderModelType],
+  );
+
   const resolvePhpExpressionType = useCallback(
     async (
       source: string,
@@ -4099,6 +4178,19 @@ export function useWorkbenchController(
       const methodCall = phpMethodCallExpression(expression);
 
       if (methodCall) {
+        if (isLaravelCollectionTerminalModelMethod(methodCall.methodName)) {
+          const modelType = await resolvePhpLaravelCollectionModelType(
+            source,
+            position,
+            methodCall.receiverExpression,
+            depth + 1,
+          );
+
+          if (modelType) {
+            return modelType;
+          }
+        }
+
         if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
           const modelType = await resolvePhpEloquentBuilderModelType(
             source,
@@ -4109,6 +4201,19 @@ export function useWorkbenchController(
 
           if (modelType) {
             return modelType;
+          }
+        }
+
+        if (isLaravelEloquentBuilderCollectionMethod(methodCall.methodName)) {
+          const modelType = await resolvePhpEloquentBuilderModelType(
+            source,
+            position,
+            methodCall.receiverExpression,
+            depth + 1,
+          );
+
+          if (modelType) {
+            return "Illuminate\\Database\\Eloquent\\Collection";
           }
         }
 
@@ -4162,6 +4267,7 @@ export function useWorkbenchController(
     },
     [
       resolvePhpEloquentBuilderModelType,
+      resolvePhpLaravelCollectionModelType,
       resolvePhpClassReference,
       resolvePhpMethodReturnType,
     ],
@@ -7277,6 +7383,20 @@ const laravelEloquentBuilderTerminalModelMethods = new Set([
   "updateorcreate",
 ]);
 
+const laravelEloquentBuilderCollectionMethods = new Set([
+  "all",
+  "cursor",
+  "get",
+]);
+
+const laravelCollectionTerminalModelMethods = new Set([
+  "find",
+  "first",
+  "firstwhere",
+  "last",
+  "sole",
+]);
+
 function isLaravelEloquentStaticBuilderMethod(methodName: string): boolean {
   return laravelEloquentStaticBuilderMethods.has(methodName.toLowerCase());
 }
@@ -7287,6 +7407,14 @@ function isLaravelEloquentBuilderFluentMethod(methodName: string): boolean {
 
 function isLaravelEloquentBuilderTerminalModelMethod(methodName: string): boolean {
   return laravelEloquentBuilderTerminalModelMethods.has(methodName.toLowerCase());
+}
+
+function isLaravelEloquentBuilderCollectionMethod(methodName: string): boolean {
+  return laravelEloquentBuilderCollectionMethods.has(methodName.toLowerCase());
+}
+
+function isLaravelCollectionTerminalModelMethod(methodName: string): boolean {
+  return laravelCollectionTerminalModelMethods.has(methodName.toLowerCase());
 }
 
 function indexProgressNoticeGroup(rootPath: string): string {
