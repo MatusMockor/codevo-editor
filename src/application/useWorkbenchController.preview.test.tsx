@@ -2889,6 +2889,9 @@ class CommentController
         $childFromProperty = $comment->children->first();
         $childFromProperty->get
 
+        $filteredChildFromProperty = $comment->children->filter()->first();
+        $filteredChildFromProperty->get
+
         $documentedParent = $comment->documentedParent()->first();
         $documentedParent->get
     }
@@ -3029,6 +3032,19 @@ class Comment
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$childFromProperty->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$filteredChildFromProperty->get"),
       ),
     ).resolves.toEqual([
       {
@@ -3387,9 +3403,16 @@ class AlbumController
         $albumFromCollection = Album::query()->whereNull('parent_id')->get()->first();
         $albumFromCollection->get
 
+        $filteredAlbumFromCollection = Album::query()->whereNull('parent_id')->get()->filter()->first();
+        $filteredAlbumFromCollection->get
+
         $albums = Album::query()->get();
         $albumFromAssignedCollection = $albums->first();
         $albumFromAssignedCollection->get
+
+        $filteredAlbums = Album::query()->get()->filter();
+        $albumFromAssignedFilteredCollection = $filteredAlbums->first();
+        $albumFromAssignedFilteredCollection->get
 
         $query = Album::query();
         $query->whereNull('parent_id')->ord
@@ -3500,6 +3523,19 @@ class Builder
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$filteredAlbumFromCollection->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$trashedAlbum->get"),
       ),
     ).resolves.toEqual([
@@ -3514,6 +3550,22 @@ class Builder
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$albumFromAssignedCollection->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(
+          controllerSource,
+          "$albumFromAssignedFilteredCollection->get",
+        ),
       ),
     ).resolves.toEqual([
       {

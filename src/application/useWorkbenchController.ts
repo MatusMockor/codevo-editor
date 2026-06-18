@@ -4597,6 +4597,15 @@ export function useWorkbenchController(
         );
       }
 
+      if (methodCall && isLaravelCollectionFluentMethod(methodCall.methodName)) {
+        return resolvePhpLaravelCollectionModelType(
+          source,
+          position,
+          methodCall.receiverExpression,
+          depth + 1,
+        );
+      }
+
       if (
         methodCall &&
         isLaravelEloquentBuilderCollectionMethod(methodCall.methodName)
@@ -4797,12 +4806,15 @@ export function useWorkbenchController(
 
           while (
             relationCall &&
-            isLaravelEloquentBuilderCollectionMethod(relationCall.methodName)
+            (isLaravelEloquentBuilderCollectionMethod(relationCall.methodName) ||
+              isLaravelCollectionFluentMethod(relationCall.methodName))
           ) {
             relationExpression = relationCall.receiverExpression;
             relationCall = phpMethodCallExpression(relationExpression);
           }
 
+          const relationPropertyAccess =
+            phpPropertyAccessExpression(relationExpression);
           const relationReceiverType = relationCall
             ? await resolvePhpExpressionType(
                 source,
@@ -4810,12 +4822,21 @@ export function useWorkbenchController(
                 relationCall.receiverExpression,
                 depth + 1,
               )
+            : relationPropertyAccess
+              ? await resolvePhpExpressionType(
+                  source,
+                  position,
+                  relationPropertyAccess.receiverExpression,
+                  depth + 1,
+                )
             : null;
+          const relationMemberName =
+            relationCall?.methodName ?? relationPropertyAccess?.propertyName ?? null;
           const relationModelType =
-            relationReceiverType && relationCall
+            relationReceiverType && relationMemberName
               ? await resolvePhpClassPropertyOrRelationType(
                   relationReceiverType,
-                  relationCall.methodName,
+                  relationMemberName,
                   true,
                 )
               : null;
@@ -4838,6 +4859,19 @@ export function useWorkbenchController(
 
         if (isLaravelEloquentBuilderCollectionMethod(methodCall.methodName)) {
           const modelType = await resolvePhpEloquentBuilderModelType(
+            source,
+            position,
+            methodCall.receiverExpression,
+            depth + 1,
+          );
+
+          if (modelType) {
+            return "Illuminate\\Database\\Eloquent\\Collection";
+          }
+        }
+
+        if (isLaravelCollectionFluentMethod(methodCall.methodName)) {
+          const modelType = await resolvePhpLaravelCollectionModelType(
             source,
             position,
             methodCall.receiverExpression,
@@ -8319,6 +8353,30 @@ const laravelCollectionTerminalModelMethods = new Set([
   "sole",
 ]);
 
+const laravelCollectionFluentMethods = new Set([
+  "filter",
+  "forpage",
+  "keyby",
+  "only",
+  "reject",
+  "reverse",
+  "skip",
+  "slice",
+  "sort",
+  "sortby",
+  "sortbydesc",
+  "take",
+  "unique",
+  "values",
+  "where",
+  "wherebetween",
+  "wherein",
+  "whereinstanceof",
+  "wherenotin",
+  "wherenotnull",
+  "wherenull",
+]);
+
 function isLaravelEloquentStaticBuilderMethod(methodName: string): boolean {
   return laravelEloquentStaticBuilderMethods.has(methodName.toLowerCase());
 }
@@ -8337,6 +8395,10 @@ function isLaravelEloquentBuilderCollectionMethod(methodName: string): boolean {
 
 function isLaravelCollectionTerminalModelMethod(methodName: string): boolean {
   return laravelCollectionTerminalModelMethods.has(methodName.toLowerCase());
+}
+
+function isLaravelCollectionFluentMethod(methodName: string): boolean {
+  return laravelCollectionFluentMethods.has(methodName.toLowerCase());
 }
 
 function resolvePhpLaravelRelationModelType(
