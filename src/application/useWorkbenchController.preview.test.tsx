@@ -1906,6 +1906,9 @@ class CommentController
         $child = $comment->children()->get()->first();
         $child->get
 
+        $childFromProperty = $comment->children->first();
+        $childFromProperty->get
+
         $documentedParent = $comment->documentedParent()->first();
         $documentedParent->get
     }
@@ -2033,6 +2036,19 @@ class Comment
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$documentedParent->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$childFromProperty->get"),
       ),
     ).resolves.toEqual([
       {

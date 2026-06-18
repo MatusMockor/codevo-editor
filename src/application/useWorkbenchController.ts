@@ -4322,6 +4322,30 @@ export function useWorkbenchController(
 
       if (methodCall) {
         if (isLaravelCollectionTerminalModelMethod(methodCall.methodName)) {
+          const collectionPropertyAccess = phpPropertyAccessExpression(
+            methodCall.receiverExpression,
+          );
+          const collectionPropertyReceiverType = collectionPropertyAccess
+            ? await resolvePhpExpressionType(
+                source,
+                position,
+                collectionPropertyAccess.receiverExpression,
+                depth + 1,
+              )
+            : null;
+          const collectionRelationModelType =
+            collectionPropertyReceiverType && collectionPropertyAccess
+              ? await resolvePhpClassPropertyOrRelationType(
+                  collectionPropertyReceiverType,
+                  collectionPropertyAccess.propertyName,
+                  true,
+                )
+              : null;
+
+          if (collectionRelationModelType) {
+            return collectionRelationModelType;
+          }
+
           const modelType = await resolvePhpLaravelCollectionModelType(
             source,
             position,
