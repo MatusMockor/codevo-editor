@@ -17,6 +17,8 @@ pub struct GitStatus {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitChangedFile {
+    pub is_staged: bool,
+    pub is_unversioned: bool,
     pub old_path: Option<String>,
     pub old_relative_path: Option<String>,
     pub path: String,
@@ -45,13 +47,33 @@ pub struct GitFileDiff {
 }
 
 pub trait GitRepositoryGateway {
+    fn commit(&self, root: &Path, message: &str) -> io::Result<GitStatus>;
     fn diff(&self, root: &Path, change: &GitChangedFile) -> io::Result<GitFileDiff>;
+    fn push(&self, root: &Path) -> io::Result<GitStatus>;
+    fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
+    fn stage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn status(&self, root: &Path) -> io::Result<GitStatus>;
+    fn unstage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
 }
 
 pub struct CommandGitRepositoryGateway;
 
 impl GitRepositoryGateway for CommandGitRepositoryGateway {
+    fn commit(&self, root: &Path, message: &str) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+        let message = message.trim();
+
+        if message.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Commit message is required.",
+            ));
+        }
+
+        run_git(&root, ["commit", "-m", message])?;
+        self.status(&root)
+    }
+
     fn diff(&self, root: &Path, change: &GitChangedFile) -> io::Result<GitFileDiff> {
         let root = root.canonicalize()?;
         let original_content = original_content(&root, change)?;
@@ -63,6 +85,47 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             modified_content,
             original_content,
         })
+    }
+
+    fn push(&self, root: &Path) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+
+        run_git(&root, ["push"])?;
+        self.status(&root)
+    }
+
+    fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+
+        for change in changes {
+            safe_relative_path(&change.relative_path)?;
+
+            if change.status == GitChangeStatus::Untracked {
+                run_git(&root, ["clean", "-f", "--", change.relative_path.as_str()])?;
+            } else {
+                if change.is_staged {
+                    run_git(
+                        &root,
+                        ["restore", "--staged", "--", change.relative_path.as_str()],
+                    )?;
+                }
+
+                run_git(&root, ["restore", "--", change.relative_path.as_str()])?;
+            }
+        }
+
+        self.status(&root)
+    }
+
+    fn stage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+
+        for change in changes {
+            safe_relative_path(&change.relative_path)?;
+            run_git(&root, ["add", "--", change.relative_path.as_str()])?;
+        }
+
+        self.status(&root)
     }
 
     fn status(&self, root: &Path) -> io::Result<GitStatus> {
@@ -94,6 +157,20 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             is_repository: true,
             root_path: root.to_string_lossy().to_string(),
         })
+    }
+
+    fn unstage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+
+        for change in changes {
+            safe_relative_path(&change.relative_path)?;
+            run_git(
+                &root,
+                ["restore", "--staged", "--", change.relative_path.as_str()],
+            )?;
+        }
+
+        self.status(&root)
     }
 }
 
@@ -161,6 +238,8 @@ fn parse_porcelain_status(root: &Path, output: &[u8]) -> io::Result<Vec<GitChang
         let status_code = &entry[..2];
         let relative_path = entry[3..].to_string();
         let status = git_change_status(status_code);
+        let is_staged = git_change_is_staged(status_code);
+        let is_unversioned = status == GitChangeStatus::Untracked;
         let old_relative_path = match status {
             GitChangeStatus::Renamed => {
                 let old = parts
@@ -183,6 +262,8 @@ fn parse_porcelain_status(root: &Path, output: &[u8]) -> io::Result<Vec<GitChang
         };
 
         changes.push(GitChangedFile {
+            is_staged,
+            is_unversioned,
             old_path,
             old_relative_path,
             path,
@@ -192,6 +273,13 @@ fn parse_porcelain_status(root: &Path, output: &[u8]) -> io::Result<Vec<GitChang
     }
 
     Ok(changes)
+}
+
+fn git_change_is_staged(status: &str) -> bool {
+    status
+        .chars()
+        .next()
+        .is_some_and(|value| value != ' ' && value != '?')
 }
 
 fn git_change_status(status: &str) -> GitChangeStatus {
@@ -216,6 +304,23 @@ fn git_change_status(status: &str) -> GitChangeStatus {
     }
 
     GitChangeStatus::Modified
+}
+
+fn run_git<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    ))
 }
 
 fn workspace_file_path(root: &Path, relative_path: &str) -> io::Result<String> {
@@ -326,6 +431,17 @@ mod tests {
         assert_eq!(changes[3].status, GitChangeStatus::Renamed);
         assert_eq!(changes[3].old_relative_path.as_deref(), Some("old.php"));
         assert_eq!(changes[4].status, GitChangeStatus::Conflicted);
+    }
+
+    #[test]
+    fn marks_index_changes_as_staged() {
+        let output = b"M  staged.php\0 M unstaged.php\0A  added.php\0?? new.php\0";
+        let changes = parse_porcelain_status(Path::new("/workspace"), output).expect("parse");
+
+        assert!(changes[0].is_staged);
+        assert!(!changes[1].is_staged);
+        assert!(changes[2].is_staged);
+        assert!(!changes[3].is_staged);
     }
 
     #[test]

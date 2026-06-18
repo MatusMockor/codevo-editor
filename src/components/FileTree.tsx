@@ -1,4 +1,4 @@
-import { ChevronRight, FileCode2, Folder, FolderOpen } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, RefObject, UIEvent } from "react";
 import {
@@ -7,6 +7,8 @@ import {
   type GitChangeStatus,
 } from "../domain/git";
 import type { FileEntry } from "../domain/workspace";
+import { getTreeGitStatusClassName } from "./gitStatusClassName";
+import { TreeEntryIcon } from "./TreeEntryIcon";
 
 const TREE_ROW_HEIGHT = 32;
 const TREE_ROW_OVERSCAN = 8;
@@ -333,15 +335,7 @@ function TreeRow({
         className={getChevronClassName(isExpandable, isExpanded)}
         size={15}
       />
-      {isDirectory ? (
-        isExpanded ? (
-          <FolderOpen aria-hidden="true" size={16} />
-        ) : (
-          <Folder aria-hidden="true" size={16} />
-        )
-      ) : (
-        <FileCode2 aria-hidden="true" size={16} />
-      )}
+      <TreeEntryIcon kind={entry.kind} expanded={isExpanded} />
       <span>{entry.name}</span>
       {isLoading ? (
         <small aria-live="polite" className="tree-row-meta">
@@ -349,7 +343,7 @@ function TreeRow({
         </small>
       ) : null}
       {status ? (
-        <span aria-label={gitStatusTitle(status)} className={getTreeRowStatusClassName(status)}>
+        <span aria-label={gitStatusTitle(status)} className={getTreeGitStatusClassName(status)}>
           {gitStatusLabel(status)}
         </span>
       ) : null}
@@ -405,18 +399,6 @@ function getVisibleTreeRows({
     indexByPath,
     rows,
   };
-}
-
-function getTreeRowStatusClassName(status: GitChangeStatus): string {
-  if (status === "added" || status === "renamed") {
-    return "tree-row-status tree-row-status-added";
-  }
-
-  if (status === "modified") {
-    return "tree-row-status tree-row-status-modified";
-  }
-
-  return `tree-row-status tree-row-status-${status}`;
 }
 
 function getChevronClassName(

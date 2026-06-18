@@ -7,11 +7,19 @@ export type GitChangeStatus =
   | "untracked";
 
 export interface GitChangedFile {
+  isStaged: boolean;
+  isUnversioned: boolean;
   oldPath: string | null;
   oldRelativePath: string | null;
   path: string;
   relativePath: string;
   status: GitChangeStatus;
+}
+
+export interface GitChangeGroup {
+  changes: GitChangedFile[];
+  id: "changes" | "unversioned";
+  title: string;
 }
 
 export interface GitStatus {
@@ -29,8 +37,13 @@ export interface GitFileDiff {
 }
 
 export interface GitGateway {
+  commit(rootPath: string, message: string): Promise<GitStatus>;
   getStatus(rootPath: string): Promise<GitStatus>;
   getDiff(rootPath: string, change: GitChangedFile): Promise<GitFileDiff>;
+  push(rootPath: string): Promise<GitStatus>;
+  revertFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
+  stageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
+  unstageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
 }
 
 export function emptyGitStatus(rootPath: string | null = null): GitStatus {
@@ -88,4 +101,32 @@ export function gitStatusTitle(status: GitChangeStatus): string {
   }
 
   return "Modified";
+}
+
+export function groupGitChanges(changes: GitChangedFile[]): GitChangeGroup[] {
+  const tracked = changes.filter((change) => !change.isUnversioned);
+  const unversioned = changes.filter((change) => change.isUnversioned);
+  const groups: GitChangeGroup[] = [];
+
+  if (tracked.length > 0) {
+    groups.push({
+      changes: tracked,
+      id: "changes",
+      title: "Changes",
+    });
+  }
+
+  if (unversioned.length > 0) {
+    groups.push({
+      changes: unversioned,
+      id: "unversioned",
+      title: "Unversioned Files",
+    });
+  }
+
+  return groups;
+}
+
+export function hasStagedGitChanges(changes: GitChangedFile[]): boolean {
+  return changes.some((change) => change.isStaged);
 }

@@ -508,6 +508,14 @@ button {
   white-space: nowrap;
 }
 
+.tree-entry-icon {
+  display: inline-grid;
+  width: 18px;
+  min-width: 18px;
+  place-items: center;
+  color: var(--color-text-muted);
+}
+
 .tree-row small {
   color: var(--color-text-subtle);
 }
@@ -582,33 +590,237 @@ button {
 }
 
 .git-change-row {
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  box-sizing: border-box;
+  grid-template-columns: 14px 18px minmax(48px, 1fr) minmax(0, 36%) 18px;
+  gap: 6px;
+  margin: 1px 6px 1px 28px;
+  padding: 0 6px 0 0;
+  overflow: hidden;
+  width: calc(100% - 34px);
 }
 
-.git-status {
+.git-commit-panel {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.git-commit-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 8px 10px;
+}
+
+.git-commit-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--color-text-strong);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.git-commit-title small {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.git-commit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.git-commit-toolbar button {
   display: inline-grid;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   place-items: center;
-  border-radius: 50%;
-  color: var(--color-panel-deep);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.git-commit-toolbar button:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-strong);
+}
+
+.git-commit-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.git-change-group {
+  display: grid;
+  gap: 0;
+  padding: 2px 0;
+}
+
+.git-change-group-header {
+  display: grid;
+  min-height: 26px;
+  grid-template-columns: 14px 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.git-change-group-toggle {
+  display: inline-grid;
+  min-width: 0;
+  width: 14px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.git-change-group-toggle:hover {
+  color: var(--color-text-strong);
+}
+
+.git-change-group-title,
+.git-change-name,
+.git-change-directory {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-change-name {
+  color: var(--color-text);
+}
+
+.git-change-directory {
+  justify-self: end;
+  max-width: 100%;
+  color: var(--color-text-subtle);
   font-size: 11px;
-  font-weight: 800;
 }
 
-.git-status-added,
-.git-status-untracked {
-  background: var(--color-success);
+.git-themed-checkbox {
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  cursor: pointer;
 }
 
-.git-status-deleted,
-.git-status-conflicted {
-  background: var(--color-error);
+.git-themed-checkbox input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  border: 0;
+  clip: rect(0 0 0 0);
+  overflow: hidden;
+  padding: 0;
 }
 
-.git-status-modified,
-.git-status-renamed {
-  background: var(--color-warning);
+.git-themed-checkbox-box {
+  display: inline-grid;
+  width: 12px;
+  height: 12px;
+  place-items: center;
+  border: 1px solid var(--color-text-muted);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-panel) 72%, var(--color-text-muted));
+  color: var(--color-active-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-panel) 55%, transparent);
+}
+
+.git-themed-checkbox:hover .git-themed-checkbox-box {
+  border-color: var(--color-text);
+  background: color-mix(in srgb, var(--color-panel) 58%, var(--color-text-muted));
+}
+
+.git-themed-checkbox.checked .git-themed-checkbox-box {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.git-themed-checkbox input:focus-visible + .git-themed-checkbox-box {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.git-themed-checkbox input:disabled + .git-themed-checkbox-box {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.git-commit-footer {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+  padding: 8px 10px 10px;
+}
+
+.git-commit-message {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 76px;
+  max-height: 150px;
+  resize: vertical;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px;
+}
+
+.git-commit-message:focus {
+  border-color: var(--color-accent);
+  outline: none;
+}
+
+.git-commit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-start;
+}
+
+.git-commit-button {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-active-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+}
+
+.git-commit-button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .git-diff-preview {

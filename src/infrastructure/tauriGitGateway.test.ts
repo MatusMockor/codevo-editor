@@ -16,6 +16,8 @@ describe("TauriGitGateway", () => {
 
   it("invokes status and diff commands in Tauri", async () => {
     const change: GitChangedFile = {
+      isStaged: false,
+      isUnversioned: false,
       oldPath: null,
       oldRelativePath: null,
       path: "/workspace/src/User.php",
@@ -49,6 +51,95 @@ describe("TauriGitGateway", () => {
     });
     expect(invoke).toHaveBeenCalledWith("get_git_diff", {
       change,
+      rootPath: "/workspace",
+    });
+  });
+
+  it("invokes local Git operation commands in Tauri", async () => {
+    const change: GitChangedFile = {
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: "/workspace/src/User.php",
+      relativePath: "src/User.php",
+      status: "modified",
+    };
+    const invoke = vi.fn(async () => ({
+      branch: "main",
+      changes: [],
+      isRepository: true,
+      rootPath: "/workspace",
+    }));
+    const gateway = new TauriGitGateway(invoke, () => true);
+
+    await gateway.stageFiles("/workspace", [change]);
+    await gateway.unstageFiles("/workspace", [change]);
+    await gateway.revertFiles("/workspace", [change]);
+    await gateway.commit("/workspace", "feat: update user");
+    await gateway.push("/workspace");
+
+    expect(invoke).toHaveBeenCalledWith("stage_git_files", {
+      changes: [change],
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("unstage_git_files", {
+      changes: [change],
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("revert_git_files", {
+      changes: [change],
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("commit_git_changes", {
+      message: "feat: update user",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("push_git_changes", {
+      rootPath: "/workspace",
+    });
+  });
+
+  it("returns empty status for local Git operations outside Tauri", async () => {
+    const change: GitChangedFile = {
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: "/workspace/src/User.php",
+      relativePath: "src/User.php",
+      status: "modified",
+    };
+    const gateway = new TauriGitGateway(vi.fn(), () => false);
+
+    await expect(gateway.stageFiles("/workspace", [change])).resolves.toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: "/workspace",
+    });
+    await expect(gateway.unstageFiles("/workspace", [change])).resolves.toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: "/workspace",
+    });
+    await expect(gateway.revertFiles("/workspace", [change])).resolves.toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: "/workspace",
+    });
+    await expect(gateway.commit("/workspace", "message")).resolves.toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: "/workspace",
+    });
+    await expect(gateway.push("/workspace")).resolves.toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
       rootPath: "/workspace",
     });
   });

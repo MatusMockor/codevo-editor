@@ -174,6 +174,8 @@ describe("useWorkbenchController preview tabs", () => {
     await act(async () => {
       await getWorkbench().openFile(file);
       await getWorkbench().previewGitChange({
+        isStaged: false,
+        isUnversioned: false,
         oldPath: null,
         oldRelativePath: null,
         path: "/workspace/src/User.php",
@@ -749,6 +751,8 @@ describe("useWorkbenchController preview tabs", () => {
   it("loads the Git original content for active editor change markers", async () => {
     const file = fileEntry("/workspace/src/User.php", "User.php");
     const change = {
+      isStaged: false,
+      isUnversioned: false,
       oldPath: null,
       oldRelativePath: null,
       path: file.path,
@@ -756,6 +760,8 @@ describe("useWorkbenchController preview tabs", () => {
       status: "modified" as const,
     };
     const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, requestedChange) => ({
         change: requestedChange,
         language: "php",
@@ -768,6 +774,9 @@ describe("useWorkbenchController preview tabs", () => {
         isRepository: true,
         rootPath,
       })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -788,6 +797,233 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().activeDocumentGitBaseline).toBe(
       "<?php\nfinal class OriginalUser {}\n",
     );
+  });
+
+  it("stages Git changes through the gateway and applies the refreshed status", async () => {
+    const change = gitChangedFile("src/User.php", false);
+    const stagedChange = { ...change, isStaged: true };
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [stagedChange],
+        isRepository: true,
+        rootPath,
+      })),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().stageGitChanges([change]);
+    });
+
+    expect(gitGateway.stageFiles).toHaveBeenCalledWith("/workspace", [change]);
+    expect(getWorkbench().gitStatus.changes).toEqual([stagedChange]);
+  });
+
+  it("commits staged Git changes and clears the commit message", async () => {
+    const change = gitChangedFile("src/User.php", true);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [],
+        isRepository: true,
+        rootPath,
+      })),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().setGitCommitMessage("feat: update git panel");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().commitGitChanges();
+    });
+
+    expect(gitGateway.commit).toHaveBeenCalledWith(
+      "/workspace",
+      "feat: update git panel",
+    );
+    expect(getWorkbench().gitCommitMessage).toBe("");
+    expect(getWorkbench().gitStatus.changes).toEqual([]);
+  });
+
+  it("stages included unversioned files before committing them", async () => {
+    const unversioned = {
+      ...gitChangedFile("docs/new-note.md", false),
+      isUnversioned: true,
+      status: "untracked" as const,
+    };
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [],
+        isRepository: true,
+        rootPath,
+      })),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "markdown",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [unversioned],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [
+          {
+            ...unversioned,
+            isStaged: true,
+            isUnversioned: false,
+            status: "added" as const,
+          },
+        ],
+        isRepository: true,
+        rootPath,
+      })),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().toggleGitChangeIncluded(unversioned);
+      getWorkbench().setGitCommitMessage("docs: add note");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().commitGitChanges();
+    });
+
+    expect(gitGateway.stageFiles).toHaveBeenCalledWith("/workspace", [unversioned]);
+    expect(gitGateway.commit).toHaveBeenCalledWith("/workspace", "docs: add note");
+    expect(getWorkbench().gitCommitMessage).toBe("");
+  });
+
+  it("commits included files and pushes the branch", async () => {
+    const change = gitChangedFile("src/User.php", false);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [],
+        isRepository: true,
+        rootPath,
+      })),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: "",
+        originalContent: "",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+      push: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().toggleGitChangeIncluded(change);
+      getWorkbench().setGitCommitMessage("feat: push flow");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().commitAndPushGitChanges();
+    });
+
+    expect(gitGateway.stageFiles).toHaveBeenCalledWith("/workspace", [change]);
+    expect(gitGateway.commit).toHaveBeenCalledWith("/workspace", "feat: push flow");
+    expect(gitGateway.push).toHaveBeenCalledWith("/workspace");
+    expect(getWorkbench().gitCommitMessage).toBe("");
   });
 
   it("reuses a clean preview tab for search result opens", async () => {
@@ -5767,6 +6003,8 @@ function createControllerDependencies({
   return {
     documentSyncGateway,
     gitGateway: gitGateway ?? {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       getDiff: vi.fn(async (_rootPath, change) => ({
         change,
         language: "plaintext",
@@ -5774,6 +6012,9 @@ function createControllerDependencies({
         originalContent: "",
       })),
       getStatus: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     },
     indexProgressGateway: {
       clearWorkspaceIndex: vi.fn(async (rootPath) => ({
@@ -6054,6 +6295,18 @@ function fileEntry(path: string, name: string): FileEntry {
     kind: "file",
     name,
     path,
+  };
+}
+
+function gitChangedFile(relativePath: string, isStaged: boolean) {
+  return {
+    isStaged,
+    isUnversioned: false,
+    oldPath: null,
+    oldRelativePath: null,
+    path: `/workspace/${relativePath}`,
+    relativePath,
+    status: "modified" as const,
   };
 }
 
