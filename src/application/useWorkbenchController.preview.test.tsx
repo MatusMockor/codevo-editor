@@ -2806,6 +2806,13 @@ namespace Kontentino\\Communication\\Models;
  */
 class Comment
 {
+    protected $fillable = ['content'];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+        'meta' => 'array',
+    ];
+
     public string $status;
 
     public function getContent(): string {}
@@ -2843,9 +2850,30 @@ class Comment
       },
       {
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "content",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
         name: "getContent",
         parameters: "",
         returnType: "string",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "is_pinned",
+        parameters: "",
+        returnType: "bool",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "meta",
+        parameters: "",
+        returnType: "array",
       },
       {
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",

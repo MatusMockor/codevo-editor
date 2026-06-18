@@ -458,6 +458,84 @@ class Comment
     ]);
   });
 
+  it("extracts Laravel model attributes from fillable and casts", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'content',
+        'parent_id',
+    ];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+        'meta' => 'array',
+        'published_at' => 'datetime',
+        'score' => 'integer',
+        'price' => 'decimal:2',
+        'content' => 'string',
+    ];
+}
+`,
+        "Comment",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "content",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "parent_id",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "is_pinned",
+        parameters: "",
+        returnType: "bool",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "meta",
+        parameters: "",
+        returnType: "array",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "published_at",
+        parameters: "",
+        returnType: "\\Illuminate\\Support\\Carbon",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "score",
+        parameters: "",
+        returnType: "int",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "price",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("parses parameter names, types, defaults and optionality", () => {
     expect(
       phpMethodParameters(

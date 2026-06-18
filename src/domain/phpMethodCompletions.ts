@@ -314,7 +314,216 @@ function phpPropertyCompletionsFromSource(
     });
   }
 
+  members.push(
+    ...phpLaravelModelAttributeCompletionsFromSource(source, declaringClassName),
+  );
+
   return members;
+}
+
+function phpLaravelModelAttributeCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+): PhpMethodCompletion[] {
+  const attributes = new Map<string, string | null>();
+
+  for (const attribute of phpLaravelFillableAttributes(source)) {
+    attributes.set(attribute, "mixed");
+  }
+
+  for (const [attribute, returnType] of phpLaravelCastAttributes(source)) {
+    attributes.set(attribute, returnType);
+  }
+
+  return Array.from(attributes, ([name, returnType]) => ({
+    declaringClassName,
+    kind: "property",
+    name,
+    parameters: "",
+    returnType,
+  }));
+}
+
+function phpLaravelFillableAttributes(source: string): string[] {
+  return phpArrayAssignmentBodies(source, "fillable").flatMap((body) =>
+    splitPhpParameterList(body)
+      .map((item) => phpStringLiteralValue(item))
+      .filter(isPhpAttributeName),
+  );
+}
+
+function phpLaravelCastAttributes(source: string): Array<[string, string | null]> {
+  return phpArrayAssignmentBodies(source, "casts").flatMap((body) =>
+    splitPhpParameterList(body).flatMap((item) => {
+      const arrowIndex = topLevelArrayArrowIndex(item);
+
+      if (arrowIndex < 0) {
+        return [];
+      }
+
+      const attribute = phpStringLiteralValue(item.slice(0, arrowIndex));
+
+      if (!isPhpAttributeName(attribute)) {
+        return [];
+      }
+
+      return [
+        [
+          attribute,
+          phpLaravelCastReturnType(item.slice(arrowIndex + 2)),
+        ] satisfies [string, string | null],
+      ];
+    }),
+  );
+}
+
+function phpArrayAssignmentBodies(source: string, propertyName: string): string[] {
+  const masked = maskPhpStringsAndComments(source);
+  const pattern = new RegExp(
+    `\\$${propertyName}\\s*=\\s*(?:\\[|array\\s*\\()`,
+    "g",
+  );
+  const bodies: string[] = [];
+
+  for (const match of masked.matchAll(pattern)) {
+    const matched = match[0] ?? "";
+    const shortArrayOffset = matched.lastIndexOf("[");
+    const arrayCallOffset = matched.lastIndexOf("(");
+    const isShortArray = shortArrayOffset > arrayCallOffset;
+    const openOffset =
+      match.index + (isShortArray ? shortArrayOffset : arrayCallOffset);
+    const closeOffset = matchingPairOffset(
+      source,
+      openOffset,
+      isShortArray ? "[" : "(",
+      isShortArray ? "]" : ")",
+    );
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    bodies.push(source.slice(openOffset + 1, closeOffset));
+  }
+
+  return bodies;
+}
+
+function phpLaravelCastReturnType(castExpression: string): string | null {
+  const normalized = normalizeWhitespace(
+    phpStringLiteralValue(castExpression) ?? castExpression,
+  )
+    .replace(/^\\+/, "")
+    .toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes("array") || normalized.includes("json")) {
+    return "array";
+  }
+
+  if (normalized.includes("collection")) {
+    return "\\Illuminate\\Support\\Collection";
+  }
+
+  if (/\b(?:bool|boolean)\b/.test(normalized)) {
+    return "bool";
+  }
+
+  if (/\b(?:int|integer)\b/.test(normalized)) {
+    return "int";
+  }
+
+  if (/\b(?:real|float|double)\b/.test(normalized)) {
+    return "float";
+  }
+
+  if (normalized.startsWith("decimal")) {
+    return "string";
+  }
+
+  if (
+    normalized === "date" ||
+    normalized === "datetime" ||
+    normalized.startsWith("immutable_date") ||
+    normalized.startsWith("immutable_datetime")
+  ) {
+    return "\\Illuminate\\Support\\Carbon";
+  }
+
+  if (
+    normalized === "string" ||
+    normalized === "encrypted" ||
+    normalized === "hashed"
+  ) {
+    return "string";
+  }
+
+  if (normalized.includes("asstringable") || normalized.includes("stringable")) {
+    return "\\Illuminate\\Support\\Stringable";
+  }
+
+  return "mixed";
+}
+
+function topLevelArrayArrowIndex(source: string): number {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "=" && source[index + 1] === ">" && depth === 0) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function phpStringLiteralValue(expression: string): string | null {
+  const trimmed = expression.trim();
+  const match = /^(['"])([\s\S]*)\1$/.exec(trimmed);
+
+  if (!match) {
+    return null;
+  }
+
+  return (match[2] ?? "").replace(/\\(['"\\])/g, "$1");
+}
+
+function isPhpAttributeName(value: string | null): value is string {
+  return Boolean(value && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value));
 }
 
 function phpFunctionParametersAt(
