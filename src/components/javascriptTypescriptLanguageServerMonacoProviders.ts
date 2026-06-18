@@ -13,6 +13,7 @@ import {
   type LanguageServerDocumentHighlight,
   type LanguageServerDocumentLink,
   type LanguageServerFeaturesGateway,
+  type LanguageServerFeature,
   type LanguageServerFoldingRange,
   type LanguageServerFormattingOptions,
   type LanguageServerInlayHint,
@@ -440,7 +441,10 @@ async function provideHover(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const hover = await context.featuresGateway.hover(
       request.rootPath,
       request.position,
@@ -471,7 +475,10 @@ async function provideCompletionItems(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return { suggestions: [] };
+    }
+
     const languageServerContext =
       toLanguageServerCompletionContext(completionContext);
     const completion = languageServerContext
@@ -583,7 +590,10 @@ async function provideDefinition(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const locations = await context.featuresGateway.definition(
       request.rootPath,
       request.position,
@@ -618,7 +628,10 @@ async function provideImplementation(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const locations = await context.featuresGateway.implementation(
       request.rootPath,
       request.position,
@@ -648,7 +661,10 @@ async function provideTypeDefinition(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const locations = await context.featuresGateway.typeDefinition(
       request.rootPath,
       request.position,
@@ -678,7 +694,10 @@ async function provideSignatureHelp(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const signatureHelp = await context.featuresGateway.signatureHelp(
       request.rootPath,
       request.position,
@@ -708,7 +727,10 @@ async function provideReferences(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const locations = await context.featuresGateway.references(
       request.rootPath,
       request.position,
@@ -743,7 +765,10 @@ async function provideDocumentHighlights(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const highlights = await context.featuresGateway.documentHighlights(
       request.rootPath,
       request.position,
@@ -774,7 +799,10 @@ async function provideDocumentLinks(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return emptyLinksList();
+    }
+
     const links = await context.featuresGateway.documentLinks(
       request.rootPath,
       request.path,
@@ -843,7 +871,10 @@ async function provideFoldingRanges(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const ranges = await context.featuresGateway.foldingRanges(
       request.rootPath,
       request.path,
@@ -874,7 +905,10 @@ async function provideRenameEdits(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const edit = await context.featuresGateway.rename(
       request.rootPath,
       request.position,
@@ -912,7 +946,10 @@ async function provideSelectionRanges(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const selectionRanges = await context.featuresGateway.selectionRanges(
       request.rootPath,
       request.path,
@@ -946,7 +983,10 @@ async function provideDocumentSemanticTokens(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const tokens = await context.featuresGateway.semanticTokens(
       request.rootPath,
       request.path,
@@ -981,7 +1021,10 @@ async function provideLinkedEditingRanges(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const ranges = await context.featuresGateway.linkedEditingRanges(
       request.rootPath,
       request.position,
@@ -1011,7 +1054,10 @@ async function resolveRenameLocation(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
     const prepareRename = await context.featuresGateway.prepareRename(
       request.rootPath,
       request.position,
@@ -1052,7 +1098,10 @@ async function provideCodeActions(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return emptyCodeActionList();
+    }
+
     const actions = await context.featuresGateway.codeActions(
       request.rootPath,
       request.path,
@@ -1141,7 +1190,10 @@ async function provideCodeLenses(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return emptyCodeLensList();
+    }
+
     const lenses = await context.featuresGateway.codeLenses(
       request.rootPath,
       request.path,
@@ -1211,7 +1263,10 @@ async function provideDocumentFormattingEdits(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return [];
+    }
+
     const edits = await context.featuresGateway.formatting(
       request.rootPath,
       request.path,
@@ -1243,7 +1298,10 @@ async function provideDocumentRangeFormattingEdits(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return [];
+    }
+
     const edits = await context.featuresGateway.rangeFormatting(
       request.rootPath,
       request.path,
@@ -1277,7 +1335,10 @@ async function provideOnTypeFormattingEdits(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return [];
+    }
+
     const edits = await context.featuresGateway.onTypeFormatting(
       request.rootPath,
       request.path,
@@ -1313,7 +1374,10 @@ async function provideInlayHints(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return emptyInlayHintList();
+    }
+
     const hints = await context.featuresGateway.inlayHints(
       request.rootPath,
       request.path,
@@ -1351,15 +1415,6 @@ function featureRequestContext(
     | "signatureHelp"
     | "typeDefinition",
 ) {
-  const status = context.getRuntimeStatus();
-
-  if (
-    status?.kind !== "running" ||
-    !canUseLanguageServerFeature(status.capabilities, feature)
-  ) {
-    return null;
-  }
-
   const activeDocument = context.getActiveDocument();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
 
@@ -1369,6 +1424,10 @@ function featureRequestContext(
     !isJavaScriptTypeScriptDocument(activeDocument) ||
     modelPath(model) !== activeDocument.path
   ) {
+    return null;
+  }
+
+  if (!canUseRuntimeFeatureForRoot(context, rootPath, feature)) {
     return null;
   }
 
@@ -1397,15 +1456,6 @@ function documentRequestContext(
     | "selectionRange"
     | "semanticTokens",
 ) {
-  const status = context.getRuntimeStatus();
-
-  if (
-    status?.kind !== "running" ||
-    !canUseLanguageServerFeature(status.capabilities, feature)
-  ) {
-    return null;
-  }
-
   const activeDocument = context.getActiveDocument();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
 
@@ -1418,10 +1468,37 @@ function documentRequestContext(
     return null;
   }
 
+  if (!canUseRuntimeFeatureForRoot(context, rootPath, feature)) {
+    return null;
+  }
+
   return {
     path: activeDocument.path,
     rootPath,
   };
+}
+
+async function flushPendingDocumentChangeForActiveRoot(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  request: { path: string; rootPath: string },
+): Promise<boolean> {
+  await context.flushPendingDocumentChange(request.path);
+
+  return isStoredWorkspaceRootActive(context, request.rootPath);
+}
+
+function canUseRuntimeFeatureForRoot(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  rootPath: string,
+  feature: LanguageServerFeature,
+): boolean {
+  const status = context.getRuntimeStatus();
+
+  return (
+    status?.kind === "running" &&
+    (!status.rootPath || status.rootPath === rootPath) &&
+    canUseLanguageServerFeature(status.capabilities, feature)
+  );
 }
 
 function isStoredWorkspaceRootActive(

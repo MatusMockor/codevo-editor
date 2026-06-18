@@ -186,6 +186,61 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("does not request TypeScript completions after switching project tabs during document sync", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const documentFlush = createDeferred<void>();
+    const gateway = featuresGateway();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange: vi.fn(async () => documentFlush.promise),
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const completionPromise = completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    documentFlush.resolve(undefined);
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    expect(gateway.completion).not.toHaveBeenCalled();
+  });
+
+  it("does not use a TypeScript runtime status from another project tab", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          rootPath: "/other",
+        }),
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    await expect(
+      completionProvider.provideCompletionItems(textModel(), {
+        column: 4,
+        lineNumber: 2,
+      }),
+    ).resolves.toEqual({ suggestions: [] });
+    expect(gateway.completion).not.toHaveBeenCalled();
+  });
+
   it("maps TypeScript document links and lazy resolution", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
