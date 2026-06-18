@@ -874,6 +874,52 @@ describe("useWorkbenchController preview tabs", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("does not restart a crashed JavaScript and TypeScript language service automatically", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const { dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: {
+        kind: "crashed",
+        message: "tsserver crashed",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptService: "auto",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
+      inlayHintsEnabled: true,
+      typeScriptVersionPreference: "bundled",
+    });
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
+  });
+
   it("stops JavaScript and TypeScript language service when settings disable it", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {

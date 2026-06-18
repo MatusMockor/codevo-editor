@@ -292,6 +292,10 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     setJavaScriptTypeScriptLanguageServerRuntimeStatus,
   ] = useState<LanguageServerRuntimeStatus | null>(null);
+  const [
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+  ] = useState<string | null>(null);
   const [languageServerDiagnosticsByPath, setLanguageServerDiagnosticsByPath] =
     useState<Record<string, LanguageServerDiagnostic[]>>({});
   const [
@@ -1319,6 +1323,9 @@ export function useWorkbenchController(
     setPhpTools(null);
     setLanguageServerPlan(null);
     setJavaScriptTypeScriptLanguageServerPlan(null);
+    setLanguageServerRuntimeStatus(null);
+    setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
+    setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
     setEntriesByDirectory({});
     setExpandedDirectories(new Set());
     setDocuments({});
@@ -1788,6 +1795,7 @@ export function useWorkbenchController(
       setJavaScriptTypeScriptLanguageServerPlan(null);
       setLanguageServerRuntimeStatus(null);
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
       setIndexProgress(initialIndexProgress());
       setIndexHealthLogs([]);
       setPhpTree(emptyPhpTree());
@@ -6492,6 +6500,10 @@ export function useWorkbenchController(
       return;
     }
 
+    if (javaScriptTypeScriptLanguageServerRuntimeStatusRoot !== workspaceRoot) {
+      return;
+    }
+
     if (isLanguageServerActive(javaScriptTypeScriptLanguageServerRuntimeStatus)) {
       return;
     }
@@ -6522,6 +6534,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerPlan,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     reportError,
     workspaceSettings.javaScriptTypeScriptAutoImports,
     workspaceSettings.javaScriptTypeScriptInlayHints,
@@ -7114,6 +7127,7 @@ export function useWorkbenchController(
     let unsubscribe: UnsubscribeFn | null = null;
 
     if (workspaceRoot) {
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
       javaScriptTypeScriptLanguageServerRuntimeGateway
         .getStatus(workspaceRoot)
         .then((status) => {
@@ -7122,10 +7136,19 @@ export function useWorkbenchController(
           }
 
           setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+          setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
         })
-        .catch((error) => reportError("JavaScript/TypeScript", error));
+        .catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
+          reportError("JavaScript/TypeScript", error);
+        });
     } else {
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
     }
 
     javaScriptTypeScriptLanguageServerRuntimeGateway
