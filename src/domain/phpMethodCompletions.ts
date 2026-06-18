@@ -23,7 +23,7 @@ export interface PhpMethodCompletion {
   classStringTemplate?: string;
   declaringClassName: string;
   isStatic?: boolean;
-  kind?: "property";
+  kind?: "property" | "relation";
   name: string;
   parameters: string;
   returnType: string | null;

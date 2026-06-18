@@ -6,6 +6,7 @@ import {
 } from "../domain/languageServerFeatures";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { phpLaravelRelationStringCompletionContextAt } from "../domain/phpNavigation";
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
@@ -47,7 +48,7 @@ export function registerLanguageServerMonacoProviders(
     provideHover: (model, position) => provideHover(monaco, context, model, position),
   });
   const completion = monaco.languages.registerCompletionItemProvider("php", {
-    triggerCharacters: ["$", ">"],
+    triggerCharacters: ["$", ">", "'", "\""],
     provideCompletionItems: (model, position) =>
       provideCompletionItems(monaco, context, model, position),
   });
@@ -227,6 +228,10 @@ async function provideCompletionItems(
       phpStaticAccessCompletionContextAt(
         documentContext.activeDocument.content,
         position,
+      ) ||
+      phpLaravelRelationStringCompletionContextAt(
+        documentContext.activeDocument.content,
+        position,
       ),
   );
   const variableSuggestions: Monaco.languages.CompletionItem[] =
@@ -302,19 +307,24 @@ async function phpMethodSuggestions(
     const methods = await context.providePhpMethodCompletions(source, position);
 
     return methods.map((item, index) => ({
-      command: item.kind !== "property" && phpMethodParameters(item.parameters).length
-        ? {
-            id: "editor.action.triggerParameterHints",
-            title: "Trigger parameter hints",
-          }
-        : undefined,
+      command:
+        item.kind !== "property" &&
+        item.kind !== "relation" &&
+        phpMethodParameters(item.parameters).length
+          ? {
+              id: "editor.action.triggerParameterHints",
+              title: "Trigger parameter hints",
+            }
+          : undefined,
       detail: phpMethodDetail(item),
       documentation: phpMethodDocumentation(item),
       insertText: phpMethodSnippet(item),
       insertTextRules:
         monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
       kind:
-        item.kind === "property"
+        item.kind === "relation"
+          ? monaco.languages.CompletionItemKind.Reference
+          : item.kind === "property"
           ? monaco.languages.CompletionItemKind.Property
           : monaco.languages.CompletionItemKind.Method,
       label: phpMethodCompletionLabel(item),
@@ -375,6 +385,12 @@ async function provideSignatureHelp(
 }
 
 function phpMethodDetail(item: PhpMethodCompletion): string {
+  if (item.kind === "relation") {
+    const returnType = item.returnType ? `: ${item.returnType}` : "";
+
+    return `${item.declaringClassName}::${item.name} relation${returnType}`;
+  }
+
   if (item.kind === "property") {
     const returnType = item.returnType ? `: ${item.returnType}` : "";
 
@@ -388,6 +404,10 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
 }
 
 function phpMethodDocumentation(item: PhpMethodCompletion): string {
+  if (item.kind === "relation") {
+    return `Laravel relation\n\n${item.declaringClassName}::${item.name}()`;
+  }
+
   if (item.kind === "property") {
     return `Property\n\n${item.declaringClassName}::$${item.name}`;
   }
@@ -412,10 +432,12 @@ function phpMethodCompletionLabel(
 ): Monaco.languages.CompletionItemLabel {
   return {
     description:
-      item.kind === "property"
+      item.kind === "relation"
+        ? `relation - ${item.declaringClassName}`
+        : item.kind === "property"
         ? `property - ${item.declaringClassName}`
         : `method - ${item.declaringClassName}`,
-    detail: item.kind === "property" ? "" : "()",
+    detail: item.kind === "property" || item.kind === "relation" ? "" : "()",
     label: item.name,
   };
 }
@@ -428,7 +450,7 @@ function phpMethodSignatureLabel(item: PhpMethodCompletion): string {
 }
 
 function phpMethodSnippet(item: PhpMethodCompletion): string {
-  if (item.kind === "property") {
+  if (item.kind === "property" || item.kind === "relation") {
     return item.name;
   }
 

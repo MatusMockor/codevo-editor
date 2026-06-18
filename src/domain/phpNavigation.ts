@@ -45,6 +45,13 @@ export interface PhpMethodDefinitionHint {
   methodName: string;
 }
 
+export interface PhpLaravelRelationStringCompletionContext {
+  className: string | null;
+  methodName: string;
+  prefix: string;
+  receiverExpression: string | null;
+}
+
 interface IdentifierAtOffset {
   end: number;
   name: string;
@@ -89,6 +96,49 @@ export function phpIdentifierContextAt(
   return {
     kind: "classIdentifier",
     name: identifier.name,
+  };
+}
+
+export function phpLaravelRelationStringCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelRelationStringCompletionContext | null {
+  const offset = offsetAtPosition(source, position);
+  const literal = stringLiteralCompletionAtOffset(source, offset);
+
+  if (!literal) {
+    return null;
+  }
+
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(literal.prefix) && literal.prefix !== "") {
+    return null;
+  }
+
+  const openParen = source.lastIndexOf("(", literal.quoteStart);
+
+  if (openParen < 0) {
+    return null;
+  }
+
+  const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+  if (closeParen !== null && literal.quoteStart > closeParen) {
+    return null;
+  }
+
+  if (topLevelArgumentIndexAtOffset(source, openParen, literal.quoteStart) !== 0) {
+    return null;
+  }
+
+  const callContext = laravelRelationCallContextAt(source, openParen);
+
+  if (!callContext) {
+    return null;
+  }
+
+  return {
+    ...callContext,
+    prefix: literal.prefix,
   };
 }
 
@@ -374,6 +424,26 @@ function laravelRelationStringContextAt(
     return null;
   }
 
+  const callContext = laravelRelationCallContextAt(source, openParen);
+
+  if (!callContext) {
+    return null;
+  }
+
+  return {
+    ...callContext,
+    kind: "laravelRelationString",
+    relationName: literal.value,
+  };
+}
+
+function laravelRelationCallContextAt(
+  source: string,
+  openParen: number,
+): Omit<
+  Extract<PhpIdentifierContext, { kind: "laravelRelationString" }>,
+  "kind" | "relationName"
+> | null {
   const beforeCall = source.slice(Math.max(0, openParen - 800), openParen);
   const memberPattern = new RegExp(
     `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*$`,
@@ -389,10 +459,8 @@ function laravelRelationStringContextAt(
 
     return {
       className: null,
-      kind: "laravelRelationString",
       methodName,
       receiverExpression: phpNormalizeReceiverExpression(memberMatch[1]),
-      relationName: literal.value,
     };
   }
 
@@ -413,10 +481,8 @@ function laravelRelationStringContextAt(
 
   return {
     className: staticMatch[1].replace(/^\\+/, ""),
-    kind: "laravelRelationString",
     methodName,
     receiverExpression: null,
-    relationName: literal.value,
   };
 }
 
@@ -509,6 +575,48 @@ function stringLiteralAtOffset(
   }
 
   return null;
+}
+
+function stringLiteralCompletionAtOffset(
+  source: string,
+  offset: number,
+): { prefix: string; quoteStart: number } | null {
+  let quote: string | null = null;
+  let quoteStart = -1;
+
+  for (let index = 0; index < source.length && index < offset; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+        quoteStart = -1;
+      }
+
+      continue;
+    }
+
+    if (character !== "'" && character !== "\"") {
+      continue;
+    }
+
+    quote = character;
+    quoteStart = index;
+  }
+
+  if (!quote || quoteStart < 0 || offset <= quoteStart) {
+    return null;
+  }
+
+  return {
+    prefix: source.slice(quoteStart + 1, offset),
+    quoteStart,
+  };
 }
 
 function matchingBracketOffset(

@@ -3,6 +3,7 @@ import {
   phpClassPathCandidates,
   phpExtendsClassName,
   phpIdentifierContextAt,
+  phpLaravelRelationStringCompletionContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
   phpNamedTypePosition,
@@ -25,6 +26,15 @@ function positionAfter(source: string, needle: string) {
   return {
     column: lastLine.length,
     lineNumber: lines.length,
+  };
+}
+
+function cursorAfter(source: string, needle: string) {
+  const position = positionAfter(source, needle);
+
+  return {
+    column: position.column + 1,
+    lineNumber: position.lineNumber,
   };
 }
 
@@ -182,6 +192,70 @@ class CommentController
       kind: "classIdentifier",
       name: "is_visible",
     });
+  });
+
+  it("detects Laravel relation string completion contexts", () => {
+    const source = `<?php
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->load('children');
+        Comment::with('parent');
+        Comment::query()->whereHas('attachments', fn ($query) => $query);
+        Comment::query()->whereRelation('children', 'is_visible', true);
+    }
+}
+`;
+    const incompleteSource = `<?php
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->load('chi
+    }
+}
+`;
+
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        incompleteSource,
+        cursorAfter(incompleteSource, "$comment->load('chi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "load",
+      prefix: "chi",
+      receiverExpression: "$comment",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "Comment::with('par"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      methodName: "with",
+      prefix: "par",
+      receiverExpression: null,
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "whereHas('att"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "whereHas",
+      prefix: "att",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "whereRelation('children', 'is_vis"),
+      ),
+    ).toBeNull();
   });
 
   it("detects Laravel container expression method calls under the cursor", () => {

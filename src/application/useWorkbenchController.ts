@@ -160,6 +160,7 @@ import {
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelRelationPropertyCompletionsFromSource,
   phpLaravelRelationTargetClassNameFromExpression,
   phpLaravelScopeMethodName,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
@@ -189,6 +190,7 @@ import {
   phpClassPathCandidates,
   phpExtendsClassName,
   phpIdentifierContextAt,
+  phpLaravelRelationStringCompletionContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
   phpMethodPositionOrNull,
@@ -4751,6 +4753,96 @@ export function useWorkbenchController(
     ],
   );
 
+  const collectPhpLaravelRelationCompletionsForClass = useCallback(
+    async (className: string): Promise<PhpMethodCompletion[]> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return [];
+      }
+
+      const completions = new Map<string, PhpMethodCompletion>();
+      const visitedClassNames = new Set<string>();
+      const rememberRelations = (relations: PhpMethodCompletion[]) => {
+        for (const relation of relations) {
+          const key = relation.name.toLowerCase();
+
+          if (completions.has(key)) {
+            continue;
+          }
+
+          completions.set(key, {
+            ...relation,
+            kind: "relation",
+          });
+        }
+      };
+      const collectRelations = async (candidateClassName: string): Promise<void> => {
+        const normalizedClassName = candidateClassName.trim().replace(/^\\+/, "");
+        const visitedKey = normalizedClassName.toLowerCase();
+
+        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+          return;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+          try {
+            const { content } = await readPhpClassMembersFromPath(
+              path,
+              normalizedClassName,
+            );
+
+            rememberRelations(
+              phpLaravelRelationPropertyCompletionsFromSource(
+                content,
+                normalizedClassName,
+              ),
+            );
+
+            for (const traitName of phpTraitClassNames(content)) {
+              const resolvedTraitName = resolvePhpClassName(content, traitName);
+
+              if (resolvedTraitName) {
+                await collectRelations(resolvedTraitName);
+              }
+            }
+
+            for (const mixinName of phpMixinClassNames(content)) {
+              const resolvedMixinName = resolvePhpClassName(content, mixinName);
+
+              if (resolvedMixinName) {
+                await collectRelations(resolvedMixinName);
+              }
+            }
+
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassName(content, parentClassName)
+              : null;
+
+            if (resolvedParentClassName) {
+              await collectRelations(resolvedParentClassName);
+            }
+
+            return;
+          } catch {
+            continue;
+          }
+        }
+      };
+
+      await collectRelations(className);
+
+      return Array.from(completions.values());
+    },
+    [
+      readPhpClassMembersFromPath,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
       const methodLookup = methodName.toLowerCase();
@@ -6385,6 +6477,60 @@ export function useWorkbenchController(
       source: string,
       position: EditorPosition,
     ): Promise<PhpMethodCompletion[]> => {
+      const relationContext = phpLaravelRelationStringCompletionContextAt(
+        source,
+        position,
+      );
+
+      if (relationContext) {
+        const staticClassName = relationContext.className
+          ? resolvePhpClassReference(source, relationContext.className)
+          : null;
+        const receiverModelType = relationContext.receiverExpression
+          ? await resolvePhpEloquentBuilderModelType(
+              source,
+              position,
+              relationContext.receiverExpression,
+            )
+          : null;
+        const receiverType =
+          !receiverModelType && relationContext.receiverExpression
+            ? await resolvePhpExpressionType(
+                source,
+                position,
+                relationContext.receiverExpression,
+              )
+            : null;
+        const relationOwnerType =
+          staticClassName ?? receiverModelType ?? receiverType;
+
+        if (!relationOwnerType) {
+          return [];
+        }
+
+        const normalizedPrefix = relationContext.prefix.toLowerCase();
+        const relations =
+          await collectPhpLaravelRelationCompletionsForClass(relationOwnerType);
+
+        return relations
+          .filter((relation) =>
+            relation.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .sort((left, right) => {
+            const leftExact =
+              left.name.toLowerCase() === normalizedPrefix ? 0 : 1;
+            const rightExact =
+              right.name.toLowerCase() === normalizedPrefix ? 0 : 1;
+
+            if (leftExact !== rightExact) {
+              return leftExact - rightExact;
+            }
+
+            return left.name.localeCompare(right.name);
+          })
+          .slice(0, 80);
+      }
+
       const accessContext = phpMemberAccessCompletionContextAt(source, position);
       const staticAccessContext = phpStaticAccessCompletionContextAt(
         source,
@@ -6424,6 +6570,10 @@ export function useWorkbenchController(
         .slice(0, 80);
     },
     [
+      collectPhpLaravelRelationCompletionsForClass,
+      resolvePhpClassReference,
+      resolvePhpEloquentBuilderModelType,
+      resolvePhpExpressionType,
       resolvePhpReceiverMethodCompletions,
       resolvePhpStaticMethodCompletions,
     ],
