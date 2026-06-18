@@ -336,6 +336,38 @@ trait BrokenTrait
     ).toEqual([unresolved]);
   });
 
+  it("suppresses app trait host-method diagnostics when host context is confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait DispatchesEvents
+{
+    public function dispatchSaved(): void
+    {
+        $this->fireModelEvent('saved');
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 15,
+      line: 7,
+      message:
+        'Method "fireModelEvent" does not exist on trait "App\\Support\\DispatchesEvents"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostMethods: new Set([
+          phpTraitHostMethodDiagnosticKey(
+            "App\\Support\\DispatchesEvents",
+            "fireModelEvent",
+          ),
+        ]),
+        path: "/workspace/app/Support/DispatchesEvents.php",
+      }),
+    ).toEqual([]);
+  });
+
   it("keeps dependency trait diagnostics when host context is not confirmed", () => {
     const source = `<?php
 trait SoftDeletes
