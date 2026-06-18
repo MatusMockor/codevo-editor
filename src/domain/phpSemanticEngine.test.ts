@@ -243,6 +243,8 @@ Album::query()->whereHas('tracks', function ($query): void {
 Album::whereHas(relation: 'artist', callback: function ($builder): void {
     $builder->ord
 });
+
+Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->ord);
 `;
 
     expect(
@@ -268,6 +270,18 @@ Album::whereHas(relation: 'artist', callback: function ($builder): void {
       modelClassName: "Album",
       receiverExpression: null,
       relationName: "artist",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$arrowQuery->ord"),
+        "arrowQuery",
+      ),
+    ).toEqual({
+      methodName: "whereHas",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: "tracks",
     });
   });
 

@@ -132,7 +132,9 @@ export function phpLaravelQueryCallbackContextForVariable(
   position: EditorPosition,
   variableName: string,
 ): PhpLaravelQueryCallbackContext | null {
-  const callback = phpClosureCallbackForVariable(source, position, variableName);
+  const callback =
+    phpClosureCallbackForVariable(source, position, variableName) ??
+    phpArrowCallbackForVariable(source, position, variableName);
 
   if (!callback) {
     return null;
@@ -819,6 +821,41 @@ function phpClosureCallbackForVariable(
     const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
 
     if (bodyEnd === null || offset <= bodyStart || offset > bodyEnd) {
+      continue;
+    }
+
+    return { startOffset };
+  }
+
+  return null;
+}
+
+function phpArrowCallbackForVariable(
+  source: string,
+  position: EditorPosition,
+  variableName: string,
+): { startOffset: number } | null {
+  const offset = offsetAtPosition(source, position);
+  const callbackPattern = /\bfn\s*\(([^)]*)\)\s*(?::\s*[^=]+)?=>/g;
+
+  for (const match of source.matchAll(callbackPattern)) {
+    const startOffset = match.index ?? 0;
+
+    if (startOffset > offset) {
+      break;
+    }
+
+    if (!phpParameterListHasVariable(match[1] ?? "", variableName)) {
+      continue;
+    }
+
+    const expressionStart = startOffset + match[0].length;
+
+    if (offset <= expressionStart) {
+      continue;
+    }
+
+    if (source.slice(expressionStart, offset).includes(";")) {
       continue;
     }
 

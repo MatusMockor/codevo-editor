@@ -5718,6 +5718,8 @@ class AlbumController
             $track = $query->first();
             $track->get
         });
+
+        Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->pub);
     }
 }
 `;
@@ -5849,6 +5851,19 @@ class Builder
         name: "getTitle",
         parameters: "",
         returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$arrowQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Track",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
       },
     ]);
   });
