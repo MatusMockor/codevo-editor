@@ -21,7 +21,6 @@ import {
 } from "../domain/keymap";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { phpImplementationGutterTargets } from "../domain/phpImplementationGutterTargets";
-import { filterPhpLanguageServerDiagnostics } from "../domain/phpLanguageServerDiagnosticFilters";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type {
   PhpSyntaxDiagnostic,
@@ -661,20 +660,10 @@ export function EditorSurface({
     monacoApi.editor.getModels().forEach((model) => {
       const path = modelPath(model);
       const diagnostics = path ? languageServerDiagnosticsByPath[path] ?? [] : [];
-      const filteredDiagnostics =
-        path &&
-        activeDocument?.path === path &&
-        activeDocument.language === "php"
-          ? filterPhpLanguageServerDiagnostics(
-              activeDocument.content,
-              diagnostics,
-              { path },
-            )
-          : diagnostics;
       monacoApi.editor.setModelMarkers(
         model,
         "php-language-server",
-        filteredDiagnostics.map((diagnostic) =>
+        diagnostics.map((diagnostic) =>
           toMonacoDiagnosticMarker(monacoApi, diagnostic),
         ),
       );
@@ -693,13 +682,7 @@ export function EditorSurface({
     }
 
     const languageServerDiagnostics =
-      activeDocument.language === "php"
-        ? filterPhpLanguageServerDiagnostics(
-            activeDocument.content,
-            languageServerDiagnosticsByPath[activeDocument.path] ?? [],
-            { path: activeDocument.path },
-          )
-        : languageServerDiagnosticsByPath[activeDocument.path] ?? [];
+      languageServerDiagnosticsByPath[activeDocument.path] ?? [];
     const syntaxDiagnostics =
       activeDocument.language === "php"
         ? syntaxDiagnosticsByPath[activeDocument.path] ?? []
