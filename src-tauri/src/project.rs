@@ -3,13 +3,16 @@ use crate::composer::{
     LocalComposerMetadataDetector,
 };
 use serde::Serialize;
-use std::{io, path::Path};
+use serde_json::Value;
+use std::{collections::BTreeSet, fs, io, path::Path};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceDescriptor {
     pub root_path: String,
     pub php: Option<PhpProjectDescriptor>,
+    #[serde(rename = "javaScriptTypeScript")]
+    pub js_ts: Option<JavaScriptTypeScriptProjectDescriptor>,
 }
 
 #[derive(Debug, Serialize)]
@@ -22,6 +25,18 @@ pub struct PhpProjectDescriptor {
     pub php_platform_version: Option<String>,
     pub php_version_constraint: Option<String>,
     pub psr4_roots: Vec<ComposerPsr4Root>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaScriptTypeScriptProjectDescriptor {
+    pub has_package_json: bool,
+    pub has_tsconfig: bool,
+    pub has_jsconfig: bool,
+    pub package_name: Option<String>,
+    pub package_manager: Option<String>,
+    pub frameworks: Vec<String>,
+    pub uses_type_script: bool,
 }
 
 pub trait WorkspaceDetector {
@@ -55,19 +70,11 @@ impl<D: ComposerMetadataDetector> WorkspaceDetector for ComposerWorkspaceDetecto
             ));
         }
 
-        let metadata = match self.composer_detector.detect(root)? {
-            Some(metadata) => metadata,
-            None => {
-                return Ok(WorkspaceDescriptor {
-                    root_path: root.to_string_lossy().to_string(),
-                    php: None,
-                })
-            }
-        };
-
-        Ok(WorkspaceDescriptor {
-            root_path: root.to_string_lossy().to_string(),
-            php: Some(PhpProjectDescriptor {
+        let js_ts = detect_javascript_typescript_project(root);
+        let php = self
+            .composer_detector
+            .detect(root)?
+            .map(|metadata| PhpProjectDescriptor {
                 classmap_roots: metadata.classmap_roots,
                 has_composer: true,
                 package_name: metadata.root_package_name,
@@ -75,9 +82,134 @@ impl<D: ComposerMetadataDetector> WorkspaceDetector for ComposerWorkspaceDetecto
                 php_platform_version: metadata.php_platform_version,
                 php_version_constraint: metadata.php_version_constraint,
                 psr4_roots: metadata.psr4_roots,
-            }),
+            });
+
+        Ok(WorkspaceDescriptor {
+            root_path: root.to_string_lossy().to_string(),
+            php,
+            js_ts,
         })
     }
+}
+
+fn detect_javascript_typescript_project(
+    root: &Path,
+) -> Option<JavaScriptTypeScriptProjectDescriptor> {
+    let package_json_path = root.join("package.json");
+    let has_package_json = package_json_path.is_file();
+    let has_tsconfig = root.join("tsconfig.json").is_file();
+    let has_jsconfig = root.join("jsconfig.json").is_file();
+
+    if !has_package_json && !has_tsconfig && !has_jsconfig {
+        return None;
+    }
+
+    let package_json = if has_package_json {
+        fs::read_to_string(package_json_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+    } else {
+        None
+    };
+    let dependencies = package_json
+        .as_ref()
+        .map(package_dependency_names)
+        .unwrap_or_default();
+    let package_name = package_json
+        .as_ref()
+        .and_then(|value| value.get("name"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let package_manager = package_json
+        .as_ref()
+        .and_then(|value| value.get("packageManager"))
+        .and_then(Value::as_str)
+        .and_then(package_manager_name)
+        .or_else(|| package_manager_from_lockfile(root));
+
+    Some(JavaScriptTypeScriptProjectDescriptor {
+        has_package_json,
+        has_tsconfig,
+        has_jsconfig,
+        package_name,
+        package_manager,
+        frameworks: detect_frameworks(&dependencies),
+        uses_type_script: has_tsconfig
+            || dependencies.contains("typescript")
+            || dependencies.iter().any(|name| name.starts_with("@types/")),
+    })
+}
+
+fn package_dependency_names(package_json: &Value) -> BTreeSet<String> {
+    let mut dependencies = BTreeSet::new();
+
+    for key in [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+    ] {
+        let Some(section) = package_json.get(key).and_then(Value::as_object) else {
+            continue;
+        };
+
+        for name in section.keys() {
+            dependencies.insert(name.to_string());
+        }
+    }
+
+    dependencies
+}
+
+fn package_manager_name(value: &str) -> Option<String> {
+    value
+        .split('@')
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
+fn package_manager_from_lockfile(root: &Path) -> Option<String> {
+    [
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("package-lock.json", "npm"),
+        ("bun.lockb", "bun"),
+        ("bun.lock", "bun"),
+    ]
+    .into_iter()
+    .find_map(|(file_name, package_manager)| {
+        root.join(file_name)
+            .is_file()
+            .then(|| package_manager.to_string())
+    })
+}
+
+fn detect_frameworks(dependencies: &BTreeSet<String>) -> Vec<String> {
+    [
+        ("next", "Next.js"),
+        ("@remix-run/react", "Remix"),
+        ("@sveltejs/kit", "SvelteKit"),
+        ("nuxt", "Nuxt"),
+        ("@angular/core", "Angular"),
+        ("astro", "Astro"),
+        ("@nestjs/core", "NestJS"),
+        ("react", "React"),
+        ("vue", "Vue"),
+        ("svelte", "Svelte"),
+        ("vite", "Vite"),
+        ("express", "Express"),
+        ("solid-js", "Solid"),
+        ("preact", "Preact"),
+    ]
+    .into_iter()
+    .filter_map(|(package_name, label)| {
+        dependencies
+            .contains(package_name)
+            .then(|| label.to_string())
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -93,6 +225,7 @@ mod tests {
         let descriptor = detector.detect(&root).expect("detect workspace");
 
         assert!(descriptor.php.is_none());
+        assert!(descriptor.js_ts.is_none());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -128,6 +261,7 @@ mod tests {
         let descriptor = detector.detect(&root).expect("detect workspace");
         let php = descriptor.php.expect("php descriptor");
 
+        assert!(descriptor.js_ts.is_none());
         assert!(php.has_composer);
         assert_eq!(php.package_name.as_deref(), Some("example/app"));
         assert_eq!(php.php_version_constraint.as_deref(), Some("^8.2"));
@@ -139,6 +273,59 @@ mod tests {
         assert!(php.psr4_roots[1].dev);
         assert_eq!(php.packages[0].name, "vendor/package");
         assert_eq!(php.packages[0].psr4_roots[0].namespace, "Vendor\\Package\\");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn detects_javascript_typescript_package_metadata() {
+        let root = create_temp_dir("workspace-js-ts-package");
+        fs::write(
+            root.join("package.json"),
+            r#"{
+              "name": "example-web",
+              "packageManager": "pnpm@9.12.0",
+              "dependencies": {
+                "react": "^19.0.0",
+                "vite": "^7.0.0"
+              },
+              "devDependencies": {
+                "typescript": "^5.9.0"
+              }
+            }"#,
+        )
+        .expect("write package");
+        fs::write(root.join("tsconfig.json"), "{}").expect("write tsconfig");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+        let js_ts = descriptor.js_ts.expect("js ts descriptor");
+
+        assert!(descriptor.php.is_none());
+        assert!(js_ts.has_package_json);
+        assert!(js_ts.has_tsconfig);
+        assert!(!js_ts.has_jsconfig);
+        assert_eq!(js_ts.package_name.as_deref(), Some("example-web"));
+        assert_eq!(js_ts.package_manager.as_deref(), Some("pnpm"));
+        assert_eq!(js_ts.frameworks, vec!["React", "Vite"]);
+        assert!(js_ts.uses_type_script);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn detects_typescript_config_without_package_json() {
+        let root = create_temp_dir("workspace-tsconfig-only");
+        fs::write(root.join("tsconfig.json"), "{}").expect("write tsconfig");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+        let js_ts = descriptor.js_ts.expect("js ts descriptor");
+
+        assert!(descriptor.php.is_none());
+        assert!(!js_ts.has_package_json);
+        assert!(js_ts.has_tsconfig);
+        assert_eq!(js_ts.package_name, None);
+        assert_eq!(js_ts.frameworks, Vec::<String>::new());
+        assert!(js_ts.uses_type_script);
         fs::remove_dir_all(root).expect("cleanup");
     }
 

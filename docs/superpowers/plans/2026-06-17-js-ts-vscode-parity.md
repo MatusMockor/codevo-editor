@@ -81,6 +81,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - JavaScript/TypeScript validation and inlay hints are now per-workspace settings. Validation Off clears and ignores JS/TS diagnostics; inlay hints flow into TypeScript server preferences and restart the managed JS/TS service when changed.
 - JavaScript/TypeScript Auto Imports is now a per-workspace setting. Off disables TypeScript module-export/import-statement completions and package.json auto-import suggestions in the managed JS/TS server preferences.
 - Settings now include a per-workspace Restart JavaScript/TypeScript service action, so users can refresh the managed TS runtime after dependency or TypeScript-version changes without restarting the whole editor.
+- Workspace detection now includes a JavaScript/TypeScript project descriptor for `package.json`, `tsconfig.json`, `jsconfig.json`, package manager and common framework markers. The status bar can show this JS/TS project context in Basic mode when editing JS/TS files.
 
 ## Full VS Code-Like Target
 
@@ -113,6 +114,7 @@ Detect JS/TS projects independently:
   - Svelte / SvelteKit
   - Angular
   - Node / Express / NestJS
+  - implemented for common package markers in the workspace descriptor
 
 ### Feature Expectations
 

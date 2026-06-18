@@ -732,6 +732,7 @@ mod tests {
                 php_version_constraint: Some("^8.3".to_string()),
                 psr4_roots: Vec::new(),
             }),
+            js_ts: None,
         }
     }
 

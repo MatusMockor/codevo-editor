@@ -45,7 +45,10 @@ import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
 } from "./domain/settings";
-import type { IntelligenceMode } from "./domain/workspace";
+import type {
+  IntelligenceMode,
+  JavaScriptTypeScriptProjectDescriptor,
+} from "./domain/workspace";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import {
@@ -182,10 +185,15 @@ function App() {
     [workbench.activeDocument, workbench.activeDocumentGitBaseline],
   );
   const workspaceLabel = useMemo(() => {
+    const jsTs = workbench.workspaceDescriptor?.javaScriptTypeScript;
     const php = workbench.workspaceDescriptor?.php;
 
+    if (jsTs && isJavaScriptTypeScriptLanguage(activeLanguage)) {
+      return javaScriptTypeScriptWorkspaceLabel(jsTs);
+    }
+
     if (!php) {
-      return null;
+      return jsTs ? javaScriptTypeScriptWorkspaceLabel(jsTs) : null;
     }
 
     const packageName = php.packageName || "PHP Composer";
@@ -209,6 +217,7 @@ function App() {
 
     return `${packageLabel} · PHP tools missing`;
   }, [
+    activeLanguage,
     workbench.phpTools,
     workbench.workspaceDescriptor,
     workbench.workspaceSettings.phpVersionOverride,
@@ -952,6 +961,33 @@ function languageServerPlanReason(message: string): string {
   }
 
   return message;
+}
+
+function isJavaScriptTypeScriptLanguage(language: string | null): boolean {
+  return language === "javascript" || language === "typescript";
+}
+
+function javaScriptTypeScriptWorkspaceLabel(
+  descriptor: JavaScriptTypeScriptProjectDescriptor,
+): string {
+  const packageName = descriptor.packageName || "JavaScript/TypeScript";
+  const frameworkLabel =
+    descriptor.frameworks.length > 0
+      ? descriptor.frameworks.slice(0, 3).join(" + ")
+      : null;
+  const languageLabel = descriptor.usesTypeScript
+    ? "TypeScript"
+    : descriptor.hasJsconfig
+      ? "JavaScript"
+      : "JS/TS";
+  const parts = [
+    packageName,
+    frameworkLabel,
+    languageLabel,
+    descriptor.packageManager,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.join(" · ");
 }
 
 function toolSourceLabel(source: string): string {

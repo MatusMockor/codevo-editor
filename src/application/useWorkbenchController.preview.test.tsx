@@ -3727,6 +3727,8 @@ function createControllerDependencies({
   const workspaceGateways: WorkbenchWorkspaceGateways = {
     detection: {
       detectWorkspace: vi.fn(async (path) => ({
+        javaScriptTypeScript:
+          workspaceDescriptor?.javaScriptTypeScript ?? null,
         php: workspaceDescriptor?.php ?? null,
         rootPath: path,
       })),
@@ -3950,6 +3952,7 @@ async function waitForClassSearch(): Promise<void> {
 
 function phpWorkspaceDescriptor(): WorkspaceDescriptor {
   return {
+    javaScriptTypeScript: null,
     php: phpProjectDescriptor(),
     rootPath: "/workspace",
   };

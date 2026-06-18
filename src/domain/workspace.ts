@@ -23,6 +23,7 @@ export interface TextSearchResult {
 export interface WorkspaceDescriptor {
   rootPath: string;
   php: PhpProjectDescriptor | null;
+  javaScriptTypeScript: JavaScriptTypeScriptProjectDescriptor | null;
 }
 
 export interface PhpProjectDescriptor {
@@ -54,6 +55,16 @@ export interface Psr4Root {
   namespace: string;
   paths: string[];
   dev: boolean;
+}
+
+export interface JavaScriptTypeScriptProjectDescriptor {
+  hasPackageJson: boolean;
+  hasTsconfig: boolean;
+  hasJsconfig: boolean;
+  packageName: string | null;
+  packageManager: string | null;
+  frameworks: string[];
+  usesTypeScript: boolean;
 }
 
 export interface PhpToolAvailability {
