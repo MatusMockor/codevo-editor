@@ -3,7 +3,10 @@ import {
   createLanguageServerTextDocument,
   fileUriFromPath,
   isLanguageServerDocument,
+  languageServerDocumentSyncKey,
   languageServerLanguageIdForDocument,
+  languageServerPathFromDocumentSyncKey,
+  languageServerUriSyncKey,
 } from "./languageServerDocumentSync";
 import type { EditorDocument } from "./workspace";
 
@@ -60,6 +63,36 @@ describe("fileUriFromPath", () => {
     );
     expect(fileUriFromPath("C:\\project\\src\\User.php")).toBe(
       "file:///C:/project/src/User.php",
+    );
+  });
+});
+
+describe("workspace-scoped sync keys", () => {
+  it("separates the same document path by workspace root", () => {
+    const documentKey = languageServerDocumentSyncKey(
+      "/workspace-a/",
+      "/workspace-a/src/App.ts",
+    );
+
+    expect(documentKey).not.toBe(
+      languageServerDocumentSyncKey(
+        "/workspace-b/",
+        "/workspace-a/src/App.ts",
+      ),
+    );
+    expect(
+      languageServerPathFromDocumentSyncKey("/workspace-a", documentKey),
+    ).toBe("/workspace-a/src/App.ts");
+    expect(
+      languageServerPathFromDocumentSyncKey("/workspace-b", documentKey),
+    ).toBeNull();
+  });
+
+  it("separates document versions by workspace root and uri", () => {
+    const uri = fileUriFromPath("/workspace-a/src/App.ts");
+
+    expect(languageServerUriSyncKey("/workspace-a", uri)).not.toBe(
+      languageServerUriSyncKey("/workspace-b", uri),
     );
   });
 });

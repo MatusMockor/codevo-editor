@@ -108,6 +108,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript completion requests now pass VS Code-like LSP completion context (`triggerKind` and `triggerCharacter`) when Monaco invokes completions from trigger characters such as `.`, quotes, backticks, JSX markers, and private field `#`.
 - TypeScript/JavaScript diagnostics now preserve LSP diagnostic tags and map them to Monaco marker tags, so unused and deprecated diagnostics can render with VS Code-like unnecessary/deprecated styling.
 - TypeScript/JavaScript lazy completion, document-link, code-action, CodeLens and command resolves now check the active workspace root before calling the managed service. Workspace edits applied to open Monaco models are also filtered to the event/command root, preventing delayed provider work from leaking into another project tab.
+- TypeScript/JavaScript document sync state is now keyed by workspace root plus document path/URI. Open/change/save/close queues, pending debounce timers, and diagnostic version checks cannot be reused across project tabs.
 
 ## Full VS Code-Like Target
 

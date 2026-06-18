@@ -63,6 +63,39 @@ export function fileUriFromPath(path: string): string {
   return `file:///${encoded}`;
 }
 
+const WORKSPACE_SYNC_KEY_SEPARATOR = "\u0000";
+
+export function languageServerDocumentSyncKey(
+  rootPath: string,
+  path: string,
+): string {
+  return [
+    normalizedWorkspaceSyncPath(rootPath),
+    normalizedWorkspaceSyncPath(path),
+  ].join(WORKSPACE_SYNC_KEY_SEPARATOR);
+}
+
+export function languageServerUriSyncKey(rootPath: string, uri: string): string {
+  return [normalizedWorkspaceSyncPath(rootPath), uri].join(
+    WORKSPACE_SYNC_KEY_SEPARATOR,
+  );
+}
+
+export function languageServerPathFromDocumentSyncKey(
+  rootPath: string,
+  key: string,
+): string | null {
+  const prefix = [normalizedWorkspaceSyncPath(rootPath), ""].join(
+    WORKSPACE_SYNC_KEY_SEPARATOR,
+  );
+
+  if (!key.startsWith(prefix)) {
+    return null;
+  }
+
+  return key.slice(prefix.length);
+}
+
 function encodeUriPath(path: string): string {
   let encoded = "";
 
@@ -80,4 +113,8 @@ function encodeUriPath(path: string): string {
 
 function isUriPathCharacter(character: string): boolean {
   return /^[A-Za-z0-9/:._~!$&'()*+,;=-]$/.test(character);
+}
+
+function normalizedWorkspaceSyncPath(path: string): string {
+  return path.trim().split("\\").join("/").replace(/\/+$/, "");
 }

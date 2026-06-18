@@ -333,6 +333,52 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
   });
 
+  it("does not flush pending JavaScript and TypeScript edits after switching project tabs", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 52,
+    };
+    const path = "/workspace-a/src/App.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+      ),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.documentSyncGateway.didChange).mockClear();
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace-a",
+      path,
+    );
+    expect(dependencies.documentSyncGateway.didChange).not.toHaveBeenCalled();
+  });
+
   it("suspends the previous project runtimes when background engines are disabled", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
