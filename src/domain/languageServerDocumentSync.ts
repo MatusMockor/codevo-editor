@@ -29,11 +29,27 @@ export function createLanguageServerTextDocument(
   version: number,
 ): LanguageServerTextDocument {
   return {
-    languageId: document.language,
+    languageId: languageServerLanguageIdForDocument(document),
     path: document.path,
     text: document.content,
     version,
   };
+}
+
+export function languageServerLanguageIdForDocument(
+  document: Pick<EditorDocument, "language" | "path">,
+): string {
+  const extension = document.path.split(".").pop()?.toLowerCase();
+
+  if (extension === "jsx") {
+    return "javascriptreact";
+  }
+
+  if (extension === "tsx") {
+    return "typescriptreact";
+  }
+
+  return document.language;
 }
 
 export function fileUriFromPath(path: string): string {

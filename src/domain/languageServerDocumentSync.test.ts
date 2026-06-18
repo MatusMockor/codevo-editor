@@ -3,6 +3,7 @@ import {
   createLanguageServerTextDocument,
   fileUriFromPath,
   isLanguageServerDocument,
+  languageServerLanguageIdForDocument,
 } from "./languageServerDocumentSync";
 import type { EditorDocument } from "./workspace";
 
@@ -24,6 +25,34 @@ describe("createLanguageServerTextDocument", () => {
   });
 });
 
+describe("languageServerLanguageIdForDocument", () => {
+  it("uses VS Code language ids for JavaScript and TypeScript React files", () => {
+    expect(
+      languageServerLanguageIdForDocument(
+        document("javascript", "/project/src/App.jsx"),
+      ),
+    ).toBe("javascriptreact");
+    expect(
+      languageServerLanguageIdForDocument(
+        document("typescript", "/project/src/App.tsx"),
+      ),
+    ).toBe("typescriptreact");
+  });
+
+  it("keeps non-React language ids unchanged", () => {
+    expect(
+      languageServerLanguageIdForDocument(
+        document("typescript", "/project/src/app.ts"),
+      ),
+    ).toBe("typescript");
+    expect(
+      languageServerLanguageIdForDocument(
+        document("javascript", "/project/src/app.mjs"),
+      ),
+    ).toBe("javascript");
+  });
+});
+
 describe("fileUriFromPath", () => {
   it("encodes local paths as file uris", () => {
     expect(fileUriFromPath("/project/src/User Name.php")).toBe(
@@ -35,12 +64,15 @@ describe("fileUriFromPath", () => {
   });
 });
 
-function document(language: EditorDocument["language"]): EditorDocument {
+function document(
+  language: EditorDocument["language"],
+  path = "/project/src/User.php",
+): EditorDocument {
   return {
     content: "<?php echo 1;",
     language,
-    name: "User.php",
-    path: "/project/src/User.php",
+    name: path.split("/").pop() ?? "User.php",
+    path,
     savedContent: "<?php echo 1;",
   };
 }

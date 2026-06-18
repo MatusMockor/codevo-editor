@@ -25,6 +25,13 @@ describe("workspace path helpers", () => {
     expect(detectLanguage("/project.v1/src/README")).toBe("plaintext");
   });
 
+  it("detects JavaScript and TypeScript Node module extensions", () => {
+    expect(detectLanguage("/project/src/server.mjs")).toBe("javascript");
+    expect(detectLanguage("/project/src/server.cjs")).toBe("javascript");
+    expect(detectLanguage("/project/src/server.mts")).toBe("typescript");
+    expect(detectLanguage("/project/src/server.cts")).toBe("typescript");
+  });
+
   it("normalizes parent and joined paths", () => {
     expect(getParentPath("C:\\project\\src\\User.php")).toBe("C:/project/src");
     expect(joinWorkspacePath("C:\\project\\", "\\src\\User.php")).toBe(

@@ -29,12 +29,12 @@ impl MetadataLanguageDetector for ExtensionMetadataLanguageDetector {
         match extension.as_str() {
             "css" => "css".to_string(),
             "html" => "html".to_string(),
-            "js" | "jsx" => "javascript".to_string(),
+            "cjs" | "js" | "jsx" | "mjs" => "javascript".to_string(),
             "json" => "json".to_string(),
             "md" => "markdown".to_string(),
             "php" => "php".to_string(),
             "rs" => "rust".to_string(),
-            "ts" | "tsx" => "typescript".to_string(),
+            "cts" | "mts" | "ts" | "tsx" => "typescript".to_string(),
             "xml" => "xml".to_string(),
             "yaml" | "yml" => "yaml".to_string(),
             _ => "plaintext".to_string(),
@@ -670,6 +670,14 @@ mod tests {
         assert_eq!(detector.language_for_path(Path::new("User.php")), "php");
         assert_eq!(
             detector.language_for_path(Path::new("app.tsx")),
+            "typescript"
+        );
+        assert_eq!(
+            detector.language_for_path(Path::new("server.mjs")),
+            "javascript"
+        );
+        assert_eq!(
+            detector.language_for_path(Path::new("server.cts")),
             "typescript"
         );
         assert_eq!(detector.language_for_path(Path::new("README")), "plaintext");
