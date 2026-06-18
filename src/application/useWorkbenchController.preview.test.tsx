@@ -4325,6 +4325,13 @@ class Comment
         'type' => CommentType::class,
     ];
 
+    protected function casts(): array
+    {
+        return [
+            'priority' => 'integer',
+        ];
+    }
+
     public string $status;
 
     public function getContent(): string {}
@@ -4441,6 +4448,13 @@ class Comment
         name: "parent_id",
         parameters: "",
         returnType: "mixed",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "priority",
+        parameters: "",
+        returnType: "int",
       },
       {
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",

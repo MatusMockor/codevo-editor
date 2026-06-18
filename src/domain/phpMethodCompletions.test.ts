@@ -703,6 +703,14 @@ class Comment extends Model
         'content' => 'string',
         'type' => CommentType::class,
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'reviewed_at' => 'datetime',
+            'review_count' => 'integer',
+        ];
+    }
 }
 `,
         "Comment",
@@ -805,6 +813,20 @@ class Comment extends Model
         name: "type",
         parameters: "",
         returnType: "App\\Enums\\CommentType",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "reviewed_at",
+        parameters: "",
+        returnType: "\\Illuminate\\Support\\Carbon",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "review_count",
+        parameters: "",
+        returnType: "int",
       },
     ]);
   });

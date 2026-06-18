@@ -568,28 +568,46 @@ function phpLaravelDefaultAttributes(
 }
 
 function phpLaravelCastAttributes(source: string): Array<[string, string | null]> {
-  return phpArrayAssignmentBodies(source, "casts").flatMap((body) =>
-    splitPhpParameterList(body).flatMap((item) => {
-      const arrowIndex = topLevelArrayArrowIndex(item);
-
-      if (arrowIndex < 0) {
-        return [];
-      }
-
-      const attribute = phpStringLiteralValue(item.slice(0, arrowIndex));
-
-      if (!isPhpAttributeName(attribute)) {
-        return [];
-      }
-
-      return [
-        [
-          attribute,
-          phpLaravelCastReturnType(source, item.slice(arrowIndex + 2)),
-        ] satisfies [string, string | null],
-      ];
-    }),
+  return phpLaravelCastAttributeBodies(source).flatMap((body) =>
+    phpLaravelCastAttributesFromBody(source, body),
   );
+}
+
+function phpLaravelCastAttributeBodies(source: string): string[] {
+  return [
+    ...phpArrayAssignmentBodies(source, "casts"),
+    ...phpMethodReturnExpressions(source, "casts").flatMap((expression) => {
+      const body = phpArrayExpressionBody(expression);
+
+      return body ? [body] : [];
+    }),
+  ];
+}
+
+function phpLaravelCastAttributesFromBody(
+  source: string,
+  body: string,
+): Array<[string, string | null]> {
+  return splitPhpParameterList(body).flatMap((item) => {
+    const arrowIndex = topLevelArrayArrowIndex(item);
+
+    if (arrowIndex < 0) {
+      return [];
+    }
+
+    const attribute = phpStringLiteralValue(item.slice(0, arrowIndex));
+
+    if (!isPhpAttributeName(attribute)) {
+      return [];
+    }
+
+    return [
+      [
+        attribute,
+        phpLaravelCastReturnType(source, item.slice(arrowIndex + 2)),
+      ] satisfies [string, string | null],
+    ];
+  });
 }
 
 function phpLaravelAccessorAttributes(
@@ -666,6 +684,34 @@ function phpArrayAssignmentBodies(source: string, propertyName: string): string[
   }
 
   return bodies;
+}
+
+function phpArrayExpressionBody(expression: string): string | null {
+  const trimmed = expression.trim();
+  const shortArrayOffset = trimmed.search(/\[/);
+  const arrayCallMatch = /\barray\s*\(/i.exec(trimmed);
+  const arrayCallOffset = arrayCallMatch?.index ?? -1;
+
+  if (
+    shortArrayOffset >= 0 &&
+    (arrayCallOffset < 0 || shortArrayOffset < arrayCallOffset)
+  ) {
+    const closeOffset = matchingPairOffset(trimmed, shortArrayOffset, "[", "]");
+
+    return closeOffset === null
+      ? null
+      : trimmed.slice(shortArrayOffset + 1, closeOffset);
+  }
+
+  if (arrayCallOffset >= 0) {
+    const openOffset =
+      arrayCallOffset + (arrayCallMatch?.[0].lastIndexOf("(") ?? 0);
+    const closeOffset = matchingPairOffset(trimmed, openOffset, "(", ")");
+
+    return closeOffset === null ? null : trimmed.slice(openOffset + 1, closeOffset);
+  }
+
+  return null;
 }
 
 function phpLaravelCastReturnType(
