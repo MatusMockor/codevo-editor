@@ -259,6 +259,25 @@ describe("SettingsDialog", () => {
         javaScriptTypeScriptValidation: false,
       },
     });
+
+    await act(async () => {
+      javaScriptTypeScriptCodeLensCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptCodeLens: true,
+        javaScriptTypeScriptInlayHints: false,
+        javaScriptTypeScriptValidation: false,
+      },
+    });
   });
 
   it("restarts JavaScript and TypeScript service from settings", async () => {
@@ -415,6 +434,10 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptInlayHintsCheckbox(): HTMLInputElement {
     return checkboxWithLabel("JavaScript/TypeScript inlay hints");
+  }
+
+  function javaScriptTypeScriptCodeLensCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("JavaScript/TypeScript CodeLens");
   }
 
   function restartJavaScriptTypeScriptServiceButton(): HTMLButtonElement {

@@ -777,6 +777,7 @@ function featuresGateway(
 ): LanguageServerFeaturesGateway {
   return {
     codeActions: vi.fn(async () => responses.codeActions ?? []),
+    codeLenses: vi.fn(async () => []),
     completion: vi.fn(async () =>
       responses.completion ?? {
         isIncomplete: false,
@@ -805,6 +806,7 @@ function featuresGateway(
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
+    resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
   };
 }
@@ -815,6 +817,7 @@ function runningStatus(
   return {
     capabilities: {
       codeAction: true,
+      codeLens: true,
       completion: true,
       definition: true,
       documentHighlight: true,

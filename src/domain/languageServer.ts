@@ -27,6 +27,7 @@ export interface JsonRpcRequest {
 
 export interface JavaScriptTypeScriptLanguageServerPlanOptions {
   autoImportsEnabled?: boolean;
+  codeLensEnabled?: boolean;
   inlayHintsEnabled?: boolean;
   typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
 }

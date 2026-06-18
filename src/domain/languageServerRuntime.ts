@@ -2,6 +2,7 @@ import type { JavaScriptTypeScriptVersionPreference } from "./settings";
 
 export interface LanguageServerCapabilities {
   codeAction: boolean;
+  codeLens: boolean;
   hover: boolean;
   completion: boolean;
   definition: boolean;
@@ -39,6 +40,7 @@ export type UnsubscribeFn = () => void;
 
 export interface LanguageServerRuntimeStartOptions {
   autoImportsEnabled?: boolean;
+  codeLensEnabled?: boolean;
   inlayHintsEnabled?: boolean;
   typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
 }
@@ -195,6 +197,10 @@ export function languageServerCapabilityLabels(
     labels.push("code actions");
   }
 
+  if (capabilities.codeLens) {
+    labels.push("code lens");
+  }
+
   if (capabilities.formatting) {
     labels.push("formatting");
   }
@@ -205,6 +211,7 @@ export function languageServerCapabilityLabels(
 export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
   return {
     codeAction: false,
+    codeLens: false,
     completion: false,
     definition: false,
     documentHighlight: false,

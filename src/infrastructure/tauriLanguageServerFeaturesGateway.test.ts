@@ -78,6 +78,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.resolveCodeAction("/project", codeAction()),
     ).resolves.toEqual(codeAction());
     await expect(
+      gateway.codeLenses("/project", "/project/src/User.php"),
+    ).resolves.toEqual([]);
+    await expect(
+      gateway.resolveCodeLens("/project", codeLens()),
+    ).resolves.toEqual(codeLens());
+    await expect(
       gateway.executeCommand("/project", command()),
     ).resolves.toBeNull();
     await expect(
@@ -145,6 +151,13 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         isPreferred: true,
         kind: "quickfix",
         title: "Fix import",
+      },
+    ];
+    const codeLenses = [
+      {
+        command: command(),
+        data: { kind: "references" },
+        range: range(),
       },
     ];
     const formatting = [
@@ -293,6 +306,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return codeActions[0];
       }
 
+      if (command === "text_document_code_lenses") {
+        return codeLenses;
+      }
+
+      if (command === "text_document_code_lens_resolve") {
+        return codeLenses[0];
+      }
+
       if (command === "language_server_execute_command") {
         return rename;
       }
@@ -421,6 +442,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.resolveCodeAction("/project", codeAction()),
     ).resolves.toEqual(codeActions[0]);
     await expect(
+      gateway.codeLenses("/project", "/project/src/User.php"),
+    ).resolves.toEqual(codeLenses);
+    await expect(
+      gateway.resolveCodeLens("/project", codeLens()),
+    ).resolves.toEqual(codeLenses[0]);
+    await expect(
       gateway.executeCommand("/project", command()),
     ).resolves.toEqual(rename);
     await expect(
@@ -533,6 +560,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       action: codeAction(),
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_code_lenses", {
+      path: "/project/src/User.php",
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_code_lens_resolve", {
+      lens: codeLens(),
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("language_server_execute_command", {
       command: command(),
       rootPath: "/project",
@@ -601,6 +636,14 @@ function command() {
     arguments: [{ tsActionId: "unusedIdentifier" }],
     command: "_typescript.applyFixAllCodeAction",
     title: "Fix all",
+  };
+}
+
+function codeLens() {
+  return {
+    command: null,
+    data: { kind: "references" },
+    range: range(),
   };
 }
 

@@ -42,6 +42,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       sessionId: 1,
       capabilities: {
         codeAction: true,
+        codeLens: true,
         completion: true,
         definition: true,
         documentHighlight: true,
@@ -101,6 +102,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     const running: LanguageServerRuntimeStatus = {
       capabilities: {
         codeAction: false,
+        codeLens: true,
         completion: true,
         definition: true,
         documentHighlight: true,
@@ -136,6 +138,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     await expect(
       gateway.start("/workspace", {
         autoImportsEnabled: false,
+        codeLensEnabled: true,
         inlayHintsEnabled: false,
         typeScriptVersionPreference: "workspace",
       }),
@@ -145,6 +148,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       "start_javascript_typescript_language_server",
       {
         autoImportsEnabled: false,
+        codeLensEnabled: true,
         inlayHintsEnabled: false,
         rootPath: "/workspace",
         typeScriptVersionPreference: "workspace",

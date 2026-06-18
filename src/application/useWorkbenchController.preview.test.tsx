@@ -763,6 +763,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
     });
@@ -770,6 +771,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
     });
@@ -819,6 +821,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
     });
@@ -826,6 +829,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "workspace",
     });
@@ -866,6 +870,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
     });
@@ -912,6 +917,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: true,
+      codeLensEnabled: false,
       inlayHintsEnabled: true,
       typeScriptVersionPreference: "bundled",
     });
@@ -1043,6 +1049,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: false,
+      codeLensEnabled: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
     });
@@ -1050,6 +1057,7 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
       autoImportsEnabled: false,
+      codeLensEnabled: false,
       inlayHintsEnabled: false,
       typeScriptVersionPreference: "workspace",
     });
@@ -4532,6 +4540,7 @@ function createControllerDependencies({
 function featuresGateway(): LanguageServerFeaturesGateway {
   return {
     codeActions: vi.fn(async () => []),
+    codeLenses: vi.fn(async () => []),
     completion: vi.fn(async () => ({
       isIncomplete: false,
       items: [],
@@ -4558,6 +4567,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     workspaceSymbols: vi.fn(async () => []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
+    resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
   };
 }

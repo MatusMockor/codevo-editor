@@ -207,6 +207,12 @@ export interface LanguageServerCodeAction {
   title: string;
 }
 
+export interface LanguageServerCodeLens {
+  command: LanguageServerCodeActionCommand | null;
+  data: unknown | null;
+  range: LanguageServerRange;
+}
+
 export interface LanguageServerFormattingOptions {
   insertSpaces: boolean;
   tabSize: number;
@@ -306,6 +312,11 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     action: LanguageServerCodeAction,
   ): Promise<LanguageServerCodeAction>;
+  codeLenses(rootPath: string, path: string): Promise<LanguageServerCodeLens[]>;
+  resolveCodeLens(
+    rootPath: string,
+    lens: LanguageServerCodeLens,
+  ): Promise<LanguageServerCodeLens>;
   executeCommand(
     rootPath: string,
     command: LanguageServerCodeActionCommand,

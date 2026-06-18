@@ -173,6 +173,7 @@ pub struct TypeScriptLanguageServerPlanner<TFactory = TypeScriptInitializeReques
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TypeScriptLanguageServerSettings {
     pub auto_imports: bool,
+    pub code_lens: bool,
     pub inlay_hints: bool,
 }
 
@@ -180,6 +181,7 @@ impl Default for TypeScriptLanguageServerSettings {
     fn default() -> Self {
         Self {
             auto_imports: true,
+            code_lens: false,
             inlay_hints: true,
         }
     }
@@ -210,6 +212,7 @@ where
             configure_typescript_server_path(&mut initialize_request, &typescript_server.path);
         }
         configure_typescript_auto_imports(&mut initialize_request, settings.auto_imports);
+        configure_typescript_code_lens(&mut initialize_request, settings.code_lens);
         configure_typescript_inlay_hints(&mut initialize_request, settings.inlay_hints);
 
         LanguageServerPlan {
@@ -317,6 +320,14 @@ fn configure_typescript_auto_imports(request: &mut JsonRpcRequest, enabled: bool
     );
 }
 
+fn configure_typescript_code_lens(request: &mut JsonRpcRequest, enabled: bool) {
+    let Some(preferences) = typescript_preferences_mut(request) else {
+        return;
+    };
+
+    preferences.insert("mockorCodeLensEnabled".to_string(), Value::Bool(enabled));
+}
+
 fn typescript_preferences_mut(
     request: &mut JsonRpcRequest,
 ) -> Option<&mut serde_json::Map<String, Value>> {
@@ -388,6 +399,9 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "resolveSupport": {
                                 "properties": ["edit", "command"]
                             }
+                        },
+                        "codeLens": {
+                            "dynamicRegistration": false
                         },
                         "definition": { "dynamicRegistration": false },
                         "documentHighlight": { "dynamicRegistration": false },
@@ -470,6 +484,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         "typeDefinition": { "dynamicRegistration": false }
                     },
                     "workspace": {
+                        "codeLens": { "refreshSupport": true },
                         "configuration": true,
                         "didChangeConfiguration": { "dynamicRegistration": false },
                         "symbol": { "dynamicRegistration": false },
@@ -743,9 +758,17 @@ mod tests {
             "auto"
         );
         assert_eq!(
+            request.params["initializationOptions"]["preferences"]["mockorCodeLensEnabled"],
+            false
+        );
+        assert_eq!(
             request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
                 ["labelDetailsSupport"],
             true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["codeLens"]["dynamicRegistration"],
+            false
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
@@ -792,6 +815,10 @@ mod tests {
             request.params["capabilities"]["textDocument"]["semanticTokens"]["requests"]["full"],
             true
         );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["codeLens"]["refreshSupport"],
+            true
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -805,6 +832,7 @@ mod tests {
             &tools_with_typescript_language_server(&root),
             TypeScriptLanguageServerSettings {
                 auto_imports: false,
+                code_lens: true,
                 inlay_hints: false,
             },
         );
@@ -827,6 +855,10 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]["includePackageJsonAutoImports"],
             "off"
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["preferences"]["mockorCodeLensEnabled"],
+            true
         );
         fs::remove_dir_all(root).expect("cleanup");
     }

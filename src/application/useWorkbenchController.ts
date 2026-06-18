@@ -821,6 +821,8 @@ export function useWorkbenchController(
             {
               autoImportsEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptAutoImports,
+              codeLensEnabled:
+                workspaceSettingsRef.current.javaScriptTypeScriptCodeLens,
               inlayHintsEnabled:
                 workspaceSettingsRef.current.javaScriptTypeScriptInlayHints,
               typeScriptVersionPreference,
@@ -5766,6 +5768,8 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptVersion ||
           previousWorkspaceSettings.javaScriptTypeScriptAutoImports !==
             resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
+          previousWorkspaceSettings.javaScriptTypeScriptCodeLens !==
+            resolvedWorkspaceSettings.javaScriptTypeScriptCodeLens ||
           previousWorkspaceSettings.javaScriptTypeScriptInlayHints !==
             resolvedWorkspaceSettings.javaScriptTypeScriptInlayHints;
 
@@ -5900,6 +5904,7 @@ export function useWorkbenchController(
       const status =
         await javaScriptTypeScriptLanguageServerRuntimeGateway.start(workspaceRoot, {
           autoImportsEnabled: currentSettings.javaScriptTypeScriptAutoImports,
+          codeLensEnabled: currentSettings.javaScriptTypeScriptCodeLens,
           inlayHintsEnabled: currentSettings.javaScriptTypeScriptInlayHints,
           typeScriptVersionPreference:
             currentSettings.javaScriptTypeScriptVersion,
@@ -6590,6 +6595,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeGateway
       .start(workspaceRoot, {
         autoImportsEnabled: workspaceSettings.javaScriptTypeScriptAutoImports,
+        codeLensEnabled: workspaceSettings.javaScriptTypeScriptCodeLens,
         inlayHintsEnabled: workspaceSettings.javaScriptTypeScriptInlayHints,
         typeScriptVersionPreference:
           workspaceSettings.javaScriptTypeScriptVersion,
@@ -6604,6 +6610,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     reportError,
     workspaceSettings.javaScriptTypeScriptAutoImports,
+    workspaceSettings.javaScriptTypeScriptCodeLens,
     workspaceSettings.javaScriptTypeScriptInlayHints,
     workspaceSettings.javaScriptTypeScriptService,
     workspaceSettings.javaScriptTypeScriptVersion,

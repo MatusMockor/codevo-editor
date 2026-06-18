@@ -22,6 +22,10 @@ export class TauriLanguageServerGateway implements LanguageServerGateway {
       args.autoImportsEnabled = options.autoImportsEnabled;
     }
 
+    if (options.codeLensEnabled !== undefined) {
+      args.codeLensEnabled = options.codeLensEnabled;
+    }
+
     if (options.typeScriptVersionPreference) {
       args.typeScriptVersionPreference = options.typeScriptVersionPreference;
     }

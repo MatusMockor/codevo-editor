@@ -932,6 +932,7 @@ function createMonaco(model: FakeModel) {
 function languageServerFeaturesGateway() {
   return {
     codeActions: vi.fn(async () => []),
+    codeLenses: vi.fn(async () => []),
     completion: vi.fn(),
     definition: vi.fn(),
     documentHighlights: vi.fn(async () => []),
@@ -952,6 +953,7 @@ function languageServerFeaturesGateway() {
     semanticTokens: vi.fn(async () => null),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
+    resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
     signatureHelp: vi.fn(),
     typeDefinition: vi.fn(async () => []),

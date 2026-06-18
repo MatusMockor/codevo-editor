@@ -56,6 +56,7 @@ pub enum LanguageServerRuntimeStatus {
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerCapabilities {
     pub code_action: bool,
+    pub code_lens: bool,
     pub hover: bool,
     pub completion: bool,
     pub definition: bool,
@@ -1411,6 +1412,10 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
         .get("includeInlayParameterNameHints")
         .and_then(Value::as_str)
         .unwrap_or("literals");
+    let code_lens_enabled = preferences
+        .get("mockorCodeLensEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     json!({
         "formattingOptions": {
@@ -1427,6 +1432,11 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
             "target": 11,
         },
         "preferences": preferences,
+        "implementationsCodeLens": { "enabled": code_lens_enabled },
+        "referencesCodeLens": {
+            "enabled": code_lens_enabled,
+            "showOnAllFunctions": false,
+        },
         "suggest": {
             "autoImports": auto_imports_enabled,
             "completeFunctionCalls": true,
@@ -1552,6 +1562,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
 
     Ok(LanguageServerCapabilities {
         code_action: is_capability_enabled(capabilities.get("codeActionProvider")),
+        code_lens: is_capability_enabled(capabilities.get("codeLensProvider")),
         hover: is_capability_enabled(capabilities.get("hoverProvider")),
         completion: is_capability_enabled(capabilities.get("completionProvider")),
         definition: is_capability_enabled(capabilities.get("definitionProvider")),
@@ -1776,6 +1787,7 @@ mod tests {
                 session_id: 1,
                 capabilities: LanguageServerCapabilities {
                     code_action: false,
+                    code_lens: false,
                     hover: true,
                     completion: true,
                     definition: true,
@@ -1809,6 +1821,7 @@ mod tests {
             session_id: 1,
             capabilities: LanguageServerCapabilities {
                 code_action: true,
+                code_lens: true,
                 hover: true,
                 completion: false,
                 definition: true,
@@ -1859,6 +1872,7 @@ mod tests {
                     "typeDefinition": true,
                     "workspaceSymbol": true,
                     "codeAction": true,
+                    "codeLens": true,
                 },
             })
         );
@@ -1899,6 +1913,7 @@ mod tests {
                     },
                     "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
                     "typeDefinitionProvider": true,
+                    "codeLensProvider": {},
                     "workspaceSymbolProvider": true,
                     "codeActionProvider": { "codeActionKinds": ["quickfix"] },
                     "documentFormattingProvider": true,
@@ -1912,6 +1927,7 @@ mod tests {
             capabilities,
             LanguageServerCapabilities {
                 code_action: true,
+                code_lens: true,
                 hover: false,
                 completion: false,
                 definition: true,
@@ -2105,7 +2121,8 @@ mod tests {
                     "preferences": {
                         "includeCompletionsForModuleExports": false,
                         "includeInlayFunctionLikeReturnTypeHints": false,
-                        "includeInlayParameterNameHints": "none"
+                        "includeInlayParameterNameHints": "none",
+                        "mockorCodeLensEnabled": true
                     }
                 }
             }),
@@ -2133,6 +2150,8 @@ mod tests {
                         { "section": "typescript.preferences" },
                         { "section": "javascript.suggest" },
                         { "section": "typescript.inlayHints" },
+                        { "section": "typescript.referencesCodeLens" },
+                        { "section": "typescript.implementationsCodeLens" },
                         { "section": "formattingOptions" },
                         { "section": "typescript.implicitProjectConfiguration" },
                         { "section": "editor" }
@@ -2150,12 +2169,15 @@ mod tests {
         assert_eq!(response["result"][1]["autoImports"], false);
         assert_eq!(response["result"][1]["completeFunctionCalls"], true);
         assert_eq!(response["result"][2]["parameterNames"]["enabled"], "none");
-        assert_eq!(response["result"][3]["tabSize"], 2);
-        assert_eq!(response["result"][3]["insertSpaces"], true);
-        assert_eq!(response["result"][4]["strict"], true);
-        assert_eq!(response["result"][4]["module"], 99);
-        assert_eq!(response["result"][4]["target"], 11);
-        assert_eq!(response["result"][5], json!({}));
+        assert_eq!(response["result"][3]["enabled"], true);
+        assert_eq!(response["result"][3]["showOnAllFunctions"], false);
+        assert_eq!(response["result"][4]["enabled"], true);
+        assert_eq!(response["result"][5]["tabSize"], 2);
+        assert_eq!(response["result"][5]["insertSpaces"], true);
+        assert_eq!(response["result"][6]["strict"], true);
+        assert_eq!(response["result"][6]["module"], 99);
+        assert_eq!(response["result"][6]["target"], 11);
+        assert_eq!(response["result"][7], json!({}));
     }
 
     #[test]

@@ -231,6 +231,14 @@ export function SettingsDialog({
                       javaScriptTypeScriptAutoImports,
                     })
                   }
+                  onChangeJavaScriptTypeScriptCodeLens={(
+                    javaScriptTypeScriptCodeLens,
+                  ) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      javaScriptTypeScriptCodeLens,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptInlayHints={(
                     javaScriptTypeScriptInlayHints,
                   ) =>
@@ -369,6 +377,7 @@ interface GeneralSettingsProps {
     mode: JavaScriptTypeScriptServiceMode,
   ): void;
   onChangeJavaScriptTypeScriptAutoImports(enabled: boolean): void;
+  onChangeJavaScriptTypeScriptCodeLens(enabled: boolean): void;
   onChangeJavaScriptTypeScriptInlayHints(enabled: boolean): void;
   onChangeJavaScriptTypeScriptValidation(enabled: boolean): void;
   onChangeJavaScriptTypeScriptVersion(
@@ -392,6 +401,7 @@ function GeneralSettings({
   onChangeAutoSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
+  onChangeJavaScriptTypeScriptCodeLens,
   onChangeJavaScriptTypeScriptInlayHints,
   onChangeJavaScriptTypeScriptService,
   onChangeJavaScriptTypeScriptValidation,
@@ -496,6 +506,18 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>JavaScript/TypeScript inlay hints</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.javaScriptTypeScriptCodeLens}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeJavaScriptTypeScriptCodeLens(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>JavaScript/TypeScript CodeLens</span>
       </label>
 
       <div className="settings-actions">

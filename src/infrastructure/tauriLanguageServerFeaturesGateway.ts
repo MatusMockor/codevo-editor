@@ -4,6 +4,7 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerCodeLens,
   type LanguageServerCompletionItem,
   type LanguageServerCompletionList,
   type LanguageServerDocumentHighlight,
@@ -38,6 +39,8 @@ const invokeCommand: InvokeCommand = (command, args) => invoke(command, args);
 const DEFAULT_FEATURE_COMMANDS = {
   codeActionResolve: "text_document_code_action_resolve",
   codeActions: "text_document_code_actions",
+  codeLensResolve: "text_document_code_lens_resolve",
+  codeLenses: "text_document_code_lenses",
   completion: "text_document_completion",
   completionResolve: "text_document_completion_resolve",
   definition: "text_document_definition",
@@ -66,6 +69,8 @@ const DEFAULT_FEATURE_COMMANDS = {
 export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   codeActionResolve: "javascript_typescript_text_document_code_action_resolve",
   codeActions: "javascript_typescript_text_document_code_actions",
+  codeLensResolve: "javascript_typescript_text_document_code_lens_resolve",
+  codeLenses: "javascript_typescript_text_document_code_lenses",
   completion: "javascript_typescript_text_document_completion",
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   definition: "javascript_typescript_text_document_definition",
@@ -95,6 +100,8 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
 export interface TauriLanguageServerFeatureCommands {
   codeActionResolve: string;
   codeActions: string;
+  codeLensResolve: string;
+  codeLenses: string;
   completion: string;
   completionResolve: string;
   definition: string;
@@ -366,6 +373,25 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.codeActionResolve,
       { action, rootPath },
       action,
+    );
+  }
+
+  codeLenses(rootPath: string, path: string): Promise<LanguageServerCodeLens[]> {
+    return this.invokeWhenAvailable(
+      this.commands.codeLenses,
+      { path, rootPath },
+      [],
+    );
+  }
+
+  resolveCodeLens(
+    rootPath: string,
+    lens: LanguageServerCodeLens,
+  ): Promise<LanguageServerCodeLens> {
+    return this.invokeWhenAvailable(
+      this.commands.codeLensResolve,
+      { lens, rootPath },
+      lens,
     );
   }
 

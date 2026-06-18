@@ -108,6 +108,14 @@ pub struct LanguageServerCodeAction {
     pub data: Option<Value>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerCodeLens {
+    pub range: LanguageServerRange,
+    pub command: Option<LanguageServerCodeActionCommand>,
+    pub data: Option<Value>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextDocumentRange {
@@ -353,6 +361,8 @@ pub trait TextDocumentFeatureRequestFactory {
         &self,
         action: &LanguageServerCodeAction,
     ) -> LanguageServerFeatureRequest;
+    fn code_lenses(&self, path: &str) -> LanguageServerFeatureRequest;
+    fn resolve_code_lens(&self, lens: &LanguageServerCodeLens) -> LanguageServerFeatureRequest;
     fn execute_command(
         &self,
         command: &LanguageServerCodeActionCommand,
@@ -573,6 +583,24 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         LanguageServerFeatureRequest {
             method: "codeAction/resolve".to_string(),
             params: json!(action),
+        }
+    }
+
+    fn code_lenses(&self, path: &str) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/codeLens".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(path)),
+                },
+            }),
+        }
+    }
+
+    fn resolve_code_lens(&self, lens: &LanguageServerCodeLens) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "codeLens/resolve".to_string(),
+            params: json!(lens),
         }
     }
 
@@ -1400,8 +1428,9 @@ mod tests {
         parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
         parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
         LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-        LanguageServerCompletionItem, LanguageServerCompletionItemLabelDetails,
-        LanguageServerCompletionList, LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
+        LanguageServerCodeLens, LanguageServerCompletionItem,
+        LanguageServerCompletionItemLabelDetails, LanguageServerCompletionList,
+        LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
         LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
@@ -1749,6 +1778,36 @@ mod tests {
         });
 
         assert_eq!(execute_without_arguments.params["arguments"], json!([]));
+    }
+
+    #[test]
+    fn code_lens_requests_are_serialized() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.code_lenses("/tmp/User.ts");
+
+        assert_eq!(request.method, "textDocument/codeLens");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+
+        let lens = LanguageServerCodeLens {
+            range: range(2, 4, 2, 10),
+            command: Some(LanguageServerCodeActionCommand {
+                title: "3 references".to_string(),
+                command: "editor.action.showReferences".to_string(),
+                arguments: Some(vec![json!("file:///tmp/User.ts")]),
+            }),
+            data: Some(json!({ "kind": "references" })),
+        };
+        let resolve = factory.resolve_code_lens(&lens);
+
+        assert_eq!(resolve.method, "codeLens/resolve");
+        assert_eq!(resolve.params["data"]["kind"], "references");
+        assert_eq!(
+            resolve.params["command"]["command"],
+            "editor.action.showReferences"
+        );
     }
 
     #[test]

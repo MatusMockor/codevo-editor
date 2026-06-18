@@ -12,6 +12,7 @@ describe("canUseLanguageServerFeature", () => {
   it("reads a feature flag from the provider capability registry", () => {
     const capabilities: LanguageServerCapabilities = {
       codeAction: false,
+      codeLens: false,
       completion: false,
       definition: true,
       documentHighlight: false,

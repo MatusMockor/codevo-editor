@@ -60,17 +60,17 @@ use lsp_features::{
     parse_inlay_hints_result, parse_optional_workspace_edit_result, parse_prepare_rename_result,
     parse_selection_ranges_result, parse_semantic_tokens_result, parse_signature_help_result,
     parse_workspace_edit_result, parse_workspace_symbols_result, LanguageServerCodeAction,
-    LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCompletionItem,
-    LanguageServerCompletionList, LanguageServerDocumentHighlight, LanguageServerDocumentLink,
-    LanguageServerDocumentSymbol, LanguageServerFoldingRange, LanguageServerFormattingOptions,
-    LanguageServerHover, LanguageServerInlayHint, LanguageServerLinkedEditingRanges,
-    LanguageServerLocation, LanguageServerPosition, LanguageServerPrepareRenameResult,
-    LanguageServerRange, LanguageServerSelectionRange, LanguageServerSemanticTokens,
-    LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerWorkspaceEdit,
-    LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory,
-    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-    TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
-    TextDocumentSelectionRange,
+    LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCodeLens,
+    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
+    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFoldingRange,
+    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInlayHint,
+    LanguageServerLinkedEditingRanges, LanguageServerLocation, LanguageServerPosition,
+    LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
+    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerTextEdit,
+    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
+    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
+    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
+    TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -517,6 +517,7 @@ fn build_javascript_typescript_language_server_plan(
     root_path: &str,
     type_script_version_preference: Option<&str>,
     auto_imports_enabled: Option<bool>,
+    code_lens_enabled: Option<bool>,
     inlay_hints_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     let root = PathBuf::from(root_path);
@@ -524,6 +525,7 @@ fn build_javascript_typescript_language_server_plan(
         javascript_typescript_tool_preference_from_setting(type_script_version_preference);
     let settings = TypeScriptLanguageServerSettings {
         auto_imports: auto_imports_enabled.unwrap_or(true),
+        code_lens: code_lens_enabled.unwrap_or(false),
         inlay_hints: inlay_hints_enabled.unwrap_or(true),
     };
     let tools = LocalJavaScriptTypeScriptToolDetector
@@ -555,12 +557,14 @@ fn plan_javascript_typescript_language_server(
     root_path: String,
     type_script_version_preference: Option<String>,
     auto_imports_enabled: Option<bool>,
+    code_lens_enabled: Option<bool>,
     inlay_hints_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     build_javascript_typescript_language_server_plan(
         &root_path,
         type_script_version_preference.as_deref(),
         auto_imports_enabled,
+        code_lens_enabled,
         inlay_hints_enabled,
     )
 }
@@ -798,6 +802,7 @@ fn start_javascript_typescript_language_server(
     root_path: String,
     type_script_version_preference: Option<String>,
     auto_imports_enabled: Option<bool>,
+    code_lens_enabled: Option<bool>,
     inlay_hints_enabled: Option<bool>,
     app: AppHandle,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -806,6 +811,7 @@ fn start_javascript_typescript_language_server(
         &root_path,
         type_script_version_preference.as_deref(),
         auto_imports_enabled,
+        code_lens_enabled,
         inlay_hints_enabled,
     )?;
 
@@ -1378,6 +1384,70 @@ fn javascript_typescript_text_document_code_action_resolve(
 
     serde_json::from_value::<LanguageServerCodeAction>(result)
         .map_err(|error| format!("Language server returned a malformed code action: {error}"))
+}
+
+#[tauri::command]
+fn text_document_code_lenses(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerCodeLens>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.code_lenses(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    serde_json::from_value::<Vec<LanguageServerCodeLens>>(result)
+        .map_err(|error| format!("Language server returned malformed code lenses: {error}"))
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_code_lenses(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerCodeLens>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.code_lenses(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    serde_json::from_value::<Vec<LanguageServerCodeLens>>(result)
+        .map_err(|error| format!("Language server returned malformed code lenses: {error}"))
+}
+
+#[tauri::command]
+fn text_document_code_lens_resolve(
+    root_path: String,
+    lens: LanguageServerCodeLens,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<LanguageServerCodeLens, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.resolve_code_lens(&lens);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(lens);
+    };
+
+    serde_json::from_value::<LanguageServerCodeLens>(result)
+        .map_err(|error| format!("Language server returned a malformed code lens: {error}"))
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_code_lens_resolve(
+    root_path: String,
+    lens: LanguageServerCodeLens,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<LanguageServerCodeLens, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.resolve_code_lens(&lens);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(lens);
+    };
+
+    serde_json::from_value::<LanguageServerCodeLens>(result)
+        .map_err(|error| format!("Language server returned a malformed code lens: {error}"))
 }
 
 #[tauri::command]
@@ -2028,6 +2098,8 @@ pub fn run() {
             javascript_typescript_language_server_execute_command,
             javascript_typescript_text_document_code_action_resolve,
             javascript_typescript_text_document_code_actions,
+            javascript_typescript_text_document_code_lens_resolve,
+            javascript_typescript_text_document_code_lenses,
             javascript_typescript_text_document_completion,
             javascript_typescript_text_document_completion_resolve,
             javascript_typescript_text_document_definition,
@@ -2053,6 +2125,8 @@ pub fn run() {
             language_server_execute_command,
             text_document_code_action_resolve,
             text_document_code_actions,
+            text_document_code_lens_resolve,
+            text_document_code_lenses,
             text_document_completion,
             text_document_completion_resolve,
             text_document_definition,

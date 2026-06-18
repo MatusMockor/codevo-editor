@@ -6,6 +6,7 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerCodeLens,
   type LanguageServerCompletionItem,
   type LanguageServerCompletionTextEdit,
   type LanguageServerDocumentHighlight,
@@ -42,6 +43,11 @@ type WorkspaceEditContext = {
 interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __languageServerAction?: LanguageServerCodeAction;
   __workspaceEditContext?: WorkspaceEditContext;
+  __workspaceRoot?: string;
+}
+
+interface LanguageServerBackedCodeLens extends Monaco.languages.CodeLens {
+  __languageServerCodeLens?: LanguageServerCodeLens;
   __workspaceRoot?: string;
 }
 
@@ -270,6 +276,16 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
             ],
           },
         ),
+      );
+    }
+
+    if (registry.registerCodeLensProvider) {
+      disposables.push(
+        registry.registerCodeLensProvider(language, {
+          provideCodeLenses: (model) => provideCodeLenses(monaco, context, model),
+          resolveCodeLens: (_model, codeLens) =>
+            resolveCodeLens(monaco, context, codeLens),
+        }),
       );
     }
 
@@ -952,6 +968,66 @@ async function resolveCodeAction(
   }
 }
 
+async function provideCodeLenses(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+): Promise<Monaco.languages.CodeLensList> {
+  const request = documentRequestContext(context, model, "codeLens");
+
+  if (!request) {
+    return emptyCodeLensList();
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const lenses = await context.featuresGateway.codeLenses(
+      request.rootPath,
+      request.path,
+    );
+
+    return {
+      lenses: lenses.map((lens) =>
+        toMonacoCodeLens(monaco, request.rootPath, lens),
+      ),
+      dispose: () => undefined,
+    };
+  } catch (error) {
+    context.reportError(error);
+    return emptyCodeLensList();
+  }
+}
+
+async function resolveCodeLens(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  codeLens: Monaco.languages.CodeLens,
+): Promise<Monaco.languages.CodeLens> {
+  const backedCodeLens = codeLens as LanguageServerBackedCodeLens;
+
+  if (
+    !backedCodeLens.__languageServerCodeLens ||
+    !backedCodeLens.__workspaceRoot
+  ) {
+    return codeLens;
+  }
+
+  try {
+    const resolved = await context.featuresGateway.resolveCodeLens(
+      backedCodeLens.__workspaceRoot,
+      backedCodeLens.__languageServerCodeLens,
+    );
+
+    return {
+      ...codeLens,
+      ...toMonacoCodeLens(monaco, backedCodeLens.__workspaceRoot, resolved),
+    };
+  } catch (error) {
+    context.reportError(error);
+    return codeLens;
+  }
+}
+
 async function provideDocumentFormattingEdits(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -1090,6 +1166,7 @@ function documentRequestContext(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   feature:
+    | "codeLens"
     | "codeAction"
     | "documentLink"
     | "foldingRange"
@@ -1203,6 +1280,97 @@ function toMonacoDocumentHighlightKind(
   }
 
   return monaco.languages.DocumentHighlightKind.Text;
+}
+
+function toMonacoCodeLens(
+  monaco: MonacoApi,
+  rootPath: string,
+  lens: LanguageServerCodeLens,
+): LanguageServerBackedCodeLens {
+  return {
+    __languageServerCodeLens: lens,
+    __workspaceRoot: rootPath,
+    ...(lens.command
+      ? { command: toMonacoCodeLensCommand(monaco, rootPath, lens.command) }
+      : {}),
+    range: toMonacoRange(monaco, lens.range),
+  };
+}
+
+function toMonacoCodeLensCommand(
+  monaco: MonacoApi,
+  rootPath: string,
+  command: LanguageServerCodeActionCommand,
+): Monaco.languages.Command {
+  if (command.command === "editor.action.showReferences") {
+    return {
+      arguments: toShowReferencesArguments(monaco, command.arguments ?? []),
+      id: command.command,
+      title: command.title,
+    };
+  }
+
+  return {
+    arguments: [
+      {
+        command,
+        rootPath,
+      } satisfies ExecuteCommandPayload,
+    ],
+    id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
+    title: command.title || command.command,
+  };
+}
+
+function toShowReferencesArguments(
+  monaco: MonacoApi,
+  args: unknown[],
+): unknown[] {
+  if (args.length < 3) {
+    return args;
+  }
+
+  const [uri, position, locations, ...rest] = args;
+
+  return [
+    typeof uri === "string"
+      ? languageServerUriToMonacoUri(monaco, uri)
+      : uri,
+    toMonacoPositionLike(position),
+    Array.isArray(locations)
+      ? toMonacoLocations(monaco, locations as LanguageServerLocation[])
+      : locations,
+    ...rest,
+  ];
+}
+
+function languageServerUriToMonacoUri(monaco: MonacoApi, uri: string): unknown {
+  const path = pathFromLanguageServerUri(uri);
+
+  return path ? monaco.Uri.file(path) : uri;
+}
+
+function toMonacoPositionLike(position: unknown): unknown {
+  if (
+    position &&
+    typeof position === "object" &&
+    "line" in position &&
+    "character" in position
+  ) {
+    const value = position as { character: unknown; line: unknown };
+
+    if (
+      typeof value.line === "number" &&
+      typeof value.character === "number"
+    ) {
+      return {
+        column: value.character + 1,
+        lineNumber: value.line + 1,
+      };
+    }
+  }
+
+  return position;
 }
 
 function flattenSelectionRange(
@@ -1447,6 +1615,13 @@ function emptyCodeActionList(): Monaco.languages.CodeActionList {
   return {
     actions: [],
     dispose: () => undefined,
+  };
+}
+
+function emptyCodeLensList(): Monaco.languages.CodeLensList {
+  return {
+    dispose: () => undefined,
+    lenses: [],
   };
 }
 

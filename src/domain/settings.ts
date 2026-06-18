@@ -46,6 +46,7 @@ export interface WorkspaceSettings {
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
   javaScriptTypeScriptAutoImports: boolean;
+  javaScriptTypeScriptCodeLens: boolean;
   javaScriptTypeScriptInlayHints: boolean;
   javaScriptTypeScriptService: JavaScriptTypeScriptServiceMode;
   javaScriptTypeScriptValidation: boolean;
@@ -105,6 +106,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     intelligenceMode: "basic",
     intelephensePath: null,
     javaScriptTypeScriptAutoImports: true,
+    javaScriptTypeScriptCodeLens: false,
     javaScriptTypeScriptInlayHints: true,
     javaScriptTypeScriptService: "auto",
     javaScriptTypeScriptValidation: true,
@@ -198,6 +200,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     javaScriptTypeScriptAutoImports: normalizeBoolean(
       value.javaScriptTypeScriptAutoImports,
       defaults.javaScriptTypeScriptAutoImports,
+    ),
+    javaScriptTypeScriptCodeLens: normalizeBoolean(
+      value.javaScriptTypeScriptCodeLens,
+      defaults.javaScriptTypeScriptCodeLens,
     ),
     javaScriptTypeScriptInlayHints: normalizeBoolean(
       value.javaScriptTypeScriptInlayHints,

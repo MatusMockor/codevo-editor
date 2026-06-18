@@ -46,6 +46,7 @@ describe("languageServerCapabilities", () => {
   it("returns running capabilities or an empty registry", () => {
     expect(languageServerCapabilities(status("running"))).toEqual({
       codeAction: true,
+      codeLens: true,
       completion: true,
       definition: true,
       documentHighlight: true,
@@ -97,6 +98,7 @@ describe("languageServerCapabilities", () => {
       "type definition",
       "workspace symbols",
       "code actions",
+      "code lens",
       "formatting",
     ]);
     expect(languageServerCapabilityLabels(status("starting"))).toEqual([]);
@@ -113,6 +115,7 @@ function status(
         sessionId: 1,
         capabilities: {
           codeAction: true,
+          codeLens: true,
           completion: true,
           definition: true,
           documentHighlight: true,

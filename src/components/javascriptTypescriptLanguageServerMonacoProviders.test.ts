@@ -42,13 +42,14 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerLinkedEditingRangeProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerCodeLensProvider).toHaveBeenCalledTimes(2);
     expect(
       monaco.languages.registerDocumentSemanticTokensProvider,
     ).toHaveBeenCalledTimes(2);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(37);
+    expect(monaco.dispose).toHaveBeenCalledTimes(39);
   });
 
   it("maps TypeScript document links and lazy resolution", async () => {
@@ -187,6 +188,86 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         }),
       ],
       wordPattern: /[A-Za-z][A-Za-z0-9]*/,
+    });
+  });
+
+  it("maps TypeScript CodeLens references through Monaco commands", async () => {
+    const monaco = createMonaco();
+    const lens = {
+      command: null,
+      data: { kind: "references" },
+      range: range(2, 1, 2, 12),
+    };
+    const gateway = featuresGateway({
+      codeLenses: [lens],
+      resolvedCodeLens: {
+        ...lens,
+        command: {
+          arguments: [
+            "file:///project/src/user.ts",
+            { character: 2, line: 2 },
+            [
+              {
+                range: range(4, 3, 4, 8),
+                uri: "file:///project/src/user.ts",
+              },
+            ],
+          ],
+          command: "editor.action.showReferences",
+          title: "1 reference",
+        },
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+
+    const provider = (monaco.languages.registerCodeLensProvider as any).mock
+      .calls[0][1];
+    const provided = await provider.provideCodeLenses(model);
+
+    expect(gateway.codeLenses).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+    );
+    expect(provided.lenses).toHaveLength(1);
+    expect(provided.lenses[0]).toEqual(
+      expect.objectContaining({
+        range: expect.objectContaining({
+          endColumn: 13,
+          endLineNumber: 3,
+          startColumn: 2,
+          startLineNumber: 3,
+        }),
+      }),
+    );
+
+    const resolved = await provider.resolveCodeLens(model, provided.lenses[0]);
+
+    expect(gateway.resolveCodeLens).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({
+        data: { kind: "references" },
+      }),
+    );
+    expect(resolved.command).toEqual({
+      arguments: [
+        { fsPath: "/project/src/user.ts", path: "/project/src/user.ts" },
+        { column: 3, lineNumber: 3 },
+        [
+          {
+            range: expect.objectContaining({
+              endColumn: 9,
+              endLineNumber: 5,
+              startColumn: 4,
+              startLineNumber: 5,
+            }),
+            uri: { fsPath: "/project/src/user.ts", path: "/project/src/user.ts" },
+          },
+        ],
+      ],
+      id: "editor.action.showReferences",
+      title: "1 reference",
     });
   });
 
@@ -1062,6 +1143,7 @@ function providerContext(
 function featuresGateway(
   responses: Partial<{
     codeActions: Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>;
+    codeLenses: Awaited<ReturnType<LanguageServerFeaturesGateway["codeLenses"]>>;
     completion: Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>;
     documentHighlights: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>
@@ -1107,6 +1189,9 @@ function featuresGateway(
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
     >;
+    resolvedCodeLens: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["resolveCodeLens"]>
+    >;
     resolvedCompletionItem: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCompletionItem"]>
     >;
@@ -1117,6 +1202,7 @@ function featuresGateway(
 ): LanguageServerFeaturesGateway {
   return {
     codeActions: vi.fn(async () => responses.codeActions ?? []),
+    codeLenses: vi.fn(async () => responses.codeLenses ?? []),
     completion: vi.fn(
       async () =>
         responses.completion ?? {
@@ -1154,6 +1240,9 @@ function featuresGateway(
     resolveCodeAction: vi.fn(
       async (_rootPath, action) => responses.resolvedCodeAction ?? action,
     ),
+    resolveCodeLens: vi.fn(
+      async (_rootPath, lens) => responses.resolvedCodeLens ?? lens,
+    ),
     resolveDocumentLink: vi.fn(
       async (_rootPath, link) => responses.resolvedDocumentLink ?? link,
     ),
@@ -1166,6 +1255,7 @@ function runningStatus(
   return {
     capabilities: {
       codeAction: true,
+      codeLens: true,
       completion: true,
       definition: true,
       documentHighlight: true,
@@ -1318,6 +1408,7 @@ function createMonaco() {
         Type: 1,
       },
       registerCodeActionProvider: vi.fn(() => disposable()),
+      registerCodeLensProvider: vi.fn(() => disposable()),
       registerCompletionItemProvider: vi.fn(() => disposable()),
       registerDefinitionProvider: vi.fn(() => disposable()),
       registerDocumentHighlightProvider: vi.fn(() => disposable()),
