@@ -585,7 +585,7 @@ function phpLaravelCastAttributes(source: string): Array<[string, string | null]
       return [
         [
           attribute,
-          phpLaravelCastReturnType(item.slice(arrowIndex + 2)),
+          phpLaravelCastReturnType(source, item.slice(arrowIndex + 2)),
         ] satisfies [string, string | null],
       ];
     }),
@@ -668,7 +668,19 @@ function phpArrayAssignmentBodies(source: string, propertyName: string): string[
   return bodies;
 }
 
-function phpLaravelCastReturnType(castExpression: string): string | null {
+function phpLaravelCastReturnType(
+  source: string,
+  castExpression: string,
+): string | null {
+  const classConstantType = phpLaravelCastClassConstantType(
+    source,
+    castExpression,
+  );
+
+  if (classConstantType) {
+    return classConstantType;
+  }
+
   const normalized = normalizeWhitespace(
     phpStringLiteralValue(castExpression) ?? castExpression,
   )
@@ -725,6 +737,21 @@ function phpLaravelCastReturnType(castExpression: string): string | null {
   }
 
   return "mixed";
+}
+
+function phpLaravelCastClassConstantType(
+  source: string,
+  castExpression: string,
+): string | null {
+  const match =
+    /^\s*(\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*\s*::\s*class\b/.exec(
+      castExpression,
+    );
+  const className = match?.[0]
+    ?.replace(/\s*::\s*class\b.*/i, "")
+    .trim();
+
+  return className ? resolvePhpClassName(source, className) : null;
 }
 
 function phpLaravelDefaultAttributeReturnType(

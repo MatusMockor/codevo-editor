@@ -4294,6 +4294,7 @@ if (path === commentPath) {
 namespace Kontentino\\Communication\\Models;
 
 use Illuminate\\Database\\Eloquent\\Casts\\Attribute;
+use Kontentino\\Communication\\Enums\\CommentType;
 
 /**
  * @property string $body
@@ -4321,6 +4322,7 @@ class Comment
     protected array $casts = [
         'is_pinned' => 'bool',
         'meta' => 'array',
+        'type' => CommentType::class,
     ];
 
     public string $status;
@@ -4466,7 +4468,7 @@ class Comment
         kind: "property",
         name: "type",
         parameters: "",
-        returnType: "mixed",
+        returnType: "Kontentino\\Communication\\Enums\\CommentType",
       },
       {
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",

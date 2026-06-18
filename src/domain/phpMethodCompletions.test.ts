@@ -675,6 +675,7 @@ class Comment
     expect(
       phpMethodCompletionsFromSource(
         `<?php
+use App\\Enums\\CommentType;
 use Illuminate\\Database\\Eloquent\\Model;
 
 class Comment extends Model
@@ -700,6 +701,7 @@ class Comment extends Model
         'score' => 'integer',
         'price' => 'decimal:2',
         'content' => 'string',
+        'type' => CommentType::class,
     ];
 }
 `,
@@ -796,6 +798,13 @@ class Comment extends Model
         name: "price",
         parameters: "",
         returnType: "string",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "type",
+        parameters: "",
+        returnType: "App\\Enums\\CommentType",
       },
     ]);
   });
