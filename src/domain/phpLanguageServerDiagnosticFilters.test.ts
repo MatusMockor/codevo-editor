@@ -268,6 +268,51 @@ trait SoftDeletes
     ).toEqual([]);
   });
 
+  it("recognizes alternate PHPactor trait host-method diagnostic wording", () => {
+    const source = `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+trait SoftDeletes
+{
+    public function forceDelete()
+    {
+        $this->fireModelEvent('forceDeleting');
+    }
+}
+`;
+    const contexts = new Set([
+      phpTraitHostMethodDiagnosticKey(
+        "Illuminate\\Database\\Eloquent\\SoftDeletes",
+        "fireModelEvent",
+      ),
+    ]);
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          diagnostic({
+            character: 15,
+            line: 7,
+            message:
+              'Undefined method "fireModelEvent" on trait "Illuminate\\Database\\Eloquent\\SoftDeletes"',
+          }),
+          diagnostic({
+            character: 15,
+            line: 7,
+            message:
+              'Trait "Illuminate\\Database\\Eloquent\\SoftDeletes" has no method "fireModelEvent"',
+          }),
+        ],
+        {
+          contextualTraitHostMethods: contexts,
+          path:
+            "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
+        },
+      ),
+    ).toEqual([]);
+  });
+
   it("keeps PHPactor trait diagnostics outside dependency folders", () => {
     const source = `<?php
 trait BrokenTrait

@@ -171,12 +171,11 @@ export function phpTraitHostMethodDiagnosticContext(
     return null;
   }
 
-  const match =
-    /\bmethod\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s+does not exist on trait\s+["']?([^"']+)["']?/i.exec(
-      diagnostic.message,
-    );
-  const methodName = match?.[1]?.trim() ?? "";
-  const traitName = match?.[2]?.trim().replace(/^\\+/, "") ?? "";
+  const context = traitHostMethodDiagnosticContextFromMessage(
+    diagnostic.message,
+  );
+  const methodName = context?.methodName ?? "";
+  const traitName = context?.traitName ?? "";
 
   if (!methodName || !traitName) {
     return null;
@@ -198,6 +197,34 @@ export function phpTraitHostMethodDiagnosticContext(
     methodName,
     traitName,
   };
+}
+
+function traitHostMethodDiagnosticContextFromMessage(
+  message: string,
+): PhpTraitHostMethodDiagnosticContext | null {
+  const methodFirstPatterns = [
+    /\bmethod\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s+does not exist on trait\s+["']?([^"']+)["']?/i,
+    /\bundefined\s+method\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s+on trait\s+["']?([^"']+)["']?/i,
+  ];
+
+  for (const pattern of methodFirstPatterns) {
+    const match = pattern.exec(message);
+    const methodName = match?.[1]?.trim() ?? "";
+    const traitName = match?.[2]?.trim().replace(/^\\+/, "") ?? "";
+
+    if (methodName && traitName) {
+      return { methodName, traitName };
+    }
+  }
+
+  const traitFirstMatch =
+    /\btrait\s+["']?([^"']+)["']?\s+(?:has no|does not have)\s+method\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?/i.exec(
+      message,
+    );
+  const traitName = traitFirstMatch?.[1]?.trim().replace(/^\\+/, "") ?? "";
+  const methodName = traitFirstMatch?.[2]?.trim() ?? "";
+
+  return methodName && traitName ? { methodName, traitName } : null;
 }
 
 export function phpUnresolvedStaticMethodDiagnosticContext(
