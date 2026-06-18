@@ -3976,6 +3976,7 @@ export function useWorkbenchController(
           normalizedClassName,
         ),
       );
+      let hasIndexedPath = false;
 
       if (shouldIndexWorkspace(intelligenceMode)) {
         const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
@@ -3994,11 +3995,12 @@ export function useWorkbenchController(
             continue;
           }
 
+          hasIndexedPath = true;
           paths.add(symbol.path);
         }
       }
 
-      if (paths.size === 0) {
+      if (paths.size === 0 || !hasIndexedPath) {
         const cacheKey = normalizedClassName.toLowerCase();
         const cachedPaths = phpClassSourcePathCacheRef.current[cacheKey];
         const fallbackPaths =

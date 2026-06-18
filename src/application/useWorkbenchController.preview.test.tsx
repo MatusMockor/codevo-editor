@@ -5038,6 +5038,111 @@ class Comment
     expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
   });
 
+  it("uses filename lookup when Composer PSR-4 points at a missing model path", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
+    const expectedPsrModelPath = "/workspace/app/Models/Comment.php";
+    const actualModelPath = "/workspace/packages/domain/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\CommentRepository;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepository $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $comment = $this->commentRepository->findOrFail(1);
+        $comment->get
+    }
+}
+`;
+    const searchFiles = vi.fn(
+      async (_root: string, query: string): Promise<FileSearchResult[]> => {
+        if (query === "Comment.php") {
+          return [
+            {
+              name: "Comment.php",
+              path: actualModelPath,
+              relativePath: "packages/domain/Models/Comment.php",
+            },
+          ];
+        }
+
+        return [];
+      },
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === repositoryPath) {
+        return `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Comment;
+
+class CommentRepository
+{
+    public function findOrFail(int $id): Comment {}
+}
+`;
+      }
+
+      if (path === expectedPsrModelPath) {
+        throw new Error("missing PSR-4 model path");
+      }
+
+      if (path === actualModelPath) {
+        return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [],
+      readTextFile,
+      searchFiles,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    expect(readTextFile).toHaveBeenCalledWith(expectedPsrModelPath);
+    expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
+  });
+
   it("opens Laravel database connection methods inferred from return expressions", async () => {
     const localUserPath = "/workspace/app/Models/LocalUser.php";
     const userAccountPath = "/workspace/app/Models/UserAccount.php";
