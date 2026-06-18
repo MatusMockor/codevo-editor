@@ -684,6 +684,15 @@ class Comment extends Model
         'parent_id',
     ];
 
+    protected $attributes = [
+        'is_visible' => true,
+        'attempts' => 0,
+        'score_ratio' => 1.5,
+        'label' => 'draft',
+        'settings' => [],
+        'nullable_note' => null,
+    ];
+
     protected array $casts = [
         'is_pinned' => 'bool',
         'meta' => 'array',
@@ -708,6 +717,48 @@ class Comment extends Model
         declaringClassName: "Comment",
         kind: "property",
         name: "parent_id",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "is_visible",
+        parameters: "",
+        returnType: "bool",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "attempts",
+        parameters: "",
+        returnType: "int",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "score_ratio",
+        parameters: "",
+        returnType: "float",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "label",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "settings",
+        parameters: "",
+        returnType: "array",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "nullable_note",
         parameters: "",
         returnType: "mixed",
       },

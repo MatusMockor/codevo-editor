@@ -425,6 +425,10 @@ export function phpLaravelModelAttributeCompletionsFromSource(
     attributes.set(attribute, "mixed");
   }
 
+  for (const [attribute, returnType] of phpLaravelDefaultAttributes(source)) {
+    attributes.set(attribute, returnType);
+  }
+
   for (const attribute of phpLaravelAppendedAttributes(source)) {
     attributes.set(attribute, "mixed");
   }
@@ -533,6 +537,33 @@ function phpLaravelAppendedAttributes(source: string): string[] {
     splitPhpParameterList(body)
       .map((item) => phpStringLiteralValue(item))
       .filter(isPhpAttributeName),
+  );
+}
+
+function phpLaravelDefaultAttributes(
+  source: string,
+): Array<[string, string | null]> {
+  return phpArrayAssignmentBodies(source, "attributes").flatMap((body) =>
+    splitPhpParameterList(body).flatMap((item) => {
+      const arrowIndex = topLevelArrayArrowIndex(item);
+
+      if (arrowIndex < 0) {
+        return [];
+      }
+
+      const attribute = phpStringLiteralValue(item.slice(0, arrowIndex));
+
+      if (!isPhpAttributeName(attribute)) {
+        return [];
+      }
+
+      return [
+        [
+          attribute,
+          phpLaravelDefaultAttributeReturnType(item.slice(arrowIndex + 2)),
+        ] satisfies [string, string | null],
+      ];
+    }),
   );
 }
 
@@ -691,6 +722,42 @@ function phpLaravelCastReturnType(castExpression: string): string | null {
 
   if (normalized.includes("asstringable") || normalized.includes("stringable")) {
     return "\\Illuminate\\Support\\Stringable";
+  }
+
+  return "mixed";
+}
+
+function phpLaravelDefaultAttributeReturnType(
+  valueExpression: string,
+): string | null {
+  const value = valueExpression.trim();
+
+  if (!value) {
+    return "mixed";
+  }
+
+  if (phpStringLiteralValue(value) !== null) {
+    return "string";
+  }
+
+  if (/^(?:true|false)$/i.test(value)) {
+    return "bool";
+  }
+
+  if (/^-?\d+$/.test(value)) {
+    return "int";
+  }
+
+  if (/^-?(?:\d+\.\d+|\d+e[+-]?\d+)$/i.test(value)) {
+    return "float";
+  }
+
+  if (/^null$/i.test(value)) {
+    return "mixed";
+  }
+
+  if (/^(?:\[|array\s*\()/i.test(value)) {
+    return "array";
   }
 
   return "mixed";

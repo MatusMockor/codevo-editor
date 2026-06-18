@@ -4313,6 +4313,11 @@ class Comment
         'thread',
     ];
 
+    protected $attributes = [
+        'is_visible' => true,
+        'label' => 'draft',
+    ];
+
     protected array $casts = [
         'is_pinned' => 'bool',
         'meta' => 'array',
@@ -4392,6 +4397,20 @@ class Comment
         name: "is_pinned",
         parameters: "",
         returnType: "bool",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "is_visible",
+        parameters: "",
+        returnType: "bool",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "label",
+        parameters: "",
+        returnType: "string",
       },
       {
         declaringClassName: "Kontentino\\Communication\\Models\\Comment",
