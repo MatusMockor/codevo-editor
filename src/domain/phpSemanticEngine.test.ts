@@ -8,6 +8,7 @@ import {
   phpMethodCallExpression,
   phpMethodReturnExpressions,
   phpNewExpressionClassName,
+  phpPropertyAccessExpression,
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
   phpThisPropertyType,
@@ -112,6 +113,16 @@ class CommentController
     ).toEqual({
       methodName: "first",
       receiverExpression: "Album::query()->whereNull('parent_id')",
+    });
+    expect(phpPropertyAccessExpression("$comment->parent")).toEqual({
+      propertyName: "parent",
+      receiverExpression: "$comment",
+    });
+    expect(
+      phpPropertyAccessExpression("$comment->parent()->first()->author"),
+    ).toEqual({
+      propertyName: "author",
+      receiverExpression: "$comment->parent()->first()",
     });
     expect(phpStaticCallExpression("CommentFactory::make()")).toEqual({
       className: "CommentFactory",

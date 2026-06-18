@@ -11,6 +11,11 @@ export interface PhpStaticCallExpression {
   methodName: string;
 }
 
+export interface PhpPropertyAccessExpression {
+  propertyName: string;
+  receiverExpression: string;
+}
+
 export function phpCurrentClassName(source: string): string | null {
   const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
     source,
@@ -148,6 +153,27 @@ export function phpMethodCallExpression(
 
   return {
     methodName: match[2],
+    receiverExpression: normalizeReceiverExpression(match[1]),
+  };
+}
+
+export function phpPropertyAccessExpression(
+  expression: string,
+): PhpPropertyAccessExpression | null {
+  const classNamePattern =
+    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+  const baseReceiverPattern =
+    String.raw`(?:new\s+${classNamePattern}\s*\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$this|${classNamePattern}\s*::\s*[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\))`;
+  const match = new RegExp(
+    `^(${baseReceiverPattern}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*$`,
+  ).exec(expression.trim());
+
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+
+  return {
+    propertyName: match[2],
     receiverExpression: normalizeReceiverExpression(match[1]),
   };
 }

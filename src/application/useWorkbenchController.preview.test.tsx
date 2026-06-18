@@ -1877,6 +1877,184 @@ class Comment
     ]);
   });
 
+  it("infers Laravel relation model completions from property and relation chains", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
+    const commentPath =
+      "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\communication;
+
+use App\\Http\\Requests\\GetOneCommentRequest;
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->parent->get
+
+        $parent = $comment->parent()->first();
+        $parent->getContent();
+
+        $child = $comment->children()->get()->first();
+        $child->get
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName:
+            "Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface",
+          kind: "interface",
+          lineNumber: 7,
+          name: "CommentRepositoryInterface",
+          path: repositoryInterfacePath,
+          relativePath:
+            "app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "Kontentino\\Communication\\Models\\Comment",
+          kind: "class",
+          lineNumber: 7,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Kontentino/src/Communication/Models/Comment.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace Kontentino\\Communication\\Interfaces;
+
+use Kontentino\\Communication\\Models\\Comment;
+
+interface CommentRepositoryInterface
+{
+    public function findOrFail(int $id): Comment;
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Comment
+{
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(Comment::class, 'parent_id');
+    }
+
+    public function children(): HasMany
+    {
+        return $this->hasMany(Comment::class, 'parent_id');
+    }
+
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->parent->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$parent->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$child->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$parent->getContent"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(commentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentPath,
+      position: {
+        column: 21,
+        lineNumber: 19,
+      },
+    });
+  });
+
   it("opens inherited Laravel model methods from repository model assignments", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =
