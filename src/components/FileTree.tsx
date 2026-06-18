@@ -188,6 +188,10 @@ export function FileTree({
     updateViewportHeight();
     const animationFrame = requestAnimationFrame(updateViewportHeight);
 
+    if (typeof ResizeObserver === "undefined") {
+      return () => cancelAnimationFrame(animationFrame);
+    }
+
     const resizeObserver = new ResizeObserver(updateViewportHeight);
     resizeObserver.observe(container);
     if (container.parentElement) {
