@@ -244,6 +244,157 @@ describe("useWorkbenchController preview tabs", () => {
     ]);
   });
 
+  it("keeps an existing Git diff preview open when the same change is previewed again", async () => {
+    const change = gitChangedFile("assets/spinner.gif", false);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "plaintext",
+        modifiedContent: "new",
+        originalContent: "old",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+    const diffPath = getWorkbench().activePath!;
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+
+    expect(getWorkbench().activePath).toBe(diffPath);
+    expect(getWorkbench().previewPath).toBe(diffPath);
+    expect(getWorkbench().selectedGitChange).toEqual(change);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({ change }),
+    );
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({ path: diffPath }),
+    ]);
+  });
+
+  it("clears the Git diff view when its editor tab is closed", async () => {
+    const change = gitChangedFile("assets/spinner.gif", false);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "plaintext",
+        modifiedContent: "new",
+        originalContent: "old",
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [change],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+    const diffPath = getWorkbench().activePath!;
+
+    act(() => {
+      getWorkbench().closeDocument(diffPath);
+    });
+
+    expect(getWorkbench().selectedGitChange).toBeNull();
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+    expect(getWorkbench().openDocuments).toEqual([]);
+  });
+
+  it("loads the next Git diff when closing the active diff tab", async () => {
+    const firstChange = gitChangedFile("src/First.php", false);
+    const secondChange = gitChangedFile("src/Second.php", false);
+    const gitGateway: GitGateway = {
+      commit: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      push: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      getDiff: vi.fn(async (_rootPath, requestedChange) => ({
+        change: requestedChange,
+        language: "php",
+        modifiedContent: `new ${requestedChange.relativePath}`,
+        originalContent: `old ${requestedChange.relativePath}`,
+      })),
+      getStatus: vi.fn(async (rootPath) => ({
+        branch: "main",
+        changes: [firstChange, secondChange],
+        isRepository: true,
+        rootPath,
+      })),
+      revertFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+      unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitChange(firstChange);
+    });
+    const firstDiffPath = getWorkbench().activePath!;
+    await act(async () => {
+      await getWorkbench().openGitChange(secondChange);
+    });
+    const secondDiffPath = getWorkbench().activePath!;
+
+    act(() => {
+      getWorkbench().closeDocument(secondDiffPath);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activePath).toBe(firstDiffPath);
+    expect(getWorkbench().selectedGitChange).toEqual(firstChange);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({
+        change: firstChange,
+        modifiedContent: "new src/First.php",
+        originalContent: "old src/First.php",
+      }),
+    );
+  });
+
   it("reloads a pinned Git diff when its tab is activated again", async () => {
     const change = gitChangedFile("assets/spinner.gif", false);
     const file = fileEntry("/workspace/src/User.php", "User.php");

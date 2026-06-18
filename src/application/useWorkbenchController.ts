@@ -2295,15 +2295,12 @@ export function useWorkbenchController(
     await refreshDirectory(workspaceRoot);
   }, [refreshDirectory, workspaceRoot]);
 
-  const activateDocument = useCallback(
-    (path: string) => {
-      if (activePath === path) {
+  const loadGitDiffDocument = useCallback(
+    (path: string, gitChange: GitChangedFile) => {
+      if (!workspaceRoot) {
         return;
       }
 
-      const gitChange = gitChangeForDiffDocumentPath(path, gitStatus.changes);
-
-      if (gitChange && workspaceRoot) {
         const requestedRoot = workspaceRoot;
         const requestToken = gitDiffRequestTokenRef.current + 1;
         gitDiffRequestTokenRef.current = requestToken;
@@ -2347,6 +2344,20 @@ export function useWorkbenchController(
 
             setGitDiffLoading(false);
           });
+    },
+    [gitGateway, recordCurrentNavigationLocation, reportError, workspaceRoot],
+  );
+
+  const activateDocument = useCallback(
+    (path: string) => {
+      if (activePath === path) {
+        return;
+      }
+
+      const gitChange = gitChangeForDiffDocumentPath(path, gitStatus.changes);
+
+      if (gitChange) {
+        loadGitDiffDocument(path, gitChange);
         return;
       }
 
@@ -2357,11 +2368,9 @@ export function useWorkbenchController(
     },
     [
       activePath,
-      gitGateway,
       gitStatus.changes,
+      loadGitDiffDocument,
       recordCurrentNavigationLocation,
-      reportError,
-      workspaceRoot,
     ],
   );
 
@@ -2742,7 +2751,8 @@ export function useWorkbenchController(
           openPaths,
           previewPath,
         );
-        const replacedPath = replacement?.path ?? null;
+        const replacedPath =
+          replacement && replacement.path !== documentPath ? replacement.path : null;
         const document: EditorDocument = {
           path: documentPath,
           name: gitDiffDocumentName(change),
@@ -2751,7 +2761,7 @@ export function useWorkbenchController(
           language: diff.language,
         };
 
-        if (replacement) {
+        if (replacement && replacement.path !== documentPath) {
           void syncClosedDocument(replacement);
           void syncClosedJavaScriptTypeScriptDocument(replacement);
         }
@@ -3857,6 +3867,14 @@ export function useWorkbenchController(
         void syncClosedJavaScriptTypeScriptDocument(document);
       }
 
+      if (gitChangeForDiffDocumentPath(path, gitStatus.changes)) {
+        gitDiffRequestTokenRef.current += 1;
+        setGitDiffLoading(false);
+        setSelectedGitChange(null);
+        setGitDiffPreview(null);
+        setMessage(null);
+      }
+
       setDocuments((current) => {
         const next = { ...current };
         delete next[path];
@@ -3868,9 +3886,20 @@ export function useWorkbenchController(
         const next = current.filter((item) => item !== path);
 
         if (activePath === path) {
-          setActivePath(
-            nextActiveEditorPathAfterClose(path, current, previewPath),
+          const nextActivePath = nextActiveEditorPathAfterClose(
+            path,
+            current,
+            previewPath,
           );
+          const nextGitChange = nextActivePath
+            ? gitChangeForDiffDocumentPath(nextActivePath, gitStatus.changes)
+            : null;
+
+          if (nextActivePath && nextGitChange) {
+            loadGitDiffDocument(nextActivePath, nextGitChange);
+          } else {
+            setActivePath(nextActivePath);
+          }
         }
 
         return next;
@@ -3879,6 +3908,8 @@ export function useWorkbenchController(
     [
       activePath,
       documents,
+      gitStatus.changes,
+      loadGitDiffDocument,
       previewPath,
       prompter,
       syncClosedDocument,
