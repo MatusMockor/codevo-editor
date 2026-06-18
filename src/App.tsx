@@ -762,6 +762,9 @@ function App() {
         appSettings={workbench.appSettings}
         isOpen={workbench.settingsOpen}
         onClose={() => workbench.setSettingsOpen(false)}
+        onRestartJavaScriptTypeScriptService={
+          workbench.restartJavaScriptTypeScriptService
+        }
         onSave={({ appSettings, trusted, workspaceSettings }) =>
           workbench.saveWorkbenchSettings(
             appSettings,

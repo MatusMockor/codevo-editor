@@ -899,6 +899,83 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace");
   });
 
+  it("restarts JavaScript and TypeScript language service with current settings", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 18,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptInlayHints: false,
+        javaScriptTypeScriptVersion: "workspace",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    vi.mocked(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).mockClear();
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).mockClear();
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().restartJavaScriptTypeScriptService();
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: false,
+      inlayHintsEnabled: false,
+      typeScriptVersionPreference: "workspace",
+    });
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: false,
+      inlayHintsEnabled: false,
+      typeScriptVersionPreference: "workspace",
+    });
+    expect(getWorkbench().message).toBe("JavaScript/TypeScript service restarted.");
+  });
+
   it("detects PHP workspace metadata before restoring startup tabs", async () => {
     const restoredPath = "/workspace/app/Http/Controllers/CommentController.php";
     const readTextFile = vi.fn(async () => "<?php\nclass CommentController {}\n");

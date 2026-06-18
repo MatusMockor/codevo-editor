@@ -31,6 +31,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
           workspaceDescriptor={null}
@@ -74,6 +75,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
           workspaceDescriptor={null}
@@ -112,6 +114,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
           workspaceDescriptor={null}
@@ -150,6 +153,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
           workspaceDescriptor={null}
@@ -188,6 +192,7 @@ describe("SettingsDialog", () => {
           appSettings={defaultAppSettings()}
           isOpen={true}
           onClose={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
           workspaceDescriptor={null}
@@ -249,6 +254,62 @@ describe("SettingsDialog", () => {
         javaScriptTypeScriptValidation: false,
       },
     });
+  });
+
+  it("restarts JavaScript and TypeScript service from settings", async () => {
+    const onRestart = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onRestartJavaScriptTypeScriptService={onRestart}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      restartJavaScriptTypeScriptServiceButton().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onRestart).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables JavaScript and TypeScript restart when the service is off", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={{
+            ...defaultWorkspaceSettings(),
+            javaScriptTypeScriptService: "off",
+          }}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(restartJavaScriptTypeScriptServiceButton().disabled).toBe(true);
   });
 
   function revealActiveFileCheckbox(): HTMLInputElement {
@@ -315,6 +376,20 @@ describe("SettingsDialog", () => {
 
   function javaScriptTypeScriptInlayHintsCheckbox(): HTMLInputElement {
     return checkboxWithLabel("JavaScript/TypeScript inlay hints");
+  }
+
+  function restartJavaScriptTypeScriptServiceButton(): HTMLButtonElement {
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("Restart JavaScript/TypeScript service"),
+    );
+
+    if (!button) {
+      throw new Error(
+        "Restart JavaScript/TypeScript service button was not rendered.",
+      );
+    }
+
+    return button;
   }
 
   function checkboxWithLabel(labelText: string): HTMLInputElement {

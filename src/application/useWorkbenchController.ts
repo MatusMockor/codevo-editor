@@ -5602,6 +5602,53 @@ export function useWorkbenchController(
     await stopLanguageServerRuntime();
   }, [stopLanguageServerRuntime]);
 
+  const restartJavaScriptTypeScriptService = useCallback(async () => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    const currentSettings = workspaceSettingsRef.current;
+
+    if (currentSettings.javaScriptTypeScriptService === "off") {
+      setMessage("Enable JavaScript/TypeScript service to restart it.");
+      return;
+    }
+
+    autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
+    await stopJavaScriptTypeScriptLanguageServerRuntime(workspaceRoot);
+
+    const plan = await refreshJavaScriptTypeScriptLanguageServerPlan(
+      workspaceRoot,
+      currentSettings.javaScriptTypeScriptVersion,
+    );
+
+    if (plan?.status !== "ready") {
+      setMessage(plan?.message ?? "JavaScript/TypeScript service is unavailable.");
+      return;
+    }
+
+    try {
+      const status =
+        await javaScriptTypeScriptLanguageServerRuntimeGateway.start(workspaceRoot, {
+          autoImportsEnabled: currentSettings.javaScriptTypeScriptAutoImports,
+          inlayHintsEnabled: currentSettings.javaScriptTypeScriptInlayHints,
+          typeScriptVersionPreference:
+            currentSettings.javaScriptTypeScriptVersion,
+        });
+      handleJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+      setMessage("JavaScript/TypeScript service restarted.");
+    } catch (error) {
+      reportError("JavaScript/TypeScript", error);
+    }
+  }, [
+    handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeGateway,
+    refreshJavaScriptTypeScriptLanguageServerPlan,
+    reportError,
+    stopJavaScriptTypeScriptLanguageServerRuntime,
+    workspaceRoot,
+  ]);
+
   const installManagedPhpactor = useCallback(async () => {
     if (!workspaceRoot || !workspaceDescriptor?.php) {
       return;
@@ -7258,6 +7305,7 @@ export function useWorkbenchController(
     setFileStructureScopeMode,
     setSmartMode,
     pinDocument,
+    restartJavaScriptTypeScriptService,
     startIndexScan,
     startHardReindex,
     startLanguageServer,

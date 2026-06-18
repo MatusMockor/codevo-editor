@@ -80,6 +80,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript version preference can now be set per workspace to Bundled or Workspace. Workspace mode prefers the project `node_modules/typescript/lib/tsserver.js` and restarts the managed JS/TS service when the preference changes.
 - JavaScript/TypeScript validation and inlay hints are now per-workspace settings. Validation Off clears and ignores JS/TS diagnostics; inlay hints flow into TypeScript server preferences and restart the managed JS/TS service when changed.
 - JavaScript/TypeScript Auto Imports is now a per-workspace setting. Off disables TypeScript module-export/import-statement completions and package.json auto-import suggestions in the managed JS/TS server preferences.
+- Settings now include a per-workspace Restart JavaScript/TypeScript service action, so users can refresh the managed TS runtime after dependency or TypeScript-version changes without restarting the whole editor.
 
 ## Full VS Code-Like Target
 
@@ -153,7 +154,7 @@ Add settings:
 - JavaScript validation on/off. Done.
 - Auto imports on/off. Done.
 - Inlay hints on/off. Done.
-- Restart JS/TS service
+- Restart JS/TS service. Done.
 - Open JS/TS service log
 
 ## Tests

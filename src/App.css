@@ -2596,6 +2596,33 @@ button {
   accent-color: var(--color-accent);
 }
 
+.settings-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.settings-actions button {
+  min-height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 12px;
+}
+
+.settings-actions button:disabled {
+  color: var(--color-disabled);
+  cursor: not-allowed;
+}
+
+.settings-actions button:not(:disabled):hover {
+  border-color: var(--color-accent);
+}
+
 .settings-readout {
   display: grid;
   gap: 5px;

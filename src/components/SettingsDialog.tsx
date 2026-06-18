@@ -41,6 +41,7 @@ interface SettingsDialogProps {
   workspaceSettings: WorkspaceSettings;
   workspaceTrust: WorkspaceTrustState | null;
   onClose(): void;
+  onRestartJavaScriptTypeScriptService(): Promise<void>;
   onSave(input: SettingsSaveInput): Promise<void>;
 }
 
@@ -58,6 +59,7 @@ export function SettingsDialog({
   appSettings,
   isOpen,
   onClose,
+  onRestartJavaScriptTypeScriptService,
   onSave,
   phpTools,
   workspaceDescriptor,
@@ -267,6 +269,9 @@ export function SettingsDialog({
                     })
                   }
                   onChangeTrusted={updateTrusted}
+                  onRestartJavaScriptTypeScriptService={
+                    onRestartJavaScriptTypeScriptService
+                  }
                   workspaceRoot={workspaceRoot}
                   workspaceSettings={draftWorkspaceSettings}
                 />
@@ -371,6 +376,7 @@ interface GeneralSettingsProps {
     visible: boolean,
   ): void;
   onChangeTrusted(trusted: boolean): void;
+  onRestartJavaScriptTypeScriptService(): Promise<void>;
 }
 
 function GeneralSettings({
@@ -388,6 +394,7 @@ function GeneralSettings({
   onChangeRuntimePolicy,
   onChangeStatusBarVisibility,
   onChangeTrusted,
+  onRestartJavaScriptTypeScriptService,
   workspaceRoot,
   workspaceSettings,
 }: GeneralSettingsProps) {
@@ -483,6 +490,19 @@ function GeneralSettings({
         />
         <span>JavaScript/TypeScript inlay hints</span>
       </label>
+
+      <div className="settings-actions">
+        <button
+          disabled={
+            !hasWorkspace ||
+            workspaceSettings.javaScriptTypeScriptService === "off"
+          }
+          onClick={() => void onRestartJavaScriptTypeScriptService()}
+          type="button"
+        >
+          Restart JavaScript/TypeScript service
+        </button>
+      </div>
 
       <label className="settings-field">
         <span>Background IDE engines</span>
