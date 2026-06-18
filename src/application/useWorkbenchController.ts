@@ -877,15 +877,24 @@ export function useWorkbenchController(
 
   const handleJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
     (status: LanguageServerRuntimeStatus) => {
+      const statusRootPath = status.rootPath ?? currentWorkspaceRootRef.current;
+
       if (
-        status.rootPath &&
+        statusRootPath &&
         currentWorkspaceRootRef.current &&
-        status.rootPath !== currentWorkspaceRootRef.current
+        statusRootPath !== currentWorkspaceRootRef.current
       ) {
         return;
       }
 
-      setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus(
+        statusRootPath
+          ? languageServerRuntimeStatusWithRoot(status, statusRootPath)
+          : status,
+      );
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
+        statusRootPath ?? null,
+      );
       const crash = languageServerCrashMessage(status);
 
       if (status.kind !== "running") {
@@ -1171,7 +1180,10 @@ export function useWorkbenchController(
         await javaScriptTypeScriptLanguageServerRuntimeGateway.stop(targetRootPath);
 
       if (targetRootPath === currentWorkspaceRootRef.current) {
-        setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+        setJavaScriptTypeScriptLanguageServerRuntimeStatus(
+          languageServerRuntimeStatusWithRoot(status, targetRootPath),
+        );
+        setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(targetRootPath);
         clearJavaScriptTypeScriptLanguageServerDiagnostics();
         resetJavaScriptTypeScriptLanguageServerDocuments();
       }
@@ -1671,6 +1683,81 @@ export function useWorkbenchController(
     ],
   );
 
+  const closeSyncedLanguageServerDocumentsForRoot = useCallback(
+    async (rootPath: string) => {
+      const syncedPaths = Array.from(syncedDocumentPathsRef.current);
+
+      await Promise.all(
+        syncedPaths.map(async (path) => {
+          clearDocumentChangeTimer(path);
+          syncedDocumentPathsRef.current.delete(path);
+          delete syncedDocumentContentRef.current[path];
+          delete pendingDocumentChangesRef.current[path];
+          delete documentVersionsRef.current[path];
+          delete documentVersionsByUriRef.current[fileUriFromPath(path)];
+
+          try {
+            await enqueueDocumentSync(path, () =>
+              languageServerDocumentSyncGateway.didClose(rootPath, path),
+            );
+          } catch (error) {
+            reportLanguageServerError(error);
+          }
+        }),
+      );
+
+      resetLanguageServerDocuments();
+    },
+    [
+      clearDocumentChangeTimer,
+      enqueueDocumentSync,
+      languageServerDocumentSyncGateway,
+      reportLanguageServerError,
+      resetLanguageServerDocuments,
+    ],
+  );
+
+  const closeSyncedJavaScriptTypeScriptDocumentsForRoot = useCallback(
+    async (rootPath: string) => {
+      const syncedPaths = Array.from(
+        javaScriptTypeScriptSyncedDocumentPathsRef.current,
+      );
+
+      await Promise.all(
+        syncedPaths.map(async (path) => {
+          clearJavaScriptTypeScriptDocumentChangeTimer(path);
+          javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(path);
+          delete javaScriptTypeScriptSyncedDocumentContentRef.current[path];
+          delete javaScriptTypeScriptPendingDocumentChangesRef.current[path];
+          delete javaScriptTypeScriptDocumentVersionsRef.current[path];
+          delete javaScriptTypeScriptDocumentVersionsByUriRef.current[
+            fileUriFromPath(path)
+          ];
+
+          try {
+            await enqueueJavaScriptTypeScriptDocumentSync(path, () =>
+              javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose(
+                rootPath,
+                path,
+              ),
+            );
+          } catch (error) {
+            reportError("JavaScript/TypeScript", error);
+          }
+        }),
+      );
+
+      resetJavaScriptTypeScriptLanguageServerDocuments();
+    },
+    [
+      clearJavaScriptTypeScriptDocumentChangeTimer,
+      enqueueJavaScriptTypeScriptDocumentSync,
+      javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+      reportError,
+      resetJavaScriptTypeScriptLanguageServerDocuments,
+    ],
+  );
+
   const loadDirectory = useCallback(
     async (
       path: string,
@@ -1767,11 +1854,17 @@ export function useWorkbenchController(
 
       if (previousRootPath && previousRootPath !== path) {
         cacheCurrentWorkspaceState(previousRootPath);
+        await Promise.allSettled([
+          closeSyncedLanguageServerDocumentsForRoot(previousRootPath),
+          closeSyncedJavaScriptTypeScriptDocumentsForRoot(previousRootPath),
+        ]);
       }
 
       workspaceSessionRestoredRef.current = false;
       resetLanguageServerDocuments();
       resetJavaScriptTypeScriptLanguageServerDocuments();
+      clearLanguageServerDiagnostics();
+      clearJavaScriptTypeScriptLanguageServerDiagnostics();
       let workspaceSettings = defaultWorkspaceSettings();
 
       try {
@@ -1967,6 +2060,10 @@ export function useWorkbenchController(
       restoreWorkspaceSession,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
+      clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      clearLanguageServerDiagnostics,
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+      closeSyncedLanguageServerDocumentsForRoot,
       settingsGateway,
       smartModeGateway,
       startInitialIndexScan,
@@ -7443,7 +7540,9 @@ export function useWorkbenchController(
             return;
           }
 
-          setJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+          setJavaScriptTypeScriptLanguageServerRuntimeStatus(
+            languageServerRuntimeStatusWithRoot(status, workspaceRoot),
+          );
           setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
         })
         .catch((error) => {
@@ -8735,6 +8834,20 @@ function isJavaScriptTypeScriptPath(path: string): boolean {
   const language = detectLanguage(path);
 
   return language === "javascript" || language === "typescript";
+}
+
+function languageServerRuntimeStatusWithRoot(
+  status: LanguageServerRuntimeStatus,
+  rootPath: string,
+): LanguageServerRuntimeStatus {
+  if (status.rootPath === rootPath) {
+    return status;
+  }
+
+  return {
+    ...status,
+    rootPath,
+  };
 }
 
 function cachedWorkspaceHasDirtyDocuments(

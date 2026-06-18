@@ -1896,6 +1896,20 @@ mod tests {
     }
 
     #[test]
+    fn runtime_status_payload_includes_workspace_root() {
+        assert_eq!(
+            super::status_event_payload(
+                &Some("/tmp/workspace-a".to_string()),
+                LanguageServerRuntimeStatus::Stopped,
+            ),
+            json!({
+                "kind": "stopped",
+                "rootPath": "/tmp/workspace-a",
+            }),
+        );
+    }
+
+    #[test]
     fn capability_values_are_normalized() {
         let capabilities = parse_capabilities(&json!({
             "result": {
