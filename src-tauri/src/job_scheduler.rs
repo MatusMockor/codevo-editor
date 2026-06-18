@@ -1,5 +1,8 @@
 use crate::file_watcher::{WorkspaceWatchEvent, WorkspaceWatchEventBatch, WorkspaceWatchEventKind};
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexJobQueue {
@@ -179,6 +182,140 @@ pub trait IndexWatchEventRouter {
 
 pub trait IndexDbWriteExecutor {
     fn execute(&mut self, operation: &IndexDbWriteOperation) -> Result<(), String>;
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceIndexLifecycle {
+    state: Arc<Mutex<WorkspaceIndexLifecycleState>>,
+}
+
+#[derive(Debug, Default)]
+struct WorkspaceIndexLifecycleState {
+    global_generation: u64,
+    workspace_generations: HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceIndexLifecycleToken {
+    generation: u64,
+    global_generation: u64,
+    lifecycle: WorkspaceIndexLifecycle,
+    workspace_root: String,
+}
+
+impl Default for WorkspaceIndexLifecycle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WorkspaceIndexLifecycle {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(WorkspaceIndexLifecycleState::default())),
+        }
+    }
+
+    pub fn begin_workspace_run(&self, workspace_root: &str) -> WorkspaceIndexLifecycleToken {
+        let mut state = self.lock_state();
+        let generation = bump_workspace_generation(&mut state, workspace_root);
+
+        WorkspaceIndexLifecycleToken {
+            generation,
+            global_generation: state.global_generation,
+            lifecycle: self.clone(),
+            workspace_root: workspace_root.to_string(),
+        }
+    }
+
+    pub fn cancel_workspace(&self, workspace_root: &str) -> u64 {
+        let mut state = self.lock_state();
+        bump_workspace_generation(&mut state, workspace_root)
+    }
+
+    pub fn cancel_workspace_and_block_writes<T>(
+        &self,
+        workspace_root: &str,
+        action: impl FnOnce() -> T,
+    ) -> T {
+        let mut state = self.lock_state();
+        bump_workspace_generation(&mut state, workspace_root);
+        let result = action();
+        drop(state);
+        result
+    }
+
+    pub fn cancel_all(&self) -> u64 {
+        let mut state = self.lock_state();
+        state.global_generation = state.global_generation.saturating_add(1);
+        state.global_generation
+    }
+
+    pub fn current_generation(&self, workspace_root: &str) -> u64 {
+        let state = self.lock_state();
+        current_workspace_generation(&state, workspace_root)
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, WorkspaceIndexLifecycleState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn is_token_current(
+        state: &WorkspaceIndexLifecycleState,
+        token: &WorkspaceIndexLifecycleToken,
+    ) -> bool {
+        token.global_generation == state.global_generation
+            && token.generation == current_workspace_generation(state, &token.workspace_root)
+    }
+}
+
+impl WorkspaceIndexLifecycleToken {
+    pub fn is_current(&self) -> bool {
+        let state = self.lifecycle.lock_state();
+        WorkspaceIndexLifecycle::is_token_current(&state, self)
+    }
+
+    pub fn run_if_current<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        let state = self.lifecycle.lock_state();
+
+        if !WorkspaceIndexLifecycle::is_token_current(&state, self) {
+            return None;
+        }
+
+        let result = action();
+        drop(state);
+        Some(result)
+    }
+
+    pub fn workspace_root(&self) -> &str {
+        &self.workspace_root
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+fn bump_workspace_generation(
+    state: &mut WorkspaceIndexLifecycleState,
+    workspace_root: &str,
+) -> u64 {
+    let generation = state
+        .workspace_generations
+        .entry(workspace_root.to_string())
+        .or_insert(0);
+    *generation = generation.saturating_add(1);
+    *generation
+}
+
+fn current_workspace_generation(state: &WorkspaceIndexLifecycleState, workspace_root: &str) -> u64 {
+    state
+        .workspace_generations
+        .get(workspace_root)
+        .copied()
+        .unwrap_or(0)
 }
 
 pub trait IndexGenerationGuard {
@@ -424,7 +561,7 @@ mod tests {
         InMemoryIndexJobScheduler, IndexCommitDecision, IndexDbWriteExecutor,
         IndexDbWriteOperation, IndexGenerationGuard, IndexJobPayload, IndexJobQueue,
         IndexJobQueuePolicy, IndexJobScheduler, IndexMaintenanceTask, IndexWatchEventRouter,
-        ScheduleIndexJobRequest,
+        ScheduleIndexJobRequest, WorkspaceIndexLifecycle,
     };
     use crate::file_watcher::{
         WorkspaceWatchBackend, WorkspaceWatchEvent, WorkspaceWatchEventBatch,
@@ -535,6 +672,40 @@ mod tests {
 
         assert_eq!(decision, IndexCommitDecision::Committed);
         assert_eq!(executor.operations.len(), 1);
+    }
+
+    #[test]
+    fn lifecycle_begin_workspace_run_invalidates_previous_run_for_root() {
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let first = lifecycle.begin_workspace_run("/workspace");
+        let second = lifecycle.begin_workspace_run("/workspace");
+
+        assert!(!first.is_current());
+        assert!(second.is_current());
+        assert_eq!(second.generation(), 2);
+    }
+
+    #[test]
+    fn lifecycle_cancel_all_invalidates_active_runs() {
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let workspace = lifecycle.begin_workspace_run("/workspace");
+        let other = lifecycle.begin_workspace_run("/other");
+
+        lifecycle.cancel_all();
+
+        assert!(!workspace.is_current());
+        assert!(!other.is_current());
+    }
+
+    #[test]
+    fn lifecycle_guarded_write_runs_only_for_current_token() {
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let token = lifecycle.begin_workspace_run("/workspace");
+
+        assert_eq!(token.run_if_current(|| 42), Some(42));
+        lifecycle.cancel_workspace("/workspace");
+
+        assert_eq!(token.run_if_current(|| 13), None);
     }
 
     #[test]

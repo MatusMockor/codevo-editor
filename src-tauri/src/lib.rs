@@ -44,6 +44,7 @@ use index_scan::{
     InitialMetadataScanStart, MetadataScanCompletionEvent, MetadataScanEventSink,
     WorkspaceReindexMode, METADATA_SCAN_COMPLETED_EVENT,
 };
+use job_scheduler::WorkspaceIndexLifecycle;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use lsp::{
     file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
@@ -153,6 +154,10 @@ fn quit_application(app: AppHandle) {
 }
 
 fn shutdown_runtime_processes(app: &AppHandle) {
+    if let Some(index_lifecycle) = app.try_state::<WorkspaceIndexLifecycle>() {
+        index_lifecycle.cancel_all();
+    }
+
     if let Some(watch_registry) = app.try_state::<JavaScriptTypeScriptWorkspaceWatchRegistry>() {
         watch_registry.stop_all();
     }
@@ -298,7 +303,22 @@ fn clear_workspace_index(
     app: AppHandle,
 ) -> Result<WorkspaceIndexClearResult, String> {
     let root = canonicalize_workspace_root(&root_path)?;
-    let database_path = workspace_index_database_path(&app, &root)?;
+    let root_string = root.to_string_lossy().to_string();
+
+    if let Some(index_lifecycle) = app.try_state::<WorkspaceIndexLifecycle>() {
+        return index_lifecycle.cancel_workspace_and_block_writes(&root_string, || {
+            clear_workspace_index_database(&app, &root)
+        });
+    }
+
+    clear_workspace_index_database(&app, &root)
+}
+
+fn clear_workspace_index_database(
+    app: &AppHandle,
+    root: &Path,
+) -> Result<WorkspaceIndexClearResult, String> {
+    let database_path = workspace_index_database_path(app, root)?;
     let index = SqliteWorkspaceIndex::open(&database_path).map_err(|error| error.to_string())?;
     index
         .clear_workspace_files()
@@ -328,6 +348,10 @@ fn start_workspace_reindex(
 ) -> Result<InitialMetadataScanStart, String> {
     let root = canonicalize_workspace_root(&root_path)?;
     let database_path = workspace_index_database_path(&app, &root)?;
+    let root_string = root.to_string_lossy().to_string();
+    let lifecycle_token = app
+        .try_state::<WorkspaceIndexLifecycle>()
+        .map(|lifecycle| lifecycle.begin_workspace_run(&root_string));
     let starter = LocalWorkspaceReindexStarter;
     let event_sink = Arc::new(AppHandleMetadataScanEventSink::new(app));
 
@@ -336,6 +360,7 @@ fn start_workspace_reindex(
             WorkspaceReindexRequest {
                 database_path,
                 language,
+                lifecycle_token,
                 mode,
                 root_path: root,
             },
@@ -729,7 +754,16 @@ fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
 fn set_smart_mode(
     mode: IntelligenceMode,
     service: State<'_, Mutex<SmartModeService>>,
+    app: AppHandle,
 ) -> Result<SmartModeState, String> {
+    let disables_indexing = matches!(mode, IntelligenceMode::Basic);
+
+    if disables_indexing {
+        if let Some(index_lifecycle) = app.try_state::<WorkspaceIndexLifecycle>() {
+            index_lifecycle.cancel_all();
+        }
+    }
+
     let mut service = service.lock().map_err(|error| error.to_string())?;
     Ok(service.set_mode(mode))
 }
@@ -2557,6 +2591,7 @@ pub fn run() {
         .manage(PhpLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
+        .manage(WorkspaceIndexLifecycle::new())
         .manage(TerminalSupervisor::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

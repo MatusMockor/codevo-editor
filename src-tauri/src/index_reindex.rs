@@ -8,6 +8,7 @@ use crate::index_scan::{
     MetadataScanCompletionEvent, MetadataScanError, MetadataScanEventSink, MetadataScanReport,
     WorkspaceMetadataScanner, WorkspaceReindexMode,
 };
+use crate::job_scheduler::WorkspaceIndexLifecycleToken;
 use crate::js_ts_symbols::{
     workspace_symbol_record as js_ts_workspace_symbol_record, JsTsSymbolExtractor,
     TextJsTsSymbolExtractor,
@@ -33,10 +34,11 @@ pub trait WorkspaceReindexStarter {
     ) -> Result<InitialMetadataScanStart, WorkspaceReindexStartError>;
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct WorkspaceReindexRequest {
     pub database_path: PathBuf,
     pub language: Option<String>,
+    pub lifecycle_token: Option<WorkspaceIndexLifecycleToken>,
     pub mode: WorkspaceReindexMode,
     pub root_path: PathBuf,
 }
@@ -83,6 +85,7 @@ impl Error for WorkspaceReindexStartError {}
 
 #[derive(Debug)]
 pub enum WorkspaceReindexError {
+    Cancelled,
     Io(io::Error),
     Parser(String),
     Store(rusqlite::Error),
@@ -92,6 +95,7 @@ pub enum WorkspaceReindexError {
 impl fmt::Display for WorkspaceReindexError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled => write!(formatter, "workspace reindex cancelled"),
             Self::Io(error) => write!(formatter, "workspace reindex IO failed: {error}"),
             Self::Parser(error) => write!(formatter, "workspace reindex parser failed: {error}"),
             Self::Store(error) => write!(formatter, "workspace reindex DB write failed: {error}"),
@@ -119,6 +123,7 @@ impl From<rusqlite::Error> for WorkspaceReindexError {
 impl From<MetadataScanError> for WorkspaceReindexError {
     fn from(error: MetadataScanError) -> Self {
         match error {
+            MetadataScanError::Cancelled => Self::Cancelled,
             MetadataScanError::Io(error) => Self::Io(error),
             MetadataScanError::Store(error) => Self::Store(error),
         }
@@ -128,46 +133,76 @@ impl From<MetadataScanError> for WorkspaceReindexError {
 pub(crate) fn run_workspace_reindex(
     request: &WorkspaceReindexRequest,
 ) -> Result<MetadataScanReport, WorkspaceReindexError> {
+    let lifecycle_token = request.lifecycle_token.as_ref();
+    ensure_reindex_current(lifecycle_token)?;
     let index = SqliteWorkspaceIndex::open(&request.database_path)?;
     let scanner = LocalWorkspaceMetadataScanner::default();
     let collection = scanner.collect_path(&request.root_path, &request.root_path)?;
+    ensure_reindex_current(lifecycle_token)?;
     let mut report = collection.report;
     let scanned_records = collection.records;
     let existing_records = index.list_workspace_files()?;
 
-    let removed_files = remove_missing_files(&index, &existing_records, &scanned_records)?;
+    let removed_files =
+        remove_missing_files(&index, lifecycle_token, &existing_records, &scanned_records)?;
     report.removed_files += removed_files;
 
     match request.mode {
         WorkspaceReindexMode::Hard => {
-            index.clear_workspace_files()?;
-            upsert_records(&index, &scanned_records)?;
+            guarded_reindex_write(lifecycle_token, || index.clear_workspace_files())?;
+            upsert_records(&index, lifecycle_token, &scanned_records)?;
             report.changed_files += scanned_records.len();
             let php_records = records_for_language(&scanned_records, "php");
             let javascript_records = records_for_language(&scanned_records, "javascript");
             let typescript_records = records_for_language(&scanned_records, "typescript");
-            parse_records(&index, &php_records, "php", &mut report)?;
-            parse_records(&index, &javascript_records, "javascript", &mut report)?;
-            parse_records(&index, &typescript_records, "typescript", &mut report)?;
+            parse_records(&index, lifecycle_token, &php_records, "php", &mut report)?;
+            parse_records(
+                &index,
+                lifecycle_token,
+                &javascript_records,
+                "javascript",
+                &mut report,
+            )?;
+            parse_records(
+                &index,
+                lifecycle_token,
+                &typescript_records,
+                "typescript",
+                &mut report,
+            )?;
         }
         WorkspaceReindexMode::Language => {
             let language = normalized_reindex_language(request.language.as_deref())?;
-            upsert_records(&index, &scanned_records)?;
-            index.clear_symbols_for_language(&language)?;
+            upsert_records(&index, lifecycle_token, &scanned_records)?;
+            guarded_reindex_write(lifecycle_token, || {
+                index.clear_symbols_for_language(&language)
+            })?;
             let records = records_for_language(&scanned_records, &language);
             report.changed_files += records.len();
-            parse_records(&index, &records, &language, &mut report)?;
+            parse_records(&index, lifecycle_token, &records, &language, &mut report)?;
         }
         WorkspaceReindexMode::Soft => {
             let changed_records = changed_records(&existing_records, &scanned_records);
-            upsert_records(&index, &scanned_records)?;
+            upsert_records(&index, lifecycle_token, &scanned_records)?;
             report.changed_files += changed_records.len();
             let php_records = records_for_language(&changed_records, "php");
             let javascript_records = records_for_language(&changed_records, "javascript");
             let typescript_records = records_for_language(&changed_records, "typescript");
-            parse_records(&index, &php_records, "php", &mut report)?;
-            parse_records(&index, &javascript_records, "javascript", &mut report)?;
-            parse_records(&index, &typescript_records, "typescript", &mut report)?;
+            parse_records(&index, lifecycle_token, &php_records, "php", &mut report)?;
+            parse_records(
+                &index,
+                lifecycle_token,
+                &javascript_records,
+                "javascript",
+                &mut report,
+            )?;
+            parse_records(
+                &index,
+                lifecycle_token,
+                &typescript_records,
+                "typescript",
+                &mut report,
+            )?;
         }
     }
 
@@ -179,11 +214,18 @@ fn run_background_reindex(
     event_sink: Arc<dyn MetadataScanEventSink>,
 ) {
     let event = match run_workspace_reindex(&request) {
-        Ok(report) => MetadataScanCompletionEvent::completed(
-            &request.root_path,
-            &request.database_path,
-            report,
-        ),
+        Ok(report) => {
+            if !lifecycle_token_is_current(request.lifecycle_token.as_ref()) {
+                return;
+            }
+
+            MetadataScanCompletionEvent::completed(
+                &request.root_path,
+                &request.database_path,
+                report,
+            )
+        }
+        Err(WorkspaceReindexError::Cancelled) => return,
         Err(error) => MetadataScanCompletionEvent::failed_message(
             &request.root_path,
             &request.database_path,
@@ -204,8 +246,39 @@ fn normalized_reindex_language(language: Option<&str>) -> Result<String, Workspa
     Err(WorkspaceReindexError::UnsupportedLanguage(language))
 }
 
+fn ensure_reindex_current(
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+) -> Result<(), WorkspaceReindexError> {
+    if lifecycle_token_is_current(lifecycle_token) {
+        return Ok(());
+    }
+
+    Err(WorkspaceReindexError::Cancelled)
+}
+
+fn lifecycle_token_is_current(lifecycle_token: Option<&WorkspaceIndexLifecycleToken>) -> bool {
+    match lifecycle_token {
+        Some(token) => token.is_current(),
+        None => true,
+    }
+}
+
+fn guarded_reindex_write<T>(
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    action: impl FnOnce() -> rusqlite::Result<T>,
+) -> Result<T, WorkspaceReindexError> {
+    match lifecycle_token {
+        Some(token) => match token.run_if_current(action) {
+            Some(result) => result.map_err(WorkspaceReindexError::Store),
+            None => Err(WorkspaceReindexError::Cancelled),
+        },
+        None => action().map_err(WorkspaceReindexError::Store),
+    }
+}
+
 fn remove_missing_files(
     index: &SqliteWorkspaceIndex,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
     existing_records: &[WorkspaceFileRecord],
     scanned_records: &[WorkspaceFileRecord],
 ) -> Result<usize, WorkspaceReindexError> {
@@ -220,7 +293,7 @@ fn remove_missing_files(
             continue;
         }
 
-        index.remove_file(&record.path)?;
+        guarded_reindex_write(lifecycle_token, || index.remove_file(&record.path))?;
         removed += 1;
     }
 
@@ -229,10 +302,11 @@ fn remove_missing_files(
 
 fn upsert_records(
     index: &SqliteWorkspaceIndex,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
     records: &[WorkspaceFileRecord],
 ) -> Result<(), WorkspaceReindexError> {
     for record in records {
-        index.upsert_file(record)?;
+        guarded_reindex_write(lifecycle_token, || index.upsert_file(record))?;
     }
 
     Ok(())
@@ -270,6 +344,7 @@ fn records_for_language(
 
 fn parse_records(
     index: &SqliteWorkspaceIndex,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
     records: &[WorkspaceFileRecord],
     language: &str,
     report: &mut MetadataScanReport,
@@ -278,7 +353,7 @@ fn parse_records(
         let extractor = TextJsTsSymbolExtractor;
 
         for record in records {
-            parse_js_ts_record(index, record, &extractor, report);
+            parse_js_ts_record(index, lifecycle_token, record, &extractor, report)?;
         }
 
         return Ok(());
@@ -295,7 +370,14 @@ fn parse_records(
     let extractor = TreeSitterPhpSymbolExtractor;
 
     for record in records {
-        parse_record(index, record, &mut parser, &extractor, report);
+        parse_record(
+            index,
+            lifecycle_token,
+            record,
+            &mut parser,
+            &extractor,
+            report,
+        )?;
     }
 
     Ok(())
@@ -303,10 +385,11 @@ fn parse_records(
 
 fn parse_js_ts_record(
     index: &SqliteWorkspaceIndex,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
     record: &WorkspaceFileRecord,
     extractor: &dyn JsTsSymbolExtractor,
     report: &mut MetadataScanReport,
-) {
+) -> Result<(), WorkspaceReindexError> {
     let source = match fs::read_to_string(&record.path) {
         Ok(source) => source,
         Err(_) => {
@@ -314,7 +397,7 @@ fn parse_js_ts_record(
                 record.relative_path.clone(),
                 "JavaScript/TypeScript source could not be read.",
             );
-            return;
+            return Ok(());
         }
     };
     let symbols = extractor.extract(&source);
@@ -328,25 +411,34 @@ fn parse_js_ts_record(
             .collect(),
     };
 
-    if index.replace_file_symbols(&file_symbols).is_err() {
-        report.record_error(
-            record.relative_path.clone(),
-            "JavaScript/TypeScript symbols could not be written.",
-        );
-        return;
+    match guarded_reindex_write(lifecycle_token, || {
+        index.replace_file_symbols(&file_symbols)
+    }) {
+        Ok(()) => {}
+        Err(WorkspaceReindexError::Store(_)) => {
+            report.record_error(
+                record.relative_path.clone(),
+                "JavaScript/TypeScript symbols could not be written.",
+            );
+            return Ok(());
+        }
+        Err(error) => return Err(error),
     }
 
     report.parsed_files += 1;
     report.symbols_indexed += symbols_indexed;
+
+    Ok(())
 }
 
 fn parse_record(
     index: &SqliteWorkspaceIndex,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
     record: &WorkspaceFileRecord,
     parser: &mut dyn PhpSyntaxParser,
     extractor: &dyn PhpSymbolExtractor,
     report: &mut MetadataScanReport,
-) {
+) -> Result<(), WorkspaceReindexError> {
     let source = match fs::read_to_string(&record.path) {
         Ok(source) => source,
         Err(_) => {
@@ -354,7 +446,7 @@ fn parse_record(
                 record.relative_path.clone(),
                 "PHP source could not be read.",
             );
-            return;
+            return Ok(());
         }
     };
     let tree = match parser.parse(&source) {
@@ -364,7 +456,7 @@ fn parse_record(
                 record.relative_path.clone(),
                 "PHP source could not be parsed.",
             );
-            return;
+            return Ok(());
         }
     };
     let symbols = extractor.extract(&tree, &source);
@@ -375,16 +467,24 @@ fn parse_record(
         symbols: symbols.into_iter().map(workspace_symbol_record).collect(),
     };
 
-    if index.replace_file_symbols(&file_symbols).is_err() {
-        report.record_error(
-            record.relative_path.clone(),
-            "PHP symbols could not be written.",
-        );
-        return;
+    match guarded_reindex_write(lifecycle_token, || {
+        index.replace_file_symbols(&file_symbols)
+    }) {
+        Ok(()) => {}
+        Err(WorkspaceReindexError::Store(_)) => {
+            report.record_error(
+                record.relative_path.clone(),
+                "PHP symbols could not be written.",
+            );
+            return Ok(());
+        }
+        Err(error) => return Err(error),
     }
 
     report.parsed_files += 1;
     report.symbols_indexed += symbols_indexed;
+
+    Ok(())
 }
 
 fn workspace_symbol_record(symbol: PhpSymbol) -> WorkspaceSymbolRecord {
@@ -419,9 +519,13 @@ fn workspace_symbol_kind(kind: PhpSymbolKind) -> WorkspaceSymbolKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_workspace_reindex, WorkspaceReindexRequest};
-    use crate::index::{SqliteWorkspaceIndex, WorkspaceIndexStore, WorkspaceSymbolStore};
+    use super::{run_workspace_reindex, WorkspaceReindexError, WorkspaceReindexRequest};
+    use crate::index::{
+        SqliteWorkspaceIndex, WorkspaceIndexMaintenanceStore, WorkspaceIndexStore,
+        WorkspaceSymbolStore,
+    };
     use crate::index_scan::WorkspaceReindexMode;
+    use crate::job_scheduler::WorkspaceIndexLifecycle;
     use std::{
         fs,
         path::PathBuf,
@@ -438,6 +542,7 @@ mod tests {
         let report = run_workspace_reindex(&WorkspaceReindexRequest {
             database_path: database_path.clone(),
             language: None,
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Soft,
             root_path: root.clone(),
         })
@@ -462,6 +567,7 @@ mod tests {
         run_workspace_reindex(&WorkspaceReindexRequest {
             database_path: database_path.clone(),
             language: None,
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Soft,
             root_path: root.clone(),
         })
@@ -469,6 +575,7 @@ mod tests {
         let report = run_workspace_reindex(&WorkspaceReindexRequest {
             database_path: database_path.clone(),
             language: Some("php".to_string()),
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Language,
             root_path: root.clone(),
         })
@@ -486,6 +593,7 @@ mod tests {
         run_workspace_reindex(&WorkspaceReindexRequest {
             database_path: database_path.clone(),
             language: None,
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Soft,
             root_path: root.clone(),
         })
@@ -495,6 +603,7 @@ mod tests {
         let report = run_workspace_reindex(&WorkspaceReindexRequest {
             database_path: database_path.clone(),
             language: None,
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Hard,
             root_path: root.clone(),
         })
@@ -513,6 +622,7 @@ mod tests {
         run_workspace_reindex(&WorkspaceReindexRequest {
             database_path: database_path.clone(),
             language: None,
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Soft,
             root_path: root.clone(),
         })
@@ -521,6 +631,7 @@ mod tests {
         let report = run_workspace_reindex(&WorkspaceReindexRequest {
             database_path,
             language: None,
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Hard,
             root_path: root,
         })
@@ -539,12 +650,40 @@ mod tests {
         let error = run_workspace_reindex(&WorkspaceReindexRequest {
             database_path,
             language: Some("ruby".to_string()),
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Language,
             root_path: root,
         })
         .expect_err("unsupported language");
 
         assert!(error.to_string().contains("unsupported reindex language"));
+    }
+
+    #[test]
+    fn cancelled_reindex_does_not_repopulate_cleared_index() {
+        let root = temp_workspace("cancelled-reindex");
+        let database_path = temp_database_path("cancelled-reindex");
+        fs::write(root.join("User.php"), php_fixture("User")).expect("php file");
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let token = lifecycle.begin_workspace_run(&path_string(root.clone()));
+
+        lifecycle.cancel_workspace_and_block_writes(token.workspace_root(), || {
+            let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+            index.clear_workspace_files().expect("clear index");
+        });
+
+        let error = run_workspace_reindex(&WorkspaceReindexRequest {
+            database_path: database_path.clone(),
+            language: None,
+            lifecycle_token: Some(token),
+            mode: WorkspaceReindexMode::Soft,
+            root_path: root,
+        })
+        .expect_err("cancelled reindex");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        assert!(matches!(error, WorkspaceReindexError::Cancelled));
+        assert_eq!(index.summary().expect("summary").file_count, 0);
     }
 
     #[test]
@@ -561,6 +700,7 @@ mod tests {
         let report = run_workspace_reindex(&WorkspaceReindexRequest {
             database_path: database_path.clone(),
             language: None,
+            lifecycle_token: None,
             mode: WorkspaceReindexMode::Soft,
             root_path: root.clone(),
         })

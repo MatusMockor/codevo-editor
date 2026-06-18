@@ -1,5 +1,6 @@
 use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
 use crate::index::{SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore};
+use crate::job_scheduler::WorkspaceIndexLifecycleToken;
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -291,9 +292,10 @@ pub struct MetadataScanCollection {
     pub report: MetadataScanReport,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct WorkspaceMetadataScanRequest {
     pub database_path: PathBuf,
+    pub lifecycle_token: Option<WorkspaceIndexLifecycleToken>,
     pub root_path: PathBuf,
 }
 
@@ -394,12 +396,20 @@ impl WorkspaceMetadataScanStarter for LocalWorkspaceMetadataScanStarter {
     ) -> Result<InitialMetadataScanStart, MetadataScanStartError> {
         let root_path = request.root_path;
         let database_path = request.database_path;
+        let lifecycle_token = request.lifecycle_token;
         let thread_root_path = root_path.clone();
         let thread_database_path = database_path.clone();
 
         thread::Builder::new()
             .name("workspace-metadata-scan".to_string())
-            .spawn(move || run_background_scan(thread_root_path, thread_database_path, event_sink))
+            .spawn(move || {
+                run_background_scan(
+                    thread_root_path,
+                    thread_database_path,
+                    lifecycle_token,
+                    event_sink,
+                )
+            })
             .map_err(MetadataScanStartError::Spawn)?;
 
         Ok(InitialMetadataScanStart {
@@ -412,6 +422,7 @@ impl WorkspaceMetadataScanStarter for LocalWorkspaceMetadataScanStarter {
 
 #[derive(Debug)]
 pub enum MetadataScanError {
+    Cancelled,
     Io(io::Error),
     Store(rusqlite::Error),
 }
@@ -419,6 +430,7 @@ pub enum MetadataScanError {
 impl fmt::Display for MetadataScanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled => write!(formatter, "metadata scan cancelled"),
             Self::Io(error) => write!(formatter, "metadata scan IO failed: {error}"),
             Self::Store(error) => write!(formatter, "metadata scan DB write failed: {error}"),
         }
@@ -457,12 +469,21 @@ impl Error for MetadataScanStartError {}
 fn run_background_scan(
     root_path: PathBuf,
     database_path: PathBuf,
+    lifecycle_token: Option<WorkspaceIndexLifecycleToken>,
     event_sink: Arc<dyn MetadataScanEventSink>,
 ) {
-    let event = match scan_background_workspace(&root_path, &database_path) {
-        Ok(report) => MetadataScanCompletionEvent::completed(&root_path, &database_path, report),
-        Err(error) => MetadataScanCompletionEvent::failed(&root_path, &database_path, error),
-    };
+    let event =
+        match scan_background_workspace(&root_path, &database_path, lifecycle_token.as_ref()) {
+            Ok(report) => {
+                if !lifecycle_token_is_current(lifecycle_token.as_ref()) {
+                    return;
+                }
+
+                MetadataScanCompletionEvent::completed(&root_path, &database_path, report)
+            }
+            Err(MetadataScanError::Cancelled) => return,
+            Err(error) => MetadataScanCompletionEvent::failed(&root_path, &database_path, error),
+        };
 
     event_sink.emit_completion(event);
 }
@@ -470,11 +491,49 @@ fn run_background_scan(
 fn scan_background_workspace(
     root_path: &Path,
     database_path: &Path,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
 ) -> Result<MetadataScanReport, MetadataScanError> {
+    ensure_scan_current(lifecycle_token)?;
     let index = SqliteWorkspaceIndex::open(database_path)?;
     let scanner = LocalWorkspaceMetadataScanner::default();
+    let collection = scanner.collect_path(root_path, root_path)?;
+    ensure_scan_current(lifecycle_token)?;
 
-    scanner.scan(root_path, &index)
+    for record in &collection.records {
+        guarded_scan_write(lifecycle_token, || index.upsert_file(record))?;
+    }
+
+    Ok(collection.report)
+}
+
+fn ensure_scan_current(
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+) -> Result<(), MetadataScanError> {
+    if lifecycle_token_is_current(lifecycle_token) {
+        return Ok(());
+    }
+
+    Err(MetadataScanError::Cancelled)
+}
+
+fn lifecycle_token_is_current(lifecycle_token: Option<&WorkspaceIndexLifecycleToken>) -> bool {
+    match lifecycle_token {
+        Some(token) => token.is_current(),
+        None => true,
+    }
+}
+
+fn guarded_scan_write<T>(
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    action: impl FnOnce() -> rusqlite::Result<T>,
+) -> Result<T, MetadataScanError> {
+    match lifecycle_token {
+        Some(token) => match token.run_if_current(action) {
+            Some(result) => result.map_err(MetadataScanError::Store),
+            None => Err(MetadataScanError::Cancelled),
+        },
+        None => action().map_err(MetadataScanError::Store),
+    }
 }
 
 fn relative_path(root_path: &Path, path: &Path) -> Option<String> {
@@ -528,6 +587,7 @@ mod tests {
         WorkspaceMetadataScanner,
     };
     use crate::index::{SqliteWorkspaceIndex, WorkspaceIndexStore};
+    use crate::job_scheduler::WorkspaceIndexLifecycle;
     use rusqlite::Connection;
     use std::{
         fs,
@@ -701,6 +761,24 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_background_scan_does_not_write_records() {
+        let root = temp_workspace("cancelled-background");
+        let database_path = temp_database_path("cancelled-background");
+        fs::write(root.join("User.php"), "<?php").expect("source file");
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let token = lifecycle.begin_workspace_run(&root.to_string_lossy());
+
+        lifecycle.cancel_workspace(token.workspace_root());
+
+        let error = super::scan_background_workspace(&root, &database_path, Some(&token))
+            .expect_err("cancelled scan");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        assert!(matches!(error, super::MetadataScanError::Cancelled));
+        assert_eq!(index.summary().expect("summary").file_count, 0);
+    }
+
+    #[test]
     fn starter_emits_completion_event_after_background_scan() {
         let root = temp_workspace("start-complete");
         let database_path = temp_database_path("start-complete");
@@ -711,6 +789,7 @@ mod tests {
             .start(
                 WorkspaceMetadataScanRequest {
                     database_path: database_path.clone(),
+                    lifecycle_token: None,
                     root_path: root.clone(),
                 },
                 sink,
@@ -738,6 +817,7 @@ mod tests {
             .start(
                 WorkspaceMetadataScanRequest {
                     database_path,
+                    lifecycle_token: None,
                     root_path: root,
                 },
                 sink,
