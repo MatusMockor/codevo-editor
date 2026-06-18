@@ -156,6 +156,8 @@ export function phpMethodCompletionsFromSource(
     const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
     const docBlock = phpDocBlockBefore(source, functionOffset);
     const parameters = phpFunctionParametersAt(source, functionOffset) ?? match[3] ?? "";
+    const declaredReturnType = normalizeReturnType(match[4] ?? null);
+    const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
 
     members.push({
       declaringClassName,
@@ -164,9 +166,7 @@ export function phpMethodCompletionsFromSource(
         normalizeWhitespace(parameters),
         docBlock,
       ),
-      returnType:
-        normalizeReturnType(match[4] ?? null) ??
-        phpDocReturnTypeFromBlock(docBlock),
+      returnType: bestPhpReturnType(declaredReturnType, documentedReturnType),
       ...(modifiers.includes("static") ? { isStatic: true } : {}),
     });
   }
@@ -390,9 +390,34 @@ function phpDocBlockBefore(source: string, functionOffset: number): string | nul
 }
 
 function phpDocReturnTypeFromBlock(docBlock: string | null): string | null {
-  const returnMatch = /@return\s+([^\s*]+)/.exec(docBlock ?? "");
+  const returnMatch = /@return\s+([^\r\n*]+)/.exec(docBlock ?? "");
 
-  return normalizeReturnType(returnMatch?.[1] ?? null);
+  return normalizeReturnType(firstPhpDocTypeToken(returnMatch?.[1] ?? null));
+}
+
+function firstPhpDocTypeToken(typeAndDescription: string | null): string | null {
+  const value = typeAndDescription?.trim() ?? "";
+  let genericDepth = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] || "";
+
+    if (character === "<") {
+      genericDepth += 1;
+      continue;
+    }
+
+    if (character === ">") {
+      genericDepth = Math.max(0, genericDepth - 1);
+      continue;
+    }
+
+    if (/\s/.test(character) && genericDepth === 0) {
+      return value.slice(0, index);
+    }
+  }
+
+  return value || null;
 }
 
 function enrichParametersFromPhpDoc(
@@ -553,6 +578,25 @@ function normalizeReturnType(returnType: string | null): string | null {
     .replace(/\s*&\s*/g, "&");
 
   return normalized || null;
+}
+
+function bestPhpReturnType(
+  declaredReturnType: string | null,
+  documentedReturnType: string | null,
+): string | null {
+  if (
+    documentedReturnType &&
+    hasPhpGenericTypeArguments(documentedReturnType) &&
+    !hasPhpGenericTypeArguments(declaredReturnType)
+  ) {
+    return documentedReturnType;
+  }
+
+  return declaredReturnType ?? documentedReturnType;
+}
+
+function hasPhpGenericTypeArguments(typeName: string | null): boolean {
+  return Boolean(typeName && /<[^>]+>/.test(typeName));
 }
 
 function normalizeWhitespace(value: string): string {

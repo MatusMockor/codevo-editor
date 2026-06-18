@@ -167,6 +167,30 @@ class Request
     ]);
   });
 
+  it("keeps more specific generic PHPDoc return types over declared relation types", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+
+class Comment
+{
+    /** @return BelongsTo<Comment, self> */
+    public function parent(): BelongsTo {}
+}
+`,
+        "Comment",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "parent",
+        parameters: "",
+        returnType: "BelongsTo<Comment, self>",
+      },
+    ]);
+  });
+
   it("extracts PHPDoc magic methods for framework-style OOP APIs", () => {
     expect(
       phpMethodCompletionsFromSource(

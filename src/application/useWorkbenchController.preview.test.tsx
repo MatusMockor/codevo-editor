@@ -1905,6 +1905,9 @@ class CommentController
 
         $child = $comment->children()->get()->first();
         $child->get
+
+        $documentedParent = $comment->documentedParent()->first();
+        $documentedParent->get
     }
 }
 `;
@@ -1974,6 +1977,12 @@ class Comment
         return $this->hasMany(Comment::class, 'parent_id');
     }
 
+    /** @return BelongsTo<Comment, self> */
+    public function documentedParent(): BelongsTo
+    {
+        return $this->belongsTo();
+    }
+
     public function getContent(): string {}
 }
 `;
@@ -2023,6 +2032,19 @@ class Comment
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$documentedParent->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$child->get"),
       ),
     ).resolves.toEqual([
@@ -2050,7 +2072,7 @@ class Comment
       path: commentPath,
       position: {
         column: 21,
-        lineNumber: 19,
+        lineNumber: 25,
       },
     });
   });
