@@ -58,6 +58,13 @@ export interface LanguageServerCompletionList {
   items: LanguageServerCompletionItem[];
 }
 
+export type LanguageServerCompletionTriggerKind = 1 | 2 | 3;
+
+export interface LanguageServerCompletionContext {
+  triggerCharacter: string | null;
+  triggerKind: LanguageServerCompletionTriggerKind;
+}
+
 export interface LanguageServerPosition {
   line: number;
   character: number;
@@ -238,6 +245,7 @@ export interface LanguageServerFeaturesGateway {
   completion(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
+    context?: LanguageServerCompletionContext,
   ): Promise<LanguageServerCompletionList>;
   resolveCompletionItem(
     rootPath: string,

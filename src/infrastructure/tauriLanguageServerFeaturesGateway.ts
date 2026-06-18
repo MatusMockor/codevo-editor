@@ -4,6 +4,7 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerCompletionContext,
   type LanguageServerCodeLens,
   type LanguageServerCompletionItem,
   type LanguageServerCompletionList,
@@ -161,10 +162,11 @@ export class TauriLanguageServerFeaturesGateway
   completion(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
+    context?: LanguageServerCompletionContext,
   ): Promise<LanguageServerCompletionList> {
     return this.invokeWhenAvailable(
       this.commands.completion,
-      { position, rootPath },
+      { ...(context ? { context } : {}), position, rootPath },
       emptyLanguageServerCompletionList(),
     );
   }

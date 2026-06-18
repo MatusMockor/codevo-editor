@@ -199,6 +199,82 @@ interface ParserFactory
     });
   });
 
+  it("preserves language-server diagnostic tags on Monaco markers", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const unused = deprecatedValue;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const unused = deprecatedValue;\n",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{
+            [activeDocument.path]: [
+              {
+                character: 6,
+                line: 0,
+                message: "'unused' is declared but its value is never read.",
+                severity: "hint",
+                source: "typescript",
+                tags: [1, 2],
+              },
+            ],
+          }}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="vs-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(monaco.editor.setModelMarkers).toHaveBeenCalledWith(
+      model,
+      "php-language-server",
+      [
+        expect.objectContaining({
+          message: "'unused' is declared but its value is never read.",
+          tags: [monaco.MarkerTag.Unnecessary, monaco.MarkerTag.Deprecated],
+        }),
+      ],
+    );
+  });
+
   it("registers guarded Option+Enter quick fix/context actions", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
@@ -893,6 +969,10 @@ function createMonaco(model: FakeModel) {
       UpArrow: 9,
     },
     KeyMod: { Alt: 512, CtrlCmd: 2048, Shift: 1024, WinCtrl: 4096 },
+    MarkerTag: {
+      Deprecated: 2,
+      Unnecessary: 1,
+    },
     languages: {
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: { Method: 2, Text: 1, Variable: 6 },

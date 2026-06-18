@@ -1415,6 +1415,7 @@ function toMonacoDiagnosticMarker(
     source: diagnostic.source || "Language Server",
     startColumn: diagnostic.character + 1,
     startLineNumber: diagnostic.line + 1,
+    tags: diagnosticTags(monaco, diagnostic.tags ?? []),
   };
 }
 
@@ -1527,6 +1528,25 @@ function diagnosticSeverity(
   }
 
   return monaco.MarkerSeverity.Info;
+}
+
+function diagnosticTags(
+  monaco: typeof Monaco,
+  tags: number[],
+): Monaco.MarkerTag[] | undefined {
+  const markerTags = tags.flatMap((tag) => {
+    if (tag === 1) {
+      return [monaco.MarkerTag.Unnecessary];
+    }
+
+    if (tag === 2) {
+      return [monaco.MarkerTag.Deprecated];
+    }
+
+    return [];
+  });
+
+  return markerTags.length > 0 ? markerTags : undefined;
 }
 
 function toMonacoSyntaxDiagnosticMarker(

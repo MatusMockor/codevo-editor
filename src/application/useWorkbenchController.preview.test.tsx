@@ -233,6 +233,78 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("restores cached JavaScript and TypeScript runtime status when activating a kept-alive project tab", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const workspaceBStatus = createDeferred<LanguageServerRuntimeStatus>();
+    const runningWorkspaceBStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 88,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => {
+          if (rootPath === "/workspace-b") {
+            return workspaceBStatus.promise;
+          }
+
+          return { kind: "stopped" as const, rootPath };
+        }),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningWorkspaceBStatus),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningWorkspaceBStatus);
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({ kind: "stopped", rootPath: "/workspace-a" }),
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace-b",
+        sessionId: 88,
+      }),
+    );
+
+    workspaceBStatus.resolve(runningWorkspaceBStatus);
+    await flushAsyncTurns(24);
+  });
+
   it("closes synced JavaScript and TypeScript documents before switching project tabs with keep-alive runtimes", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),
@@ -392,6 +464,52 @@ describe("useWorkbenchController preview tabs", () => {
     expect(readDirectory).not.toHaveBeenCalledWith(
       "/workspace/src/components",
     );
+  });
+
+  it("does not flush pending JavaScript and TypeScript edits after switching project tabs", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 52,
+    };
+    const path = "/workspace-a/src/App.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+      ),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.documentSyncGateway.didChange).mockClear();
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace-a",
+      path,
+    );
+    expect(dependencies.documentSyncGateway.didChange).not.toHaveBeenCalled();
   });
 
   it("suspends the previous project runtimes when background engines are disabled", async () => {
@@ -2318,6 +2436,86 @@ class CommentFactory
     ]);
   });
 
+  it("keeps late-static fluent return types bound to the receiver class", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const baseCommentPath = "/workspace/app/Models/BaseComment.php";
+    const specialCommentPath = "/workspace/app/Models/SpecialComment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\SpecialComment;
+
+class CommentController
+{
+    public function show(SpecialComment $comment): void
+    {
+        $comment->fluent()->spec
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === baseCommentPath) {
+          return `<?php
+namespace App\\Models;
+
+class BaseComment
+{
+    /** @return static */
+    public function fluent() {}
+}
+`;
+        }
+
+        if (path === specialCommentPath) {
+          return `<?php
+namespace App\\Models;
+
+class SpecialComment extends BaseComment
+{
+    public function specialOnly(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->fluent()->spec"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\SpecialComment",
+        name: "specialOnly",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("uses Laravel container receivers for method completions and signatures", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const servicePath = "/workspace/app/Services/CommentService.php";
@@ -3306,6 +3504,7 @@ class CommentController
     public function getOne(GetOneCommentRequest $request): void
     {
         $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->par
         $comment->parent->get
 
         $parent = $comment->parent()->first();
@@ -3319,6 +3518,9 @@ class CommentController
 
         $filteredChildFromProperty = $comment->children->filter()->first();
         $filteredChildFromProperty->get
+
+        $reviewer = $comment->reviewers->first();
+        $reviewer->get
 
         $documentedParent = $comment->documentedParent()->first();
         $documentedParent->get
@@ -3394,6 +3596,7 @@ use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
 use Illuminate\\Database\\Eloquent\\Relations\\MorphedByMany;
 
+/** @property-read \\Illuminate\\Database\\Eloquent\\Collection<int, User> $reviewers */
 class Comment
 {
     public function parent(): BelongsTo
@@ -3448,6 +3651,26 @@ class User
       );
     });
 
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->par"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "parent",
+        parameters: "",
+        returnType: "BelongsTo",
+      },
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        kind: "property",
+        name: "parent",
+        parameters: "",
+        returnType: "Comment",
+      },
+    ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
@@ -3516,6 +3739,19 @@ class User
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "$reviewer->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        name: "getName",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "$child->get"),
       ),
     ).resolves.toEqual([
@@ -3556,7 +3792,7 @@ class User
       path: commentPath,
       position: {
         column: 21,
-        lineNumber: 32,
+        lineNumber: 33,
       },
     });
   });
@@ -3852,14 +4088,123 @@ trait SoftDeletes
     );
   });
 
+  it("suppresses static local-scope diagnostics only when the model defines the scope", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::published()->first();
+        Album::missingMagic()->first();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 12,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Album
+{
+    public function scopePublished(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 16,
+            line: 9,
+            message: "Method App\\Models\\Album::published() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            character: 16,
+            line: 10,
+            message: "Method App\\Models\\Album::missingMagic() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        character: 16,
+        line: 10,
+        message: "Method App\\Models\\Album::missingMagic() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("keeps Laravel Eloquent builder generics through fluent chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumCollectionPath = "/workspace/app/Collections/AlbumCollection.php";
     const albumPath = "/workspace/app/Models/Album.php";
     const builderPath =
       "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
     const controllerSource = `<?php
 namespace App\\Http\\Controllers;
 
+use App\\Collections\\AlbumCollection;
 use App\\Models\\Album;
 
 class AlbumController
@@ -3878,6 +4223,11 @@ class AlbumController
 
         $trashedAlbum = Album::withTrashed()->whereNull('parent_id')->first();
         $trashedAlbum->get
+
+        Album::withR
+        Album::withRelations(
+        Album::pub
+        Album::published(
 
         $albumWithRelations = Album::withRelations()->findOrFail(1);
         $albumWithRelations->get
@@ -3918,6 +4268,10 @@ class AlbumController
         /** @var \\Illuminate\\Database\\Eloquent\\Collection<int, Album> $documentedAlbums */
         $documentedAlbum = $documentedAlbums->first();
         $documentedAlbum->get
+
+        /** @var AlbumCollection $customAlbums */
+        $customAlbum = $customAlbums->first();
+        $customAlbum->get
     }
 }
 `;
@@ -3942,6 +4296,21 @@ class Album
     public function getTitle(): string {}
 
     public function scopePublished($query, bool $strict = true): void {}
+    public function scopeWithRelations(Builder $query): Builder {}
+}
+`;
+        }
+
+        if (path === albumCollectionPath) {
+          return `<?php
+namespace App\\Collections;
+
+use App\\Models\\Album;
+use Illuminate\\Database\\Eloquent\\Collection;
+
+/** @extends Collection<int, Album> */
+class AlbumCollection extends Collection
+{
 }
 `;
         }
@@ -4071,6 +4440,74 @@ class Builder
         returnType: "string",
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Album::withR"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "withRelations",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        controllerSource,
+        positionAfter(controllerSource, "Album::withRelations("),
+      ),
+    ).resolves.toEqual({
+      argumentIndex: 0,
+      method: {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "withRelations",
+        parameters: "",
+        returnType: "Builder",
+      },
+      parameters: [],
+    });
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Album::pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodSignature(
+        controllerSource,
+        positionAfter(controllerSource, "Album::published("),
+      ),
+    ).resolves.toEqual({
+      argumentIndex: 0,
+      method: {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+      parameters: [
+        {
+          defaultValue: "true",
+          name: "$strict",
+          optional: true,
+          raw: "bool $strict = true",
+          type: "bool",
+        },
+      ],
+    });
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
@@ -4217,6 +4654,19 @@ class Builder
         returnType: "string",
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$customAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
   });
 
   it("opens Laravel fluent builder methods from chained calls", async () => {
@@ -4294,6 +4744,127 @@ class Builder
       position: {
         column: 21,
         lineNumber: 11,
+      },
+    });
+  });
+
+  it("opens Laravel static model scope and builder magic methods", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const builderPath =
+      "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::withRelations()->findOrFail(1);
+        Album::whereNull('parent_id')->first();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Album
+{
+    public function scopeWithRelations(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        if (path === builderPath) {
+          return `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+class Builder
+{
+    public function whereNull($columns, $boolean = 'and', $not = false)
+    {
+        return $this;
+    }
+
+    public function findOrFail($id)
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Album::withRelations"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(albumPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: albumPath,
+      position: {
+        column: 21,
+        lineNumber: 8,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Album::whereNull"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(builderPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: builderPath,
+      position: {
+        column: 21,
+        lineNumber: 6,
       },
     });
   });
@@ -4978,6 +5549,7 @@ final class FacebookAdapterService extends BaseAdapter
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerPlan,
+    javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptRuntimeStatus = { kind: "stopped" as const },
     languageServerPlan,
     languageServerDiagnosticsGateway,
@@ -4997,6 +5569,7 @@ final class FacebookAdapterService extends BaseAdapter
     javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
+    javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     javaScriptTypeScriptRuntimeStatus?: LanguageServerRuntimeStatus;
     languageServerPlan?: LanguageServerPlan;
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -5026,6 +5599,7 @@ final class FacebookAdapterService extends BaseAdapter
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
       javaScriptTypeScriptRuntimeStatus,
       languageServerPlan,
       languageServerDiagnosticsGateway,
@@ -5105,6 +5679,7 @@ function createControllerDependencies({
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
   javaScriptTypeScriptLanguageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerPlan,
+  javaScriptTypeScriptLanguageServerRuntimeGateway,
   javaScriptTypeScriptRuntimeStatus,
   languageServerPlan,
   languageServerFeaturesGateway,
@@ -5124,6 +5699,7 @@ function createControllerDependencies({
   javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
+  javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
   javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus;
   languageServerPlan?: LanguageServerPlan;
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
@@ -5261,13 +5837,14 @@ function createControllerDependencies({
     javaScriptTypeScriptLanguageServerDocumentSyncGateway: documentSyncGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway:
       javaScriptTypeScriptLanguageServerFeaturesGateway ?? featuresGateway(),
-    javaScriptTypeScriptLanguageServerRuntimeGateway: {
-      getStatus: vi.fn(async () => javaScriptTypeScriptInitialRuntimeStatus),
-      openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
-      start: vi.fn(async () => javaScriptTypeScriptRuntimeStatus),
-      stop: vi.fn(async () => ({ kind: "stopped" as const })),
-      subscribeStatus: vi.fn(async () => () => undefined),
-    },
+    javaScriptTypeScriptLanguageServerRuntimeGateway:
+      javaScriptTypeScriptLanguageServerRuntimeGateway ?? {
+        getStatus: vi.fn(async () => javaScriptTypeScriptInitialRuntimeStatus),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => javaScriptTypeScriptRuntimeStatus),
+        stop: vi.fn(async () => ({ kind: "stopped" as const })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
     phpFileOutlineGateway: {
       getPhpFileOutline: vi.fn(async () => ({ nodes: [] })),
       parsePhpFileOutline: vi.fn(async () => ({ nodes: [] })),

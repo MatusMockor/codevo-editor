@@ -8,7 +8,10 @@ import {
   phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
 } from "./phpMethodCompletions";
-import { phpLaravelLocalScopeCompletionsFromMethods } from "./phpFrameworkLaravel";
+import {
+  phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelStaticLocalScopeCompletionsFromMethods,
+} from "./phpFrameworkLaravel";
 
 function positionAfter(source: string, needle: string) {
   const offset = source.indexOf(needle);
@@ -285,6 +288,30 @@ class Comment
     ]);
   });
 
+  it("maps Laravel local scopes to static model completions", () => {
+    const methods = phpMethodCompletionsFromSource(
+      `<?php
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Comment
+{
+    public function scopeWithRelations(Builder $query): Builder {}
+}
+`,
+      "Comment",
+    );
+
+    expect(phpLaravelStaticLocalScopeCompletionsFromMethods(methods)).toEqual([
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "withRelations",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+  });
+
   it("uses PHPDoc return types when methods do not declare one", () => {
     expect(
       phpMethodCompletionsFromSource(
@@ -346,6 +373,87 @@ class Comment
         name: "parent",
         parameters: "",
         returnType: "BelongsTo<Comment, self>",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "parent",
+        parameters: "",
+        returnType: "Comment",
+      },
+    ]);
+  });
+
+  it("extracts Laravel relation methods as magic properties", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use App\\Models\\Attachment;
+use App\\Models\\Post;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+
+class Comment
+{
+    public function post(): BelongsTo
+    {
+        return $this->belongsTo(Post::class);
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(Attachment::class);
+    }
+
+    /** @return MorphTo<Post, self> */
+    public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+`,
+        "Comment",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "post",
+        parameters: "",
+        returnType: "BelongsTo",
+      },
+      {
+        declaringClassName: "Comment",
+        name: "attachments",
+        parameters: "",
+        returnType: "HasMany",
+      },
+      {
+        declaringClassName: "Comment",
+        name: "commentable",
+        parameters: "",
+        returnType: "MorphTo<Post, self>",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "post",
+        parameters: "",
+        returnType: "Post",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "attachments",
+        parameters: "",
+        returnType: "Attachment",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "commentable",
+        parameters: "",
+        returnType: "Post",
       },
     ]);
   });
@@ -416,6 +524,7 @@ trait InteractsWithInput
 /**
  * @property string $body
  * @property-read int $externalId
+ * @property-read \\Illuminate\\Database\\Eloquent\\Collection<int, Comment> $children
  */
 class Comment
 {
@@ -448,6 +557,13 @@ class Comment
         name: "externalId",
         parameters: "",
         returnType: "int",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "children",
+        parameters: "",
+        returnType: "\\Illuminate\\Database\\Eloquent\\Collection<int, Comment>",
       },
       {
         declaringClassName: "Comment",

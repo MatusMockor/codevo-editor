@@ -105,6 +105,15 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript completions now trigger on `#` as well as standard member/import/JSX trigger characters, so private class fields and methods go through the managed language-server completion path.
 - TypeScript/JavaScript completions now also trigger on backticks, matching VS Code-style TypeScript completions in template string contexts.
 - TypeScript/JavaScript completion metadata now preserves deprecated item markers from LSP `deprecated` and `tags`, so Monaco can render deprecated suggestions like VS Code.
+- TypeScript/JavaScript completion requests now pass VS Code-like LSP completion context (`triggerKind` and `triggerCharacter`) when Monaco invokes completions from trigger characters such as `.`, quotes, backticks, JSX markers, and private field `#`.
+- TypeScript/JavaScript diagnostics now preserve LSP diagnostic tags and map them to Monaco marker tags, so unused and deprecated diagnostics can render with VS Code-like unnecessary/deprecated styling.
+- TypeScript/JavaScript lazy completion, document-link, code-action, CodeLens and command resolves now check the active workspace root before calling the managed service. Workspace edits applied to open Monaco models are also filtered to the event/command root, preventing delayed provider work from leaking into another project tab.
+- TypeScript/JavaScript document sync state is now keyed by workspace root plus document path/URI. Open/change/save/close queues, pending debounce timers, and diagnostic version checks cannot be reused across project tabs.
+- TypeScript/JavaScript runtime status is now cached per workspace root. Status events from a kept-alive background project are retained without changing the active tab, then restored immediately when that project tab is activated.
+- The backend language-server registry now has regression coverage proving root-keyed notifications are written only to the requested workspace process, reducing the risk of JS/TS project tab cross-talk.
+- The backend language-server registry now also proves request/response routing is workspace-scoped, so hover/completion/navigation requests for one project cannot be written to another project's TypeScript service.
+- TypeScript/JavaScript lazy resolves for completions, document links, code actions, and CodeLens now re-check the active workspace after the server responds. If the user switches project tabs while a resolve is in flight, stale auto-import edits or resolved metadata are dropped instead of being applied to the new active project.
+- TypeScript/JavaScript command-backed edits now also re-check the active workspace after `workspace/executeCommand` returns, so slow organize-imports or fix-all commands cannot apply edits after the user has switched project tabs.
 
 ## Full VS Code-Like Target
 

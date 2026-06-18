@@ -13,6 +13,7 @@ export interface LanguageServerDiagnostic {
   message: string;
   severity: LanguageServerDiagnosticSeverity;
   source: string | null;
+  tags?: number[];
   line: number;
   character: number;
 }

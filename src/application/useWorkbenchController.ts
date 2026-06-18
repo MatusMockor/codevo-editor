@@ -50,14 +50,19 @@ import {
 } from "../domain/languageServerDiagnostics";
 import {
   filterPhpLanguageServerDiagnostics,
+  phpMethodDiagnosticKey,
   phpTraitHostMethodDiagnosticContext,
   phpTraitHostMethodDiagnosticKey,
+  phpUnresolvedStaticMethodDiagnosticContext,
 } from "../domain/phpLanguageServerDiagnosticFilters";
 import {
   createLanguageServerTextDocument,
   fileUriFromPath,
   isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
+  languageServerDocumentSyncKey,
+  languageServerPathFromDocumentSyncKey,
+  languageServerUriSyncKey,
   type LanguageServerDocumentSyncGateway,
   type LanguageServerTextDocument,
 } from "../domain/languageServerDocumentSync";
@@ -141,11 +146,16 @@ import {
   isLaravelCollectionTerminalModelMethod,
   isLaravelEloquentBuilderCollectionMethod,
   isLaravelEloquentBuilderFluentMethod,
+  isLaravelEloquentBuilderMethodName,
   isLaravelEloquentBuilderTerminalModelMethod,
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentStaticBuilderMethod,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelRelationTargetClassNameFromExpression,
+  phpLaravelScopeMethodName,
+  phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
+import { firstPhpDocTypeToken } from "../domain/phpDocTemplates";
 import {
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
@@ -472,6 +482,9 @@ export function useWorkbenchController(
   const javaScriptTypeScriptDocumentSyncQueuesRef = useRef<
     Record<string, Promise<void>>
   >({});
+  const javaScriptTypeScriptRuntimeStatusByRootRef = useRef<
+    Record<string, LanguageServerRuntimeStatus>
+  >({});
   const phpClassSourcePathCacheRef = useRef<Record<string, string[]>>({});
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
@@ -765,8 +778,13 @@ export function useWorkbenchController(
         return;
       }
 
-      const currentVersion =
-        javaScriptTypeScriptDocumentVersionsByUriRef.current[event.uri];
+      const diagnosticsRootPath =
+        event.rootPath ?? currentWorkspaceRootRef.current;
+      const currentVersion = diagnosticsRootPath
+        ? javaScriptTypeScriptDocumentVersionsByUriRef.current[
+            languageServerUriSyncKey(diagnosticsRootPath, event.uri)
+          ]
+        : undefined;
 
       if (
         !shouldApplyLanguageServerDiagnostics(
@@ -866,6 +884,17 @@ export function useWorkbenchController(
     [languageServerGateway, reportError],
   );
 
+  const cacheJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
+    (rootPath: string, status: LanguageServerRuntimeStatus) => {
+      const rootedStatus = languageServerRuntimeStatusWithRoot(status, rootPath);
+      javaScriptTypeScriptRuntimeStatusByRootRef.current[rootPath] =
+        rootedStatus;
+
+      return rootedStatus;
+    },
+    [],
+  );
+
   const handleLanguageServerRuntimeStatus = useCallback(
     (status: LanguageServerRuntimeStatus) => {
       if (
@@ -897,6 +926,13 @@ export function useWorkbenchController(
     (status: LanguageServerRuntimeStatus) => {
       const statusRootPath = status.rootPath ?? currentWorkspaceRootRef.current;
 
+      const rootedStatus = statusRootPath
+        ? cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
+            statusRootPath,
+            status,
+          )
+        : status;
+
       if (
         statusRootPath &&
         currentWorkspaceRootRef.current &&
@@ -905,11 +941,7 @@ export function useWorkbenchController(
         return;
       }
 
-      setJavaScriptTypeScriptLanguageServerRuntimeStatus(
-        statusRootPath
-          ? languageServerRuntimeStatusWithRoot(status, statusRootPath)
-          : status,
-      );
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
         statusRootPath ?? null,
       );
@@ -925,7 +957,11 @@ export function useWorkbenchController(
 
       reportError("JavaScript/TypeScript", crash);
     },
-    [clearJavaScriptTypeScriptLanguageServerDiagnostics, reportError],
+    [
+      cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
+      clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      reportError,
+    ],
   );
 
   const handleMetadataScanCompletion = useCallback(
@@ -1058,11 +1094,14 @@ export function useWorkbenchController(
   }, []);
 
   const nextJavaScriptTypeScriptDocumentVersion = useCallback(
-    (path: string): number => {
+    (rootPath: string, path: string): number => {
+      const key = languageServerDocumentSyncKey(rootPath, path);
       const next =
-        (javaScriptTypeScriptDocumentVersionsRef.current[path] || 0) + 1;
-      javaScriptTypeScriptDocumentVersionsRef.current[path] = next;
-      javaScriptTypeScriptDocumentVersionsByUriRef.current[fileUriFromPath(path)] =
+        (javaScriptTypeScriptDocumentVersionsRef.current[key] || 0) + 1;
+      javaScriptTypeScriptDocumentVersionsRef.current[key] = next;
+      javaScriptTypeScriptDocumentVersionsByUriRef.current[
+        languageServerUriSyncKey(rootPath, fileUriFromPath(path))
+      ] =
         next;
       return next;
     },
@@ -1081,15 +1120,15 @@ export function useWorkbenchController(
   }, []);
 
   const clearJavaScriptTypeScriptDocumentChangeTimer = useCallback(
-    (path: string) => {
-      const timer = javaScriptTypeScriptDocumentChangeTimersRef.current[path];
+    (key: string) => {
+      const timer = javaScriptTypeScriptDocumentChangeTimersRef.current[key];
 
       if (!timer) {
         return;
       }
 
       window.clearTimeout(timer);
-      delete javaScriptTypeScriptDocumentChangeTimersRef.current[path];
+      delete javaScriptTypeScriptDocumentChangeTimersRef.current[key];
     },
     [],
   );
@@ -1115,20 +1154,20 @@ export function useWorkbenchController(
   );
 
   const enqueueJavaScriptTypeScriptDocumentSync = useCallback(
-    (path: string, operation: () => Promise<void>) => {
+    (key: string, operation: () => Promise<void>) => {
       const previous =
-        javaScriptTypeScriptDocumentSyncQueuesRef.current[path] ||
+        javaScriptTypeScriptDocumentSyncQueuesRef.current[key] ||
         Promise.resolve();
       const next = previous.then(operation, operation);
       const queued = next.catch(() => undefined);
-      javaScriptTypeScriptDocumentSyncQueuesRef.current[path] = queued;
+      javaScriptTypeScriptDocumentSyncQueuesRef.current[key] = queued;
 
       queued.finally(() => {
-        if (javaScriptTypeScriptDocumentSyncQueuesRef.current[path] !== queued) {
+        if (javaScriptTypeScriptDocumentSyncQueuesRef.current[key] !== queued) {
           return;
         }
 
-        delete javaScriptTypeScriptDocumentSyncQueuesRef.current[path];
+        delete javaScriptTypeScriptDocumentSyncQueuesRef.current[key];
       });
 
       return next;
@@ -1197,11 +1236,14 @@ export function useWorkbenchController(
     try {
       const status =
         await javaScriptTypeScriptLanguageServerRuntimeGateway.stop(targetRootPath);
+      const rootedStatus =
+        cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
+          targetRootPath,
+          status,
+        );
 
       if (targetRootPath === currentWorkspaceRootRef.current) {
-        setJavaScriptTypeScriptLanguageServerRuntimeStatus(
-          languageServerRuntimeStatusWithRoot(status, targetRootPath),
-        );
+        setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
         setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(targetRootPath);
         clearJavaScriptTypeScriptLanguageServerDiagnostics();
         resetJavaScriptTypeScriptLanguageServerDocuments();
@@ -1213,6 +1255,7 @@ export function useWorkbenchController(
       return null;
     }
   }, [
+    cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     reportError,
@@ -1316,28 +1359,31 @@ export function useWorkbenchController(
         return;
       }
 
-      if (javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)) {
+      const syncKey = languageServerDocumentSyncKey(rootPath, document.path);
+
+      if (javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)) {
         return;
       }
 
-      const version = nextJavaScriptTypeScriptDocumentVersion(document.path);
+      const version = nextJavaScriptTypeScriptDocumentVersion(
+        rootPath,
+        document.path,
+      );
       const syncedDocument = createLanguageServerTextDocument(document, version);
-      javaScriptTypeScriptSyncedDocumentPathsRef.current.add(document.path);
-      javaScriptTypeScriptSyncedDocumentContentRef.current[document.path] =
+      javaScriptTypeScriptSyncedDocumentPathsRef.current.add(syncKey);
+      javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey] =
         document.content;
 
       try {
-        await enqueueJavaScriptTypeScriptDocumentSync(document.path, () =>
+        await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
           javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen(
             rootPath,
             syncedDocument,
           ),
         );
       } catch (error) {
-        javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(document.path);
-        delete javaScriptTypeScriptSyncedDocumentContentRef.current[
-          document.path
-        ];
+        javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(syncKey);
+        delete javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey];
         reportError("JavaScript/TypeScript", error);
       }
     },
@@ -1360,6 +1406,7 @@ export function useWorkbenchController(
     workspaceSessionRestoredRef.current = false;
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
+    javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -1455,44 +1502,48 @@ export function useWorkbenchController(
         return;
       }
 
+      const syncKey = rootPath
+        ? languageServerDocumentSyncKey(rootPath, document.path)
+        : null;
+
       if (
         !rootPath ||
-        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)
+        !syncKey ||
+        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
       ) {
         return;
       }
 
       if (
-        javaScriptTypeScriptSyncedDocumentContentRef.current[document.path] ===
+        javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey] ===
         document.content
       ) {
         return;
       }
 
-      clearJavaScriptTypeScriptDocumentChangeTimer(document.path);
-      javaScriptTypeScriptSyncedDocumentContentRef.current[document.path] =
+      clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
+      javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey] =
         document.content;
 
-      const version = nextJavaScriptTypeScriptDocumentVersion(document.path);
+      const version = nextJavaScriptTypeScriptDocumentVersion(
+        rootPath,
+        document.path,
+      );
       const syncedDocument = createLanguageServerTextDocument(document, version);
-      javaScriptTypeScriptPendingDocumentChangesRef.current[document.path] =
+      javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey] =
         syncedDocument;
-      javaScriptTypeScriptDocumentChangeTimersRef.current[document.path] =
+      javaScriptTypeScriptDocumentChangeTimersRef.current[syncKey] =
         window.setTimeout(() => {
           const pendingDocument =
-            javaScriptTypeScriptPendingDocumentChangesRef.current[document.path];
-          delete javaScriptTypeScriptDocumentChangeTimersRef.current[
-            document.path
-          ];
-          delete javaScriptTypeScriptPendingDocumentChangesRef.current[
-            document.path
-          ];
+            javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
+          delete javaScriptTypeScriptDocumentChangeTimersRef.current[syncKey];
+          delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
 
           if (!pendingDocument) {
             return;
           }
 
-          void enqueueJavaScriptTypeScriptDocumentSync(document.path, () =>
+          void enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
             javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
               rootPath,
               pendingDocument,
@@ -1536,17 +1587,21 @@ export function useWorkbenchController(
   const flushPendingJavaScriptTypeScriptDocumentChange = useCallback(
     async (path: string) => {
       const rootPath = currentWorkspaceRootRef.current;
-      const pendingDocument =
-        javaScriptTypeScriptPendingDocumentChangesRef.current[path];
+      const syncKey = rootPath
+        ? languageServerDocumentSyncKey(rootPath, path)
+        : null;
+      const pendingDocument = syncKey
+        ? javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey]
+        : null;
 
-      if (!rootPath || !pendingDocument) {
+      if (!rootPath || !syncKey || !pendingDocument) {
         return;
       }
 
-      clearJavaScriptTypeScriptDocumentChangeTimer(path);
-      delete javaScriptTypeScriptPendingDocumentChangesRef.current[path];
+      clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
+      delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
 
-      await enqueueJavaScriptTypeScriptDocumentSync(path, () =>
+      await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
         javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
           rootPath,
           pendingDocument,
@@ -1598,8 +1653,14 @@ export function useWorkbenchController(
   const syncSavedJavaScriptTypeScriptDocument = useCallback(
     async (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
+      const syncKey = rootPath
+        ? languageServerDocumentSyncKey(rootPath, document.path)
+        : null;
 
-      if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)) {
+      if (
+        !syncKey ||
+        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
+      ) {
         return;
       }
 
@@ -1609,13 +1670,12 @@ export function useWorkbenchController(
 
       try {
         await flushPendingJavaScriptTypeScriptDocumentChange(document.path);
-        await enqueueJavaScriptTypeScriptDocumentSync(document.path, () =>
+        await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
           javaScriptTypeScriptLanguageServerDocumentSyncGateway.didSave(
             rootPath,
             createLanguageServerTextDocument(
               document,
-              javaScriptTypeScriptDocumentVersionsRef.current[document.path] ||
-                0,
+              javaScriptTypeScriptDocumentVersionsRef.current[syncKey] || 0,
             ),
           ),
         );
@@ -1665,27 +1725,29 @@ export function useWorkbenchController(
   const syncClosedJavaScriptTypeScriptDocument = useCallback(
     async (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
+      const syncKey = rootPath
+        ? languageServerDocumentSyncKey(rootPath, document.path)
+        : null;
 
       if (
         !rootPath ||
-        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(document.path)
+        !syncKey ||
+        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
       ) {
         return;
       }
 
-      clearJavaScriptTypeScriptDocumentChangeTimer(document.path);
-      javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(document.path);
-      delete javaScriptTypeScriptSyncedDocumentContentRef.current[document.path];
-      delete javaScriptTypeScriptPendingDocumentChangesRef.current[
-        document.path
-      ];
-      delete javaScriptTypeScriptDocumentVersionsRef.current[document.path];
+      clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
+      javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(syncKey);
+      delete javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey];
+      delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
+      delete javaScriptTypeScriptDocumentVersionsRef.current[syncKey];
       delete javaScriptTypeScriptDocumentVersionsByUriRef.current[
-        fileUriFromPath(document.path)
+        languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
       ];
 
       try {
-        await enqueueJavaScriptTypeScriptDocumentSync(document.path, () =>
+        await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
           javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose(
             rootPath,
             document.path,
@@ -1739,23 +1801,27 @@ export function useWorkbenchController(
 
   const closeSyncedJavaScriptTypeScriptDocumentsForRoot = useCallback(
     async (rootPath: string) => {
-      const syncedPaths = Array.from(
+      const syncedDocuments = Array.from(
         javaScriptTypeScriptSyncedDocumentPathsRef.current,
-      );
+      ).flatMap((key) => {
+        const path = languageServerPathFromDocumentSyncKey(rootPath, key);
+
+        return path ? [{ key, path }] : [];
+      });
 
       await Promise.all(
-        syncedPaths.map(async (path) => {
-          clearJavaScriptTypeScriptDocumentChangeTimer(path);
-          javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(path);
-          delete javaScriptTypeScriptSyncedDocumentContentRef.current[path];
-          delete javaScriptTypeScriptPendingDocumentChangesRef.current[path];
-          delete javaScriptTypeScriptDocumentVersionsRef.current[path];
+        syncedDocuments.map(async ({ key, path }) => {
+          clearJavaScriptTypeScriptDocumentChangeTimer(key);
+          javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(key);
+          delete javaScriptTypeScriptSyncedDocumentContentRef.current[key];
+          delete javaScriptTypeScriptPendingDocumentChangesRef.current[key];
+          delete javaScriptTypeScriptDocumentVersionsRef.current[key];
           delete javaScriptTypeScriptDocumentVersionsByUriRef.current[
-            fileUriFromPath(path)
+            languageServerUriSyncKey(rootPath, fileUriFromPath(path))
           ];
 
           try {
-            await enqueueJavaScriptTypeScriptDocumentSync(path, () =>
+            await enqueueJavaScriptTypeScriptDocumentSync(key, () =>
               javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose(
                 rootPath,
                 path,
@@ -1766,15 +1832,12 @@ export function useWorkbenchController(
           }
         }),
       );
-
-      resetJavaScriptTypeScriptLanguageServerDocuments();
     },
     [
       clearJavaScriptTypeScriptDocumentChangeTimer,
       enqueueJavaScriptTypeScriptDocumentSync,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       reportError,
-      resetJavaScriptTypeScriptLanguageServerDocuments,
     ],
   );
 
@@ -2146,6 +2209,7 @@ export function useWorkbenchController(
             : currentSettings.recentWorkspacePath;
 
         delete workspaceStateCacheRef.current[path];
+        delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
         await stopProjectRuntimes(path);
 
         try {
@@ -2174,6 +2238,7 @@ export function useWorkbenchController(
         null;
 
       delete workspaceStateCacheRef.current[path];
+      delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
       await stopProjectRuntimes(path);
 
       try {
@@ -3752,6 +3817,21 @@ export function useWorkbenchController(
     [resolvePhpClassReference],
   );
 
+  const resolvePhpMethodDeclaredReturnType = useCallback(
+    (
+      source: string,
+      typeName: string | null,
+      lateStaticClassName: string,
+    ): string | null => {
+      if (phpReturnTypeIncludesLateStatic(typeName)) {
+        return lateStaticClassName || null;
+      }
+
+      return resolvePhpDeclaredType(source, typeName);
+    },
+    [resolvePhpDeclaredType],
+  );
+
   const resolvePhpLaravelBoundConcrete = useCallback(
     async (className: string): Promise<string | null> => {
       if (!workspaceRoot) {
@@ -4243,41 +4323,78 @@ export function useWorkbenchController(
       }
 
       const contextualTraitHostMethods = new Set<string>();
+      const contextualExistingMethods = new Set<string>();
 
       for (const diagnostic of diagnostics) {
-        const context = phpTraitHostMethodDiagnosticContext(source, diagnostic);
+        const staticMethodContext = phpUnresolvedStaticMethodDiagnosticContext(
+          source,
+          diagnostic,
+        );
 
-        if (!context) {
+        if (staticMethodContext) {
+          const resolvedClassName = resolvePhpClassReference(
+            source,
+            staticMethodContext.className,
+          );
+          const scopeMethodName = phpLaravelScopeMethodName(
+            staticMethodContext.methodName,
+          );
+          const hasContextualScopeMethod =
+            resolvedClassName && scopeMethodName
+              ? await phpClassHierarchyHasMethod(
+                  resolvedClassName,
+                  scopeMethodName,
+                )
+              : false;
+
+          if (hasContextualScopeMethod) {
+            contextualExistingMethods.add(
+              phpMethodDiagnosticKey(
+                staticMethodContext.className,
+                staticMethodContext.methodName,
+              ),
+            );
+          }
+        }
+
+        const traitContext = phpTraitHostMethodDiagnosticContext(
+          source,
+          diagnostic,
+        );
+
+        if (!traitContext) {
           continue;
         }
 
-        const normalizedTraitName = context.traitName.replace(/^\\+/, "");
+        const normalizedTraitName = traitContext.traitName.replace(/^\\+/, "");
         const traitClassName = normalizedTraitName.includes("\\")
           ? normalizedTraitName
-          : (resolvePhpClassReference(source, context.traitName) ??
+          : (resolvePhpClassReference(source, traitContext.traitName) ??
             normalizedTraitName);
 
         if (
           await phpTraitHostMethodExists(
             traitClassName,
-            context.methodName,
+            traitContext.methodName,
           )
         ) {
           contextualTraitHostMethods.add(
             phpTraitHostMethodDiagnosticKey(
               traitClassName,
-              context.methodName,
+              traitContext.methodName,
             ),
           );
         }
       }
 
       return filterPhpLanguageServerDiagnostics(source, diagnostics, {
+        contextualExistingMethods,
         contextualTraitHostMethods,
         path,
       });
     },
     [
+      phpClassHierarchyHasMethod,
       phpTraitHostMethodExists,
       readNavigationFileContent,
       resolvePhpClassReference,
@@ -4293,6 +4410,7 @@ export function useWorkbenchController(
       className: string,
       methodName: string,
       visitedClassNames = new Set<string>(),
+      lateStaticClassName = className,
     ): Promise<string | null> => {
       if (!workspaceRoot || !workspaceDescriptor?.php) {
         return null;
@@ -4300,6 +4418,9 @@ export function useWorkbenchController(
 
       const normalizedClassName = className.trim().replace(/^\\+/, "");
       const visitedKey = normalizedClassName.toLowerCase();
+      const normalizedLateStaticClassName = lateStaticClassName
+        .trim()
+        .replace(/^\\+/, "");
 
       if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
         return null;
@@ -4314,6 +4435,7 @@ export function useWorkbenchController(
           facadeTargetClassName,
           methodName,
           visitedClassNames,
+          facadeTargetClassName,
         );
       }
 
@@ -4332,6 +4454,7 @@ export function useWorkbenchController(
           boundConcreteClassName,
           methodName,
           visitedClassNames,
+          boundConcreteClassName,
         );
       };
 
@@ -4402,7 +4525,13 @@ export function useWorkbenchController(
             (candidate) =>
               candidate.name.toLowerCase() === methodName.toLowerCase(),
           );
-          const returnType = resolvePhpDeclaredType(content, method?.returnType ?? null);
+          const returnType = method
+            ? resolvePhpMethodDeclaredReturnType(
+                content,
+                method.returnType,
+                normalizedLateStaticClassName || normalizedClassName,
+              )
+            : null;
 
           if (returnType) {
             return returnType;
@@ -4431,6 +4560,7 @@ export function useWorkbenchController(
                   resolvedTraitName,
                   methodName,
                   visitedClassNames,
+                  normalizedLateStaticClassName || normalizedClassName,
                 )
               : null;
 
@@ -4446,6 +4576,7 @@ export function useWorkbenchController(
                   resolvedMixinName,
                   methodName,
                   visitedClassNames,
+                  normalizedLateStaticClassName || normalizedClassName,
                 )
               : null;
 
@@ -4464,6 +4595,7 @@ export function useWorkbenchController(
               resolvedParentClassName,
               methodName,
               visitedClassNames,
+              normalizedLateStaticClassName || normalizedClassName,
             );
 
             if (parentReturnType) {
@@ -4483,7 +4615,7 @@ export function useWorkbenchController(
       readPhpClassMembersFromPath,
       resolvePhpLaravelBoundConcrete,
       resolvePhpClassReference,
-      resolvePhpDeclaredType,
+      resolvePhpMethodDeclaredReturnType,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
       workspaceRoot,
@@ -4520,6 +4652,18 @@ export function useWorkbenchController(
             (candidate) =>
               candidate.name.toLowerCase() === propertyName.toLowerCase(),
           );
+          const collectionPropertyModelType =
+            member?.kind === "property" && includeCollectionRelations
+              ? phpCollectionGenericModelTypeCandidate(member.returnType)
+              : null;
+          const resolvedCollectionPropertyModelType = collectionPropertyModelType
+            ? resolvePhpClassReference(content, collectionPropertyModelType)
+            : null;
+
+          if (resolvedCollectionPropertyModelType) {
+            return resolvedCollectionPropertyModelType;
+          }
+
           const propertyType =
             member?.kind === "property"
               ? resolvePhpDeclaredType(content, member.returnType)
@@ -4639,6 +4783,73 @@ export function useWorkbenchController(
       );
     },
     [collectPhpMethodsForClass],
+  );
+
+  const resolvePhpCollectionModelTypeFromClass = useCallback(
+    async (className: string): Promise<string | null> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return null;
+      }
+
+      const visitedClassNames = new Set<string>();
+
+      const resolveCollection = async (
+        candidateClassName: string,
+      ): Promise<string | null> => {
+        const normalizedClassName = candidateClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const visitedKey = normalizedClassName.toLowerCase();
+
+        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+          return null;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        for (const path of await resolvePhpClassSourcePaths(
+          normalizedClassName,
+        )) {
+          try {
+            const content = await readNavigationFileContent(path);
+            const genericModelType =
+              phpClassDocGenericCollectionModelTypeCandidate(content);
+            const resolvedGenericModelType = genericModelType
+              ? resolvePhpClassReference(content, genericModelType)
+              : null;
+
+            if (resolvedGenericModelType) {
+              return resolvedGenericModelType;
+            }
+
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassReference(content, parentClassName)
+              : null;
+            const parentModelType = resolvedParentClassName
+              ? await resolveCollection(resolvedParentClassName)
+              : null;
+
+            if (parentModelType) {
+              return parentModelType;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return null;
+      };
+
+      return resolveCollection(className);
+    },
+    [
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
   );
 
   const resolvePhpEloquentBuilderModelType = useCallback(
@@ -4807,13 +5018,27 @@ export function useWorkbenchController(
       }
 
       const staticCall = phpStaticCallExpression(normalizedExpression);
+      const staticCallClassName = staticCall
+        ? resolvePhpClassReference(source, staticCall.className)
+        : null;
+
+      if (
+        staticCall &&
+        staticCallClassName &&
+        (await phpClassHasLaravelLocalScope(
+          staticCallClassName,
+          staticCall.methodName,
+        ))
+      ) {
+        return staticCallClassName;
+      }
 
       if (
         staticCall &&
         (isLaravelEloquentStaticBuilderMethod(staticCall.methodName) ||
           isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName))
       ) {
-        return resolvePhpClassReference(source, staticCall.className);
+        return staticCallClassName;
       }
 
       return null;
@@ -4837,6 +5062,22 @@ export function useWorkbenchController(
       }
 
       const normalizedExpression = expression.trim();
+      const directCollectionType = phpReceiverExpressionTypeInSource(
+        source,
+        position,
+        normalizedExpression,
+      );
+      const resolvedDirectCollectionType = directCollectionType
+        ? resolvePhpClassReference(source, directCollectionType)
+        : null;
+      const directCollectionModelType = resolvedDirectCollectionType
+        ? await resolvePhpCollectionModelTypeFromClass(resolvedDirectCollectionType)
+        : null;
+
+      if (directCollectionModelType) {
+        return directCollectionModelType;
+      }
+
       const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
         normalizedExpression,
       );
@@ -4910,7 +5151,11 @@ export function useWorkbenchController(
 
       return null;
     },
-    [resolvePhpClassReference, resolvePhpEloquentBuilderModelType],
+    [
+      resolvePhpClassReference,
+      resolvePhpCollectionModelTypeFromClass,
+      resolvePhpEloquentBuilderModelType,
+    ],
   );
 
   const phpClassMethodReturnsClassStringArgument = useCallback(
@@ -5244,6 +5489,13 @@ export function useWorkbenchController(
           return "Illuminate\\Database\\Eloquent\\Builder";
         }
 
+        if (
+          className &&
+          (await phpClassHasLaravelLocalScope(className, staticCall.methodName))
+        ) {
+          return "Illuminate\\Database\\Eloquent\\Builder";
+        }
+
         return className
           ? resolvePhpMethodReturnType(className, staticCall.methodName)
           : null;
@@ -5312,9 +5564,14 @@ export function useWorkbenchController(
         facadeTargetClassName ?? resolvedClassName,
       );
 
-      return facadeTargetClassName
-        ? methods
-        : methods.filter((method) => method.isStatic);
+      if (facadeTargetClassName) {
+        return methods;
+      }
+
+      return mergePhpMethodCompletions(
+        methods.filter((method) => method.isStatic),
+        phpLaravelStaticLocalScopeCompletionsFromMethods(methods),
+      );
     },
     [collectPhpMethodsForClass, resolvePhpClassReference],
   );
@@ -5685,6 +5942,54 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpStaticMethodCallDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "staticMethodCall" }>,
+    ): Promise<boolean> => {
+      if (!activeDocument) {
+        return false;
+      }
+
+      const className = resolvePhpClassName(
+        activeDocument.content,
+        context.className,
+      );
+
+      if (!className) {
+        return false;
+      }
+
+      if (await openDirectPhpMethodTarget(className, context.methodName)) {
+        return true;
+      }
+
+      const scopeMethodName = phpLaravelScopeMethodName(context.methodName);
+
+      if (
+        scopeMethodName &&
+        (await openDirectPhpMethodTarget(className, scopeMethodName))
+      ) {
+        return true;
+      }
+
+      if (
+        isLaravelEloquentBuilderMethodName(context.methodName) &&
+        (await openDirectPhpMethodTarget(
+          "Illuminate\\Database\\Eloquent\\Builder",
+          context.methodName,
+        ))
+      ) {
+        return true;
+      }
+
+      setMessage(
+        `No typed target found for ${context.className}::${context.methodName}().`,
+      );
+      return false;
+    },
+    [activeDocument, openDirectPhpMethodTarget],
+  );
+
   const goToPhpClassIdentifierDefinition = useCallback(
     async (name: string): Promise<boolean> => {
       if (!activeDocument) {
@@ -5723,6 +6028,10 @@ export function useWorkbenchController(
       return goToPhpMethodCallDefinition(context);
     }
 
+    if (context.kind === "staticMethodCall") {
+      return goToPhpStaticMethodCallDefinition(context);
+    }
+
     if (context.kind === "laravelRouteActionMethod") {
       const className = resolvePhpClassName(
         activeDocument.content,
@@ -5749,6 +6058,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpMethodCallDefinition,
+    goToPhpStaticMethodCallDefinition,
     openDirectPhpMethodTarget,
     openPhpClassTarget,
   ]);
@@ -5948,6 +6258,10 @@ export function useWorkbenchController(
           return goToPhpMethodCallDefinition(context);
         }
 
+        if (context.kind === "staticMethodCall") {
+          return goToPhpStaticMethodCallDefinition(context);
+        }
+
         if (context.kind === "laravelRouteActionMethod") {
           const className = resolvePhpClassName(
             activeDocument.content,
@@ -5959,6 +6273,10 @@ export function useWorkbenchController(
           }
 
           return openDirectPhpMethodTarget(className, context.methodName);
+        }
+
+        if (context.kind !== "classIdentifier") {
+          return false;
         }
 
         const openedClassTarget = await goToPhpClassIdentifierDefinition(
@@ -6031,6 +6349,7 @@ export function useWorkbenchController(
     activeDocument,
     goToPhpClassIdentifierDefinition,
     goToPhpMethodCallDefinition,
+    goToPhpStaticMethodCallDefinition,
     intelligenceMode,
     openDirectPhpMethodTarget,
     openNavigationTarget,
@@ -7752,7 +8071,17 @@ export function useWorkbenchController(
     let unsubscribe: UnsubscribeFn | null = null;
 
     if (workspaceRoot) {
-      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
+      const cachedStatus =
+        javaScriptTypeScriptRuntimeStatusByRootRef.current[workspaceRoot] ?? null;
+
+      if (cachedStatus) {
+        setJavaScriptTypeScriptLanguageServerRuntimeStatus(cachedStatus);
+        setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
+      } else {
+        setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
+        setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
+      }
+
       javaScriptTypeScriptLanguageServerRuntimeGateway
         .getStatus(workspaceRoot)
         .then((status) => {
@@ -7760,9 +8089,13 @@ export function useWorkbenchController(
             return;
           }
 
-          setJavaScriptTypeScriptLanguageServerRuntimeStatus(
-            languageServerRuntimeStatusWithRoot(status, workspaceRoot),
-          );
+          const rootedStatus =
+            cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
+              workspaceRoot,
+              status,
+            );
+
+          setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
           setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
         })
         .catch((error) => {
@@ -7801,6 +8134,7 @@ export function useWorkbenchController(
       unsubscribe?.();
     };
   }, [
+    cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     reportError,
@@ -8559,6 +8893,20 @@ function phpSourceSignature(source: string): string {
   return `${source.length}:${hash >>> 0}`;
 }
 
+function phpReturnTypeIncludesLateStatic(typeName: string | null): boolean {
+  return Boolean(
+    typeName
+      ?.trim()
+      .replace(/^\?/, "")
+      .split(/[|&]/)
+      .some((part) => {
+        const normalized = part.trim().replace(/^\\+/, "").toLowerCase();
+
+        return normalized === "static" || normalized === "$this";
+      }),
+  );
+}
+
 function laravelFacadeTargetClassName(className: string): string | null {
   const normalizedClassName = className.replace(/^\\+/, "").toLowerCase();
   const targets: Record<string, string> = {
@@ -8593,6 +8941,37 @@ function resolvePhpLaravelRelationModelType(
   const [relatedModelType] = phpDeclaredGenericTypeCandidates(returnType);
 
   return relatedModelType ? resolvePhpClassName(source, relatedModelType) : null;
+}
+
+function phpCollectionGenericModelTypeCandidate(
+  typeName: string | null,
+): string | null {
+  if (!typeName) {
+    return null;
+  }
+
+  if (!/\bCollection\s*</i.test(typeName)) {
+    return null;
+  }
+
+  return phpDeclaredGenericTypeCandidates(typeName).find(
+    (candidate) => !isGenericPhpPlaceholder(candidate),
+  ) ?? null;
+}
+
+function phpClassDocGenericCollectionModelTypeCandidate(
+  source: string,
+): string | null {
+  for (const match of source.matchAll(/@(?:extends|implements)\s+([^\r\n*]+)/g)) {
+    const typeName = firstPhpDocTypeToken(match[1] ?? null);
+    const candidate = phpCollectionGenericModelTypeCandidate(typeName);
+
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function mergePhpMethodCompletions(
@@ -8644,6 +9023,17 @@ function isLaravelEloquentRelationType(
     : laravelEloquentSingularRelationTypes.has(normalizedTypeName);
 }
 
+function isGenericPhpPlaceholder(typeName: string): boolean {
+  const normalized = typeName.trim().replace(/^\\+/, "").toLowerCase();
+
+  return (
+    normalized === "self" ||
+    normalized === "static" ||
+    normalized === "$this" ||
+    /^t[A-Z_]/.test(typeName)
+  );
+}
+
 const laravelEloquentRelationTypes = new Set([
   "belongsto",
   "belongstomany",
@@ -8665,34 +9055,6 @@ const laravelEloquentSingularRelationTypes = new Set([
   "morphone",
   "morphto",
 ]);
-
-function phpLaravelRelationTargetClassNameFromExpression(
-  expression: string,
-  includeCollectionRelations: boolean,
-): string | null {
-  const classNamePattern =
-    String.raw`(?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
-  const match = new RegExp(
-    String.raw`\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphedByMany|morphToMany)\s*\(\s*(` +
-      classNamePattern +
-      String.raw`)\s*::\s*class\b`,
-  ).exec(expression.trim());
-
-  const relationType = match?.[1]?.toLowerCase();
-
-  if (!relationType) {
-    return null;
-  }
-
-  if (
-    !includeCollectionRelations &&
-    !laravelEloquentSingularRelationTypes.has(relationType)
-  ) {
-    return null;
-  }
-
-  return match?.[2]?.replace(/^\\+/, "") ?? null;
-}
 
 function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;

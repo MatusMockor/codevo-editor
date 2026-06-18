@@ -26,6 +26,11 @@ export type PhpIdentifierContext =
       methodName: string;
       receiverExpression: string;
       variableName: string;
+    }
+  | {
+      className: string;
+      kind: "staticMethodCall";
+      methodName: string;
     };
 
 export interface PhpMethodDefinitionHint {
@@ -60,6 +65,12 @@ export function phpIdentifierContextAt(
 
   if (methodCall) {
     return methodCall;
+  }
+
+  const staticMethodCall = staticMethodCallContextAt(source, identifier);
+
+  if (staticMethodCall) {
+    return staticMethodCall;
   }
 
   return {
@@ -249,6 +260,39 @@ function methodCallContextAt(
         methodName: identifier.name,
         receiverExpression: phpNormalizeReceiverExpression(match[1] || ""),
         variableName: phpSimpleVariableName(match[1] || "") || "",
+      };
+    }
+  }
+
+  return null;
+}
+
+function staticMethodCallContextAt(
+  source: string,
+  identifier: IdentifierAtOffset,
+): PhpIdentifierContext | null {
+  if (identifier.name.toLowerCase() === "class") {
+    return null;
+  }
+
+  const lineStart = source.lastIndexOf("\n", identifier.start - 1) + 1;
+  const lineEnd = source.indexOf("\n", identifier.end);
+  const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+  const staticMethodPattern = new RegExp(
+    `((?:\\\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\\s*::\\s*${escapeRegExp(identifier.name)}\\b`,
+    "g",
+  );
+
+  for (const match of line.matchAll(staticMethodPattern)) {
+    const matchStart = lineStart + (match.index ?? 0);
+    const methodStart = matchStart + match[0].lastIndexOf(identifier.name);
+    const methodEnd = methodStart + identifier.name.length;
+
+    if (identifier.start >= methodStart && identifier.end <= methodEnd) {
+      return {
+        className: (match[1] ?? "").replace(/^\\+/, ""),
+        kind: "staticMethodCall",
+        methodName: identifier.name,
       };
     }
   }

@@ -1776,6 +1776,130 @@ mod tests {
     }
 
     #[test]
+    fn registry_routes_notifications_to_the_requested_workspace_only() {
+        let registry = LanguageServerRegistry::new_with_label("Test server");
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let capture_a = Arc::clone(&spawner_a.stdin_capture);
+        let capture_b = Arc::clone(&spawner_b.stdin_capture);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command(),
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/workspace-b",
+                &command(),
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        registry
+            .send_notification(
+                "/tmp/workspace-b",
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "textDocument/didSave".to_string(),
+                    params: json!({
+                        "textDocument": {
+                            "uri": "file:///tmp/workspace-b/src/App.ts",
+                        },
+                    }),
+                },
+            )
+            .expect("send workspace b notification");
+
+        assert!(!captured_messages(&capture_a)
+            .iter()
+            .any(|message| message["method"] == "textDocument/didSave"));
+        assert!(captured_messages(&capture_b).iter().any(|message| {
+            message["method"] == "textDocument/didSave"
+                && message["params"]["textDocument"]["uri"]
+                    == "file:///tmp/workspace-b/src/App.ts"
+        }));
+    }
+
+    #[test]
+    fn registry_routes_requests_to_the_requested_workspace_only() {
+        let registry = Arc::new(LanguageServerRegistry::new_with_label("Test server"));
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let capture_a = Arc::clone(&spawner_a.stdin_capture);
+        let capture_b = Arc::clone(&spawner_b.stdin_capture);
+        let held_b = Arc::clone(&spawner_b.held_writer);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command(),
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/workspace-b",
+                &command(),
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        let request_registry = Arc::clone(&registry);
+        let request = std::thread::spawn(move || {
+            request_registry
+                .send_request(
+                    "/tmp/workspace-b",
+                    "textDocument/hover",
+                    json!({
+                        "textDocument": {
+                            "uri": "file:///tmp/workspace-b/src/App.ts",
+                        },
+                        "position": { "line": 1, "character": 4 },
+                    }),
+                )
+                .expect("send workspace b request")
+                .expect("workspace b request result")
+        });
+        let request_id = wait_for_captured_request_id(&capture_b, "textDocument/hover");
+
+        assert!(!captured_messages(&capture_a)
+            .iter()
+            .any(|message| message["method"] == "textDocument/hover"));
+
+        write_held_message(
+            &held_b,
+            json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": { "contents": "workspace b hover" },
+            }),
+        );
+
+        let result = request.join().expect("request thread");
+
+        assert_eq!(result["contents"], "workspace b hover");
+    }
+
+    #[test]
     fn initialize_result_capabilities_are_reported_on_running_status() {
         let spawner = FakeSpawner::new(ready_script_with_capabilities(), true);
         let (sink, rx) = ChannelSink::new();

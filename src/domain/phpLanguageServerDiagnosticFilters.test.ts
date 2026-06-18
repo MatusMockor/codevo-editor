@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   filterPhpLanguageServerDiagnostics,
+  phpMethodDiagnosticKey,
   phpTraitHostMethodDiagnosticKey,
+  phpUnresolvedStaticMethodDiagnosticContext,
 } from "./phpLanguageServerDiagnosticFilters";
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 
@@ -12,6 +14,11 @@ describe("filterPhpLanguageServerDiagnostics", () => {
 $queryBuilder = Album::whereNull('parent_id');
 $album = Album::withRelations()->findOrFail($id);
 `;
+    const localScopeDiagnostic = diagnostic({
+      character: 16,
+      line: 3,
+      message: "Method App\\Models\\Album::withRelations() does not exist",
+    });
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [
@@ -20,13 +27,9 @@ $album = Album::withRelations()->findOrFail($id);
           line: 2,
           message: "Method App\\Models\\Album::whereNull() does not exist",
         }),
-        diagnostic({
-          character: 16,
-          line: 3,
-          message: "Method App\\Models\\Album::withRelations() does not exist",
-        }),
+        localScopeDiagnostic,
       ]),
-    ).toEqual([]);
+    ).toEqual([localScopeDiagnostic]);
   });
 
   it("keeps unresolved diagnostics for unknown static methods", () => {
@@ -43,6 +46,50 @@ $queryBuilder = Album::whereNulll('parent_id');
     expect(filterPhpLanguageServerDiagnostics(source, [unresolved])).toEqual([
       unresolved,
     ]);
+  });
+
+  it("suppresses unresolved static method diagnostics only when semantic context confirms the method", () => {
+    const source = `<?php
+
+$album = Album::published()->first();
+`;
+    const unresolved = diagnostic({
+      character: 16,
+      line: 2,
+      message: "Method App\\Models\\Album::published() does not exist",
+    });
+
+    expect(filterPhpLanguageServerDiagnostics(source, [unresolved])).toEqual([
+      unresolved,
+    ]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualExistingMethods: new Set([
+          phpMethodDiagnosticKey("Album", "published"),
+        ]),
+      }),
+    ).toEqual([]);
+  });
+
+  it("extracts static method diagnostic contexts from unresolved PHPactor messages", () => {
+    const source = `<?php
+
+$album = \\App\\Models\\Album::published()->first();
+`;
+
+    expect(
+      phpUnresolvedStaticMethodDiagnosticContext(
+        source,
+        diagnostic({
+          character: 29,
+          line: 2,
+          message: "Method App\\Models\\Album::published() does not exist",
+        }),
+      ),
+    ).toEqual({
+      className: "App\\Models\\Album",
+      methodName: "published",
+    });
   });
 
   it("keeps syntax diagnostics on Laravel lines", () => {

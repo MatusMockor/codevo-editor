@@ -94,6 +94,47 @@ class AlbumController
     });
   });
 
+  it("detects static method calls under the cursor", () => {
+    const source = `<?php
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::withRelations()->findOrFail(1);
+        \\App\\Models\\Album::whereNull('parent_id');
+        Album::class;
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "Album::withRelations"),
+      ),
+    ).toEqual({
+      className: "Album",
+      kind: "staticMethodCall",
+      methodName: "withRelations",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "\\App\\Models\\Album::whereNull"),
+      ),
+    ).toEqual({
+      className: "App\\Models\\Album",
+      kind: "staticMethodCall",
+      methodName: "whereNull",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "Album::class")),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "class",
+    });
+  });
+
   it("detects Laravel container expression method calls under the cursor", () => {
     const source = `<?php
 class CommentController

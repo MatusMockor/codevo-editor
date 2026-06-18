@@ -63,17 +63,18 @@ use lsp_features::{
     parse_selection_ranges_result, parse_semantic_tokens_result, parse_signature_help_result,
     parse_workspace_edit_result, parse_workspace_symbols_result, LanguageServerCodeAction,
     LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCodeLens,
-    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
-    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFoldingRange,
-    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInlayHint,
-    LanguageServerLinkedEditingRanges, LanguageServerLocation, LanguageServerPosition,
-    LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
-    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerTextEdit,
-    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
-    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
-    TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentOnTypeFormatting,
-    TextDocumentPosition, TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
-    TextDocumentSelectionRange, WorkspaceFileChange, WorkspaceFileRename,
+    LanguageServerCompletionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
+    LanguageServerDocumentHighlight, LanguageServerDocumentLink, LanguageServerDocumentSymbol,
+    LanguageServerFoldingRange, LanguageServerFormattingOptions, LanguageServerHover,
+    LanguageServerInlayHint, LanguageServerLinkedEditingRanges, LanguageServerLocation,
+    LanguageServerPosition, LanguageServerPrepareRenameResult, LanguageServerRange,
+    LanguageServerSelectionRange, LanguageServerSemanticTokens, LanguageServerSignatureHelp,
+    LanguageServerTextEdit, LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
+    LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
+    TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+    TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
+    TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
+    WorkspaceFileChange, WorkspaceFileRename,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -1083,10 +1084,11 @@ fn javascript_typescript_text_document_hover(
 fn text_document_completion(
     root_path: String,
     position: TextDocumentPosition,
+    context: Option<LanguageServerCompletionContext>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionList, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.completion(&position);
+    let request = factory.completion(&TextDocumentCompletion { position, context });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(LanguageServerCompletionList {
             is_incomplete: false,
@@ -1101,10 +1103,11 @@ fn text_document_completion(
 fn javascript_typescript_text_document_completion(
     root_path: String,
     position: TextDocumentPosition,
+    context: Option<LanguageServerCompletionContext>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionList, String> {
     let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.completion(&position);
+    let request = factory.completion(&TextDocumentCompletion { position, context });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(LanguageServerCompletionList {
             is_incomplete: false,
