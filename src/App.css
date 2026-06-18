@@ -2386,6 +2386,134 @@ button {
   padding: 6px 8px 8px;
 }
 
+.call-hierarchy {
+  width: min(680px, calc(100vw - 36px));
+  max-height: min(520px, calc(100vh - 96px));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-modal);
+  box-shadow: var(--shadow-pop);
+  outline: 0;
+}
+
+.call-hierarchy-header {
+  display: grid;
+  min-height: 50px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-strong);
+  padding: 7px 13px;
+}
+
+.call-hierarchy-header span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.call-hierarchy-header strong,
+.call-hierarchy-header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-hierarchy-header strong {
+  font-size: 15px;
+}
+
+.call-hierarchy-header small {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.call-hierarchy-header svg {
+  color: var(--color-text-subtle);
+}
+
+.call-hierarchy-results {
+  max-height: min(470px, calc(100vh - 146px));
+  overflow: auto;
+  padding: 7px 8px 9px;
+}
+
+.call-hierarchy-section + .call-hierarchy-section {
+  margin-top: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 7px;
+}
+
+.call-hierarchy-section h2 {
+  margin: 0 0 4px;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.call-hierarchy-empty {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.call-hierarchy-row {
+  display: grid;
+  width: 100%;
+  min-height: 38px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.call-hierarchy-row:hover {
+  background: var(--color-hover);
+}
+
+.call-hierarchy-row.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+}
+
+.call-hierarchy-row svg {
+  color: var(--color-accent);
+}
+
+.call-hierarchy-row span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.call-hierarchy-row strong,
+.call-hierarchy-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-hierarchy-row strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.call-hierarchy-row small {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
 .implementation-choice {
   display: grid;
   width: 100%;

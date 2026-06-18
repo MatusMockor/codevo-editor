@@ -10,6 +10,7 @@ import {
   type WorkbenchNotice,
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type { CallHierarchyRow, CallHierarchyView } from "../domain/callHierarchy";
 import {
   shouldIndexWorkspace,
   shouldStartLanguageServer,
@@ -446,6 +447,8 @@ export function useWorkbenchController(
     targets: ImplementationTarget[];
     title: string;
   } | null>(null);
+  const [callHierarchyView, setCallHierarchyView] =
+    useState<CallHierarchyView | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
   const [appSettings, setAppSettings] =
@@ -3535,6 +3538,7 @@ export function useWorkbenchController(
     setClassOpenOpen(false);
     setTextSearchOpen(false);
     setSettingsOpen(false);
+    setCallHierarchyView(null);
 
     if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
       if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
@@ -7536,6 +7540,119 @@ export function useWorkbenchController(
     );
   }, [goToLanguageServerLocation]);
 
+  const openCallHierarchyRow = useCallback(
+    async (row: CallHierarchyRow) => {
+      setCallHierarchyView(null);
+      const path = pathFromLanguageServerUri(row.item.uri);
+
+      if (!path) {
+        setMessage("Could not open call hierarchy target.");
+        return;
+      }
+
+      await openNavigationTarget(path, toEditorPosition(row.range.start), row.label);
+    },
+    [openNavigationTarget],
+  );
+
+  const openCallHierarchy = useCallback(async () => {
+    if (!activeDocument) {
+      setMessage("Open a JavaScript or TypeScript file to show call hierarchy.");
+      return;
+    }
+
+    if (
+      !workspaceRoot ||
+      !isJavaScriptTypeScriptLanguageServerDocument(activeDocument)
+    ) {
+      setMessage("Call hierarchy is available for JavaScript and TypeScript files.");
+      return;
+    }
+
+    if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+      setMessage("JavaScript/TypeScript service is starting. Try call hierarchy again in a moment.");
+      return;
+    }
+
+    if (
+      !canUseLanguageServerFeature(
+        javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+        "callHierarchy",
+      )
+    ) {
+      setMessage("JavaScript/TypeScript service does not provide call hierarchy.");
+      return;
+    }
+
+    const editorPosition = activeEditorPositionRef.current;
+
+    if (!editorPosition) {
+      setMessage("Place the cursor on a symbol to show call hierarchy.");
+      return;
+    }
+
+    const requestedRoot = workspaceRoot;
+    const requestedPath = activeDocument.path;
+
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setTextSearchOpen(false);
+    setSettingsOpen(false);
+    setFileStructureOpen(false);
+    setImplementationChooser(null);
+    setCallHierarchyView(null);
+
+    try {
+      await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
+      const [item] =
+        await javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy(
+          requestedRoot,
+          toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
+        );
+
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      if (!item) {
+        setMessage("No call hierarchy available for this symbol.");
+        return;
+      }
+
+      const [incoming, outgoing] = await Promise.all([
+        javaScriptTypeScriptLanguageServerFeaturesGateway.incomingCalls(
+          requestedRoot,
+          item,
+        ),
+        javaScriptTypeScriptLanguageServerFeaturesGateway.outgoingCalls(
+          requestedRoot,
+          item,
+        ),
+      ]);
+
+      if (currentWorkspaceRootRef.current !== requestedRoot) {
+        return;
+      }
+
+      setCallHierarchyView({
+        incoming,
+        item,
+        outgoing,
+      });
+      setMessage(null);
+    } catch (error) {
+      reportError("Call Hierarchy", error);
+    }
+  }, [
+    activeDocument,
+    flushPendingJavaScriptTypeScriptDocumentChange,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    reportError,
+    workspaceRoot,
+  ]);
+
   const applyNavigationLocation = useCallback(
     async (location: NavigationLocation) => {
       const opened = await openPathForNavigation(location.path);
@@ -8095,10 +8212,16 @@ export function useWorkbenchController(
     setTextSearchOpen(false);
     setLanguageServerSetupOpen(false);
     setFileStructureOpen(false);
+    setCallHierarchyView(null);
     setSettingsOpen(true);
   }, []);
 
   const closeFloatingSurface = useCallback((): boolean => {
+    if (callHierarchyView) {
+      setCallHierarchyView(null);
+      return true;
+    }
+
     if (implementationChooser) {
       setImplementationChooser(null);
       return true;
@@ -8146,6 +8269,7 @@ export function useWorkbenchController(
 
     return false;
   }, [
+    callHierarchyView,
     classOpenOpen,
     closeGitDiffPreview,
     fileStructureOpen,
@@ -8329,6 +8453,24 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.showCallHierarchy",
+      title: "Show Call Hierarchy",
+      category: "Editor",
+      isEnabled: () =>
+        Boolean(activeDocument) &&
+        Boolean(
+          activeDocument &&
+            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
+        ) &&
+        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+        canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "callHierarchy",
+        ),
+      run: openCallHierarchy,
+    });
+
+    registry.register({
       id: "commands.show",
       title: "Show Commands",
       category: "Workbench",
@@ -8509,6 +8651,7 @@ export function useWorkbenchController(
     gitDiffLoading,
     navigateBackward,
     navigateForwardInHistory,
+    openCallHierarchy,
     openFileStructure,
     openSettingsPanel,
     navigationHistory,
@@ -8531,6 +8674,7 @@ export function useWorkbenchController(
     toggleWorkspaceTrust,
     indexProgress,
     intelligenceMode,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
     languageServerPlan,
     languageServerRuntimeStatus,
     selectedGitChange,
@@ -9613,11 +9757,13 @@ export function useWorkbenchController(
     activePath,
     appSettings,
     activateWorkspaceTab,
+    callHierarchyView,
     classOpenLoading,
     classOpenOpen,
     classOpenQuery,
     classOpenResults,
     closeImplementationChooser: () => setImplementationChooser(null),
+    closeCallHierarchy: () => setCallHierarchyView(null),
     closeDocument,
     closeGitDiffPreview,
     closeWorkspaceTab,
@@ -9666,6 +9812,8 @@ export function useWorkbenchController(
     message,
     openDocuments,
     openFile,
+    openCallHierarchy,
+    openCallHierarchyRow,
     openGitChange,
     openFileStructure,
     openImplementationTarget,

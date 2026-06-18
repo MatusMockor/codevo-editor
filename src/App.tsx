@@ -12,6 +12,7 @@ import type {
 import { useWorkbenchController } from "./application/useWorkbenchController";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { BottomPanel } from "./components/BottomPanel";
+import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
 import { EditorSurface } from "./components/EditorSurface";
@@ -805,6 +806,13 @@ function App() {
         title={
           workbench.implementationChooser?.title ?? "Choose implementation"
         }
+      />
+
+      <CallHierarchy
+        isOpen={Boolean(workbench.callHierarchyView)}
+        onClose={workbench.closeCallHierarchy}
+        onOpen={workbench.openCallHierarchyRow}
+        view={workbench.callHierarchyView}
       />
 
       <LanguageServerSetup

@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { emptyGitStatus, gitChangeKey, type GitGateway } from "../domain/git";
+import { callHierarchyRows } from "../domain/callHierarchy";
 import {
   useWorkbenchController,
   type WorkbenchWorkspaceGateways,
@@ -2743,6 +2744,117 @@ describe("useWorkbenchController preview tabs", () => {
       kind: "method",
       label: "loadUser",
       lineNumber: 3,
+    });
+  });
+
+  it("opens JavaScript and TypeScript call hierarchy from command palette actions", async () => {
+    const path = "/workspace/src/userService.ts";
+    const callerPath = "/workspace/src/app.ts";
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      sessionId: 12,
+    };
+    const item = {
+      data: { symbolId: "loadUser" },
+      detail: "src/userService.ts",
+      kind: 6,
+      name: "loadUser",
+      range: range(1, 9, 3, 3),
+      selectionRange: range(1, 9, 1, 17),
+      tags: [],
+      uri: "file:///workspace/src/userService.ts",
+    };
+    const caller = {
+      data: { symbolId: "render" },
+      detail: "src/app.ts",
+      kind: 12,
+      name: "render",
+      range: range(4, 0, 6, 1),
+      selectionRange: range(4, 9, 4, 15),
+      tags: [],
+      uri: "file:///workspace/src/app.ts",
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockResolvedValue([item]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.incomingCalls,
+    ).mockResolvedValue([
+      {
+        from: caller,
+        fromRanges: [range(5, 2, 5, 10)],
+      },
+    ]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.outgoingCalls,
+    ).mockResolvedValue([]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === callerPath) {
+          return "import { loadUser } from './userService';\nrender(loadUser());\n";
+        }
+
+        return "export function loadUser() {\n  return 'Ada';\n}\n";
+      }),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 17,
+        lineNumber: 2,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy,
+    ).toHaveBeenCalledWith("/workspace", {
+      character: 16,
+      line: 1,
+      path,
+    });
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.incomingCalls,
+    ).toHaveBeenCalledWith("/workspace", item);
+    expect(getWorkbench().callHierarchyView?.item.name).toBe("loadUser");
+    expect(getWorkbench().callHierarchyView?.incoming).toHaveLength(1);
+
+    const [row] = callHierarchyRows(getWorkbench().callHierarchyView!);
+
+    await act(async () => {
+      await getWorkbench().openCallHierarchyRow(row);
+    });
+
+    expect(getWorkbench().callHierarchyView).toBe(null);
+    expect(getWorkbench().activePath).toBe(callerPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: callerPath,
+      position: {
+        column: 3,
+        lineNumber: 6,
+      },
     });
   });
 
