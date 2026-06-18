@@ -56,15 +56,16 @@ use lsp_document::{
 use lsp_features::{
     parse_code_action_result, parse_completion_result, parse_definition_result,
     parse_document_highlights_result, parse_document_links_result, parse_document_symbols_result,
-    parse_formatting_result, parse_hover_result, parse_inlay_hints_result,
-    parse_optional_workspace_edit_result, parse_selection_ranges_result,
+    parse_folding_ranges_result, parse_formatting_result, parse_hover_result,
+    parse_inlay_hints_result, parse_optional_workspace_edit_result, parse_selection_ranges_result,
     parse_signature_help_result, parse_workspace_edit_result, parse_workspace_symbols_result,
     LanguageServerCodeAction, LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
     LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
-    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFormattingOptions,
-    LanguageServerHover, LanguageServerInlayHint, LanguageServerLocation, LanguageServerPosition,
-    LanguageServerRange, LanguageServerSelectionRange, LanguageServerSignatureHelp,
-    LanguageServerTextEdit, LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
+    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFoldingRange,
+    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInlayHint,
+    LanguageServerLocation, LanguageServerPosition, LanguageServerRange,
+    LanguageServerSelectionRange, LanguageServerSignatureHelp, LanguageServerTextEdit,
+    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
     LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory,
     TextDocumentFormatting, TextDocumentInlayHintRange, TextDocumentPosition, TextDocumentRange,
     TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
@@ -1521,6 +1522,36 @@ fn javascript_typescript_text_document_document_link_resolve(
 }
 
 #[tauri::command]
+fn text_document_folding_ranges(
+    root_path: String,
+    path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerFoldingRange>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.folding_ranges(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_folding_ranges_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_folding_ranges(
+    root_path: String,
+    path: String,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerFoldingRange>, String> {
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.folding_ranges(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_folding_ranges_result(&result)
+}
+
+#[tauri::command]
 fn workspace_symbols(
     root_path: String,
     query: String,
@@ -1818,6 +1849,7 @@ pub fn run() {
             javascript_typescript_text_document_document_link_resolve,
             javascript_typescript_text_document_document_links,
             javascript_typescript_text_document_document_symbols,
+            javascript_typescript_text_document_folding_ranges,
             javascript_typescript_text_document_formatting,
             javascript_typescript_text_document_hover,
             javascript_typescript_text_document_implementation,
@@ -1838,6 +1870,7 @@ pub fn run() {
             text_document_document_link_resolve,
             text_document_document_links,
             text_document_document_symbols,
+            text_document_folding_ranges,
             text_document_did_change,
             text_document_did_close,
             text_document_did_open,

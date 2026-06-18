@@ -4018,6 +4018,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => []),
     executeCommand: vi.fn(async () => null),
+    foldingRanges: vi.fn(async () => []),
     formatting: vi.fn(async () => []),
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),

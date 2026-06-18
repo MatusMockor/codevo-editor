@@ -94,6 +94,14 @@ export interface LanguageServerDocumentLink {
   tooltip: string | null;
 }
 
+export interface LanguageServerFoldingRange {
+  endCharacter: number | null;
+  endLine: number;
+  kind: string | null;
+  startCharacter: number | null;
+  startLine: number;
+}
+
 export interface LanguageServerSelectionRange {
   parent: LanguageServerSelectionRange | null;
   range: LanguageServerRange;
@@ -217,6 +225,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     link: LanguageServerDocumentLink,
   ): Promise<LanguageServerDocumentLink>;
+  foldingRanges(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerFoldingRange[]>;
   workspaceSymbols(
     rootPath: string,
     query: string,

@@ -36,6 +36,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.resolveDocumentLink("/project", documentLink()),
     ).resolves.toEqual(documentLink());
+    await expect(
+      gateway.foldingRanges("/project", "/project/src/User.php"),
+    ).resolves.toEqual([]);
     await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
       [],
     );
@@ -205,6 +208,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       ...documentLinks[0],
       target: "file:///project/src/User.php",
     };
+    const foldingRanges = [
+      {
+        endCharacter: null,
+        endLine: 20,
+        kind: "region",
+        startCharacter: null,
+        startLine: 10,
+      },
+    ];
     const workspaceSymbols = [
       {
         containerName: "App",
@@ -288,6 +300,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return resolvedDocumentLink;
       }
 
+      if (command === "text_document_folding_ranges") {
+        return foldingRanges;
+      }
+
       if (command === "workspace_symbols") {
         return workspaceSymbols;
       }
@@ -329,6 +345,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.resolveDocumentLink("/project", documentLink()),
     ).resolves.toEqual(resolvedDocumentLink);
+    await expect(
+      gateway.foldingRanges("/project", "/project/src/User.php"),
+    ).resolves.toEqual(foldingRanges);
     await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
       workspaceSymbols,
     );
@@ -411,6 +430,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         rootPath: "/project",
       },
     );
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_folding_ranges", {
+      path: "/project/src/User.php",
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("workspace_symbols", {
       query: "User",
       rootPath: "/project",

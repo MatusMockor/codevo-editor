@@ -214,6 +214,19 @@ pub struct LanguageServerDocumentLink {
     pub data: Option<Value>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerFoldingRange {
+    pub start_line: u32,
+    #[serde(default)]
+    pub start_character: Option<u32>,
+    pub end_line: u32,
+    #[serde(default)]
+    pub end_character: Option<u32>,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerSelectionRange {
@@ -267,6 +280,7 @@ pub trait TextDocumentFeatureRequestFactory {
         &self,
         link: &LanguageServerDocumentLink,
     ) -> LanguageServerFeatureRequest;
+    fn folding_ranges(&self, path: &str) -> LanguageServerFeatureRequest;
     fn document_symbols(&self, path: &str) -> LanguageServerFeatureRequest;
     fn workspace_symbols(&self, query: &str) -> LanguageServerFeatureRequest;
     fn implementation(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
@@ -342,6 +356,17 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         LanguageServerFeatureRequest {
             method: "documentLink/resolve".to_string(),
             params: json!(link),
+        }
+    }
+
+    fn folding_ranges(&self, path: &str) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/foldingRange".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(path)),
+                },
+            }),
         }
     }
 
@@ -608,6 +633,27 @@ pub fn parse_document_links_result(
         .map(|item| {
             serde_json::from_value::<LanguageServerDocumentLink>(item.clone()).map_err(|error| {
                 format!("Language server returned a malformed document link: {error}")
+            })
+        })
+        .collect()
+}
+
+pub fn parse_folding_ranges_result(
+    value: &Value,
+) -> Result<Vec<LanguageServerFoldingRange>, String> {
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let Some(items) = value.as_array() else {
+        return Err("Language server returned malformed folding ranges.".to_string());
+    };
+
+    items
+        .iter()
+        .map(|item| {
+            serde_json::from_value::<LanguageServerFoldingRange>(item.clone()).map_err(|error| {
+                format!("Language server returned a malformed folding range: {error}")
             })
         })
         .collect()
@@ -1181,8 +1227,8 @@ mod tests {
     use super::{
         parse_code_action_result, parse_completion_result, parse_definition_result,
         parse_document_highlights_result, parse_document_links_result,
-        parse_document_symbols_result, parse_formatting_result, parse_hover_result,
-        parse_inlay_hints_result, parse_optional_workspace_edit_result,
+        parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
+        parse_hover_result, parse_inlay_hints_result, parse_optional_workspace_edit_result,
         parse_selection_ranges_result, parse_signature_help_result, parse_workspace_edit_result,
         parse_workspace_symbols_result, LanguageServerCodeAction, LanguageServerCodeActionCommand,
         LanguageServerCodeActionContext, LanguageServerCompletionItem,
@@ -1243,6 +1289,18 @@ mod tests {
         let request = factory.document_links("/tmp/User.ts");
 
         assert_eq!(request.method, "textDocument/documentLink");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+    }
+
+    #[test]
+    fn folding_range_request_contains_document_uri() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.folding_ranges("/tmp/User.ts");
+
+        assert_eq!(request.method, "textDocument/foldingRange");
         assert!(request.params["textDocument"]["uri"]
             .as_str()
             .expect("uri")
@@ -2110,6 +2168,37 @@ mod tests {
         );
         assert_eq!(links[1].target, None);
         assert_eq!(parse_document_links_result(&json!(null)).expect("null"), []);
+    }
+
+    #[test]
+    fn parses_folding_ranges() {
+        let ranges = parse_folding_ranges_result(&json!([
+            {
+                "startLine": 2,
+                "startCharacter": 4,
+                "endLine": 8,
+                "endCharacter": 1,
+                "kind": "region"
+            },
+            {
+                "startLine": 12,
+                "endLine": 15
+            }
+        ]))
+        .expect("folding ranges");
+
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0].start_line, 2);
+        assert_eq!(ranges[0].start_character, Some(4));
+        assert_eq!(ranges[0].end_line, 8);
+        assert_eq!(ranges[0].end_character, Some(1));
+        assert_eq!(ranges[0].kind.as_deref(), Some("region"));
+        assert_eq!(ranges[1].start_character, None);
+        assert_eq!(ranges[1].kind, None);
+        assert_eq!(
+            parse_folding_ranges_result(&json!(null)).expect("null"),
+            Vec::new()
+        );
     }
 
     #[test]

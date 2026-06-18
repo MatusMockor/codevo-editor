@@ -38,11 +38,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(2);
+    expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(2);
     expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(2);
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(29);
+    expect(monaco.dispose).toHaveBeenCalledTimes(31);
   });
 
   it("maps TypeScript document links and lazy resolution", async () => {
@@ -103,6 +104,44 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         url: "file:///project/src/user.ts",
       }),
     );
+  });
+
+  it("maps TypeScript folding ranges through the language server", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      foldingRanges: [
+        {
+          endCharacter: null,
+          endLine: 8,
+          kind: "region",
+          startCharacter: null,
+          startLine: 2,
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+
+    const foldingProvider = (
+      monaco.languages.registerFoldingRangeProvider as any
+    ).mock.calls[0][1];
+    const ranges = await foldingProvider.provideFoldingRanges(model);
+
+    expect(gateway.foldingRanges).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+    );
+    expect(monaco.languages.FoldingRangeKind.fromValue).toHaveBeenCalledWith(
+      "region",
+    );
+    expect(ranges).toEqual([
+      {
+        end: 9,
+        kind: { value: "region" },
+        start: 3,
+      },
+    ]);
   });
 
   it("maps TypeScript document highlights and smart selection ranges", async () => {
@@ -814,6 +853,9 @@ function featuresGateway(
       ReturnType<LanguageServerFeaturesGateway["executeCommand"]>
     >;
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
+    foldingRanges: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>
+    >;
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     references: Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>;
     rangeFormatting: Awaited<
@@ -856,6 +898,7 @@ function featuresGateway(
     documentLinks: vi.fn(async () => responses.documentLinks ?? []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => responses.executeCommandEdit ?? null),
+    foldingRanges: vi.fn(async () => responses.foldingRanges ?? []),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => null),
     implementation: vi.fn(async () => []),
@@ -889,6 +932,7 @@ function runningStatus(
       documentHighlight: true,
       documentLink: true,
       documentSymbol: true,
+      foldingRange: true,
       formatting: true,
       hover: true,
       implementation: true,
@@ -1017,6 +1061,9 @@ function createMonaco() {
         Text: 0,
         Write: 2,
       },
+      FoldingRangeKind: {
+        fromValue: vi.fn((value: string) => ({ value })),
+      },
       InlayHintKind: {
         Parameter: 2,
         Type: 1,
@@ -1027,6 +1074,7 @@ function createMonaco() {
       registerDocumentHighlightProvider: vi.fn(() => disposable()),
       registerDocumentFormattingEditProvider: vi.fn(() => disposable()),
       registerDocumentRangeFormattingEditProvider: vi.fn(() => disposable()),
+      registerFoldingRangeProvider: vi.fn(() => disposable()),
       registerHoverProvider: vi.fn(() => disposable()),
       registerImplementationProvider: vi.fn(() => disposable()),
       registerInlayHintsProvider: vi.fn(() => disposable()),

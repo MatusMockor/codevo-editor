@@ -17,6 +17,7 @@ describe("canUseLanguageServerFeature", () => {
       documentHighlight: false,
       documentLink: false,
       documentSymbol: false,
+      foldingRange: false,
       formatting: false,
       hover: true,
       implementation: false,

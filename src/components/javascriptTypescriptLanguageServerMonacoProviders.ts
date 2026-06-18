@@ -10,6 +10,7 @@ import {
   type LanguageServerDocumentHighlight,
   type LanguageServerDocumentLink,
   type LanguageServerFeaturesGateway,
+  type LanguageServerFoldingRange,
   type LanguageServerFormattingOptions,
   type LanguageServerInlayHint,
   type LanguageServerLocation,
@@ -267,6 +268,15 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerLinkProvider(language, {
           provideLinks: (model) => provideDocumentLinks(monaco, context, model),
           resolveLink: (link) => resolveDocumentLink(monaco, context, link),
+        }),
+      );
+    }
+
+    if (registry.registerFoldingRangeProvider) {
+      disposables.push(
+        registry.registerFoldingRangeProvider(language, {
+          provideFoldingRanges: (model) =>
+            provideFoldingRanges(monaco, context, model),
         }),
       );
     }
@@ -590,6 +600,31 @@ async function resolveDocumentLink(
   }
 }
 
+async function provideFoldingRanges(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+): Promise<Monaco.languages.FoldingRange[] | null> {
+  const request = documentRequestContext(context, model, "foldingRange");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const ranges = await context.featuresGateway.foldingRanges(
+      request.rootPath,
+      request.path,
+    );
+
+    return ranges.map((range) => toMonacoFoldingRange(monaco, range));
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
 async function provideRenameEdits(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -867,6 +902,7 @@ function documentRequestContext(
   feature:
     | "codeAction"
     | "documentLink"
+    | "foldingRange"
     | "formatting"
     | "inlayHint"
     | "rangeFormatting"
@@ -896,6 +932,19 @@ function documentRequestContext(
   return {
     path: activeDocument.path,
     rootPath,
+  };
+}
+
+function toMonacoFoldingRange(
+  monaco: MonacoApi,
+  range: LanguageServerFoldingRange,
+): Monaco.languages.FoldingRange {
+  return {
+    end: range.endLine + 1,
+    kind: range.kind
+      ? monaco.languages.FoldingRangeKind.fromValue(range.kind)
+      : undefined,
+    start: range.startLine + 1,
   };
 }
 

@@ -8,6 +8,7 @@ export interface LanguageServerCapabilities {
   documentHighlight: boolean;
   documentLink: boolean;
   documentSymbol: boolean;
+  foldingRange: boolean;
   formatting: boolean;
   implementation: boolean;
   inlayHint: boolean;
@@ -133,6 +134,10 @@ export function languageServerCapabilityLabels(
     labels.push("document links");
   }
 
+  if (capabilities.foldingRange) {
+    labels.push("folding");
+  }
+
   if (capabilities.implementation) {
     labels.push("implementation");
   }
@@ -184,6 +189,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     documentHighlight: false,
     documentLink: false,
     documentSymbol: false,
+    foldingRange: false,
     formatting: false,
     hover: false,
     implementation: false,

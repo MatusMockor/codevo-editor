@@ -9,6 +9,7 @@ import {
   type LanguageServerDocumentHighlight,
   type LanguageServerDocumentLink,
   type LanguageServerDocumentSymbol,
+  type LanguageServerFoldingRange,
   type LanguageServerFormattingOptions,
   type LanguageServerFeaturesGateway,
   type LanguageServerHover,
@@ -42,6 +43,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   documentLinks: "text_document_document_links",
   documentSymbols: "text_document_document_symbols",
   executeCommand: "language_server_execute_command",
+  foldingRanges: "text_document_folding_ranges",
   formatting: "text_document_formatting",
   hover: "text_document_hover",
   implementation: "text_document_implementation",
@@ -65,6 +67,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   documentLinks: "javascript_typescript_text_document_document_links",
   documentSymbols: "javascript_typescript_text_document_document_symbols",
   executeCommand: "javascript_typescript_language_server_execute_command",
+  foldingRanges: "javascript_typescript_text_document_folding_ranges",
   formatting: "javascript_typescript_text_document_formatting",
   hover: "javascript_typescript_text_document_hover",
   implementation: "javascript_typescript_text_document_implementation",
@@ -88,6 +91,7 @@ export interface TauriLanguageServerFeatureCommands {
   documentLinks: string;
   documentSymbols: string;
   executeCommand: string;
+  foldingRanges: string;
   formatting: string;
   hover: string;
   implementation: string;
@@ -210,6 +214,17 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.documentLinkResolve,
       { link, rootPath },
       link,
+    );
+  }
+
+  foldingRanges(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerFoldingRange[]> {
+    return this.invokeWhenAvailable(
+      this.commands.foldingRanges,
+      { path, rootPath },
+      [],
     );
   }
 

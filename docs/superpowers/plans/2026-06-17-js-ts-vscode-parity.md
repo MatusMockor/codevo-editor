@@ -88,6 +88,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - TypeScript/JavaScript selection ranges are now served by the managed language server in Basic mode, giving smart expand-selection data from tsserver instead of only word-based selection.
 - TypeScript/JavaScript range formatting is now served by the managed language server in Basic mode, so formatting a selection uses the same LSP path as full document formatting.
 - TypeScript/JavaScript document links are now served by the managed language server in Basic mode, including lazy `documentLink/resolve` for links whose target is resolved on demand.
+- TypeScript/JavaScript folding ranges are now served by the managed language server in Basic mode, so code folding can follow TypeScript service structure instead of relying only on text indentation.
 
 ## Full VS Code-Like Target
 
@@ -141,6 +142,7 @@ Basic mode must support:
 - formatting
 - range formatting / format selection. Implemented through LSP-backed Monaco provider.
 - document links. Implemented through LSP-backed Monaco provider with resolve support.
+- folding ranges. Implemented through LSP-backed Monaco provider.
 - inlay hints. Implemented through LSP-backed Monaco provider.
 - signature help. Implemented through LSP-backed Monaco provider.
 - document highlights. Implemented through LSP-backed Monaco provider.
