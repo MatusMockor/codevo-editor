@@ -1059,7 +1059,190 @@ export function phpLaravelRelationPropertyCompletionsFromSource(
     });
   }
 
+  members.push(
+    ...phpLaravelDynamicRelationPropertyCompletionsFromSource(
+      contextSource,
+      declaringClassName,
+      source,
+    ),
+  );
+
   return dedupePhpMembers(members);
+}
+
+function phpLaravelDynamicRelationPropertyCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+  declaringClassSource: string,
+): PhpMethodCompletion[] {
+  const members: PhpMethodCompletion[] = [];
+  const masked = maskPhpStringsAndComments(source);
+  const ownerPattern =
+    String.raw`(?:__CLASS__|self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
+  const pattern = new RegExp(
+    String.raw`(?:^|[^A-Za-z0-9_\\])(` +
+      ownerPattern +
+      String.raw`)\s*::\s*resolveRelationUsing\s*\(`,
+    "g",
+  );
+
+  for (const match of masked.matchAll(pattern)) {
+    const ownerName = match[1]?.replace(/^\\+/, "") ?? "";
+
+    if (
+      !phpLaravelRelationOwnerMatchesDeclaringClass(
+        source,
+        declaringClassSource,
+        ownerName,
+        declaringClassName,
+      )
+    ) {
+      continue;
+    }
+
+    const openOffset = (match.index ?? 0) + (match[0]?.lastIndexOf("(") ?? 0);
+    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    const argumentsSource = source.slice(openOffset + 1, closeOffset);
+    const relationName = phpLaravelDynamicRelationNameFromArguments(argumentsSource);
+    const callbackExpression =
+      phpLaravelDynamicRelationCallbackFromArguments(argumentsSource);
+
+    if (
+      !isPhpAttributeName(relationName) ||
+      !callbackExpression ||
+      !phpLaravelHasRelationFactoryCallInExpression(callbackExpression, true)
+    ) {
+      continue;
+    }
+
+    const targetClassName =
+      phpLaravelRelationTargetClassNameFromExpression(
+        callbackExpression,
+        true,
+        undefined,
+        (expression) =>
+          phpClassStringExpressionValue(
+            source,
+            expression,
+            declaringClassName,
+          ),
+      ) ??
+      phpLaravelMorphToTargetClassNameFromContext(
+        source,
+        declaringClassName,
+        callbackExpression,
+      );
+    const relationTargetType = phpLaravelRelationTypeForDeclaringClass(
+      targetClassName,
+      declaringClassName,
+      declaringClassSource,
+    );
+
+    members.push({
+      declaringClassName,
+      kind: "property",
+      name: relationName,
+      parameters: "",
+      returnType: relationTargetType ?? "mixed",
+    });
+  }
+
+  return dedupePhpMembers(members);
+}
+
+function phpLaravelRelationOwnerMatchesDeclaringClass(
+  source: string,
+  declaringClassSource: string,
+  ownerName: string,
+  declaringClassName: string,
+): boolean {
+  const ownerType =
+    phpLaravelRelationTypeForDeclaringClass(
+      ownerName,
+      declaringClassName,
+      declaringClassSource,
+    ) ?? ownerName;
+  const resolvedOwnerType =
+    phpLaravelResolvedClassName(source, ownerType) ?? ownerType;
+  const resolvedDeclaringType =
+    phpLaravelResolvedClassName(source, declaringClassName) ?? declaringClassName;
+  const normalizedOwner = normalizedLaravelClassName(resolvedOwnerType);
+  const normalizedDeclaring = normalizedLaravelClassName(resolvedDeclaringType);
+
+  if (!normalizedOwner || !normalizedDeclaring) {
+    return false;
+  }
+
+  if (normalizedOwner === normalizedDeclaring) {
+    return true;
+  }
+
+  if (!normalizedOwner.includes("\\") || !normalizedDeclaring.includes("\\")) {
+    return (
+      (normalizedOwner.split("\\").pop() ?? normalizedOwner) ===
+      (normalizedDeclaring.split("\\").pop() ?? normalizedDeclaring)
+    );
+  }
+
+  return false;
+}
+
+function phpLaravelDynamicRelationNameFromArguments(
+  argumentsSource: string,
+): string | null {
+  for (const [index, argument] of splitPhpParameterList(
+    argumentsSource,
+  ).entries()) {
+    const namedArgumentMatch =
+      /^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!:)\s*([\s\S]+)$/.exec(argument);
+    const argumentName = namedArgumentMatch?.[1]?.toLowerCase() ?? null;
+    const value = (namedArgumentMatch?.[2] ?? argument).trim();
+
+    if (argumentName && argumentName !== "name" && argumentName !== "relation") {
+      continue;
+    }
+
+    if (!argumentName && index > 0) {
+      continue;
+    }
+
+    const relationName = phpStringLiteralValue(value);
+
+    if (relationName) {
+      return relationName;
+    }
+  }
+
+  return null;
+}
+
+function phpLaravelDynamicRelationCallbackFromArguments(
+  argumentsSource: string,
+): string | null {
+  for (const [index, argument] of splitPhpParameterList(
+    argumentsSource,
+  ).entries()) {
+    const namedArgumentMatch =
+      /^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!:)\s*([\s\S]+)$/.exec(argument);
+    const argumentName = namedArgumentMatch?.[1]?.toLowerCase() ?? null;
+
+    if (argumentName && argumentName !== "callback") {
+      continue;
+    }
+
+    if (!argumentName && index !== 1) {
+      continue;
+    }
+
+    return (namedArgumentMatch?.[2] ?? argument).trim() || null;
+  }
+
+  return null;
 }
 
 function laravelLocalScopeName(methodName: string): string | null {
@@ -2830,6 +3013,34 @@ export function phpLaravelRelationTargetClassNameFromExpression(
   }
 
   return null;
+}
+
+function phpLaravelHasRelationFactoryCallInExpression(
+  expression: string,
+  includeCollectionRelations: boolean,
+): boolean {
+  const normalizedExpression = expression.trim();
+  const pattern =
+    /\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphedByMany|morphTo|morphToMany)\s*\(/g;
+
+  for (const match of normalizedExpression.matchAll(pattern)) {
+    const relationType = match[1]?.toLowerCase();
+
+    if (!relationType) {
+      continue;
+    }
+
+    if (
+      !includeCollectionRelations &&
+      !laravelEloquentSingularRelationTypes.has(relationType)
+    ) {
+      continue;
+    }
+
+    return true;
+  }
+
+  return false;
 }
 
 function phpLaravelRelationTargetClassNameFromArguments(

@@ -1236,6 +1236,80 @@ class Comment
     ]);
   });
 
+  it("extracts Laravel dynamic relation targets from resolveRelationUsing callbacks", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use App\\Models\\Attachment;
+use App\\Models\\Post;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+}
+
+class Reaction extends Model
+{
+}
+
+class Owner extends Model
+{
+}
+
+Comment::resolveRelationUsing('post', function (Comment $comment) {
+    return $comment->belongsTo(Post::class);
+});
+
+Comment::resolveRelationUsing(
+    name: 'attachments',
+    callback: static fn (Comment $comment) => $comment->hasMany(Attachment::class),
+);
+
+Comment::resolveRelationUsing('legacyComments', function (Comment $comment) {
+    return $comment->hasMany('legacy_comments');
+});
+
+\\Comment::resolveRelationUsing('owner', fn (Comment $comment) => $comment->belongsTo(Owner::class));
+
+Reaction::resolveRelationUsing('comment', fn (Reaction $reaction) => $reaction->belongsTo(Comment::class));
+
+Comment::resolveRelationUsing('notRelation', fn () => 'not a relation');
+`,
+        "Comment",
+        laravelCompletionOptions,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "post",
+        parameters: "",
+        returnType: "Post",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "attachments",
+        parameters: "",
+        returnType: "Attachment",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "legacyComments",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "owner",
+        parameters: "",
+        returnType: "Owner",
+      },
+    ]);
+  });
+
   it("does not infer non-class string relation arguments as model targets", () => {
     expect(
       phpMethodCompletionsFromSource(
