@@ -6967,6 +6967,150 @@ class Album
     ]);
   });
 
+  it("suppresses builder local-scope diagnostics through generic repository returns", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const repositoryPath = "/workspace/app/Repositories/AlbumRepository.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\AlbumRepository;
+
+class AlbumController
+{
+    public function index(AlbumRepository $albums): void
+    {
+        $query = $albums->query();
+        $query->withRelations()->first();
+        $query->missingMagic()->first();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 17,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Repositories\\AlbumRepository",
+          kind: "class",
+          lineNumber: 8,
+          name: "AlbumRepository",
+          path: repositoryPath,
+          relativePath: "app/Repositories/AlbumRepository.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Album
+{
+    public function scopeWithRelations(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        if (path === repositoryPath) {
+          return `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class AlbumRepository
+{
+    /** @return Builder<Album> */
+    public function query(): Builder {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    const scopeLine =
+      positionAfter(controllerSource, "$query->withRelations").lineNumber - 1;
+    const missingLine =
+      positionAfter(controllerSource, "$query->missingMagic").lineNumber - 1;
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 16,
+            line: scopeLine,
+            message:
+              "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            character: 16,
+            line: missingLine,
+            message:
+              "Method Illuminate\\Database\\Eloquent\\Builder::missingMagic() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        character: 16,
+        line: missingLine,
+        message:
+          "Method Illuminate\\Database\\Eloquent\\Builder::missingMagic() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("exposes Laravel dynamic where helpers from model attributes", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
