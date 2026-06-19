@@ -1943,6 +1943,54 @@ mod tests {
     }
 
     #[test]
+    fn registry_drop_stops_all_workspace_sessions() {
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let held_a = Arc::clone(&spawner_a.held_writer);
+        let held_b = Arc::clone(&spawner_b.held_writer);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+
+        {
+            let registry = LanguageServerRegistry::new_with_label("Test server");
+
+            registry
+                .start(
+                    "/tmp/workspace-a",
+                    &command(),
+                    &initialize_request(),
+                    &spawner_a,
+                    sink_a,
+                    noop_diagnostics_sink(),
+                )
+                .expect("start workspace a");
+            registry
+                .start(
+                    "/tmp/workspace-b",
+                    &command(),
+                    &initialize_request(),
+                    &spawner_b,
+                    sink_b,
+                    noop_diagnostics_sink(),
+                )
+                .expect("start workspace b");
+
+            assert_eq!(
+                registry.running_roots(),
+                vec![
+                    "/tmp/workspace-a".to_string(),
+                    "/tmp/workspace-b".to_string()
+                ]
+            );
+            assert!(held_a.lock().expect("workspace a writer").is_some());
+            assert!(held_b.lock().expect("workspace b writer").is_some());
+        }
+
+        assert!(held_a.lock().expect("workspace a writer").is_none());
+        assert!(held_b.lock().expect("workspace b writer").is_none());
+    }
+
+    #[test]
     #[cfg(unix)]
     fn registry_stop_resolves_missing_symlink_alias_root() {
         use std::os::unix::fs::symlink;
