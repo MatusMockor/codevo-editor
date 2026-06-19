@@ -66,6 +66,13 @@ export function phpFrameworkProviderSignature(
   return providers.map((provider) => provider.id).join(",");
 }
 
+export function isPhpFrameworkProviderActive(
+  providers: readonly PhpFrameworkProvider[],
+  providerId: string,
+): boolean {
+  return providers.some((provider) => provider.id === providerId);
+}
+
 export function phpFrameworkMemberCompletionsFromSource(
   source: string,
   declaringClassName: string,

@@ -6613,6 +6613,106 @@ class Album
     ]);
   });
 
+  it("keeps local-scope diagnostics in plain Composer projects", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
+    const albumPath = "/workspace/app/Models/Album.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        Album::published()->first();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 15,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === albumPath) {
+          return `<?php
+namespace App\\Models;
+
+class Album
+{
+    public function scopePublished($query)
+    {
+        return $query;
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        packageName: "custom/api",
+        packages: [],
+      }),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 16,
+            line: 9,
+            message: "Method App\\Models\\Album::published() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        character: 16,
+        line: 9,
+        message: "Method App\\Models\\Album::published() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("suppresses builder local-scope diagnostics only when the inferred model defines the scope", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
@@ -6981,6 +7081,116 @@ class Builder
         character: 24,
         line: 18,
         message: "Method App\\Models\\Comment::missingDynamic() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
+  it("does not expose Laravel dynamic where helpers in plain Composer projects", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function index(): void
+    {
+        Comment::whereCon
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 14,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    protected $fillable = [
+        'content',
+    ];
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        packageName: "custom/api",
+        packages: [],
+      }),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Comment::whereCon"),
+      ),
+    ).resolves.toEqual([]);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 24,
+            line: 10,
+            message: "Method App\\Models\\Comment::whereContent() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        character: 24,
+        line: 10,
+        message: "Method App\\Models\\Comment::whereContent() does not exist",
         severity: "error",
         source: "phpactor",
       },
@@ -9115,10 +9325,12 @@ async function waitForClassSearch(): Promise<void> {
   });
 }
 
-function phpWorkspaceDescriptor(): WorkspaceDescriptor {
+function phpWorkspaceDescriptor(
+  phpOverrides: Partial<PhpProjectDescriptor> = {},
+): WorkspaceDescriptor {
   return {
     javaScriptTypeScript: null,
-    php: phpProjectDescriptor(),
+    php: phpProjectDescriptor(phpOverrides),
     rootPath: "/workspace",
   };
 }
@@ -9141,7 +9353,9 @@ function javaScriptTypeScriptWorkspaceDescriptor(): WorkspaceDescriptor {
   };
 }
 
-function phpProjectDescriptor(): PhpProjectDescriptor {
+function phpProjectDescriptor(
+  overrides: Partial<PhpProjectDescriptor> = {},
+): PhpProjectDescriptor {
   return {
     classmapRoots: [],
     hasComposer: true,
@@ -9187,6 +9401,7 @@ function phpProjectDescriptor(): PhpProjectDescriptor {
         paths: ["app/"],
       },
     ],
+    ...overrides,
   };
 }
 

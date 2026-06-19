@@ -200,6 +200,7 @@ import {
   phpMethodReturnExpressions,
 } from "../domain/phpTypeAnalysis";
 import {
+  isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
   phpFrameworkProvidersForProject,
 } from "../domain/phpFrameworkProviders";
@@ -343,6 +344,10 @@ export function useWorkbenchController(
   );
   const activePhpFrameworkProviderSignature = useMemo(
     () => phpFrameworkProviderSignature(activePhpFrameworkProviders),
+    [activePhpFrameworkProviders],
+  );
+  const isLaravelFrameworkActive = useMemo(
+    () => isPhpFrameworkProviderActive(activePhpFrameworkProviders, "laravel"),
     [activePhpFrameworkProviders],
   );
   const [workspaceTrust, setWorkspaceTrust] =
@@ -4516,7 +4521,7 @@ export function useWorkbenchController(
 
   const resolvePhpLaravelBoundConcrete = useCallback(
     async (className: string): Promise<string | null> => {
-      if (!workspaceRoot) {
+      if (!isLaravelFrameworkActive || !workspaceRoot) {
         return null;
       }
 
@@ -4591,6 +4596,7 @@ export function useWorkbenchController(
     [
       readNavigationFileContent,
       resolvePhpClassReference,
+      isLaravelFrameworkActive,
       textSearch,
       workspaceRoot,
     ],
@@ -4962,7 +4968,7 @@ export function useWorkbenchController(
       className: string,
       options: { isStatic?: boolean } = {},
     ): Promise<PhpMethodCompletion[]> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
         return [];
       }
 
@@ -5002,6 +5008,7 @@ export function useWorkbenchController(
     [
       readPhpClassMembersFromPath,
       resolvePhpClassSourcePaths,
+      isLaravelFrameworkActive,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -5009,7 +5016,7 @@ export function useWorkbenchController(
 
   const collectPhpLaravelRelationCompletionsForClass = useCallback(
     async (className: string): Promise<PhpMethodCompletion[]> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
         return [];
       }
 
@@ -5101,6 +5108,7 @@ export function useWorkbenchController(
       readPhpClassMembersFromPath,
       resolvePhpDeclaredType,
       resolvePhpClassSourcePaths,
+      isLaravelFrameworkActive,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -5316,9 +5324,9 @@ export function useWorkbenchController(
             source,
             staticMethodContext.className,
           );
-          const scopeMethodName = phpLaravelScopeMethodName(
-            staticMethodContext.methodName,
-          );
+          const scopeMethodName = isLaravelFrameworkActive
+            ? phpLaravelScopeMethodName(staticMethodContext.methodName)
+            : null;
           const hasContextualScopeMethod =
             resolvedClassName && scopeMethodName
               ? await phpClassHierarchyHasMethod(
@@ -5326,12 +5334,13 @@ export function useWorkbenchController(
                   scopeMethodName,
                 )
               : false;
-          const hasContextualDynamicWhereMethod = resolvedClassName
-            ? await phpClassHasLaravelDynamicWhere(
-                resolvedClassName,
-                staticMethodContext.methodName,
-              )
-            : false;
+          const hasContextualDynamicWhereMethod =
+            isLaravelFrameworkActive && resolvedClassName
+              ? await phpClassHasLaravelDynamicWhere(
+                  resolvedClassName,
+                  staticMethodContext.methodName,
+                )
+              : false;
 
           if (hasContextualScopeMethod || hasContextualDynamicWhereMethod) {
             contextualExistingMethods.add(
@@ -5353,14 +5362,16 @@ export function useWorkbenchController(
             column: diagnostic.character + 1,
             lineNumber: diagnostic.line + 1,
           };
-          const builderModelType = await resolvePhpEloquentBuilderModelTypeRef.current(
-            source,
-            diagnosticPosition,
-            memberMethodContext.receiverExpression,
-          );
-          const scopeMethodName = phpLaravelScopeMethodName(
-            memberMethodContext.methodName,
-          );
+          const builderModelType = isLaravelFrameworkActive
+            ? await resolvePhpEloquentBuilderModelTypeRef.current(
+                source,
+                diagnosticPosition,
+                memberMethodContext.receiverExpression,
+              )
+            : null;
+          const scopeMethodName = isLaravelFrameworkActive
+            ? phpLaravelScopeMethodName(memberMethodContext.methodName)
+            : null;
           const hasContextualScopeMethod =
             builderModelType && scopeMethodName
               ? await phpClassHierarchyHasMethod(
@@ -5368,12 +5379,13 @@ export function useWorkbenchController(
                   scopeMethodName,
                 )
               : false;
-          const hasContextualDynamicWhereMethod = builderModelType
-            ? await phpClassHasLaravelDynamicWhere(
-                builderModelType,
-                memberMethodContext.methodName,
-              )
-            : false;
+          const hasContextualDynamicWhereMethod =
+            isLaravelFrameworkActive && builderModelType
+              ? await phpClassHasLaravelDynamicWhere(
+                  builderModelType,
+                  memberMethodContext.methodName,
+                )
+              : false;
 
           if (hasContextualScopeMethod || hasContextualDynamicWhereMethod) {
             contextualMemberMethods.add(
@@ -5427,6 +5439,7 @@ export function useWorkbenchController(
       phpClassHierarchyHasMethod,
       phpClassHasLaravelDynamicWhere,
       activePhpFrameworkProviders,
+      isLaravelFrameworkActive,
       phpTraitHostMethodExists,
       readNavigationFileContent,
       resolvePhpClassReference,
@@ -5852,6 +5865,10 @@ export function useWorkbenchController(
 
   const phpClassHasLaravelLocalScope = useCallback(
     async (className: string, scopeName: string): Promise<boolean> => {
+      if (!isLaravelFrameworkActive) {
+        return false;
+      }
+
       const scopeLookup = scopeName.toLowerCase();
       const scopeCompletions = phpLaravelLocalScopeCompletionsFromMethods(
         await collectPhpMethodsForClass(className),
@@ -5861,7 +5878,7 @@ export function useWorkbenchController(
         (scope) => scope.name.toLowerCase() === scopeLookup,
       );
     },
-    [collectPhpMethodsForClass],
+    [collectPhpMethodsForClass, isLaravelFrameworkActive],
   );
 
   const resolvePhpLaravelRelationPathOwnerType = useCallback(
@@ -5869,6 +5886,10 @@ export function useWorkbenchController(
       className: string,
       previousRelationNames: readonly string[] = [],
     ): Promise<string | null> => {
+      if (!isLaravelFrameworkActive) {
+        return null;
+      }
+
       let ownerType: string | null = className;
 
       for (const relationName of previousRelationNames) {
@@ -5887,7 +5908,7 @@ export function useWorkbenchController(
 
       return ownerType;
     },
-    [resolvePhpClassPropertyOrRelationType],
+    [resolvePhpClassPropertyOrRelationType, isLaravelFrameworkActive],
   );
 
   const resolvePhpCollectionModelTypeFromClass = useCallback(
@@ -5964,7 +5985,7 @@ export function useWorkbenchController(
       expression: string,
       depth = 0,
     ): Promise<string | null> => {
-      if (depth > 5) {
+      if (!isLaravelFrameworkActive || depth > 5) {
         return null;
       }
 
@@ -6203,6 +6224,7 @@ export function useWorkbenchController(
     [
       phpClassHasLaravelLocalScope,
       phpClassHasLaravelDynamicWhere,
+      isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
       resolvePhpMethodReturnType,
@@ -6221,7 +6243,7 @@ export function useWorkbenchController(
       expression: string,
       depth = 0,
     ): Promise<string | null> => {
-      if (depth > 5) {
+      if (!isLaravelFrameworkActive || depth > 5) {
         return null;
       }
 
@@ -6319,6 +6341,7 @@ export function useWorkbenchController(
       resolvePhpClassReference,
       resolvePhpCollectionModelTypeFromClass,
       resolvePhpEloquentBuilderModelType,
+      isLaravelFrameworkActive,
     ],
   );
 
@@ -6382,6 +6405,7 @@ export function useWorkbenchController(
       }
 
       if (
+        isLaravelFrameworkActive &&
         variableMatch?.[1] &&
         phpLaravelQueryCallbackContextForVariable(
           source,
@@ -6403,7 +6427,9 @@ export function useWorkbenchController(
 
       const constructedClassName =
         phpNewExpressionClassName(expression) ??
-        phpLaravelContainerExpressionClassName(expression);
+        (isLaravelFrameworkActive
+          ? phpLaravelContainerExpressionClassName(expression)
+          : null);
 
       if (constructedClassName) {
         return resolvePhpClassReference(source, constructedClassName);
@@ -6482,7 +6508,10 @@ export function useWorkbenchController(
       const methodCall = phpMethodCallExpression(expression);
 
       if (methodCall) {
-        if (isLaravelCollectionTerminalModelMethod(methodCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          isLaravelCollectionTerminalModelMethod(methodCall.methodName)
+        ) {
           const collectionPropertyAccess = phpPropertyAccessExpression(
             methodCall.receiverExpression,
           );
@@ -6519,7 +6548,10 @@ export function useWorkbenchController(
           }
         }
 
-        if (isLaravelEloquentModelBuilderFactoryMethod(methodCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          isLaravelEloquentModelBuilderFactoryMethod(methodCall.methodName)
+        ) {
           const modelType = await resolvePhpEloquentBuilderModelType(
             source,
             position,
@@ -6532,7 +6564,10 @@ export function useWorkbenchController(
           }
         }
 
-        if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)
+        ) {
           let relationExpression = methodCall.receiverExpression;
           let relationCall = phpMethodCallExpression(relationExpression);
 
@@ -6589,7 +6624,10 @@ export function useWorkbenchController(
           }
         }
 
-        if (isLaravelEloquentBuilderCollectionMethod(methodCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          isLaravelEloquentBuilderCollectionMethod(methodCall.methodName)
+        ) {
           const modelType = await resolvePhpEloquentBuilderModelType(
             source,
             position,
@@ -6602,7 +6640,10 @@ export function useWorkbenchController(
           }
         }
 
-        if (isLaravelCollectionFluentMethod(methodCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          isLaravelCollectionFluentMethod(methodCall.methodName)
+        ) {
           const modelType = await resolvePhpLaravelCollectionModelType(
             source,
             position,
@@ -6615,7 +6656,10 @@ export function useWorkbenchController(
           }
         }
 
-        if (isLaravelEloquentBuilderFluentMethod(methodCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          isLaravelEloquentBuilderFluentMethod(methodCall.methodName)
+        ) {
           const modelType = await resolvePhpEloquentBuilderModelType(
             source,
             position,
@@ -6628,7 +6672,10 @@ export function useWorkbenchController(
           }
         }
 
-        if (isLaravelDatabaseQueryBuilderFactoryMethod(methodCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          isLaravelDatabaseQueryBuilderFactoryMethod(methodCall.methodName)
+        ) {
           const receiverType = await resolvePhpExpressionType(
             source,
             position,
@@ -6641,7 +6688,10 @@ export function useWorkbenchController(
           }
         }
 
-        if (isLaravelDatabaseQueryBuilderFluentMethod(methodCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          isLaravelDatabaseQueryBuilderFluentMethod(methodCall.methodName)
+        ) {
           const receiverType = await resolvePhpExpressionType(
             source,
             position,
@@ -6662,6 +6712,7 @@ export function useWorkbenchController(
         );
 
         if (
+          isLaravelFrameworkActive &&
           localScopeModelType &&
           (await phpClassHasLaravelLocalScope(
             localScopeModelType,
@@ -6672,6 +6723,7 @@ export function useWorkbenchController(
         }
 
         if (
+          isLaravelFrameworkActive &&
           localScopeModelType &&
           (await phpClassHasLaravelDynamicWhere(
             localScopeModelType,
@@ -6689,6 +6741,7 @@ export function useWorkbenchController(
         );
 
         if (
+          isLaravelFrameworkActive &&
           receiverType &&
           isLaravelEloquentModelFluentMethod(methodCall.methodName)
         ) {
@@ -6704,22 +6757,29 @@ export function useWorkbenchController(
 
       if (staticCall) {
         const className = resolvePhpClassReference(source, staticCall.className);
-        const facadeOrClassName = className
+        const facadeTargetClassName = isLaravelFrameworkActive && className
           ? (laravelFacadeTargetClassName(className) ?? className)
           : null;
+        const facadeOrClassName = facadeTargetClassName ?? className;
 
         if (
+          isLaravelFrameworkActive &&
           className &&
           isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName)
         ) {
           return className;
         }
 
-        if (className && isLaravelEloquentStaticBuilderMethod(staticCall.methodName)) {
+        if (
+          isLaravelFrameworkActive &&
+          className &&
+          isLaravelEloquentStaticBuilderMethod(staticCall.methodName)
+        ) {
           return "Illuminate\\Database\\Eloquent\\Builder";
         }
 
         if (
+          isLaravelFrameworkActive &&
           facadeOrClassName &&
           isLaravelDatabaseQueryBuilderFactoryMethod(staticCall.methodName) &&
           isLaravelDatabaseConnectionType(facadeOrClassName)
@@ -6728,6 +6788,7 @@ export function useWorkbenchController(
         }
 
         if (
+          isLaravelFrameworkActive &&
           className &&
           (await phpClassHasLaravelLocalScope(className, staticCall.methodName))
         ) {
@@ -6735,6 +6796,7 @@ export function useWorkbenchController(
         }
 
         if (
+          isLaravelFrameworkActive &&
           className &&
           (await phpClassHasLaravelDynamicWhere(className, staticCall.methodName))
         ) {
@@ -6756,6 +6818,7 @@ export function useWorkbenchController(
       phpClassMethodReturnsClassStringArgument,
       phpClassHasLaravelLocalScope,
       phpClassHasLaravelDynamicWhere,
+      isLaravelFrameworkActive,
       resolvePhpMethodReturnType,
     ],
   );
@@ -6813,12 +6876,14 @@ export function useWorkbenchController(
         return [];
       }
 
-      const facadeTargetClassName = laravelFacadeTargetClassName(resolvedClassName);
+      const facadeTargetClassName = isLaravelFrameworkActive
+        ? laravelFacadeTargetClassName(resolvedClassName)
+        : null;
       const methods = await collectPhpMethodsForClass(
         facadeTargetClassName ?? resolvedClassName,
       );
 
-      if (facadeTargetClassName) {
+      if (isLaravelFrameworkActive && facadeTargetClassName) {
         return methods;
       }
 
@@ -6829,13 +6894,16 @@ export function useWorkbenchController(
 
       return mergePhpMethodCompletions(
         methods.filter((method) => method.isStatic),
-        phpLaravelStaticLocalScopeCompletionsFromMethods(methods),
+        isLaravelFrameworkActive
+          ? phpLaravelStaticLocalScopeCompletionsFromMethods(methods)
+          : [],
         dynamicWhereMethods,
       );
     },
     [
       collectPhpLaravelDynamicWhereMethodsForClass,
       collectPhpMethodsForClass,
+      isLaravelFrameworkActive,
       resolvePhpClassReference,
     ],
   );
@@ -6850,7 +6918,7 @@ export function useWorkbenchController(
         position,
       );
 
-      if (relationContext) {
+      if (isLaravelFrameworkActive && relationContext) {
         const staticClassName = relationContext.className
           ? resolvePhpClassReference(source, relationContext.className)
           : null;
@@ -6945,6 +7013,7 @@ export function useWorkbenchController(
     },
     [
       collectPhpLaravelRelationCompletionsForClass,
+      isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
@@ -7213,7 +7282,7 @@ export function useWorkbenchController(
 
   const openPhpLaravelDynamicWhereTarget = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
         return false;
       }
 
@@ -7251,6 +7320,7 @@ export function useWorkbenchController(
       openNavigationTarget,
       readNavigationFileContent,
       resolvePhpClassSourcePaths,
+      isLaravelFrameworkActive,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -7283,10 +7353,12 @@ export function useWorkbenchController(
         (variableType
           ? resolvePhpClassName(activeDocument.content, variableType)
           : null);
-      const frameworkHint = phpLaravelRequestMethodDefinition(
-        resolvedVariableType,
-        context.methodName,
-      );
+      const frameworkHint = isLaravelFrameworkActive
+        ? phpLaravelRequestMethodDefinition(
+            resolvedVariableType,
+            context.methodName,
+          )
+        : null;
 
       if (frameworkHint) {
         return openPhpMethodHintTarget(frameworkHint);
@@ -7334,6 +7406,7 @@ export function useWorkbenchController(
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
       openPhpMethodHintTarget,
+      isLaravelFrameworkActive,
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
     ],
@@ -7360,7 +7433,9 @@ export function useWorkbenchController(
         return true;
       }
 
-      const scopeMethodName = phpLaravelScopeMethodName(context.methodName);
+      const scopeMethodName = isLaravelFrameworkActive
+        ? phpLaravelScopeMethodName(context.methodName)
+        : null;
 
       if (
         scopeMethodName &&
@@ -7374,6 +7449,7 @@ export function useWorkbenchController(
       }
 
       if (
+        isLaravelFrameworkActive &&
         isLaravelEloquentBuilderMethodName(context.methodName) &&
         (await openDirectPhpMethodTarget(
           "Illuminate\\Database\\Eloquent\\Builder",
@@ -7388,14 +7464,19 @@ export function useWorkbenchController(
       );
       return false;
     },
-    [activeDocument, openDirectPhpMethodTarget, openPhpLaravelDynamicWhereTarget],
+    [
+      activeDocument,
+      isLaravelFrameworkActive,
+      openDirectPhpMethodTarget,
+      openPhpLaravelDynamicWhereTarget,
+    ],
   );
 
   const goToPhpLaravelRelationStringDefinition = useCallback(
     async (
       context: Extract<PhpIdentifierContext, { kind: "laravelRelationString" }>,
     ): Promise<boolean> => {
-      if (!activeDocument) {
+      if (!isLaravelFrameworkActive || !activeDocument) {
         return false;
       }
 
@@ -7449,6 +7530,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
+      isLaravelFrameworkActive,
       openDirectPhpMethodTarget,
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
