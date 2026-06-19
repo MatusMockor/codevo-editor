@@ -201,6 +201,65 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("inserts Laravel route name completions as plain string suffixes", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "routes/web.php",
+        insertText: "show",
+        kind: "route" as const,
+        name: "comments.show",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(): string\n{\n    return route('comments.sh');\n}\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    return route('comments.sh');",
+        word: {
+          endColumn: 32,
+          startColumn: 30,
+        },
+      }),
+      {
+        column: 32,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        command: undefined,
+        detail: "Laravel route - routes/web.php",
+        documentation: "Laravel named route\n\ncomments.show",
+        insertText: "show",
+        insertTextRules: 4,
+        kind: 12,
+        label: {
+          description: "route - routes/web.php",
+          detail: "",
+          label: "comments.show",
+        },
+      }),
+    ]);
+  });
+
   it("deduplicates typed PHP methods against LSP signature labels", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -973,6 +1032,7 @@ function createRegisteredProviders() {
         Method: 2,
         Property: 10,
         Text: 1,
+        Value: 12,
         Variable: 6,
       },
       registerCodeActionProvider: vi.fn((language, provider, metadata) => {
