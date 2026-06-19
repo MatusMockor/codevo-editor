@@ -2133,6 +2133,122 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
   });
 
+  it("starts inferred JavaScript and TypeScript service for restored JS TS tabs", async () => {
+    const restoredPath = "/workspace/src/App.ts";
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const { dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === restoredPath) {
+          return "export const app = 1;\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+        session: {
+          activePath: restoredPath,
+          bottomPanelView: "problems",
+          openPaths: [restoredPath],
+          sidebarView: "files",
+        },
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
+      codeLensEnabled: false,
+      inlayHintsEnabled: true,
+      typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
+    });
+    expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
+  it("does not start JavaScript and TypeScript service for PHP-only project tabs", async () => {
+    const restoredPath = "/workspace/scripts/tool.ts";
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const { dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === restoredPath) {
+          return "export const tool = 1;\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+        session: {
+          activePath: restoredPath,
+          bottomPanelView: "problems",
+          openPaths: [restoredPath],
+          sidebarView: "files",
+        },
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
+      codeLensEnabled: false,
+      inlayHintsEnabled: true,
+      typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
+    });
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
   it("starts JavaScript and TypeScript language service with workspace TypeScript preference", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {

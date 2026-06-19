@@ -598,7 +598,7 @@ export function useWorkbenchController(
   );
   const shouldAutoStartJavaScriptTypeScriptLanguageServer =
     Boolean(workspaceDescriptor?.javaScriptTypeScript) ||
-    hasOpenJavaScriptTypeScriptDocument;
+    (!workspaceDescriptor?.php && hasOpenJavaScriptTypeScriptDocument);
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
