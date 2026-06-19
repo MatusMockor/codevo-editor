@@ -183,11 +183,12 @@ pub(crate) fn run_workspace_reindex(
         }
         WorkspaceReindexMode::Soft => {
             let changed_records = changed_records(&existing_records, &scanned_records);
+            let records_to_parse = soft_parse_records(&index, &changed_records, &scanned_records)?;
             upsert_records(&index, lifecycle_token, &scanned_records)?;
             report.changed_files += changed_records.len();
-            let php_records = records_for_language(&changed_records, "php");
-            let javascript_records = records_for_language(&changed_records, "javascript");
-            let typescript_records = records_for_language(&changed_records, "typescript");
+            let php_records = records_for_language(&records_to_parse, "php");
+            let javascript_records = records_for_language(&records_to_parse, "javascript");
+            let typescript_records = records_for_language(&records_to_parse, "typescript");
             parse_records(&index, lifecycle_token, &php_records, "php", &mut report)?;
             parse_records(
                 &index,
@@ -329,6 +330,35 @@ fn changed_records(
         })
         .cloned()
         .collect()
+}
+
+fn soft_parse_records(
+    index: &SqliteWorkspaceIndex,
+    changed_records: &[WorkspaceFileRecord],
+    scanned_records: &[WorkspaceFileRecord],
+) -> Result<Vec<WorkspaceFileRecord>, WorkspaceReindexError> {
+    let mut parse_records = changed_records.to_vec();
+    let mut parse_paths: BTreeSet<String> = changed_records
+        .iter()
+        .map(|record| record.path.clone())
+        .collect();
+
+    for record in scanned_records {
+        if parse_paths.contains(&record.path) || !is_symbol_indexed_language(&record.language) {
+            continue;
+        }
+
+        if index.list_file_symbols(&record.path)?.is_empty() {
+            parse_paths.insert(record.path.clone());
+            parse_records.push(record.clone());
+        }
+    }
+
+    Ok(parse_records)
+}
+
+fn is_symbol_indexed_language(language: &str) -> bool {
+    matches!(language, "php" | "javascript" | "typescript")
 }
 
 fn records_for_language(
@@ -522,7 +552,7 @@ mod tests {
     use super::{run_workspace_reindex, WorkspaceReindexError, WorkspaceReindexRequest};
     use crate::index::{
         SqliteWorkspaceIndex, WorkspaceIndexMaintenanceStore, WorkspaceIndexStore,
-        WorkspaceSymbolStore,
+        WorkspaceSymbolSearchStore, WorkspaceSymbolStore,
     };
     use crate::index_scan::WorkspaceReindexMode;
     use crate::job_scheduler::WorkspaceIndexLifecycle;
@@ -556,6 +586,59 @@ mod tests {
         assert_eq!(report.changed_files, 1);
         assert_eq!(report.parsed_files, 1);
         assert_eq!(symbols[0].fully_qualified_name, "App\\User");
+    }
+
+    #[test]
+    fn soft_reindex_repairs_unchanged_php_files_missing_symbols() {
+        let root = temp_workspace("soft-missing-symbols");
+        let database_path = temp_database_path("soft-missing-symbols");
+        let user_path = root.join("src/User.php");
+        fs::create_dir_all(root.join("src")).expect("src dir");
+        fs::write(&user_path, php_fixture("User")).expect("php file");
+
+        run_workspace_reindex(&WorkspaceReindexRequest {
+            database_path: database_path.clone(),
+            language: None,
+            lifecycle_token: None,
+            mode: WorkspaceReindexMode::Soft,
+            root_path: root.clone(),
+        })
+        .expect("seed reindex");
+
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .clear_symbols_for_language("php")
+            .expect("clear php symbols");
+        assert!(index
+            .list_file_symbols(&path_string(user_path.clone()))
+            .expect("empty symbols")
+            .is_empty());
+
+        let report = run_workspace_reindex(&WorkspaceReindexRequest {
+            database_path: database_path.clone(),
+            language: None,
+            lifecycle_token: None,
+            mode: WorkspaceReindexMode::Soft,
+            root_path: root.clone(),
+        })
+        .expect("repair reindex");
+        let repaired_index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        let symbols = repaired_index
+            .list_file_symbols(&path_string(user_path))
+            .expect("symbols");
+        let results = repaired_index
+            .search_project_symbols("User", 10)
+            .expect("symbol search");
+
+        assert_eq!(report.changed_files, 0);
+        assert_eq!(report.parsed_files, 1);
+        assert!(report.symbols_indexed > 0);
+        assert!(symbols
+            .iter()
+            .any(|symbol| symbol.fully_qualified_name == "App\\User"));
+        assert!(results
+            .iter()
+            .any(|symbol| symbol.fully_qualified_name == "App\\User"));
     }
 
     #[test]
