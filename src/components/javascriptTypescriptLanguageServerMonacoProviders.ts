@@ -2121,7 +2121,11 @@ function toMonacoCompletionItem(
     documentation: item.documentation || undefined,
     filterText: item.filterText || undefined,
     insertText: insert.insertText,
-    ...(insert.command ? { command: insert.command } : {}),
+    ...(item.command
+      ? { command: toMonacoLanguageServerCommand(rootPath, item.command) }
+      : insert.command
+        ? { command: insert.command }
+        : {}),
     ...(insert.insertTextRules ? { insertTextRules: insert.insertTextRules } : {}),
     kind,
     label: completionLabel(item),
@@ -2133,6 +2137,22 @@ function toMonacoCompletionItem(
     ...(isDeprecatedCompletionItem(item)
       ? { tags: [monaco.languages.CompletionItemTag.Deprecated] }
       : {}),
+  };
+}
+
+function toMonacoLanguageServerCommand(
+  rootPath: string,
+  command: LanguageServerCodeActionCommand,
+): Monaco.languages.Command {
+  return {
+    arguments: [
+      {
+        command,
+        rootPath,
+      } satisfies ExecuteCommandPayload,
+    ],
+    id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
+    title: command.title || command.command,
   };
 }
 

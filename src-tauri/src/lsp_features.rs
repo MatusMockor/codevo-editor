@@ -266,6 +266,7 @@ pub struct LanguageServerCompletionItem {
     pub additional_text_edits: Vec<LanguageServerTextEdit>,
     #[serde(default)]
     pub commit_characters: Vec<String>,
+    pub command: Option<LanguageServerCodeActionCommand>,
     pub data: Option<Value>,
     #[serde(default)]
     pub deprecated: bool,
@@ -1370,6 +1371,7 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
     Some(LanguageServerCompletionItem {
         additional_text_edits,
         commit_characters,
+        command: parse_code_action_command(value),
         data: value.get("data").cloned(),
         deprecated: value
             .get("deprecated")
@@ -2401,6 +2403,11 @@ mod tests {
                         "sortText": "11",
                         "data": { "entryNames": ["User"] },
                         "commitCharacters": ["."],
+                        "command": {
+                            "title": "Apply completion code action",
+                            "command": "_typescript.applyCompletionCodeAction",
+                            "arguments": [{ "source": "completion" }]
+                        },
                         "deprecated": true,
                         "tags": [1],
                         "additionalTextEdits": [
@@ -2441,6 +2448,11 @@ mod tests {
                         new_text: "import { User } from './user';\n".to_string(),
                     }],
                     commit_characters: vec![".".to_string()],
+                    command: Some(LanguageServerCodeActionCommand {
+                        title: "Apply completion code action".to_string(),
+                        command: "_typescript.applyCompletionCodeAction".to_string(),
+                        arguments: Some(vec![json!({ "source": "completion" })]),
+                    }),
                     data: Some(json!({ "entryNames": ["User"] })),
                     deprecated: true,
                     label: "User".to_string(),
@@ -2490,6 +2502,7 @@ mod tests {
         let item = LanguageServerCompletionItem {
             additional_text_edits: Vec::new(),
             commit_characters: Vec::new(),
+            command: None,
             data: Some(json!({ "entryNames": ["User"] })),
             deprecated: false,
             label: "User".to_string(),

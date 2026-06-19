@@ -1297,8 +1297,68 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.suggestions[1]).not.toHaveProperty("command");
   });
 
+  it("maps TypeScript completion commands through the guarded language server executor", async () => {
+    const monaco = createMonaco();
+    const completionCommand = {
+      arguments: [{ source: "completion" }],
+      command: "_typescript.applyCompletionCodeAction",
+      title: "Apply completion code action",
+    };
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            command: completionCommand,
+            detail: "function",
+            documentation: null,
+            insertText: "loadUser",
+            kind: 3,
+            label: "loadUser",
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0].command).toEqual({
+      arguments: [
+        {
+          command: completionCommand,
+          rootPath: "/project",
+        },
+      ],
+      id: "mockor.javascriptTypeScript.executeLanguageServerCommand",
+      title: "Apply completion code action",
+    });
+
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+    await commandDescriptor.run(null, result.suggestions[0].command.arguments[0]);
+
+    expect(gateway.executeCommand).toHaveBeenCalledWith(
+      "/project",
+      completionCommand,
+    );
+  });
+
   it("resolves TypeScript completion items through the language server", async () => {
     const monaco = createMonaco();
+    const resolvedCommand = {
+      arguments: [{ source: "resolve" }],
+      command: "_typescript.applyCompletionCodeAction",
+      title: "Apply completion code action",
+    };
     const gateway = featuresGateway({
       completion: {
         isIncomplete: false,
@@ -1320,6 +1380,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             range: range(0, 0, 0, 0),
           },
         ],
+        command: resolvedCommand,
         data: { entryNames: ["loadUser"] },
         detail: "function loadUser(id: string): Promise<User>",
         documentation: "Resolved docs",
@@ -1365,6 +1426,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         ],
         detail: "function loadUser(id: string): Promise<User>",
         documentation: "Resolved docs",
+        command: {
+          arguments: [
+            {
+              command: resolvedCommand,
+              rootPath: "/project",
+            },
+          ],
+          id: "mockor.javascriptTypeScript.executeLanguageServerCommand",
+          title: "Apply completion code action",
+        },
         insertText: "loadUser(${1:id})",
         insertTextRules: 4,
       }),

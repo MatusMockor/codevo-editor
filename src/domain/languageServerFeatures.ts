@@ -37,6 +37,7 @@ export interface LanguageServerCompletionItemLabelDetails {
 export interface LanguageServerCompletionItem {
   additionalTextEdits?: LanguageServerTextEdit[];
   commitCharacters?: string[];
+  command?: LanguageServerCodeActionCommand | null;
   data?: unknown;
   deprecated?: boolean;
   label: string;

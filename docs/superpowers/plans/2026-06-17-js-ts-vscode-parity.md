@@ -73,6 +73,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - Completion items now preserve richer LSP metadata (`textEdit`, `additionalTextEdits`, `sortText`, `filterText`, `commitCharacters`, snippet format) so auto imports and exact replacement ranges are not dropped.
 - Completion lists now preserve LSP `isIncomplete`, and completion items preserve `preselect`, so Monaco can keep requesting narrowed suggestions and select the server-preferred item more like VS Code.
 - `completionItem/resolve` is wired through the JS/TS language-server gateway and Monaco provider, matching the VS Code pattern of lazily resolving documentation and import edits for focused suggestions.
+- TypeScript/JavaScript completion items now preserve LSP `command` and map it through the existing workspace-root-guarded execute-command path, including commands returned by `completionItem/resolve`.
 - `textDocument/inlayHint` is wired through the managed JS/TS language server and Monaco provider, giving light mode VS Code-style inline type/parameter hints when the server advertises support.
 - `textDocument/signatureHelp` is wired through the managed JS/TS language server and Monaco provider, so function calls can show VS Code-style active signatures and parameter documentation.
 - `textDocument/documentSymbol` is wired through the shared LSP gateway and JS/TS Basic-mode file structure, giving `Cmd+R` a VS Code-like outline for JavaScript and TypeScript files without PHP IDE Mode.
