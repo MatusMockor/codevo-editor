@@ -480,6 +480,205 @@ fn ensure_lsp_position_in_workspace(
     ensure_lsp_path_in_workspace(root_path, &position.path)
 }
 
+fn ensure_lsp_uri_in_workspace(root_path: &str, uri: &str) -> Result<(), String> {
+    if !uri.starts_with("file://") {
+        return Ok(());
+    }
+
+    let Some(path) = path_from_file_uri(uri) else {
+        return Err("File URI is outside the workspace root.".to_string());
+    };
+
+    ensure_lsp_path_in_workspace(root_path, &path)
+}
+
+fn ensure_lsp_workspace_edit_paths_in_workspace(
+    root_path: &str,
+    edit: &LanguageServerWorkspaceEdit,
+) -> Result<(), String> {
+    for uri in edit.changes.keys() {
+        ensure_lsp_uri_in_workspace(root_path, uri)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_lsp_completion_item_payload_in_workspace(
+    root_path: &str,
+    item: &LanguageServerCompletionItem,
+) -> Result<(), String> {
+    if let Some(command) = &item.command {
+        ensure_lsp_command_payload_paths_in_workspace(root_path, command)?;
+    }
+
+    ensure_lsp_json_payload_paths_in_workspace(root_path, item.data.as_ref())
+}
+
+fn ensure_lsp_code_action_payload_in_workspace(
+    root_path: &str,
+    action: &LanguageServerCodeAction,
+) -> Result<(), String> {
+    if let Some(edit) = &action.edit {
+        ensure_lsp_workspace_edit_paths_in_workspace(root_path, edit)?;
+    }
+
+    if let Some(command) = &action.command {
+        ensure_lsp_command_payload_paths_in_workspace(root_path, command)?;
+    }
+
+    ensure_lsp_json_payload_paths_in_workspace(root_path, action.data.as_ref())
+}
+
+fn ensure_lsp_code_lens_payload_in_workspace(
+    root_path: &str,
+    lens: &LanguageServerCodeLens,
+) -> Result<(), String> {
+    if let Some(command) = &lens.command {
+        ensure_lsp_command_payload_paths_in_workspace(root_path, command)?;
+    }
+
+    ensure_lsp_json_payload_paths_in_workspace(root_path, lens.data.as_ref())
+}
+
+fn ensure_lsp_document_link_payload_in_workspace(
+    root_path: &str,
+    link: &LanguageServerDocumentLink,
+) -> Result<(), String> {
+    if let Some(target) = &link.target {
+        ensure_lsp_payload_string_in_workspace(root_path, target, true)?;
+    }
+
+    ensure_lsp_json_payload_paths_in_workspace(root_path, link.data.as_ref())
+}
+
+fn ensure_lsp_call_hierarchy_item_in_workspace(
+    root_path: &str,
+    item: &LanguageServerCallHierarchyItem,
+) -> Result<(), String> {
+    ensure_lsp_uri_in_workspace(root_path, &item.uri)?;
+    ensure_lsp_json_payload_paths_in_workspace(root_path, item.data.as_ref())
+}
+
+fn ensure_lsp_type_hierarchy_item_in_workspace(
+    root_path: &str,
+    item: &LanguageServerTypeHierarchyItem,
+) -> Result<(), String> {
+    ensure_lsp_uri_in_workspace(root_path, &item.uri)?;
+    ensure_lsp_json_payload_paths_in_workspace(root_path, item.data.as_ref())
+}
+
+fn ensure_lsp_command_payload_paths_in_workspace(
+    root_path: &str,
+    command: &LanguageServerCodeActionCommand,
+) -> Result<(), String> {
+    if let Some(arguments) = &command.arguments {
+        for argument in arguments {
+            ensure_lsp_json_value_paths_in_workspace(root_path, argument, true)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_lsp_json_payload_paths_in_workspace(
+    root_path: &str,
+    payload: Option<&Value>,
+) -> Result<(), String> {
+    if let Some(payload) = payload {
+        ensure_lsp_json_value_paths_in_workspace(root_path, payload, false)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_lsp_json_value_paths_in_workspace(
+    root_path: &str,
+    value: &Value,
+    path_context: bool,
+) -> Result<(), String> {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                ensure_lsp_json_value_paths_in_workspace(root_path, item, path_context)?;
+            }
+        }
+        Value::Object(fields) => {
+            for (key, field_value) in fields {
+                ensure_lsp_payload_string_in_workspace(root_path, key, false)?;
+                ensure_lsp_json_value_paths_in_workspace(
+                    root_path,
+                    field_value,
+                    path_context || is_lsp_path_payload_key(key),
+                )?;
+            }
+        }
+        Value::String(value) => {
+            ensure_lsp_payload_string_in_workspace(root_path, value, path_context)?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn ensure_lsp_payload_string_in_workspace(
+    root_path: &str,
+    value: &str,
+    path_context: bool,
+) -> Result<(), String> {
+    if value.starts_with("file://") {
+        return ensure_lsp_uri_in_workspace(root_path, value);
+    }
+
+    if !path_context || has_non_file_uri_scheme(value) {
+        return Ok(());
+    }
+
+    ensure_lsp_path_in_workspace(root_path, value)
+}
+
+fn is_lsp_path_payload_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|character| *character != '_' && *character != '-')
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+
+    normalized == "file"
+        || normalized == "target"
+        || normalized.ends_with("uri")
+        || normalized.ends_with("path")
+        || normalized.ends_with("filename")
+}
+
+fn has_non_file_uri_scheme(value: &str) -> bool {
+    let bytes = value.as_bytes();
+
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+
+    let Some(first) = bytes.first() else {
+        return false;
+    };
+
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+
+    for byte in bytes.iter().skip(1) {
+        if *byte == b':' {
+            return !value.starts_with("file:");
+        }
+
+        if !(byte.is_ascii_alphanumeric() || matches!(*byte, b'+' | b'-' | b'.')) {
+            return false;
+        }
+    }
+
+    false
+}
+
 fn php_file_outline_node_kind_from_symbol(kind: PhpSymbolKind) -> PhpFileOutlineNodeKind {
     match kind {
         PhpSymbolKind::Class => PhpFileOutlineNodeKind::Class,
@@ -1300,6 +1499,8 @@ fn javascript_typescript_text_document_completion_resolve(
     item: LanguageServerCompletionItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionItem, String> {
+    ensure_lsp_completion_item_payload_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_completion_item(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1574,6 +1775,8 @@ fn javascript_typescript_text_document_code_action_resolve(
     action: LanguageServerCodeAction,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeAction, String> {
+    ensure_lsp_code_action_payload_in_workspace(&root_path, &action)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_action(&action);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1640,6 +1843,8 @@ fn javascript_typescript_text_document_code_lens_resolve(
     lens: LanguageServerCodeLens,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeLens, String> {
+    ensure_lsp_code_lens_payload_in_workspace(&root_path, &lens)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_lens(&lens);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1703,6 +1908,8 @@ fn javascript_typescript_text_document_incoming_calls(
     item: LanguageServerCallHierarchyItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerIncomingCall>, String> {
+    ensure_lsp_call_hierarchy_item_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.incoming_calls(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1733,6 +1940,8 @@ fn javascript_typescript_text_document_outgoing_calls(
     item: LanguageServerCallHierarchyItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerOutgoingCall>, String> {
+    ensure_lsp_call_hierarchy_item_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.outgoing_calls(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1795,6 +2004,8 @@ fn javascript_typescript_text_document_type_hierarchy_supertypes(
     item: LanguageServerTypeHierarchyItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    ensure_lsp_type_hierarchy_item_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_hierarchy_supertypes(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1825,6 +2036,8 @@ fn javascript_typescript_text_document_type_hierarchy_subtypes(
     item: LanguageServerTypeHierarchyItem,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    ensure_lsp_type_hierarchy_item_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_hierarchy_subtypes(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2231,6 +2444,8 @@ fn javascript_typescript_text_document_document_link_resolve(
     link: LanguageServerDocumentLink,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerDocumentLink, String> {
+    ensure_lsp_document_link_payload_in_workspace(&root_path, &link)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_document_link(&link);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2537,13 +2752,20 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_lsp_path_in_workspace, ensure_path_in_workspace, normalize_path, path_from_file_uri,
-        workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        ensure_lsp_call_hierarchy_item_in_workspace, ensure_lsp_code_action_payload_in_workspace,
+        ensure_lsp_code_lens_payload_in_workspace, ensure_lsp_completion_item_payload_in_workspace,
+        ensure_lsp_document_link_payload_in_workspace, ensure_lsp_path_in_workspace,
+        ensure_lsp_type_hierarchy_item_in_workspace, ensure_path_in_workspace, normalize_path,
+        path_from_file_uri, workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
+    use crate::lsp::file_uri;
     use crate::lsp_features::{
-        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeLens,
+        LanguageServerCompletionItem, LanguageServerDocumentLink, LanguageServerPosition,
+        LanguageServerRange, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
         LanguageServerWorkspaceEdit,
     };
+    use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::{
         fs,
@@ -2597,6 +2819,135 @@ mod tests {
             &path_string(&sibling.join("App.ts"))
         )
         .is_err());
+    }
+
+    #[test]
+    fn lsp_completion_resolve_guard_rejects_outside_payload_paths() {
+        let root = temp_workspace("completion-resolve-root");
+        let outside = temp_workspace("completion-resolve-outside");
+        let inside_item = completion_item(json!({ "file": path_string(&root.join("src/App.ts")) }));
+        let outside_path_item =
+            completion_item(json!({ "file": path_string(&outside.join("Secret.ts")) }));
+        let outside_uri_item = completion_item(json!({
+            "uri": file_uri(&outside.join("Secret.ts")),
+        }));
+
+        assert!(
+            ensure_lsp_completion_item_payload_in_workspace(&path_string(&root), &inside_item)
+                .is_ok()
+        );
+        assert!(ensure_lsp_completion_item_payload_in_workspace(
+            &path_string(&root),
+            &outside_path_item
+        )
+        .is_err());
+        assert!(ensure_lsp_completion_item_payload_in_workspace(
+            &path_string(&root),
+            &outside_uri_item
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn lsp_code_action_resolve_guard_rejects_outside_edit_and_command_paths() {
+        let root = temp_workspace("code-action-resolve-root");
+        let outside = temp_workspace("code-action-resolve-outside");
+        let inside_action = code_action(json!({
+            "edit": {
+                "changes": {
+                    file_uri(&root.join("src/App.ts")): []
+                }
+            }
+        }));
+        let outside_edit_action = code_action(json!({
+            "edit": {
+                "changes": {
+                    file_uri(&outside.join("Secret.ts")): []
+                }
+            }
+        }));
+        let outside_command_action = code_action(json!({
+            "command": {
+                "title": "Organize imports",
+                "command": "_typescript.organizeImports",
+                "arguments": [file_uri(&outside.join("Secret.ts"))]
+            }
+        }));
+
+        assert!(
+            ensure_lsp_code_action_payload_in_workspace(&path_string(&root), &inside_action)
+                .is_ok()
+        );
+        assert!(ensure_lsp_code_action_payload_in_workspace(
+            &path_string(&root),
+            &outside_edit_action
+        )
+        .is_err());
+        assert!(ensure_lsp_code_action_payload_in_workspace(
+            &path_string(&root),
+            &outside_command_action
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn lsp_code_lens_and_document_link_resolve_guards_reject_outside_paths() {
+        let root = temp_workspace("resolve-payload-root");
+        let outside = temp_workspace("resolve-payload-outside");
+        let inside_lens = code_lens(json!({
+            "data": { "file": path_string(&root.join("src/App.ts")) }
+        }));
+        let outside_lens = code_lens(json!({
+            "command": {
+                "title": "3 references",
+                "command": "editor.action.showReferences",
+                "arguments": [file_uri(&outside.join("Secret.ts"))]
+            }
+        }));
+        let outside_target_link = document_link(json!({
+            "target": file_uri(&outside.join("Secret.ts"))
+        }));
+        let outside_data_link = document_link(json!({
+            "data": { "file": path_string(&outside.join("Secret.ts")) }
+        }));
+
+        assert!(
+            ensure_lsp_code_lens_payload_in_workspace(&path_string(&root), &inside_lens).is_ok()
+        );
+        assert!(
+            ensure_lsp_code_lens_payload_in_workspace(&path_string(&root), &outside_lens).is_err()
+        );
+        assert!(ensure_lsp_document_link_payload_in_workspace(
+            &path_string(&root),
+            &outside_target_link
+        )
+        .is_err());
+        assert!(ensure_lsp_document_link_payload_in_workspace(
+            &path_string(&root),
+            &outside_data_link
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn lsp_hierarchy_follow_up_guards_reject_outside_item_uris() {
+        let root = temp_workspace("hierarchy-root");
+        let outside = temp_workspace("hierarchy-outside");
+        let inside_call = call_hierarchy_item(&file_uri(&root.join("src/App.ts")));
+        let outside_call = call_hierarchy_item(&file_uri(&outside.join("Secret.ts")));
+        let outside_type = type_hierarchy_item(&file_uri(&outside.join("Secret.ts")));
+
+        assert!(
+            ensure_lsp_call_hierarchy_item_in_workspace(&path_string(&root), &inside_call).is_ok()
+        );
+        assert!(
+            ensure_lsp_call_hierarchy_item_in_workspace(&path_string(&root), &outside_call)
+                .is_err()
+        );
+        assert!(
+            ensure_lsp_type_hierarchy_item_in_workspace(&path_string(&root), &outside_type)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2729,6 +3080,85 @@ mod tests {
 
     fn path_string(path: &Path) -> String {
         path.to_string_lossy().to_string()
+    }
+
+    fn completion_item(data: Value) -> LanguageServerCompletionItem {
+        serde_json::from_value(json!({
+            "label": "App",
+            "data": data,
+        }))
+        .expect("completion item")
+    }
+
+    fn code_action(payload: Value) -> LanguageServerCodeAction {
+        let mut value = json!({
+            "title": "Resolve action",
+        });
+        merge_object(&mut value, payload);
+
+        serde_json::from_value(value).expect("code action")
+    }
+
+    fn code_lens(payload: Value) -> LanguageServerCodeLens {
+        let mut value = json!({
+            "range": lsp_range(),
+        });
+        merge_object(&mut value, payload);
+
+        serde_json::from_value(value).expect("code lens")
+    }
+
+    fn document_link(payload: Value) -> LanguageServerDocumentLink {
+        let mut value = json!({
+            "range": lsp_range(),
+        });
+        merge_object(&mut value, payload);
+
+        serde_json::from_value(value).expect("document link")
+    }
+
+    fn call_hierarchy_item(uri: &str) -> LanguageServerCallHierarchyItem {
+        serde_json::from_value(json!({
+            "name": "render",
+            "kind": 12,
+            "uri": uri,
+            "range": lsp_range(),
+            "selectionRange": lsp_range(),
+        }))
+        .expect("call hierarchy item")
+    }
+
+    fn type_hierarchy_item(uri: &str) -> LanguageServerTypeHierarchyItem {
+        serde_json::from_value(json!({
+            "name": "View",
+            "kind": 5,
+            "uri": uri,
+            "range": lsp_range(),
+            "selectionRange": lsp_range(),
+        }))
+        .expect("type hierarchy item")
+    }
+
+    fn lsp_range() -> LanguageServerRange {
+        LanguageServerRange {
+            start: LanguageServerPosition {
+                line: 0,
+                character: 0,
+            },
+            end: LanguageServerPosition {
+                line: 0,
+                character: 3,
+            },
+        }
+    }
+
+    fn merge_object(value: &mut Value, payload: Value) {
+        let value = value.as_object_mut().expect("object value");
+        let payload = payload.as_object().expect("object payload");
+
+        for (key, field) in payload {
+            value.insert(key.clone(), field.clone());
+        }
     }
 }
 

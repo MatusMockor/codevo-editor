@@ -10,6 +10,8 @@ import {
 } from "./phpMethodCompletions";
 import {
   isLaravelEloquentBuilderMethodName,
+  isLaravelEloquentBuilderFluentMethod,
+  isLaravelEloquentStaticBuilderMethod,
   isLaravelEloquentBuilderTerminalModelMethod,
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
@@ -45,6 +47,12 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentBuilderTerminalModelMethod("firstOrNew")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("firstWhere")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("firstOrNew")).toBe(true);
+  });
+
+  it("treats withRelations as a Laravel Eloquent builder method", () => {
+    expect(isLaravelEloquentStaticBuilderMethod("withRelations")).toBe(true);
+    expect(isLaravelEloquentBuilderFluentMethod("withRelations")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("withRelations")).toBe(true);
   });
 
   it("detects member access completion context", () => {

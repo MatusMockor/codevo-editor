@@ -17,12 +17,6 @@ describe("filterPhpLanguageServerDiagnostics", () => {
 $queryBuilder = Album::whereNull('parent_id');
 $album = Album::withRelations()->findOrFail($id);
 `;
-    const localScopeDiagnostic = diagnostic({
-      character: 16,
-      line: 3,
-      message: "Method App\\Models\\Album::withRelations() does not exist",
-    });
-
     expect(
       filterPhpLanguageServerDiagnostics(source, [
         diagnostic({
@@ -30,11 +24,15 @@ $album = Album::withRelations()->findOrFail($id);
           line: 2,
           message: "Method App\\Models\\Album::whereNull() does not exist",
         }),
-        localScopeDiagnostic,
+        diagnostic({
+          character: 16,
+          line: 3,
+          message: "Method App\\Models\\Album::withRelations() does not exist",
+        }),
       ], {
         frameworkProviders: [phpLaravelFrameworkProvider],
       }),
-    ).toEqual([localScopeDiagnostic]);
+    ).toEqual([]);
   });
 
   it("keeps unresolved diagnostics for unknown static methods", () => {
@@ -57,18 +55,24 @@ $queryBuilder = Album::whereNulll('parent_id');
     const source = `<?php
 
 $queryBuilder = Album::whereNull('parent_id');
+$album = Album::withRelations()->findOrFail($id);
 `;
-    const unresolved = diagnostic({
+    const whereNull = diagnostic({
       character: 23,
       line: 2,
       message: "Method App\\Models\\Album::whereNull() does not exist",
     });
+    const withRelations = diagnostic({
+      character: 16,
+      line: 3,
+      message: "Method App\\Models\\Album::withRelations() does not exist",
+    });
 
     expect(
-      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+      filterPhpLanguageServerDiagnostics(source, [whereNull, withRelations], {
         frameworkProviders: [],
       }),
-    ).toEqual([unresolved]);
+    ).toEqual([whereNull, withRelations]);
   });
 
   it("suppresses unresolved static method diagnostics only when semantic context confirms the method", () => {

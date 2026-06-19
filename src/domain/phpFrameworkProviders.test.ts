@@ -60,6 +60,34 @@ class Comment extends Model
     ]);
   });
 
+  it("does not expose Laravel model attributes without the Laravel provider", () => {
+    const source = `<?php
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'content',
+    ];
+}
+`;
+
+    expect(phpFrameworkMemberCompletionsFromSource(source, "Comment", [])).toEqual(
+      [],
+    );
+  });
+
+  it("recognizes Laravel static builder methods only through the Laravel provider", () => {
+    expect(
+      isKnownPhpFrameworkStaticMethod("<?php", "Album", "withRelations", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkStaticMethod("<?php", "Album", "withRelations", []),
+    ).toBe(false);
+  });
+
   it("supports framework-specific providers without changing the core parser", () => {
     const netteProvider: PhpFrameworkProvider = {
       id: "nette",
