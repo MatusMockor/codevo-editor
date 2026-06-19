@@ -66,8 +66,20 @@ export interface PhpLaravelQueryCallbackContext {
   relationName: string | null;
 }
 
-const laravelQueryCallbackMethods =
-  "where|orWhere|whereHas|orWhereHas|withWhereHas|whereDoesntHave|orWhereDoesntHave|with";
+const laravelQueryCallbackMethods = [
+  "where",
+  "orWhere",
+  "whereHas",
+  "orWhereHas",
+  "withWhereHas",
+  "whereHasMorph",
+  "orWhereHasMorph",
+  "whereDoesntHave",
+  "orWhereDoesntHave",
+  "whereDoesntHaveMorph",
+  "orWhereDoesntHaveMorph",
+  "with",
+].join("|");
 
 export function phpCurrentClassName(source: string): string | null {
   const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(

@@ -478,6 +478,16 @@ Album::whereHas(relation: 'artist', callback: function ($builder): void {
 
 Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->ord);
 
+Album::query()->whereHasMorph('commentable', [Post::class], function ($morphQuery): void {
+    $morphQuery->ord
+});
+
+Album::whereDoesntHaveMorph(
+    relation: 'authorable',
+    types: [User::class],
+    callback: fn ($namedMorphQuery) => $namedMorphQuery->ord,
+);
+
 Album::with(['tracks' => function ($eagerQuery): void {
     $eagerQuery->ord
 }]);
@@ -500,6 +510,30 @@ Album::with(relations: ['tracks' => function ($namedEagerQuery): void {
       modelClassName: null,
       receiverExpression: "Album::query()",
       relationName: "tracks",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$morphQuery->ord"),
+        "morphQuery",
+      ),
+    ).toEqual({
+      methodName: "whereHasMorph",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: "commentable",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$namedMorphQuery->ord"),
+        "namedMorphQuery",
+      ),
+    ).toEqual({
+      methodName: "whereDoesntHaveMorph",
+      modelClassName: "Album",
+      receiverExpression: null,
+      relationName: "authorable",
     });
     expect(
       phpLaravelQueryCallbackContextForVariable(

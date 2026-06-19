@@ -423,6 +423,96 @@ trait DispatchesEvents
     ).toEqual([]);
   });
 
+  it("suppresses trait self host-method diagnostics when host context is confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): mixed
+    {
+        return self::hostState();
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 21,
+      line: 7,
+      message:
+        'Method "hostState" does not exist on trait "App\\Support\\ResolvesHostState"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostMethods: new Set([
+          phpTraitHostMethodDiagnosticKey(
+            "App\\Support\\ResolvesHostState",
+            "hostState",
+          ),
+        ]),
+        path: "/workspace/app/Support/ResolvesHostState.php",
+      }),
+    ).toEqual([]);
+  });
+
+  it("suppresses trait static host-method diagnostics when host context is confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): mixed
+    {
+        return static::hostState();
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 23,
+      line: 7,
+      message:
+        'Method "hostState" does not exist on trait "App\\Support\\ResolvesHostState"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostMethods: new Set([
+          phpTraitHostMethodDiagnosticKey(
+            "App\\Support\\ResolvesHostState",
+            "hostState",
+          ),
+        ]),
+        path: "/workspace/app/Support/ResolvesHostState.php",
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps trait static host-method diagnostics when host context is not confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): mixed
+    {
+        return static::hostState();
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 23,
+      line: 7,
+      message:
+        'Method "hostState" does not exist on trait "App\\Support\\ResolvesHostState"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        path: "/workspace/app/Support/ResolvesHostState.php",
+      }),
+    ).toEqual([unresolved]);
+  });
+
   it("keeps dependency trait diagnostics when host context is not confirmed", () => {
     const source = `<?php
 trait SoftDeletes

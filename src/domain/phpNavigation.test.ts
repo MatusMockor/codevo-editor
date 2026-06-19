@@ -160,6 +160,9 @@ class CommentController
         Comment::query()->orDoesntHave('archivedChildren');
         Comment::withOnly('primaryParent')->first();
         $comment->without('hiddenChildren');
+        Comment::query()->hasMorph('morphableComments', [Post::class]);
+        Comment::query()->whereDoesntHaveMorph('ghostableComments', [Post::class], fn ($query) => $query);
+        Comment::query()->orWhereDoesntHaveMorph('archivableComments', [Post::class], fn ($query) => $query);
     }
 }
 `;
@@ -242,6 +245,33 @@ class CommentController
       methodName: "without",
       receiverExpression: "$comment",
       relationName: "hiddenChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'morphableComments'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "hasMorph",
+      receiverExpression: "Comment::query()",
+      relationName: "morphableComments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'ghostableComments'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "whereDoesntHaveMorph",
+      receiverExpression: "Comment::query()",
+      relationName: "ghostableComments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'archivableComments'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "orWhereDoesntHaveMorph",
+      receiverExpression: "Comment::query()",
+      relationName: "archivableComments",
     });
   });
 
@@ -329,6 +359,9 @@ class CommentController
         Comment::query()->orDoesntHave('archivedChi');
         Comment::withOnly('primaryPar');
         $comment->without('hiddenChi');
+        Comment::query()->hasMorph('morphableCom', [Post::class]);
+        Comment::query()->whereDoesntHaveMorph('ghostableCom', [Post::class], fn ($query) => $query);
+        Comment::query()->orWhereDoesntHaveMorph('archivableCom', [Post::class], fn ($query) => $query);
     }
 }
 `;
@@ -436,6 +469,39 @@ class CommentController
       methodName: "without",
       prefix: "hiddenChi",
       receiverExpression: "$comment",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "hasMorph('morphableCom"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "hasMorph",
+      prefix: "morphableCom",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "whereDoesntHaveMorph('ghostableCom"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "whereDoesntHaveMorph",
+      prefix: "ghostableCom",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "orWhereDoesntHaveMorph('archivableCom"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "orWhereDoesntHaveMorph",
+      prefix: "archivableCom",
+      receiverExpression: "Comment::query()",
     });
   });
 
