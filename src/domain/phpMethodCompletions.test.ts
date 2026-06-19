@@ -9,6 +9,8 @@ import {
   phpTraitClassNames,
 } from "./phpMethodCompletions";
 import {
+  isLaravelEloquentBuilderMethodName,
+  isLaravelEloquentBuilderTerminalModelMethod,
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
@@ -33,6 +35,13 @@ function positionAfter(source: string, needle: string) {
 }
 
 describe("phpMethodCompletions", () => {
+  it("treats common Eloquent finder methods as terminal model methods", () => {
+    expect(isLaravelEloquentBuilderTerminalModelMethod("firstWhere")).toBe(true);
+    expect(isLaravelEloquentBuilderTerminalModelMethod("firstOrNew")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("firstWhere")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("firstOrNew")).toBe(true);
+  });
+
   it("detects member access completion context", () => {
     const source = `<?php
 class Controller

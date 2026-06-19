@@ -162,6 +162,8 @@ const laravelEloquentBuilderTerminalModelMethods = new Set([
   "firstor",
   "firstorcreate",
   "firstorfail",
+  "firstornew",
+  "firstwhere",
   "sole",
   "updateorcreate",
 ]);
