@@ -872,8 +872,12 @@ export function EditorSurface({
           lineHeight: 20,
           minimap: { enabled: false },
           padding: { top: 14, bottom: 14 },
+          parameterHints: { enabled: true, cycle: true },
+          quickSuggestions: { other: true, comments: false, strings: true },
+          quickSuggestionsDelay: 10,
           scrollBeyondLastLine: false,
           smoothScrolling: true,
+          suggestOnTriggerCharacters: true,
           tabSize: 2,
         }}
         path={activeDocument.path}

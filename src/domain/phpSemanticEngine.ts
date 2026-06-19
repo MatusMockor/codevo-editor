@@ -140,6 +140,24 @@ export function phpReceiverExpressionTypeInSource(
     return phpThisPropertyType(source, thisPropertyMatch[1], options);
   }
 
+  const propertyAccess = phpPropertyAccessExpression(normalizedExpression);
+
+  if (propertyAccess) {
+    const receiverType = phpReceiverExpressionTypeInSource(
+      source,
+      position,
+      propertyAccess.receiverExpression,
+      options,
+    );
+
+    return phpFrameworkPropertyTypeFromSource(
+      source,
+      propertyAccess.propertyName,
+      options.frameworkProviders,
+      receiverType,
+    );
+  }
+
   const methodCall = phpMethodCallExpression(normalizedExpression);
 
   if (methodCall) {
@@ -198,6 +216,13 @@ export function phpVariableTypeInSource(
     phpFrameworkContainerExpressionClassName(
       assignmentExpression,
       options.frameworkProviders,
+    ) ??
+    phpFrameworkPropertyAccessAssignmentReturnType(
+      source,
+      position,
+      variableName,
+      assignmentExpression,
+      options,
     ) ??
     phpFrameworkMethodCallAssignmentReturnType(
       source,
@@ -294,7 +319,37 @@ export function phpThisPropertyType(
       source,
       propertyName,
       options.frameworkProviders,
+      phpCurrentClassName(source),
     )
+  );
+}
+
+function phpFrameworkPropertyAccessAssignmentReturnType(
+  source: string,
+  position: EditorPosition,
+  variableName: string,
+  assignmentExpression: string,
+  options: PhpSemanticEngineOptions,
+): string | null {
+  const propertyAccess = phpPropertyAccessExpression(assignmentExpression);
+
+  if (!propertyAccess) {
+    return null;
+  }
+
+  if (
+    new RegExp(`^\\$${escapeRegExp(variableName)}\\b`).test(
+      propertyAccess.receiverExpression,
+    )
+  ) {
+    return null;
+  }
+
+  return phpReceiverExpressionTypeInSource(
+    source,
+    position,
+    assignmentExpression,
+    options,
   );
 }
 

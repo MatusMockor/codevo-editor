@@ -731,14 +731,7 @@ async function phpMethodSuggestions(
       insertText: phpMethodSnippet(item),
       insertTextRules:
         monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-      kind:
-        item.kind === "relation"
-          ? monaco.languages.CompletionItemKind.Reference
-          : item.kind === "route"
-          ? monaco.languages.CompletionItemKind.Value
-          : item.kind === "property"
-          ? monaco.languages.CompletionItemKind.Property
-          : monaco.languages.CompletionItemKind.Method,
+      kind: phpMethodCompletionKind(monaco, item),
       label: phpMethodCompletionLabel(item),
       range,
       sortText: `0_${String(index).padStart(4, "0")}`,
@@ -794,6 +787,25 @@ async function provideSignatureHelp(
     context.reportError(error);
     return null;
   }
+}
+
+function phpMethodCompletionKind(
+  monaco: MonacoApi,
+  item: PhpMethodCompletion,
+): Monaco.languages.CompletionItemKind {
+  if (item.kind === "relation") {
+    return monaco.languages.CompletionItemKind.Field;
+  }
+
+  if (item.kind === "route") {
+    return monaco.languages.CompletionItemKind.Value;
+  }
+
+  if (item.kind === "property") {
+    return monaco.languages.CompletionItemKind.Property;
+  }
+
+  return monaco.languages.CompletionItemKind.Method;
 }
 
 function phpMethodDetail(item: PhpMethodCompletion): string {

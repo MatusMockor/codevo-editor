@@ -932,6 +932,137 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("maps Laravel relation completions as field-like property access", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Post",
+        kind: "relation" as const,
+        name: "comments",
+        parameters: "",
+        returnType: "Illuminate\\Database\\Eloquent\\Relations\\HasMany",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction show(Post $post): void\n{\n    $post->com\n}\n",
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          lineContent: "    $post->com",
+          word: {
+            endColumn: 15,
+            startColumn: 12,
+          },
+        }),
+        {
+          column: 15,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [
+        expect.objectContaining({
+          command: undefined,
+          detail:
+            "App\\Models\\Post::comments relation: Illuminate\\Database\\Eloquent\\Relations\\HasMany",
+          documentation: "Laravel relation\n\nApp\\Models\\Post::comments()",
+          insertText: "comments",
+          kind: 5,
+          label: {
+            description: "relation - App\\Models\\Post",
+            detail: "",
+            label: "comments",
+          },
+        }),
+      ],
+    });
+  });
+
+  it("keeps typed PHP methods and properties with the same display name distinct", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "App\\Models\\Comment::status(): string",
+            documentation: null,
+            insertText: "status",
+            kind: 2,
+            label: "status",
+          },
+        ],
+      },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Comment",
+        kind: "property" as const,
+        name: "status",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "status",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction show(Comment $comment): void\n{\n    $comment->sta\n}\n",
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    $comment->sta",
+        word: {
+          endColumn: 18,
+          startColumn: 15,
+        },
+      }),
+      {
+        column: 18,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toHaveLength(2);
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        insertText: "status",
+        kind: 10,
+        label: {
+          description: "property - App\\Models\\Comment",
+          detail: "",
+          label: "status",
+        },
+      }),
+      expect.objectContaining({
+        insertText: "status()$0",
+        kind: 2,
+        label: {
+          description: "method - App\\Models\\Comment",
+          detail: "()",
+          label: "status",
+        },
+      }),
+    ]);
+  });
+
   it("places the cursor after parentheses for typed PHP methods without parameters", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [

@@ -347,6 +347,7 @@ const laravelEloquentRelationFactoryClassNames = new Map([
   ["morphmany", "MorphMany"],
   ["morphone", "MorphOne"],
   ["morphedbymany", "MorphedByMany"],
+  ["morphto", "MorphTo"],
   ["morphtomany", "MorphToMany"],
 ]);
 
@@ -763,6 +764,52 @@ export function phpLaravelModelAttributeClassTypeFromSource(
     : null;
 }
 
+export function phpLaravelModelPropertyClassTypeFromSource(
+  source: string,
+  propertyName: string,
+  receiverType: string | null,
+): string | null {
+  const receiverModelType = receiverType
+    ? phpLaravelResolvedModelTypeCandidate(source, receiverType)
+    : null;
+
+  if (receiverType && !receiverModelType) {
+    return null;
+  }
+
+  return (
+    phpLaravelRelationPropertyClassTypeFromSource(
+      source,
+      propertyName,
+      receiverType,
+    ) ??
+    phpLaravelModelAttributeClassTypeFromSource(source, propertyName)
+  );
+}
+
+function phpLaravelRelationPropertyClassTypeFromSource(
+  source: string,
+  propertyName: string,
+  receiverType: string | null,
+): string | null {
+  const modelType = phpLaravelResolvedModelTypeCandidate(source, receiverType);
+
+  if (!modelType) {
+    return null;
+  }
+
+  const classSource = phpClassSourceForClassName(source, modelType) ?? source;
+  const propertyLookup = propertyName.trim().toLowerCase();
+  const relationType =
+    phpLaravelRelationPropertyCompletionsFromSource(classSource, modelType).find(
+      (completion) =>
+        completion.kind === "property" &&
+        completion.name.toLowerCase() === propertyLookup,
+    )?.returnType ?? null;
+
+  return phpLaravelResolvedModelTypeCandidate(source, relationType);
+}
+
 export function phpLaravelRelationPropertyCompletionsFromSource(
   source: string,
   declaringClassName: string,
@@ -1129,16 +1176,24 @@ function phpLaravelRelationFactoryCallReturnTypeFromSource(
   }
 
   const expression = callExpression ?? receiverExpression ?? "";
-  const targetClassName = phpLaravelRelationTargetClassNameFromExpression(
-    expression,
-    true,
-    phpLocalClassStringResolverBeforeExpression(source, expression),
-    phpClassStringExpressionResolverBeforeExpression(
-      source,
+  const targetClassName =
+    phpLaravelRelationTargetClassNameFromExpression(
       expression,
-      declaringModelType,
-    ),
-  );
+      true,
+      phpLocalClassStringResolverBeforeExpression(source, expression),
+      phpClassStringExpressionResolverBeforeExpression(
+        source,
+        expression,
+        declaringModelType,
+      ),
+    ) ??
+    (relationClassName === "MorphTo"
+      ? phpLaravelMorphToTargetClassNameFromContext(
+          source,
+          declaringModelType,
+          expression,
+        )
+      : null);
   const relatedModelType = phpLaravelResolvedModelTypeCandidate(
     source,
     phpLaravelRelationTypeForDeclaringClass(
@@ -1157,6 +1212,125 @@ function phpLaravelRelationFactoryClassName(methodName: string): string | null {
   return (
     laravelEloquentRelationFactoryClassNames.get(methodName.toLowerCase()) ?? null
   );
+}
+
+function phpLaravelMorphToTargetClassNameFromContext(
+  source: string,
+  declaringModelType: string,
+  expression: string,
+): string | null {
+  const normalizedExpression = normalizePhpExpressionForComparison(expression);
+
+  if (!/\$this\??->morphTo\s*\(/i.test(expression)) {
+    return null;
+  }
+
+  const targets = new Set<string>();
+
+  for (const method of phpLaravelClassMethodReturnContexts(
+    source,
+    declaringModelType,
+  )) {
+    if (
+      !isLaravelMorphToReturnType(method.returnType) ||
+      !normalizePhpExpressionForComparison(method.body).includes(
+        normalizedExpression,
+      )
+    ) {
+      continue;
+    }
+
+    const target = phpLaravelRelationModelTypeFromReturnType(method.returnType);
+
+    if (target) {
+      targets.add(target);
+    }
+  }
+
+  return targets.size === 1 ? Array.from(targets)[0] ?? null : null;
+}
+
+function isLaravelMorphToReturnType(returnType: string | null): boolean {
+  const typeName = phpDeclaredTypeCandidate(returnType ?? "");
+  const normalizedTypeName = (typeName ?? returnType ?? "")
+    .trim()
+    .replace(/^\?/, "")
+    .replace(/^\\+/, "")
+    .split("<")[0]
+    ?.toLowerCase();
+  const shortTypeName = normalizedTypeName?.startsWith(
+    "illuminate\\database\\eloquent\\relations\\",
+  )
+    ? normalizedTypeName.split("\\").pop() ?? normalizedTypeName
+    : normalizedTypeName;
+
+  return shortTypeName === "morphto";
+}
+
+function phpLaravelClassMethodReturnContexts(
+  source: string,
+  className: string,
+): Array<{ body: string; returnType: string | null }> {
+  const contexts: Array<{ body: string; returnType: string | null }> = [];
+  const ranges = phpLaravelClassBodyRanges(source, className);
+  const methodPattern =
+    /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*[A-Za-z_][A-Za-z0-9_]*\s*\(/g;
+
+  for (const range of ranges) {
+    const bodySource = source.slice(range.bodyStart, range.bodyEnd);
+
+    for (const match of bodySource.matchAll(methodPattern)) {
+      const functionOffset =
+        range.bodyStart + (match.index ?? 0) + match[0].lastIndexOf("function");
+      const parametersStart =
+        range.bodyStart + (match.index ?? 0) + match[0].length - 1;
+      const parametersEnd = matchingPairOffset(
+        source,
+        parametersStart,
+        "(",
+        ")",
+      );
+
+      if (parametersEnd === null) {
+        continue;
+      }
+
+      const bodyStart = source.indexOf("{", parametersEnd);
+
+      if (bodyStart < 0 || bodyStart > range.bodyEnd) {
+        continue;
+      }
+
+      const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
+
+      if (bodyEnd === null || bodyEnd > range.bodyEnd) {
+        continue;
+      }
+
+      const declaredReturnType = normalizeReturnType(
+        returnTypeAfterFunctionParameters(source, parametersEnd),
+      );
+      const documentedReturnType = phpDocReturnTypeFromBlock(
+        phpDocBlockBefore(source, functionOffset),
+      );
+
+      contexts.push({
+        body: source.slice(bodyStart + 1, bodyEnd),
+        returnType: bestPhpReturnType(declaredReturnType, documentedReturnType),
+      });
+    }
+  }
+
+  return contexts;
+}
+
+function returnTypeAfterFunctionParameters(
+  source: string,
+  parametersEnd: number,
+): string | null {
+  const match = /^\s*:\s*([^{;\n]+)/.exec(source.slice(parametersEnd + 1));
+
+  return match?.[1] ?? null;
 }
 
 function phpLaravelEloquentBuilderCallReturnType(
@@ -3048,6 +3222,10 @@ function normalizeReturnType(returnType: string | null): string | null {
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizePhpExpressionForComparison(value: string): string {
+  return value.replace(/\s+/g, "");
 }
 
 function splitPhpParameterList(parameters: string): string[] {

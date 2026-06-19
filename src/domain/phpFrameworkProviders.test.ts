@@ -162,9 +162,15 @@ class Album extends Model
 namespace App\\Models;
 
 use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
 
 class Comment extends Model
 {
+    /** @return MorphTo<Post, self> */
+    public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
 }
 
 class Post extends Model
@@ -192,6 +198,28 @@ class Post extends Model
         "$this->hasMany(Post::class)",
         [phpLaravelFrameworkProvider],
         "$this->hasMany(Post::class)->first()",
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "morphTo",
+        "App\\Models\\Comment",
+        "$this",
+        [phpLaravelFrameworkProvider],
+        "$this->morphTo()",
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\MorphTo<App\\Models\\Post>",
+    );
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "first",
+        "Illuminate\\Database\\Eloquent\\Relations\\MorphTo<App\\Models\\Post>",
+        "$this->morphTo()",
+        [phpLaravelFrameworkProvider],
+        "$this->morphTo()->first()",
       ),
     ).toBe("App\\Models\\Post");
     expect(

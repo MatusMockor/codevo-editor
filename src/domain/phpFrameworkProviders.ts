@@ -4,8 +4,8 @@ import {
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
   phpLaravelMethodCallReturnTypeFromSource,
-  phpLaravelModelAttributeClassTypeFromSource,
   phpLaravelModelAttributeCompletionsFromSource,
+  phpLaravelModelPropertyClassTypeFromSource,
   phpLaravelRelationPropertyCompletionsFromSource,
 } from "./phpFrameworkLaravel";
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
@@ -24,6 +24,7 @@ export interface PhpFrameworkStaticMethodContext {
 
 export interface PhpFrameworkPropertyTypeContext {
   propertyName: string;
+  receiverType: string | null;
   source: string;
 }
 
@@ -91,8 +92,12 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
       isLaravelEloquentStaticBuilderReceiver(source, className),
   },
   semantics: {
-    propertyTypeFromSource: ({ propertyName, source }) =>
-      phpLaravelModelAttributeClassTypeFromSource(source, propertyName),
+    propertyTypeFromSource: ({ propertyName, receiverType, source }) =>
+      phpLaravelModelPropertyClassTypeFromSource(
+        source,
+        propertyName,
+        receiverType,
+      ),
     methodCallReturnTypeFromSource: ({
       callExpression,
       methodName,
@@ -174,10 +179,12 @@ export function phpFrameworkPropertyTypeFromSource(
   source: string,
   propertyName: string,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  receiverType: string | null = null,
 ): string | null {
   for (const provider of providers) {
     const propertyType = provider.semantics?.propertyTypeFromSource?.({
       propertyName,
+      receiverType,
       source,
     });
 
