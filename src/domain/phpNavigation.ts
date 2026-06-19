@@ -330,13 +330,9 @@ export function phpImplementationDeclarationContextAt(
     return null;
   }
 
-  const line = source.split(/\r?\n/)[position.lineNumber - 1] ?? "";
+  const declarationPrefix = phpMethodDeclarationPrefixAt(source, position);
 
-  if (
-    !/\babstract\s+(?:(?:public|protected|private)\s+)?(?:static\s+)?function\b/.test(
-      line,
-    )
-  ) {
+  if (!declarationPrefix || !/\babstract\b/.test(declarationPrefix)) {
     return null;
   }
 
@@ -1193,12 +1189,29 @@ function phpMethodDeclarationNameAtPosition(
     return null;
   }
 
-  const line = source.split(/\r?\n/)[position.lineNumber - 1] ?? "";
-  const pattern = new RegExp(
-    `\\bfunction\\s+${escapeRegExp(identifier.name)}\\b`,
-  );
+  return phpMethodDeclarationPrefixAt(source, position) ? identifier.name : null;
+}
 
-  return pattern.test(line) ? identifier.name : null;
+function phpMethodDeclarationPrefixAt(
+  source: string,
+  position: EditorPosition,
+): string | null {
+  const offset = offsetAtPosition(source, position);
+  const identifier = identifierAtOffset(source, offset);
+
+  if (!identifier) {
+    return null;
+  }
+
+  const declarationStart =
+    Math.max(
+      source.lastIndexOf(";", identifier.start - 1),
+      source.lastIndexOf("{", identifier.start - 1),
+      source.lastIndexOf("}", identifier.start - 1),
+    ) + 1;
+  const prefix = source.slice(declarationStart, identifier.start);
+
+  return /\bfunction\s*&?\s*$/.test(prefix) ? prefix : null;
 }
 
 function phpClassReferenceList(source: string): string[] {

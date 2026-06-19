@@ -779,6 +779,15 @@ abstract class PlatformAdapter
     }
 }
 `;
+    const multilineAbstractSource = `<?php
+abstract class ParserFactory
+{
+    abstract public function
+        getParser(
+            string $apiVersion,
+        ): ParserInterface;
+}
+`;
 
     expect(
       phpImplementationDeclarationContextAt(
@@ -796,6 +805,15 @@ abstract class PlatformAdapter
       ),
     ).toEqual({
       methodName: "getPlatform",
+        typeKind: "class",
+      });
+    expect(
+      phpImplementationDeclarationContextAt(
+        multilineAbstractSource,
+        positionAfter(multilineAbstractSource, "getParser"),
+      ),
+    ).toEqual({
+      methodName: "getParser",
       typeKind: "class",
     });
     expect(
