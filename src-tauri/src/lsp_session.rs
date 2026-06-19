@@ -65,6 +65,7 @@ pub struct LanguageServerCapabilities {
     pub document_highlight: bool,
     pub document_link: bool,
     pub document_symbol: bool,
+    pub did_rename_files: bool,
     pub folding_range: bool,
     pub formatting: bool,
     pub implementation: bool,
@@ -1729,6 +1730,11 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         document_highlight: is_capability_enabled(capabilities.get("documentHighlightProvider")),
         document_link: is_capability_enabled(capabilities.get("documentLinkProvider")),
         document_symbol: is_capability_enabled(capabilities.get("documentSymbolProvider")),
+        did_rename_files: capabilities
+            .get("workspace")
+            .and_then(|workspace| workspace.get("fileOperations"))
+            .and_then(|file_operations| file_operations.get("didRename"))
+            .is_some(),
         folding_range: is_capability_enabled(capabilities.get("foldingRangeProvider")),
         formatting: is_capability_enabled(capabilities.get("documentFormattingProvider")),
         implementation: is_capability_enabled(capabilities.get("implementationProvider")),
@@ -2128,6 +2134,7 @@ mod tests {
                     document_highlight: false,
                     document_link: false,
                     document_symbol: false,
+                    did_rename_files: false,
                     folding_range: false,
                     formatting: false,
                     implementation: true,
@@ -2166,6 +2173,7 @@ mod tests {
                 document_highlight: true,
                 document_link: true,
                 document_symbol: true,
+                did_rename_files: true,
                 folding_range: true,
                 formatting: true,
                 implementation: false,
@@ -2199,6 +2207,7 @@ mod tests {
                     "documentHighlight": true,
                     "documentLink": true,
                     "documentSymbol": true,
+                    "didRenameFiles": true,
                     "foldingRange": true,
                     "formatting": true,
                     "implementation": false,
@@ -2285,6 +2294,7 @@ mod tests {
                     "documentRangeFormattingProvider": true,
                     "workspace": {
                         "fileOperations": {
+                            "didRename": { "filters": [] },
                             "willRename": { "filters": [] }
                         }
                     },
@@ -2305,6 +2315,7 @@ mod tests {
                 document_highlight: true,
                 document_link: true,
                 document_symbol: true,
+                did_rename_files: true,
                 folding_range: true,
                 formatting: true,
                 implementation: true,

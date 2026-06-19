@@ -2495,6 +2495,7 @@ describe("useWorkbenchController preview tabs", () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: {
         ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
         willRenameFiles: true,
       },
       kind: "running",
@@ -2545,6 +2546,120 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
   });
 
+  it("notifies the JavaScript TypeScript service after rename when only did-rename is supported", async () => {
+    const oldPath = "/workspace/src/User.ts";
+    const newPath = "/workspace/src/Account.ts";
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 24,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+    ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+  });
+
+  it("does not reapply JavaScript TypeScript workspace edits to already edited open Monaco models", async () => {
+    const openPath = "/workspace/src/User.ts";
+    const closedPath = "/workspace/src/Helper.ts";
+    const edit = {
+      changes: {
+        [fileUriFromPath(openPath)]: [
+          {
+            newText: "let",
+            range: {
+              end: { character: 5, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+        [fileUriFromPath(closedPath)]: [
+          {
+            newText: "export const helper = true;\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === openPath) {
+          return "const value = 1;\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "User.ts"));
+    });
+
+    await act(async () => {
+      await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+        edit,
+        {
+          editedOpenPaths: [openPath],
+          rootPath: "/workspace",
+        },
+      );
+    });
+
+    expect(getWorkbench().activeDocument?.content).toBe("const value = 1;\n");
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
+  });
+
   it("filters JavaScript TypeScript rename edits to the active workspace root", async () => {
     const oldPath = "/workspace/src/User.ts";
     const newPath = "/workspace/src/Account.ts";
@@ -2584,6 +2699,7 @@ describe("useWorkbenchController preview tabs", () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: {
         ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
         willRenameFiles: true,
       },
       kind: "running",
@@ -2655,6 +2771,7 @@ describe("useWorkbenchController preview tabs", () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: {
         ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
         willRenameFiles: true,
       },
       kind: "running",

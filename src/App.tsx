@@ -643,6 +643,9 @@ function App() {
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}
+            applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
+              workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
+            }
             changeHunks={activeEditorChangeHunks}
             editorRevealTarget={workbench.editorRevealTarget}
             flushPendingLanguageServerDocument={

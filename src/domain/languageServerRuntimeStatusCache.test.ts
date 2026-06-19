@@ -112,6 +112,7 @@ function running(sessionId: number): LanguageServerRuntimeStatus {
       documentHighlight: true,
       documentLink: true,
       documentSymbol: true,
+      didRenameFiles: true,
       foldingRange: true,
       formatting: true,
       hover: true,

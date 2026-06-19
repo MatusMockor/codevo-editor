@@ -10,6 +10,7 @@ export interface LanguageServerCapabilities {
   documentHighlight: boolean;
   documentLink: boolean;
   documentSymbol: boolean;
+  didRenameFiles: boolean;
   foldingRange: boolean;
   formatting: boolean;
   implementation: boolean;
@@ -210,6 +211,10 @@ export function languageServerCapabilityLabels(
     labels.push("file rename edits");
   }
 
+  if (capabilities.didRenameFiles) {
+    labels.push("file rename notifications");
+  }
+
   if (capabilities.workspaceSymbol) {
     labels.push("workspace symbols");
   }
@@ -239,6 +244,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     documentHighlight: false,
     documentLink: false,
     documentSymbol: false,
+    didRenameFiles: false,
     foldingRange: false,
     formatting: false,
     hover: false,

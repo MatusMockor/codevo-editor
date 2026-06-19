@@ -665,26 +665,27 @@ export function phpLaravelDynamicWhereAttributeTargetFromSource(
   source: string,
   methodName: string,
 ): PhpLaravelDynamicWhereAttributeTarget | null {
-  const methodLookup = methodName.trim().toLowerCase();
+  const firstOccurrence = phpLaravelDynamicWhereAttributeOccurrencesForMethod(
+    source,
+    methodName,
+  )[0];
 
-  if (!methodLookup.startsWith("where")) {
+  if (!firstOccurrence) {
     return null;
   }
 
-  for (const occurrence of phpLaravelDynamicWhereAttributeOccurrences(source)) {
-    const suffix = phpLaravelDynamicWhereSuffix(occurrence.attributeName);
+  return {
+    attributeName: firstOccurrence.attributeName,
+    position: editorPositionAtOffset(source, firstOccurrence.attributeOffset),
+  };
+}
 
-    if (!suffix || `where${suffix}`.toLowerCase() !== methodLookup) {
-      continue;
-    }
-
-    return {
-      attributeName: occurrence.attributeName,
-      position: editorPositionAtOffset(source, occurrence.attributeOffset),
-    };
-  }
-
-  return null;
+export function isLaravelDynamicWhereMethodForSource(
+  source: string,
+  methodName: string,
+): boolean {
+  return phpLaravelDynamicWhereAttributeOccurrencesForMethod(source, methodName)
+    .length > 0;
 }
 
 export function phpLaravelModelAttributeCompletionsFromSource(
@@ -1044,6 +1045,7 @@ function phpLaravelEloquentBuilderCallPreservesBuilder(
 ): boolean {
   return (
     isLaravelEloquentBuilderPreservingMethod(methodName) ||
+    phpLaravelModelHasDynamicWhere(source, modelType, methodName) ||
     phpLaravelModelHasLocalScope(source, modelType, methodName)
   );
 }
@@ -1177,6 +1179,19 @@ function phpLaravelModelHasLocalScope(
 
     return false;
   });
+}
+
+function phpLaravelModelHasDynamicWhere(
+  source: string,
+  modelType: string,
+  methodName: string,
+): boolean {
+  return phpLaravelClassBodyRanges(source, modelType).some((range) =>
+    isLaravelDynamicWhereMethodForSource(
+      source.slice(range.bodyStart, range.bodyEnd),
+      methodName,
+    ),
+  );
 }
 
 function phpLaravelClassBodyRanges(
@@ -1348,6 +1363,81 @@ function phpLaravelDynamicWhereSuffix(attribute: string): string | null {
   return parts
     .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
     .join("");
+}
+
+function phpLaravelDynamicWhereAttributeOccurrencesForMethod(
+  source: string,
+  methodName: string,
+): PhpLaravelDynamicWhereAttributeOccurrence[] {
+  const suffixSegments = phpLaravelDynamicWhereMethodSuffixSegments(methodName);
+
+  if (!suffixSegments.length) {
+    return [];
+  }
+
+  const attributeSuffixes = phpLaravelDynamicWhereAttributeOccurrences(source)
+    .map((occurrence) => ({
+      occurrence,
+      suffix: phpLaravelDynamicWhereSuffix(occurrence.attributeName),
+    }))
+    .filter(
+      (
+        item,
+      ): item is {
+        occurrence: PhpLaravelDynamicWhereAttributeOccurrence;
+        suffix: string;
+      } => Boolean(item.suffix),
+    );
+  const occurrences: PhpLaravelDynamicWhereAttributeOccurrence[] = [];
+
+  for (const segment of suffixSegments) {
+    const occurrence = attributeSuffixes.find(
+      (item) => item.suffix.toLowerCase() === segment.toLowerCase(),
+    )?.occurrence;
+
+    if (!occurrence) {
+      return [];
+    }
+
+    occurrences.push(occurrence);
+  }
+
+  return occurrences;
+}
+
+function phpLaravelDynamicWhereMethodSuffixSegments(
+  methodName: string,
+): string[] {
+  const suffix = phpLaravelDynamicWhereMethodSuffix(methodName);
+
+  if (!suffix) {
+    return [];
+  }
+
+  const segments = suffix.split(/(?:And|Or)(?=[A-Z])/);
+
+  return segments.every(Boolean) ? segments : [];
+}
+
+function phpLaravelDynamicWhereMethodSuffix(methodName: string): string | null {
+  const normalizedMethodName = methodName.trim();
+  const lowerMethodName = normalizedMethodName.toLowerCase();
+
+  if (
+    lowerMethodName.startsWith("orwhere") &&
+    normalizedMethodName.length > "orWhere".length
+  ) {
+    return normalizedMethodName.slice("orWhere".length);
+  }
+
+  if (
+    lowerMethodName.startsWith("where") &&
+    normalizedMethodName.length > "where".length
+  ) {
+    return normalizedMethodName.slice("where".length);
+  }
+
+  return null;
 }
 
 function phpLaravelDynamicWhereAttributeOccurrences(

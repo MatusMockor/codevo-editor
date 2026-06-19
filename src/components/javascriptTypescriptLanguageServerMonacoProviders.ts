@@ -43,6 +43,16 @@ type WorkspaceEditContext = {
   versionId: number | undefined;
 };
 
+export interface JavaScriptTypeScriptWorkspaceEditApplicationContext {
+  editedOpenPaths: string[];
+  rootPath?: string;
+}
+
+export type JavaScriptTypeScriptWorkspaceEditApplier = (
+  edit: LanguageServerWorkspaceEdit,
+  context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
+) => Promise<void> | void;
+
 interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __languageServerAction?: LanguageServerCodeAction;
   __workspaceEditContext?: WorkspaceEditContext;
@@ -67,7 +77,8 @@ interface LanguageServerBackedLink extends Monaco.languages.ILink {
 }
 
 interface ExecuteCommandPayload {
-  command: LanguageServerCodeActionCommand;
+  command?: LanguageServerCodeActionCommand | null;
+  edit?: LanguageServerWorkspaceEdit | null;
   rootPath: string;
 }
 
@@ -122,6 +133,7 @@ const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
 } satisfies Monaco.languages.SemanticTokensLegend;
 
 export interface JavaScriptTypeScriptLanguageServerProviderContext {
+  applyWorkspaceEdit?: JavaScriptTypeScriptWorkspaceEditApplier;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
   getActiveDocument(): EditorDocument | null;
@@ -152,7 +164,14 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     disposables.push(workspaceEditSubscriptionDisposable);
     context.workspaceEditGateway
       .subscribeWorkspaceEdits((event) => {
-        applyWorkspaceEditEvent(monaco, context, event);
+        void applyWorkspaceEditEvent(monaco, context, event).catch((error) => {
+          if (event.rootPath) {
+            reportErrorForActiveRoot(context, event.rootPath, error);
+            return;
+          }
+
+          context.reportError(error);
+        });
       })
       .then((unsubscribe) => {
         if (workspaceEditSubscriptionDisposed) {
@@ -177,6 +196,23 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       }
 
       try {
+        if (payload.edit) {
+          await applyWorkspaceEditAfterMonacoEdit(
+            monaco,
+            context,
+            payload.edit,
+            payload.rootPath,
+          );
+        }
+
+        if (!isStoredWorkspaceRootActive(context, payload.rootPath)) {
+          return;
+        }
+
+        if (!payload.command) {
+          return;
+        }
+
         const edit = await context.featuresGateway.executeCommand(
           payload.rootPath,
           payload.command,
@@ -187,7 +223,12 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         }
 
         if (edit) {
-          applyWorkspaceEditToOpenModels(monaco, edit, payload.rootPath);
+          await applyWorkspaceEditWithOpenModels(
+            monaco,
+            context,
+            edit,
+            payload.rootPath,
+          );
         }
       } catch (error) {
         reportErrorForActiveRoot(context, payload.rootPath, error);
@@ -1929,17 +1970,18 @@ function toMonacoCodeAction(
     __workspaceEditContext: editContext,
     __workspaceRoot: rootPath,
     diagnostics: context.markers,
-    ...(action.command
+    ...(action.command || action.edit
       ? {
           command: {
             arguments: [
               {
                 command: action.command,
+                edit: action.edit,
                 rootPath,
               } satisfies ExecuteCommandPayload,
             ],
             id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
-            title: action.command.title || action.title,
+            title: action.command?.title || action.title,
           },
         }
       : {}),
@@ -2078,8 +2120,8 @@ function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {
 function applyWorkspaceEditToOpenModels(
   monaco: MonacoApi,
   edit: LanguageServerWorkspaceEdit,
-  rootPath?: string,
-): void {
+): string[] {
+  const editedOpenPaths: string[] = [];
   const modelsByPath = new Map(
     monaco.editor.getModels().map((model) => [modelPath(model), model]),
   );
@@ -2088,7 +2130,7 @@ function applyWorkspaceEditToOpenModels(
     const path = pathFromLanguageServerUri(uri);
     const model = path ? modelsByPath.get(path) : null;
 
-    if (!path || !model || (rootPath && !isPathInWorkspaceRoot(rootPath, path))) {
+    if (!path || !model || edits.length === 0) {
       return;
     }
 
@@ -2100,14 +2142,46 @@ function applyWorkspaceEditToOpenModels(
       })),
       () => null,
     );
+    editedOpenPaths.push(path);
+  });
+
+  return editedOpenPaths;
+}
+
+async function applyWorkspaceEditWithOpenModels(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  edit: LanguageServerWorkspaceEdit,
+  rootPath?: string,
+): Promise<void> {
+  const scopedEdit = workspaceEditForRoot(edit, rootPath);
+  const editedOpenPaths = applyWorkspaceEditToOpenModels(monaco, scopedEdit);
+
+  await context.applyWorkspaceEdit?.(scopedEdit, {
+    editedOpenPaths,
+    rootPath,
   });
 }
 
-function applyWorkspaceEditEvent(
+async function applyWorkspaceEditAfterMonacoEdit(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  edit: LanguageServerWorkspaceEdit,
+  rootPath?: string,
+): Promise<void> {
+  const scopedEdit = workspaceEditForRoot(edit, rootPath);
+
+  await context.applyWorkspaceEdit?.(scopedEdit, {
+    editedOpenPaths: openModelPathsForWorkspaceEdit(monaco, scopedEdit),
+    rootPath,
+  });
+}
+
+async function applyWorkspaceEditEvent(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   event: LanguageServerWorkspaceEditEvent,
-): void {
+): Promise<void> {
   const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
 
   if (
@@ -2118,9 +2192,53 @@ function applyWorkspaceEditEvent(
     return;
   }
 
-  applyWorkspaceEditToOpenModels(monaco, event.edit, event.rootPath ?? undefined);
+  await applyWorkspaceEditWithOpenModels(
+    monaco,
+    context,
+    event.edit,
+    event.rootPath ?? undefined,
+  );
 }
 
+function openModelPathsForWorkspaceEdit(
+  monaco: MonacoApi,
+  edit: LanguageServerWorkspaceEdit,
+): string[] {
+  const editPaths = new Set(
+    Object.keys(edit.changes).flatMap((uri) => {
+      const path = pathFromLanguageServerUri(uri);
+
+      return path ? [path] : [];
+    }),
+  );
+
+  return monaco.editor
+    .getModels()
+    .flatMap((model) => {
+      const path = modelPath(model);
+
+      return path && editPaths.has(path) ? [path] : [];
+    });
+}
+
+function workspaceEditForRoot(
+  edit: LanguageServerWorkspaceEdit,
+  rootPath?: string,
+): LanguageServerWorkspaceEdit {
+  if (!rootPath) {
+    return edit;
+  }
+
+  return {
+    changes: Object.fromEntries(
+      Object.entries(edit.changes).filter(([uri]) => {
+        const path = pathFromLanguageServerUri(uri);
+
+        return path ? isPathInWorkspaceRoot(rootPath, path) : false;
+      }),
+    ),
+  };
+}
 
 function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
   const normalizedRootPath = normalizedWorkspacePath(rootPath);

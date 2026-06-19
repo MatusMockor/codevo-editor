@@ -5,6 +5,7 @@ import type {
   LanguageServerFeaturesGateway,
   LanguageServerHover,
   LanguageServerLocation,
+  LanguageServerRange,
 } from "../domain/languageServerFeatures";
 import type {
   LanguageServerCapabilities,
@@ -26,11 +27,18 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.signatureLanguage).toBe("php");
     expect(registered.codeActionLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
-      providedCodeActionKinds: ["quickfix"],
+      providedCodeActionKinds: [
+        "quickfix",
+        "refactor",
+        "source",
+        "source.fixAll",
+        "source.organizeImports",
+      ],
     });
 
     disposable.dispose();
 
+    expect(registered.commandDispose).toHaveBeenCalled();
     expect(registered.hoverDispose).toHaveBeenCalled();
     expect(registered.completionDispose).toHaveBeenCalled();
     expect(registered.signatureDispose).toHaveBeenCalled();
@@ -1036,12 +1044,208 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(providePhpMethodSignature).toHaveBeenCalled();
   });
 
-  it("provides a quick fix for unexpected bare PHP identifiers", () => {
+  it("requests LSP code actions and maps edits, commands and diagnostics", async () => {
     const registered = createRegisteredProviders();
-    const context = providerContext();
+    const commandAction = {
+      command: {
+        arguments: ["unused"],
+        command: "phpactor.fixAll",
+        title: "Fix all",
+      },
+      data: { id: "fix-all" },
+      edit: null,
+      isPreferred: false,
+      kind: "source.fixAll",
+      title: "Fix all unused imports",
+    };
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: null,
+          data: null,
+          edit: workspaceEdit(
+            "file:///project/src/User.php",
+            "use App\\Models\\User;\n",
+          ),
+          isPreferred: true,
+          kind: "quickfix",
+          title: "Import User",
+        },
+        commandAction,
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
-    expect(
+    const marker = {
+      code: { target: "https://example.test/PHP041", value: "PHP041" },
+      endColumn: 9,
+      endLineNumber: 3,
+      message: "Undefined type User",
+      severity: registered.monaco.MarkerSeverity.Error,
+      source: "phpactor",
+      startColumn: 5,
+      startLineNumber: 3,
+    };
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model(),
+      new registered.monaco.Range(3, 5, 3, 9),
+      {
+        markers: [marker],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.codeActions).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      range(2, 4, 2, 8),
+      {
+        diagnostics: [
+          {
+            code: "PHP041",
+            message: "Undefined type User",
+            range: range(2, 4, 2, 8),
+            severity: 1,
+            source: "phpactor",
+          },
+        ],
+        only: ["quickfix"],
+      },
+    );
+    expect(actions.actions).toEqual([
+      expect.objectContaining({
+        diagnostics: [marker],
+        edit: {
+          edits: [
+            {
+              resource: {
+                fsPath: "/project/src/User.php",
+                path: "/project/src/User.php",
+              },
+              textEdit: {
+                range: expect.objectContaining({
+                  endColumn: 1,
+                  endLineNumber: 1,
+                  startColumn: 1,
+                  startLineNumber: 1,
+                }),
+                text: "use App\\Models\\User;\n",
+              },
+              versionId: 42,
+            },
+          ],
+        },
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Import User",
+      }),
+      expect.objectContaining({
+        command: {
+          arguments: [
+            {
+              command: commandAction.command,
+              rootPath: "/project",
+            },
+          ],
+          id: "mockor.php.executeLanguageServerCommand",
+          title: "Fix all",
+        },
+        diagnostics: [marker],
+        isPreferred: false,
+        kind: "source.fixAll",
+        title: "Fix all unused imports",
+      }),
+    ]);
+  });
+
+  it("resolves LSP-backed code actions", async () => {
+    const registered = createRegisteredProviders();
+    const unresolvedAction = {
+      command: null,
+      data: { id: "add-import" },
+      edit: null,
+      isPreferred: true,
+      kind: "quickfix",
+      title: "Import User",
+    };
+    const resolvedAction = {
+      ...unresolvedAction,
+      edit: workspaceEdit(
+        "file:///project/src/User.php",
+        "use App\\Models\\User;\n",
+      ),
+    };
+    const gateway = featuresGateway({
+      codeActions: [unresolvedAction],
+      resolvedCodeAction: resolvedAction,
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model(),
+      new registered.monaco.Range(3, 5, 3, 9),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const resolved = await registered.codeActionProvider.resolveCodeAction(
+      actions.actions[0],
+    );
+
+    expect(gateway.resolveCodeAction).toHaveBeenCalledWith(
+      "/project",
+      unresolvedAction,
+    );
+    expect(resolved).toEqual(
+      expect.objectContaining({
+        edit: {
+          edits: [
+            {
+              resource: {
+                fsPath: "/project/src/User.php",
+                path: "/project/src/User.php",
+              },
+              textEdit: {
+                range: expect.objectContaining({
+                  endColumn: 1,
+                  endLineNumber: 1,
+                  startColumn: 1,
+                  startLineNumber: 1,
+                }),
+                text: "use App\\Models\\User;\n",
+              },
+              versionId: 42,
+            },
+          ],
+        },
+        kind: "quickfix",
+        title: "Import User",
+      }),
+    );
+  });
+
+  it("provides a quick fix for unexpected bare PHP identifiers", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const context = providerContext({
+      featuresGateway: gateway,
+      runtimeStatus: runningStatus({ codeAction: false }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
       registered.codeActionProvider.provideCodeActions(
         model(),
         new registered.monaco.Range(4, 5, 4, 13),
@@ -1060,7 +1264,7 @@ describe("registerLanguageServerMonacoProviders", () => {
           trigger: 1,
         },
       ),
-    ).toEqual({
+    ).resolves.toEqual({
       actions: [
         {
           diagnostics: [
@@ -1101,12 +1305,14 @@ describe("registerLanguageServerMonacoProviders", () => {
       ],
       dispose: expect.any(Function),
     });
+    expect(gateway.codeActions).not.toHaveBeenCalled();
   });
 
 });
 
 function createRegisteredProviders() {
   const codeActionDispose = vi.fn();
+  const commandDispose = vi.fn();
   const hoverDispose = vi.fn();
   const completionDispose = vi.fn();
   const signatureDispose = vi.fn();
@@ -1115,6 +1321,7 @@ function createRegisteredProviders() {
     codeActionLanguage: string | null;
     codeActionMetadata: any;
     codeActionProvider: any;
+    commandDispose: ReturnType<typeof vi.fn>;
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
     completionProvider: any;
@@ -1130,6 +1337,7 @@ function createRegisteredProviders() {
     codeActionLanguage: null,
     codeActionMetadata: null,
     codeActionProvider: null,
+    commandDispose,
     completionDispose,
     completionLanguage: null,
     completionProvider: null,
@@ -1160,7 +1368,12 @@ function createRegisteredProviders() {
         this.endColumn = endColumn;
       }
     },
+    editor: {
+      addCommand: vi.fn(() => ({ dispose: commandDispose })),
+      getModels: vi.fn(() => []),
+    },
     languages: {
+      CodeActionTriggerType: { Invoke: 1 },
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: {
         Class: 7,
@@ -1195,6 +1408,15 @@ function createRegisteredProviders() {
         registered.signatureProvider = provider;
         return { dispose: signatureDispose };
       }),
+    },
+    MarkerSeverity: {
+      Error: 8,
+      Hint: 1,
+      Info: 2,
+      Warning: 4,
+    },
+    Uri: {
+      file: (path: string) => ({ fsPath: path, path }),
     },
   };
 
@@ -1246,6 +1468,9 @@ function featuresGateway(
     hover: LanguageServerHover | null;
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     references: LanguageServerLocation[];
+    resolvedCodeAction: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
+    >;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
     signatureHelp: Awaited<
       ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
@@ -1296,7 +1521,9 @@ function featuresGateway(
     willRenameFiles: vi.fn(async () => null),
     workspaceSymbols: vi.fn(async () => responses.workspaceSymbols ?? []),
     resolveCompletionItem: vi.fn(async (_rootPath, item) => item),
-    resolveCodeAction: vi.fn(async (_rootPath, action) => action),
+    resolveCodeAction: vi.fn(
+      async (_rootPath, action) => responses.resolvedCodeAction ?? action,
+    ),
     resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
   };
@@ -1315,6 +1542,7 @@ function runningStatus(
       documentHighlight: true,
       documentLink: true,
       documentSymbol: true,
+      didRenameFiles: true,
       foldingRange: true,
       formatting: true,
       hover: true,
@@ -1383,5 +1611,36 @@ function position() {
   return {
     column: 5,
     lineNumber: 11,
+  };
+}
+
+function workspaceEdit(uri: string, newText: string) {
+  return {
+    changes: {
+      [uri]: [
+        {
+          newText,
+          range: range(0, 0, 0, 0),
+        },
+      ],
+    },
+  };
+}
+
+function range(
+  startLine: number,
+  startCharacter: number,
+  endLine: number,
+  endCharacter: number,
+): LanguageServerRange {
+  return {
+    end: {
+      character: endCharacter,
+      line: endLine,
+    },
+    start: {
+      character: startCharacter,
+      line: startLine,
+    },
   };
 }

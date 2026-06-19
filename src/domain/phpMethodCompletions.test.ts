@@ -9,6 +9,7 @@ import {
   phpTraitClassNames,
 } from "./phpMethodCompletions";
 import {
+  isLaravelDynamicWhereMethodForSource,
   isLaravelEloquentBuilderMethodName,
   isLaravelEloquentBuilderFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
@@ -68,6 +69,14 @@ use Illuminate\\Database\\Eloquent\\Model;
 
 class Album extends Model
 {
+    protected $fillable = [
+        'content',
+    ];
+
+    protected array $casts = [
+        'type' => 'string',
+    ];
+
     public function scopeWithRelations(Builder $query): Builder
     {
         return $query;
@@ -89,6 +98,22 @@ class Album extends Model
         "withRelations",
         "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
         "Album::query()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "whereContentAndType",
+        "Album",
+        "Album::whereContentAndType('draft', 'post')",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "orWhereContent",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        null,
       ),
     ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
     expect(
@@ -511,6 +536,55 @@ class Comment
     });
     expect(
       phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereMissing"),
+    ).toBeNull();
+  });
+
+  it("recognizes compound and orWhere Laravel dynamic where attributes", () => {
+    const source = `<?php
+class Comment
+{
+    protected $fillable = [
+        'content',
+    ];
+
+    protected array $casts = [
+        'type' => 'string',
+    ];
+}
+`;
+
+    expect(isLaravelDynamicWhereMethodForSource(source, "whereContentAndType")).toBe(
+      true,
+    );
+    expect(isLaravelDynamicWhereMethodForSource(source, "orWhereContent")).toBe(
+      true,
+    );
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(
+        source,
+        "whereContentAndType",
+      ),
+    ).toEqual({
+      attributeName: "content",
+      position: {
+        column: 10,
+        lineNumber: 5,
+      },
+    });
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(source, "orWhereContent"),
+    ).toEqual({
+      attributeName: "content",
+      position: {
+        column: 10,
+        lineNumber: 5,
+      },
+    });
+    expect(
+      phpLaravelDynamicWhereAttributeTargetFromSource(
+        source,
+        "whereContentAndMissing",
+      ),
     ).toBeNull();
   });
 

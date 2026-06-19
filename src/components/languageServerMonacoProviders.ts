@@ -1,8 +1,15 @@
 import type * as Monaco from "monaco-editor";
 import {
   canUseLanguageServerFeature,
+  pathFromLanguageServerUri,
   toLanguageServerTextDocumentPosition,
+  type LanguageServerCodeAction,
+  type LanguageServerCodeActionCommand,
+  type LanguageServerCodeActionContext,
   type LanguageServerFeaturesGateway,
+  type LanguageServerRange,
+  type LanguageServerTextEdit,
+  type LanguageServerWorkspaceEdit,
 } from "../domain/languageServerFeatures";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
@@ -23,6 +30,24 @@ type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
+type WorkspaceEditContext = {
+  path: string | null;
+  versionId: number | undefined;
+};
+
+interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
+  __languageServerAction?: LanguageServerCodeAction;
+  __workspaceEditContext?: WorkspaceEditContext;
+  __workspaceRoot?: string;
+}
+
+interface ExecuteCommandPayload {
+  command: LanguageServerCodeActionCommand;
+  rootPath: string;
+}
+
+const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
+  "mockor.php.executeLanguageServerCommand";
 
 export interface LanguageServerMonacoProviderContext {
   featuresGateway: LanguageServerFeaturesGateway;
@@ -45,6 +70,37 @@ export function registerLanguageServerMonacoProviders(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
 ): Disposable {
+  const command = monaco.editor.addCommand({
+    id: EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID,
+    run: async (_accessor, payload: ExecuteCommandPayload | undefined) => {
+      if (!payload) {
+        return;
+      }
+
+      if (!isRuntimeActiveForRoot(context, payload.rootPath)) {
+        return;
+      }
+
+      try {
+        const edit = await context.featuresGateway.executeCommand(
+          payload.rootPath,
+          payload.command,
+        );
+
+        if (!isRuntimeActiveForRoot(context, payload.rootPath)) {
+          return;
+        }
+
+        if (edit) {
+          applyWorkspaceEditToOpenModels(monaco, edit, payload.rootPath);
+        }
+      } catch (error) {
+        if (isRuntimeActiveForRoot(context, payload.rootPath)) {
+          context.reportError(error);
+        }
+      }
+    },
+  });
   const hover = monaco.languages.registerHoverProvider("php", {
     provideHover: (model, position) => provideHover(monaco, context, model, position),
   });
@@ -63,15 +119,24 @@ export function registerLanguageServerMonacoProviders(
     "php",
     {
       provideCodeActions: (model, range, actionContext) =>
-        provideCodeActions(monaco, model, range, actionContext),
+        provideCodeActions(monaco, context, model, range, actionContext),
+      resolveCodeAction: (action) =>
+        resolveCodeAction(monaco, context, action),
     },
     {
-      providedCodeActionKinds: ["quickfix"],
+      providedCodeActionKinds: [
+        "quickfix",
+        "refactor",
+        "source",
+        "source.fixAll",
+        "source.organizeImports",
+      ],
     },
   );
 
   return {
     dispose: () => {
+      command.dispose();
       hover.dispose();
       completion.dispose();
       signature.dispose();
@@ -82,15 +147,113 @@ export function registerLanguageServerMonacoProviders(
 
 function provideCodeActions(
   monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+  actionContext: Monaco.languages.CodeActionContext,
+): Promise<Monaco.languages.CodeActionList> {
+  const localActions = provideLocalCodeActions(
+    monaco,
+    model,
+    range,
+    actionContext,
+  );
+  const request = featureDocumentRequestContext(context, model, "codeAction");
+
+  if (!request) {
+    return Promise.resolve(codeActionList(localActions));
+  }
+
+  return context.flushPendingDocumentChange(request.path)
+    .then(() =>
+      context.featuresGateway.codeActions(
+        request.rootPath,
+        request.path,
+        toLanguageServerRange(range),
+        toLanguageServerCodeActionContext(monaco, actionContext),
+      ),
+    )
+    .then((actions) =>
+      codeActionList([
+        ...actions.flatMap((action) =>
+          toMonacoCodeAction(
+            monaco,
+            workspaceEditContext(model),
+            request.rootPath,
+            action,
+            actionContext,
+          ),
+        ),
+        ...localActions,
+      ]),
+    )
+    .catch((error) => {
+      context.reportError(error);
+      return codeActionList(localActions);
+    });
+}
+
+async function resolveCodeAction(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  action: Monaco.languages.CodeAction,
+): Promise<Monaco.languages.CodeAction> {
+  const backedAction = action as LanguageServerBackedCodeAction;
+
+  if (
+    !backedAction.__languageServerAction ||
+    !backedAction.__workspaceRoot ||
+    !isRuntimeActiveForRoot(context, backedAction.__workspaceRoot)
+  ) {
+    return action;
+  }
+
+  try {
+    const resolved = await context.featuresGateway.resolveCodeAction(
+      backedAction.__workspaceRoot,
+      backedAction.__languageServerAction,
+    );
+
+    if (!isRuntimeActiveForRoot(context, backedAction.__workspaceRoot)) {
+      return action;
+    }
+
+    const [mapped] = toMonacoCodeAction(
+      monaco,
+      backedAction.__workspaceEditContext ?? {
+        path: null,
+        versionId: undefined,
+      },
+      backedAction.__workspaceRoot,
+      resolved,
+      {
+        markers: action.diagnostics ?? [],
+        only: action.kind ?? undefined,
+        trigger: monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    return mapped ? { ...action, ...mapped } : action;
+  } catch (error) {
+    if (isRuntimeActiveForRoot(context, backedAction.__workspaceRoot)) {
+      context.reportError(error);
+    }
+
+    return action;
+  }
+}
+
+function provideLocalCodeActions(
+  monaco: MonacoApi,
   model: MonacoModel,
   range: Monaco.Range,
   context: Monaco.languages.CodeActionContext,
-): Monaco.languages.CodeActionList {
+): Monaco.languages.CodeAction[] {
   if (context.only && !context.only.startsWith("quickfix")) {
-    return emptyCodeActionList();
+    return [];
   }
 
-  const actions = context.markers
+  return context.markers
     .filter(isUnexpectedBareIdentifierMarker)
     .filter((marker) => markerTouchesRange(marker, range))
     .map((marker) => ({
@@ -116,16 +279,13 @@ function provideCodeActions(
       kind: "quickfix",
       title: "Remove unexpected identifier",
     }));
-
-  return {
-    actions,
-    dispose: () => undefined,
-  };
 }
 
-function emptyCodeActionList(): Monaco.languages.CodeActionList {
+function codeActionList(
+  actions: Monaco.languages.CodeAction[],
+): Monaco.languages.CodeActionList {
   return {
-    actions: [],
+    actions,
     dispose: () => undefined,
   };
 }
@@ -166,6 +326,232 @@ function markerTouchesRange(
   }
 
   return true;
+}
+
+function toLanguageServerRange(range: Monaco.Range): LanguageServerRange {
+  return {
+    end: {
+      character: Math.max(0, range.endColumn - 1),
+      line: Math.max(0, range.endLineNumber - 1),
+    },
+    start: {
+      character: Math.max(0, range.startColumn - 1),
+      line: Math.max(0, range.startLineNumber - 1),
+    },
+  };
+}
+
+function toLanguageServerCodeActionContext(
+  monaco: MonacoApi,
+  context: Monaco.languages.CodeActionContext,
+): LanguageServerCodeActionContext {
+  return {
+    diagnostics: context.markers.map((marker) => ({
+      code: markerCode(marker),
+      message: marker.message,
+      range: {
+        end: {
+          character: Math.max(0, marker.endColumn - 1),
+          line: Math.max(0, marker.endLineNumber - 1),
+        },
+        start: {
+          character: Math.max(0, marker.startColumn - 1),
+          line: Math.max(0, marker.startLineNumber - 1),
+        },
+      },
+      severity: lspDiagnosticSeverity(monaco, marker.severity),
+      source: marker.source ?? null,
+    })),
+    only: context.only ? [context.only] : null,
+  };
+}
+
+function markerCode(marker: Monaco.editor.IMarkerData): string | number | null {
+  if (!marker.code) {
+    return null;
+  }
+
+  if (typeof marker.code === "string" || typeof marker.code === "number") {
+    return marker.code;
+  }
+
+  return marker.code.value;
+}
+
+function lspDiagnosticSeverity(
+  monaco: MonacoApi,
+  severity: Monaco.MarkerSeverity,
+): number | null {
+  if (severity === monaco.MarkerSeverity.Error) {
+    return 1;
+  }
+
+  if (severity === monaco.MarkerSeverity.Warning) {
+    return 2;
+  }
+
+  if (severity === monaco.MarkerSeverity.Info) {
+    return 3;
+  }
+
+  if (severity === monaco.MarkerSeverity.Hint) {
+    return 4;
+  }
+
+  return null;
+}
+
+function toMonacoCodeAction(
+  monaco: MonacoApi,
+  editContext: WorkspaceEditContext,
+  rootPath: string,
+  action: LanguageServerCodeAction,
+  context: Monaco.languages.CodeActionContext,
+): Monaco.languages.CodeAction[] {
+  if (!action.edit && !action.command && action.data == null && !action.disabled) {
+    return [];
+  }
+
+  const codeAction: LanguageServerBackedCodeAction = {
+    __languageServerAction: action,
+    __workspaceEditContext: editContext,
+    __workspaceRoot: rootPath,
+    diagnostics: context.markers,
+    ...(action.command
+      ? {
+          command: toMonacoLanguageServerCommand(
+            rootPath,
+            action.command,
+            action.title,
+          ),
+        }
+      : {}),
+    ...(action.edit
+      ? {
+          edit: toMonacoWorkspaceEdit(
+            monaco,
+            editContext,
+            action.edit,
+            rootPath,
+          ),
+        }
+      : {}),
+    ...(action.disabled
+      ? {
+          disabled: action.disabled.reason,
+        }
+      : {}),
+    isPreferred: action.isPreferred,
+    kind: action.kind ?? "quickfix",
+    title: action.title,
+  };
+
+  return [codeAction];
+}
+
+function toMonacoLanguageServerCommand(
+  rootPath: string,
+  command: LanguageServerCodeActionCommand,
+  fallbackTitle: string,
+): Monaco.languages.Command {
+  return {
+    arguments: [
+      {
+        command,
+        rootPath,
+      } satisfies ExecuteCommandPayload,
+    ],
+    id: EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID,
+    title: command.title || fallbackTitle,
+  };
+}
+
+function toMonacoWorkspaceEdit(
+  monaco: MonacoApi,
+  context: WorkspaceEditContext,
+  edit: LanguageServerWorkspaceEdit,
+  rootPath?: string,
+): Monaco.languages.WorkspaceEdit {
+  return {
+    edits: Object.entries(edit.changes).flatMap(([uri, edits]) => {
+      const path = pathFromLanguageServerUri(uri);
+
+      if (!path) {
+        return [];
+      }
+
+      if (rootPath && !isPathInWorkspaceRoot(rootPath, path)) {
+        return [];
+      }
+
+      const resource = monaco.Uri.file(path);
+      const versionId = context.path === path ? context.versionId : undefined;
+
+      return edits.map((textEdit) => ({
+        resource,
+        textEdit: toMonacoTextEdit(monaco, textEdit),
+        versionId,
+      }));
+    }),
+  };
+}
+
+function toMonacoTextEdit(
+  monaco: MonacoApi,
+  edit: LanguageServerTextEdit,
+): Monaco.languages.TextEdit {
+  return {
+    range: toMonacoRange(monaco, edit.range),
+    text: edit.newText,
+  };
+}
+
+function toMonacoRange(
+  monaco: MonacoApi,
+  range: LanguageServerRange,
+): Monaco.Range {
+  return new monaco.Range(
+    range.start.line + 1,
+    range.start.character + 1,
+    range.end.line + 1,
+    range.end.character + 1,
+  );
+}
+
+function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {
+  return {
+    path: modelPath(model),
+    versionId:
+      typeof model.getVersionId === "function" ? model.getVersionId() : undefined,
+  };
+}
+
+function applyWorkspaceEditToOpenModels(
+  monaco: MonacoApi,
+  edit: LanguageServerWorkspaceEdit,
+  rootPath?: string,
+): void {
+  const modelsByPath = new Map(
+    monaco.editor.getModels().map((model) => [modelPath(model), model]),
+  );
+
+  Object.entries(edit.changes).forEach(([uri, edits]) => {
+    const path = pathFromLanguageServerUri(uri);
+    const model = path ? modelsByPath.get(path) : null;
+
+    if (!path || !model || (rootPath && !isPathInWorkspaceRoot(rootPath, path))) {
+      return;
+    }
+
+    model.pushEditOperations(
+      [],
+      edits.map((textEdit) => ({
+        range: toMonacoRange(monaco, textEdit.range),
+        text: textEdit.newText,
+      })),
+      () => null,
+    );
+  });
 }
 
 async function provideHover(
@@ -845,6 +1231,23 @@ function featureRequestContext(
   position: MonacoPosition,
   feature: "completion" | "hover",
 ) {
+  const request = featureDocumentRequestContext(context, model, feature);
+
+  if (!request) {
+    return null;
+  }
+
+  return {
+    ...request,
+    position: toLanguageServerTextDocumentPosition(request.path, position),
+  };
+}
+
+function featureDocumentRequestContext(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  feature: "codeAction" | "completion" | "hover",
+) {
   const activeDocument = context.getActiveDocument();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
 
@@ -858,7 +1261,7 @@ function featureRequestContext(
 
   const path = modelPath(model);
 
-  if (path !== activeDocument.path) {
+  if (!path || path !== activeDocument.path) {
     return null;
   }
 
@@ -866,17 +1269,13 @@ function featureRequestContext(
     return null;
   }
 
-  return {
-    path,
-    position: toLanguageServerTextDocumentPosition(path, position),
-    rootPath,
-  };
+  return { path, rootPath };
 }
 
 function canUseRuntimeFeatureForRoot(
   context: LanguageServerMonacoProviderContext,
   rootPath: string,
-  feature: "completion" | "hover",
+  feature: "codeAction" | "completion" | "hover",
 ): boolean {
   const status = context.getRuntimeStatus();
 
@@ -885,6 +1284,32 @@ function canUseRuntimeFeatureForRoot(
     (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath)) &&
     canUseLanguageServerFeature(status.capabilities, feature)
   );
+}
+
+function isRuntimeActiveForRoot(
+  context: LanguageServerMonacoProviderContext,
+  rootPath: string,
+): boolean {
+  const status = context.getRuntimeStatus();
+
+  return (
+    status?.kind === "running" &&
+    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath))
+  );
+}
+
+function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
+  const normalizedRootPath = normalizedWorkspacePath(rootPath);
+  const normalizedPath = normalizedWorkspacePath(path);
+
+  return (
+    normalizedPath === normalizedRootPath ||
+    normalizedPath.startsWith(`${normalizedRootPath}/`)
+  );
+}
+
+function normalizedWorkspacePath(path: string): string {
+  return path.trim().split("\\").join("/").replace(/\/+$/, "");
 }
 
 function modelPath(model: MonacoModel): string | null {

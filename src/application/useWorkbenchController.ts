@@ -4021,6 +4021,36 @@ export function useWorkbenchController(
     [],
   );
 
+  const applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = useCallback(
+    async (
+      edit: LanguageServerWorkspaceEdit,
+      context: { editedOpenPaths?: string[]; rootPath?: string },
+    ): Promise<void> => {
+      const requestedRoot = context.rootPath ?? currentWorkspaceRootRef.current;
+
+      if (
+        !requestedRoot ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return;
+      }
+
+      const rootEdit = workspaceEditForRoot(edit, requestedRoot);
+      const controllerEdit = workspaceEditWithoutPaths(
+        rootEdit,
+        context.editedOpenPaths ?? [],
+      );
+      const openDocumentPaths = Object.keys(documentsRef.current);
+      applyWorkspaceEditToOpenDocuments(controllerEdit, requestedRoot);
+      await workspaceFiles.applyWorkspaceEdit(
+        requestedRoot,
+        rootEdit,
+        openDocumentPaths,
+      );
+    },
+    [applyWorkspaceEditToOpenDocuments, workspaceFiles],
+  );
+
   const applyJavaScriptTypeScriptRenameEdits = useCallback(
     async (oldPath: string, newPath: string) => {
       if (
@@ -4098,7 +4128,7 @@ export function useWorkbenchController(
         javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running" ||
         !canUseLanguageServerFeature(
           javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "willRenameFiles",
+          "didRenameFiles",
         )
       ) {
         return;
@@ -11346,6 +11376,7 @@ export function useWorkbenchController(
       : null,
     activePath,
     appSettings,
+    applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
     activateWorkspaceTab,
     callHierarchyView,
     typeHierarchyView,
@@ -12254,6 +12285,27 @@ function workspaceEditForRoot(
         const path = pathFromLanguageServerUri(uri);
 
         return !path || isSessionPathInWorkspace(rootPath, path);
+      }),
+    ),
+  };
+}
+
+function workspaceEditWithoutPaths(
+  edit: LanguageServerWorkspaceEdit,
+  paths: string[],
+): LanguageServerWorkspaceEdit {
+  if (paths.length === 0) {
+    return edit;
+  }
+
+  const skippedPaths = new Set(paths.map(normalizedSessionPath));
+
+  return {
+    changes: Object.fromEntries(
+      Object.entries(edit.changes).filter(([uri]) => {
+        const path = pathFromLanguageServerUri(uri);
+
+        return !path || !skippedPaths.has(normalizedSessionPath(path));
       }),
     ),
   };

@@ -11,6 +11,7 @@ import type {
   EditorPosition,
   EditorRevealTarget,
   LanguageServerFeaturesGateway,
+  LanguageServerWorkspaceEdit,
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import {
@@ -33,7 +34,10 @@ import type {
 } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
-import { registerJavaScriptTypeScriptLanguageServerMonacoProviders } from "./javascriptTypescriptLanguageServerMonacoProviders";
+import {
+  registerJavaScriptTypeScriptLanguageServerMonacoProviders,
+  type JavaScriptTypeScriptWorkspaceEditApplicationContext,
+} from "./javascriptTypescriptLanguageServerMonacoProviders";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import {
   configureShikiLanguageFeatures,
@@ -49,6 +53,10 @@ interface ChangePreviewState {
 
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  applyJavaScriptTypeScriptLanguageServerWorkspaceEdit?(
+    edit: LanguageServerWorkspaceEdit,
+    context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
+  ): Promise<void>;
   changeHunks: EditorChangeHunk[];
   editorRevealTarget: EditorRevealTarget | null;
   flushPendingJavaScriptTypeScriptLanguageServerDocument?(
@@ -92,6 +100,7 @@ interface EditorSurfaceProps {
 
 export function EditorSurface({
   activeDocument,
+  applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
   changeHunks,
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
@@ -135,6 +144,9 @@ export function EditorSurface({
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
   const flushPendingJavaScriptTypeScriptRef = useRef(
     flushPendingJavaScriptTypeScriptLanguageServerDocument,
+  );
+  const applyJavaScriptTypeScriptWorkspaceEditRef = useRef(
+    applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
   );
   const errorReporterRef = useRef(onLanguageServerError);
   const changeDecorationIdsRef = useRef<string[]>([]);
@@ -214,6 +226,11 @@ export function EditorSurface({
   }, [flushPendingJavaScriptTypeScriptLanguageServerDocument]);
 
   useEffect(() => {
+    applyJavaScriptTypeScriptWorkspaceEditRef.current =
+      applyJavaScriptTypeScriptLanguageServerWorkspaceEdit;
+  }, [applyJavaScriptTypeScriptLanguageServerWorkspaceEdit]);
+
+  useEffect(() => {
     errorReporterRef.current = onLanguageServerError;
   }, [onLanguageServerError]);
 
@@ -254,6 +271,8 @@ export function EditorSurface({
     const disposable = registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monacoApi,
       {
+        applyWorkspaceEdit: (edit, editContext) =>
+          applyJavaScriptTypeScriptWorkspaceEditRef.current(edit, editContext),
         featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
         flushPendingDocumentChange: (path) =>
           flushPendingJavaScriptTypeScriptRef.current(path),

@@ -19,6 +19,7 @@ describe("canUseLanguageServerFeature", () => {
       documentHighlight: false,
       documentLink: false,
       documentSymbol: false,
+      didRenameFiles: false,
       foldingRange: false,
       formatting: false,
       hover: true,

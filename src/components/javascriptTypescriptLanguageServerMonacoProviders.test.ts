@@ -916,10 +916,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       expect.objectContaining({
         command: expect.objectContaining({
           arguments: [
-            {
+            expect.objectContaining({
               command: commandOnlyAction.command,
               rootPath: "/project",
-            },
+            }),
           ],
           id: "mockor.javascriptTypeScript.executeLanguageServerCommand",
         }),
@@ -1621,6 +1621,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const monaco = createMonaco();
     const model = textModel();
     let activeRoot = "/project";
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
     const commandEdit =
       createDeferred<
         Awaited<ReturnType<LanguageServerFeaturesGateway["executeCommand"]>>
@@ -1633,6 +1634,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
       providerContext({
+        applyWorkspaceEdit,
         featuresGateway: gateway,
         getWorkspaceRoot: () => activeRoot,
       }),
@@ -1657,6 +1659,159 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       expect.objectContaining({ command: "_typescript.organizeImports" }),
     );
     expect(model.pushEditOperations).not.toHaveBeenCalled();
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
+  });
+
+  it("applies TypeScript command workspace edits through the workspace applier while keeping open models current", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const siblingRootModel = {
+      ...textModel(),
+      uri: {
+        fsPath: "/project-neighbor/src/user.ts",
+        path: "/project-neighbor/src/user.ts",
+      },
+    };
+    const commandEdit = {
+      changes: {
+        ...workspaceEdit("file:///project/src/user.ts", "OpenEdit").changes,
+        ...workspaceEdit("file:///project/src/helper.ts", "ClosedEdit").changes,
+        ...workspaceEdit(
+          "file:///project-neighbor/src/user.ts",
+          "Ignored sibling root",
+        ).changes,
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const gateway = featuresGateway({
+      executeCommandEdit: commandEdit,
+    });
+    monaco.editor.getModels.mockReturnValue([model, siblingRootModel]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    await commandDescriptor.run(null, {
+      command: {
+        arguments: [{ scope: "file" }],
+        command: "_typescript.organizeImports",
+        title: "Organize Imports",
+      },
+      rootPath: "/project",
+    });
+
+    expect(model.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 6,
+            endLineNumber: 1,
+            startColumn: 2,
+            startLineNumber: 1,
+          }),
+          text: "OpenEdit",
+        },
+      ],
+      expect.any(Function),
+    );
+    expect(siblingRootModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      {
+        changes: {
+          ...workspaceEdit("file:///project/src/user.ts", "OpenEdit").changes,
+          ...workspaceEdit("file:///project/src/helper.ts", "ClosedEdit").changes,
+        },
+      },
+      {
+        editedOpenPaths: ["/project/src/user.ts"],
+        rootPath: "/project",
+      },
+    );
+  });
+
+  it("persists edit-bearing TypeScript code actions through the workspace applier", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const codeActionEdit = {
+      changes: {
+        ...workspaceEdit("file:///project/src/user.ts", "OpenActionEdit").changes,
+        ...workspaceEdit("file:///project/src/helper.ts", "ClosedActionEdit")
+          .changes,
+        ...workspaceEdit(
+          "file:///project-neighbor/src/user.ts",
+          "Ignored sibling root",
+        ).changes,
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: null,
+          data: null,
+          edit: codeActionEdit,
+          isPreferred: true,
+          kind: "quickfix",
+          title: "Update imports",
+        },
+      ],
+    });
+    monaco.editor.getModels.mockReturnValue([model]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+      }),
+    );
+    const codeActionProvider = (
+      monaco.languages.registerCodeActionProvider as any
+    ).mock.calls[0][1];
+
+    const actions = await codeActionProvider.provideCodeActions(
+      model,
+      new monaco.Range(1, 1, 1, 5),
+      {
+        markers: [],
+        only: "quickfix",
+      },
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+    await commandDescriptor.run(null, actions.actions[0].command.arguments[0]);
+
+    expect(actions.actions[0].edit.edits).toEqual([
+      expect.objectContaining({
+        resource: { fsPath: "/project/src/user.ts", path: "/project/src/user.ts" },
+      }),
+      expect.objectContaining({
+        resource: {
+          fsPath: "/project/src/helper.ts",
+          path: "/project/src/helper.ts",
+        },
+      }),
+    ]);
+    expect(model.pushEditOperations).not.toHaveBeenCalled();
+    expect(gateway.executeCommand).not.toHaveBeenCalled();
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      {
+        changes: {
+          ...workspaceEdit("file:///project/src/user.ts", "OpenActionEdit")
+            .changes,
+          ...workspaceEdit("file:///project/src/helper.ts", "ClosedActionEdit")
+            .changes,
+        },
+      },
+      {
+        editedOpenPaths: ["/project/src/user.ts"],
+        rootPath: "/project",
+      },
+    );
   });
 
   it("drops stale TypeScript prepare-rename rejection after switching project tabs", async () => {
@@ -1798,6 +1953,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         path: "/project-neighbor/src/user.ts",
       },
     };
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
     const unsubscribe = vi.fn();
     const workspaceEditGateway = {
       subscribeWorkspaceEdits: vi.fn(async (listener) => {
@@ -1805,6 +1961,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           edit: {
             changes: {
               ...workspaceEdit("file:///project/src/user.ts", "Applied").changes,
+              ...workspaceEdit("file:///project/src/helper.ts", "Applied closed")
+                .changes,
               ...workspaceEdit(
                 "file:///project-neighbor/src/user.ts",
                 "Ignored sibling root",
@@ -1828,7 +1986,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     const disposable = registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       monaco as any,
-      providerContext({ workspaceEditGateway }),
+      providerContext({ applyWorkspaceEdit, workspaceEditGateway }),
     );
     await Promise.resolve();
 
@@ -1849,6 +2007,20 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       expect.any(Function),
     );
     expect(siblingRootModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(applyWorkspaceEdit).toHaveBeenCalledTimes(1);
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      {
+        changes: {
+          ...workspaceEdit("file:///project/src/user.ts", "Applied").changes,
+          ...workspaceEdit("file:///project/src/helper.ts", "Applied closed")
+            .changes,
+        },
+      },
+      {
+        editedOpenPaths: ["/project/src/user.ts"],
+        rootPath: "/project/",
+      },
+    );
 
     disposable.dispose();
 
@@ -1860,6 +2032,7 @@ function providerContext(
   overrides: Partial<JavaScriptTypeScriptLanguageServerProviderContext> = {},
 ): JavaScriptTypeScriptLanguageServerProviderContext {
   return {
+    applyWorkspaceEdit: overrides.applyWorkspaceEdit,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
@@ -2007,6 +2180,7 @@ function runningStatus(
       documentHighlight: true,
       documentLink: true,
       documentSymbol: true,
+      didRenameFiles: true,
       foldingRange: true,
       formatting: true,
       hover: true,
