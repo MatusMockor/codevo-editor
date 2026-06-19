@@ -587,6 +587,16 @@ export function useWorkbenchController(
     .map((path) => documents[path])
     .filter((document): document is EditorDocument => Boolean(document));
   const dirtyCount = openDocuments.filter(isDirty).length;
+  const hasOpenJavaScriptTypeScriptDocument = openDocuments.some(
+    (document) =>
+      isJavaScriptTypeScriptLanguageServerDocument(document) &&
+      Boolean(
+        workspaceRoot && isSessionPathInWorkspace(workspaceRoot, document.path),
+      ),
+  );
+  const shouldAutoStartJavaScriptTypeScriptLanguageServer =
+    Boolean(workspaceDescriptor?.javaScriptTypeScript) ||
+    hasOpenJavaScriptTypeScriptDocument;
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
@@ -9349,6 +9359,10 @@ export function useWorkbenchController(
       return;
     }
 
+    if (!shouldAutoStartJavaScriptTypeScriptLanguageServer) {
+      return;
+    }
+
     if (javaScriptTypeScriptLanguageServerPlan?.status !== "ready") {
       return;
     }
@@ -9398,6 +9412,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     reportError,
+    shouldAutoStartJavaScriptTypeScriptLanguageServer,
     workspaceSettings.javaScriptTypeScriptAutoImports,
     workspaceSettings.javaScriptTypeScriptCodeLens,
     workspaceSettings.javaScriptTypeScriptInlayHints,

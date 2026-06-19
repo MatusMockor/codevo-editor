@@ -2035,6 +2035,7 @@ describe("useWorkbenchController preview tabs", () => {
         ...defaultWorkspaceSettings(),
         intelligenceMode: "basic",
       },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);
     await act(async () => {
@@ -2051,6 +2052,75 @@ describe("useWorkbenchController preview tabs", () => {
       typeScriptVersionPreference: "bundled",
       validationEnabled: true,
     });
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
+      codeLensEnabled: false,
+      inlayHintsEnabled: true,
+      typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
+    });
+    expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
+  it("starts JavaScript and TypeScript language service lazily for inferred workspaces", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === "/workspace/src/App.ts") {
+          return "export const app = 1;\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
+      codeLensEnabled: false,
+      inlayHintsEnabled: true,
+      typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
+    });
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry("/workspace/src/App.ts", "App.ts"),
+      );
+    });
+    await flushAsyncTurns(24);
+
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
     ).toHaveBeenCalledWith("/workspace", {
@@ -2099,6 +2169,7 @@ describe("useWorkbenchController preview tabs", () => {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptVersion: "workspace",
       },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);
 
@@ -2322,6 +2393,7 @@ describe("useWorkbenchController preview tabs", () => {
         intelligenceMode: "basic",
         javaScriptTypeScriptService: "off",
       },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);
 
@@ -2370,6 +2442,7 @@ describe("useWorkbenchController preview tabs", () => {
         ...defaultWorkspaceSettings(),
         javaScriptTypeScriptService: "auto",
       },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     await flushAsyncTurns(24);
 
