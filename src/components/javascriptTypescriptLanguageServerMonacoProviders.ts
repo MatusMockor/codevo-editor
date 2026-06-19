@@ -1079,6 +1079,10 @@ async function resolveRenameLocation(
       text: prepareRename.placeholder ?? model.getValueInRange(range),
     };
   } catch (error) {
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return {
       rejectReason: errorMessage(error),
     } as Monaco.languages.RenameLocation & Monaco.languages.Rejection;

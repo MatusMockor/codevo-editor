@@ -1623,6 +1623,42 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(model.pushEditOperations).not.toHaveBeenCalled();
   });
 
+  it("drops stale TypeScript prepare-rename rejection after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const prepareRename = createDeferred<
+      Awaited<ReturnType<LanguageServerFeaturesGateway["prepareRename"]>>
+    >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.prepareRename).mockImplementationOnce(
+      async () => prepareRename.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock
+      .calls[0][1];
+    const renameLocationPromise = renameProvider.resolveRenameLocation(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    prepareRename.reject(new Error("Cannot rename this symbol."));
+
+    await expect(renameLocationPromise).resolves.toBeNull();
+    expect(gateway.prepareRename).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 0,
+      path: "/project/src/user.ts",
+    });
+  });
+
   it("ignores stale TypeScript lazy resolves after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";
@@ -1962,15 +1998,21 @@ function runningStatus(
 
 function createDeferred<T>(): {
   promise: Promise<T>;
+  reject(reason?: unknown): void;
   resolve(value: T): void;
 } {
+  let rejectValue: ((reason?: unknown) => void) | null = null;
   let resolveValue: ((value: T) => void) | null = null;
-  const promise = new Promise<T>((resolve) => {
+  const promise = new Promise<T>((resolve, reject) => {
+    rejectValue = reject;
     resolveValue = resolve;
   });
 
   return {
     promise,
+    reject(reason?: unknown): void {
+      rejectValue?.(reason);
+    },
     resolve(value: T): void {
       resolveValue?.(value);
     },
