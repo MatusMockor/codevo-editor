@@ -656,13 +656,13 @@ function completionItemDedupeKey(
   monaco: MonacoApi,
   item: Monaco.languages.CompletionItem,
 ): string {
-  const label = completionItemLabelText(item.label);
+  const callableName = completionItemCallableDedupeName(monaco, item);
 
-  if (isCallableCompletionKind(monaco, item.kind)) {
-    const callableName = phpCallableCompletionName(label) ?? label;
-
+  if (callableName) {
     return `callable:${callableName.toLowerCase()}`;
   }
+
+  const label = completionItemLabelText(item.label);
 
   if (
     item.kind === monaco.languages.CompletionItemKind.Property ||
@@ -672,6 +672,47 @@ function completionItemDedupeKey(
   }
 
   return `${item.kind}:${label.toLowerCase()}`;
+}
+
+function completionItemCallableDedupeName(
+  monaco: MonacoApi,
+  item: Monaco.languages.CompletionItem,
+): string | null {
+  const label = completionItemLabelText(item.label);
+  const callableName = phpCallableCompletionName(label);
+
+  if (!callableName) {
+    return null;
+  }
+
+  if (isCallableCompletionKind(monaco, item.kind)) {
+    return callableName;
+  }
+
+  if (
+    [label, item.insertText, item.detail, item.documentation]
+      .filter((candidate): candidate is string => typeof candidate === "string")
+      .some((candidate) => completionLabelLooksLikeSignature(candidate, callableName))
+  ) {
+    return callableName;
+  }
+
+  if (
+    typeof item.label !== "string" &&
+    item.label.detail &&
+    completionLabelLooksLikeSignature(
+      `${item.label.label}${item.label.detail}`,
+      callableName,
+    )
+  ) {
+    return callableName;
+  }
+
+  return null;
+}
+
+function completionLabelLooksLikeSignature(value: string, name: string): boolean {
+  return new RegExp(`(?:^|::|\\b)${escapeRegExp(name)}\\s*\\(`).test(value);
 }
 
 function completionItemLabelText(
