@@ -568,6 +568,16 @@ Album::whereHas(relation: 'artist', callback: function ($builder): void {
 
 Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->ord);
 
+Album::query()->when($flag, fn ($whenQuery) => $whenQuery->pub);
+
+Album::query()->unless($flag, function ($unlessQuery): void {
+    $unlessQuery->pub
+});
+
+Album::query()->tap(fn ($tapQuery) => $tapQuery->pub);
+
+Album::query()->when(fn ($conditionQuery) => $conditionQuery->pub, fn ($matchedWhenQuery) => $matchedWhenQuery->pub);
+
 Album::query()->whereHasMorph('commentable', [Post::class], function ($morphQuery): void {
     $morphQuery->ord
 });
@@ -608,6 +618,61 @@ Album::with(relations: ['tracks' => function ($namedEagerQuery): void {
       modelClassName: null,
       receiverExpression: "Album::query()",
       relationName: "tracks",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$whenQuery->pub"),
+        "whenQuery",
+      ),
+    ).toEqual({
+      methodName: "when",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: null,
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$unlessQuery->pub"),
+        "unlessQuery",
+      ),
+    ).toEqual({
+      methodName: "unless",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: null,
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$tapQuery->pub"),
+        "tapQuery",
+      ),
+    ).toEqual({
+      methodName: "tap",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: null,
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$conditionQuery->pub"),
+        "conditionQuery",
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$matchedWhenQuery->pub"),
+        "matchedWhenQuery",
+      ),
+    ).toEqual({
+      methodName: "when",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: null,
     });
     expect(
       phpLaravelQueryCallbackContextForVariable(

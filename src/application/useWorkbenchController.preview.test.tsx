@@ -8939,6 +8939,27 @@ class AlbumController
             $post = $morphQuery->first();
             $post->get
         });
+
+        Album::query()->when($flag, function ($whenQuery): void {
+            $whenQuery->pub
+            $whenQuery->published()->ord
+            $whenAlbum = $whenQuery->first();
+            $whenAlbum->get
+        });
+
+        Album::query()->unless($flag, function ($unlessQuery): void {
+            $unlessQuery->pub
+            $unlessQuery->published()->ord
+            $unlessAlbum = $unlessQuery->first();
+            $unlessAlbum->get
+        });
+
+        Album::query()->tap(function ($tapQuery): void {
+            $tapQuery->pub
+            $tapQuery->published()->ord
+            $tapAlbum = $tapQuery->first();
+            $tapAlbum->get
+        });
     }
 }
 `;
@@ -8988,11 +9009,16 @@ class AlbumController
           return `<?php
 namespace App\\Models;
 
+use Illuminate\\Database\\Eloquent\\Builder;
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
 use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
 
 class Album
 {
+    public function getTitle(): string {}
+
+    public function scopePublished(Builder $query): Builder {}
+
     public function tracks(): HasMany
     {
         $related = Track::class;
@@ -9151,6 +9177,123 @@ class Builder
     ).resolves.toEqual([
       {
         declaringClassName: "App\\Models\\Post",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$whenQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$whenQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$whenAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$unlessQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$unlessQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$unlessAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$tapQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$tapQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$tapAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
         name: "getTitle",
         parameters: "",
         returnType: "string",

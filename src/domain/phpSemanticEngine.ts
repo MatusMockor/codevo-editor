@@ -85,7 +85,7 @@ export interface PhpSemanticEngineOptions {
   frameworkProviders?: readonly PhpFrameworkProvider[];
 }
 
-const laravelQueryCallbackMethods = [
+const laravelQueryCallbackMethodNames = [
   "where",
   "orWhere",
   "whereHas",
@@ -98,7 +98,12 @@ const laravelQueryCallbackMethods = [
   "whereDoesntHaveMorph",
   "orWhereDoesntHaveMorph",
   "with",
-].join("|");
+  "when",
+  "unless",
+  "tap",
+];
+const laravelQueryCallbackMethods = laravelQueryCallbackMethodNames.join("|");
+const laravelCurrentBuilderCallbackMethods = new Set(["when", "unless", "tap"]);
 
 export function phpCurrentClassName(source: string): string | null {
   const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
@@ -872,6 +877,18 @@ function phpCallbackMethodCallContext(
       continue;
     }
 
+    if (
+      !phpLaravelQueryCallbackArgumentMatches(
+        methodName,
+        source,
+        openOffset + 1,
+        closeOffset,
+        callbackStartOffset,
+      )
+    ) {
+      continue;
+    }
+
     const morphTypeClassNames = phpMorphTypeClassNamesBeforeCallbackArgument(
       methodName,
       source,
@@ -884,12 +901,16 @@ function phpCallbackMethodCallContext(
       methodName,
       ...(morphTypeClassNames ? { morphTypeClassNames } : {}),
       receiverOrClassName,
-      relationName: phpRelationNameBeforeCallbackArgument(
-        source,
-        openOffset + 1,
-        closeOffset,
-        callbackStartOffset,
-      ),
+      relationName: laravelCurrentBuilderCallbackMethods.has(
+        methodName.toLowerCase(),
+      )
+        ? null
+        : phpRelationNameBeforeCallbackArgument(
+            source,
+            openOffset + 1,
+            closeOffset,
+            callbackStartOffset,
+          ),
       startOffset,
     };
   }
@@ -904,6 +925,53 @@ function phpCallbackMethodCallContext(
         relationName: context.relationName,
       }
     : null;
+}
+
+function phpLaravelQueryCallbackArgumentMatches(
+  methodName: string,
+  source: string,
+  argumentsStartOffset: number,
+  argumentsEndOffset: number,
+  callbackStartOffset: number,
+): boolean {
+  const normalizedMethodName = methodName.toLowerCase();
+  const expectedArgumentIndex =
+    normalizedMethodName === "tap"
+      ? 0
+      : normalizedMethodName === "when" || normalizedMethodName === "unless"
+        ? 1
+        : null;
+
+  if (expectedArgumentIndex === null) {
+    return true;
+  }
+
+  return (
+    phpCallbackArgumentIndex(
+      source,
+      argumentsStartOffset,
+      argumentsEndOffset,
+      callbackStartOffset,
+    ) === expectedArgumentIndex
+  );
+}
+
+function phpCallbackArgumentIndex(
+  source: string,
+  argumentsStartOffset: number,
+  argumentsEndOffset: number,
+  callbackStartOffset: number,
+): number | null {
+  const argumentsSource = source.slice(argumentsStartOffset, argumentsEndOffset);
+  const callbackRelativeOffset = callbackStartOffset - argumentsStartOffset;
+  const argumentsList = splitPhpArgumentsWithOffsets(argumentsSource);
+  const callbackArgumentIndex = argumentsList.findIndex(
+    (argument) =>
+      argument.start <= callbackRelativeOffset &&
+      callbackRelativeOffset <= argument.end,
+  );
+
+  return callbackArgumentIndex >= 0 ? callbackArgumentIndex : null;
 }
 
 function phpMorphTypeClassNamesBeforeCallbackArgument(
