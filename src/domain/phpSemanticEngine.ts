@@ -15,11 +15,9 @@ import {
   phpDeclaredTypeCandidate,
 } from "./phpTypeAnalysis";
 import {
-  phpLaravelModelAttributeClassTypeFromSource,
-  phpLaravelRepositoryMethodModelReturnTypeFromSource,
-} from "./phpFrameworkLaravel";
-import {
-  isPhpFrameworkProviderActive,
+  phpFrameworkContainerExpressionClassName,
+  phpFrameworkMethodCallReturnTypeFromSource,
+  phpFrameworkPropertyTypeFromSource,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
 
@@ -28,6 +26,11 @@ export {
   phpDeclaredTypeCandidate,
   phpMethodReturnExpressions,
 } from "./phpTypeAnalysis";
+export {
+  phpLaravelContainerBindingsFromSource,
+  phpLaravelContainerExpressionClassName,
+  type PhpLaravelContainerBinding,
+} from "./phpFrameworkLaravel";
 
 export interface PhpMethodCallExpression {
   methodName: string;
@@ -62,11 +65,6 @@ export type PhpClassStringCallExpression =
       kind: "staticCall";
       methodName: string;
     };
-
-export interface PhpLaravelContainerBinding {
-  abstractClassName: string;
-  concreteClassName: string;
-}
 
 export interface PhpDocGenericInheritance {
   className: string;
@@ -164,16 +162,17 @@ export function phpVariableTypeInSource(
     phpParameterTypeForVariable(source, position, variableName) ??
     phpDocTypeForVariableBefore(source, position, variableName) ??
     phpNewExpressionClassName(assignmentExpression) ??
-    (isLaravelSemanticProviderActive(options)
-      ? phpLaravelContainerExpressionClassName(assignmentExpression) ??
-        phpLaravelRepositoryAssignmentModelType(
-          source,
-          position,
-          variableName,
-          assignmentExpression,
-          options,
-        )
-      : null)
+    phpFrameworkContainerExpressionClassName(
+      assignmentExpression,
+      options.frameworkProviders,
+    ) ??
+    phpFrameworkMethodCallAssignmentReturnType(
+      source,
+      position,
+      variableName,
+      assignmentExpression,
+      options,
+    )
   );
 }
 
@@ -254,9 +253,11 @@ export function phpThisPropertyType(
     phpPromotedPropertyType(source, propertyName) ??
     phpDeclaredPropertyType(source, propertyName) ??
     phpDocTypeForProperty(source, propertyName) ??
-    (isLaravelSemanticProviderActive(options)
-      ? phpLaravelModelAttributeClassTypeFromSource(source, propertyName)
-      : null)
+    phpFrameworkPropertyTypeFromSource(
+      source,
+      propertyName,
+      options.frameworkProviders,
+    )
   );
 }
 
@@ -289,56 +290,7 @@ export function phpNewExpressionClassName(expression: string): string | null {
   return match?.[1]?.replace(/^\\+/, "") ?? null;
 }
 
-export function phpLaravelContainerExpressionClassName(
-  expression: string,
-): string | null {
-  const normalized = expression.trim();
-  const match =
-    new RegExp(
-      `^(?:app|resolve|make)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
-    ).exec(normalized) ??
-    new RegExp(
-      `(?:->|::)make\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
-    ).exec(normalized);
-
-  return match?.[1]?.replace(/^\\+/, "") ?? null;
-}
-
-export function phpLaravelContainerBindingsFromSource(
-  source: string,
-): PhpLaravelContainerBinding[] {
-  const bindings: PhpLaravelContainerBinding[] = [];
-  const directBindingPattern = new RegExp(
-    `(?:->|::)(?:bind|singleton|scoped)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\s*,\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class`,
-    "g",
-  );
-  const contextualBindingPattern = new RegExp(
-    `->\\s*needs\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\s*\\)\\s*->\\s*give\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class`,
-    "g",
-  );
-
-  for (const match of source.matchAll(directBindingPattern)) {
-    const abstractClassName = match[1]?.replace(/^\\+/, "");
-    const concreteClassName = match[2]?.replace(/^\\+/, "");
-
-    if (abstractClassName && concreteClassName) {
-      bindings.push({ abstractClassName, concreteClassName });
-    }
-  }
-
-  for (const match of source.matchAll(contextualBindingPattern)) {
-    const abstractClassName = match[1]?.replace(/^\\+/, "");
-    const concreteClassName = match[2]?.replace(/^\\+/, "");
-
-    if (abstractClassName && concreteClassName) {
-      bindings.push({ abstractClassName, concreteClassName });
-    }
-  }
-
-  return bindings;
-}
-
-function phpLaravelRepositoryAssignmentModelType(
+function phpFrameworkMethodCallAssignmentReturnType(
   source: string,
   position: EditorPosition,
   variableName: string,
@@ -359,7 +311,7 @@ function phpLaravelRepositoryAssignmentModelType(
     return null;
   }
 
-  return phpLaravelRepositoryMethodModelReturnTypeFromSource(
+  return phpFrameworkMethodCallReturnTypeFromSource(
     source,
     methodCall.methodName,
     phpReceiverExpressionTypeInSource(
@@ -368,13 +320,8 @@ function phpLaravelRepositoryAssignmentModelType(
       methodCall.receiverExpression,
       options,
     ),
+    options.frameworkProviders,
   );
-}
-
-function isLaravelSemanticProviderActive(
-  options: PhpSemanticEngineOptions,
-): boolean {
-  return isPhpFrameworkProviderActive(options.frameworkProviders ?? [], "laravel");
 }
 
 export function phpClassStringCallExpression(

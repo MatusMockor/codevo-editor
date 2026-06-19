@@ -1,7 +1,11 @@
 import {
   isLaravelEloquentBuilderMethodName,
+  phpLaravelContainerBindingsFromSource,
+  phpLaravelContainerExpressionClassName,
+  phpLaravelModelAttributeClassTypeFromSource,
   phpLaravelModelAttributeCompletionsFromSource,
   phpLaravelRelationPropertyCompletionsFromSource,
+  phpLaravelRepositoryMethodModelReturnTypeFromSource,
 } from "./phpFrameworkLaravel";
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
 import type { PhpProjectDescriptor } from "./workspace";
@@ -17,6 +21,30 @@ export interface PhpFrameworkStaticMethodContext {
   source: string;
 }
 
+export interface PhpFrameworkPropertyTypeContext {
+  propertyName: string;
+  source: string;
+}
+
+export interface PhpFrameworkMethodCallReturnTypeContext {
+  methodName: string;
+  receiverType: string | null;
+  source: string;
+}
+
+export interface PhpFrameworkContainerExpressionContext {
+  expression: string;
+}
+
+export interface PhpFrameworkContainerBinding {
+  abstractClassName: string;
+  concreteClassName: string;
+}
+
+export interface PhpFrameworkContainerBindingsContext {
+  source: string;
+}
+
 export interface PhpFrameworkProvider {
   id: string;
   completions?: {
@@ -26,6 +54,20 @@ export interface PhpFrameworkProvider {
   };
   diagnostics?: {
     isKnownStaticMethod?: (context: PhpFrameworkStaticMethodContext) => boolean;
+  };
+  semantics?: {
+    propertyTypeFromSource?: (
+      context: PhpFrameworkPropertyTypeContext,
+    ) => string | null;
+    methodCallReturnTypeFromSource?: (
+      context: PhpFrameworkMethodCallReturnTypeContext,
+    ) => string | null;
+    containerExpressionClassName?: (
+      context: PhpFrameworkContainerExpressionContext,
+    ) => string | null;
+    containerBindingsFromSource?: (
+      context: PhpFrameworkContainerBindingsContext,
+    ) => PhpFrameworkContainerBinding[];
   };
 }
 
@@ -43,6 +85,20 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   diagnostics: {
     isKnownStaticMethod: ({ methodName }) =>
       isLaravelEloquentBuilderMethodName(methodName),
+  },
+  semantics: {
+    propertyTypeFromSource: ({ propertyName, source }) =>
+      phpLaravelModelAttributeClassTypeFromSource(source, propertyName),
+    methodCallReturnTypeFromSource: ({ methodName, receiverType, source }) =>
+      phpLaravelRepositoryMethodModelReturnTypeFromSource(
+        source,
+        methodName,
+        receiverType,
+      ),
+    containerExpressionClassName: ({ expression }) =>
+      phpLaravelContainerExpressionClassName(expression),
+    containerBindingsFromSource: ({ source }) =>
+      phpLaravelContainerBindingsFromSource(source),
   },
 };
 
@@ -99,6 +155,73 @@ export function isKnownPhpFrameworkStaticMethod(
         methodName,
         source,
       }) ?? false,
+  );
+}
+
+export function phpFrameworkPropertyTypeFromSource(
+  source: string,
+  propertyName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const propertyType = provider.semantics?.propertyTypeFromSource?.({
+      propertyName,
+      source,
+    });
+
+    if (propertyType) {
+      return propertyType;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkMethodCallReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const returnType = provider.semantics?.methodCallReturnTypeFromSource?.({
+      methodName,
+      receiverType,
+      source,
+    });
+
+    if (returnType) {
+      return returnType;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkContainerExpressionClassName(
+  expression: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const className = provider.semantics?.containerExpressionClassName?.({
+      expression,
+    });
+
+    if (className) {
+      return className;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkContainerBindingsFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkContainerBinding[] {
+  return providers.flatMap(
+    (provider) =>
+      provider.semantics?.containerBindingsFromSource?.({ source }) ?? [],
   );
 }
 

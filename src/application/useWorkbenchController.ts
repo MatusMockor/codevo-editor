@@ -191,14 +191,12 @@ import {
   phpDocGenericMixins,
   phpDocRawTypeForVariableBefore,
   phpDocTemplateNames,
-  phpLaravelContainerExpressionClassName,
   phpMethodCallExpression,
   phpNewExpressionClassName,
   phpPropertyAccessExpression,
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
   phpFunctionReturnsClassStringArgument,
-  phpLaravelContainerBindingsFromSource,
   phpLaravelQueryCallbackContextForVariable,
 } from "../domain/phpSemanticEngine";
 import {
@@ -207,6 +205,8 @@ import {
   phpMethodReturnExpressions,
 } from "../domain/phpTypeAnalysis";
 import {
+  phpFrameworkContainerBindingsFromSource,
+  phpFrameworkContainerExpressionClassName,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
   phpFrameworkProvidersForProject,
@@ -567,7 +567,7 @@ export function useWorkbenchController(
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
   );
-  const phpLaravelBindingCacheRef = useRef<Record<string, string | null>>({});
+  const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
@@ -1147,7 +1147,7 @@ export function useWorkbenchController(
       activeIndexRootRef.current = event.rootPath;
       phpClassSourcePathCacheRef.current = {};
       phpClassMemberCacheRef.current = {};
-      phpLaravelBindingCacheRef.current = {};
+      phpFrameworkBindingCacheRef.current = {};
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
       );
@@ -1208,7 +1208,7 @@ export function useWorkbenchController(
     lastPhpFileOutlineRefreshKeyRef.current = null;
     phpClassSourcePathCacheRef.current = {};
     phpClassMemberCacheRef.current = {};
-    phpLaravelBindingCacheRef.current = {};
+    phpFrameworkBindingCacheRef.current = {};
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
     setPhpTree(emptyPhpTree());
@@ -2284,7 +2284,7 @@ export function useWorkbenchController(
       lastPhpFileOutlineRefreshKeyRef.current = null;
       phpClassSourcePathCacheRef.current = {};
       phpClassMemberCacheRef.current = {};
-      phpLaravelBindingCacheRef.current = {};
+      phpFrameworkBindingCacheRef.current = {};
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
       autoStartedLanguageServerRootRef.current = null;
@@ -4588,9 +4588,9 @@ export function useWorkbenchController(
     [resolvePhpDeclaredType],
   );
 
-  const resolvePhpLaravelBoundConcrete = useCallback(
+  const resolvePhpFrameworkBoundConcrete = useCallback(
     async (className: string): Promise<string | null> => {
-      if (!isLaravelFrameworkActive || !workspaceRoot) {
+      if (!activePhpFrameworkProviders.length || !workspaceRoot) {
         return null;
       }
 
@@ -4604,11 +4604,11 @@ export function useWorkbenchController(
 
       if (
         Object.prototype.hasOwnProperty.call(
-          phpLaravelBindingCacheRef.current,
+          phpFrameworkBindingCacheRef.current,
           cacheKey,
         )
       ) {
-        return phpLaravelBindingCacheRef.current[cacheKey] ?? null;
+        return phpFrameworkBindingCacheRef.current[cacheKey] ?? null;
       }
 
       let concreteClassName: string | null = null;
@@ -4630,7 +4630,10 @@ export function useWorkbenchController(
         try {
           const content = await readNavigationFileContent(result.path);
 
-          for (const binding of phpLaravelContainerBindingsFromSource(content)) {
+          for (const binding of phpFrameworkContainerBindingsFromSource(
+            content,
+            activePhpFrameworkProviders,
+          )) {
             const abstractClassName = resolvePhpClassReference(
               content,
               binding.abstractClassName,
@@ -4660,15 +4663,15 @@ export function useWorkbenchController(
       }
 
       if (concreteClassName) {
-        phpLaravelBindingCacheRef.current[cacheKey] = concreteClassName;
+        phpFrameworkBindingCacheRef.current[cacheKey] = concreteClassName;
       }
 
       return concreteClassName;
     },
     [
+      activePhpFrameworkProviders,
       readNavigationFileContent,
       resolvePhpClassReference,
-      isLaravelFrameworkActive,
       textSearch,
       workspaceRoot,
     ],
@@ -5016,7 +5019,7 @@ export function useWorkbenchController(
       await collectMethods(className);
 
       const boundConcreteClassName =
-        await resolvePhpLaravelBoundConcrete(className);
+        await resolvePhpFrameworkBoundConcrete(className);
 
       if (boundConcreteClassName) {
         await collectMethods(boundConcreteClassName);
@@ -5026,7 +5029,7 @@ export function useWorkbenchController(
     },
     [
       readPhpClassMembersFromPath,
-      resolvePhpLaravelBoundConcrete,
+      resolvePhpFrameworkBoundConcrete,
       resolvePhpGenericTemplateTypesForInheritedClass,
       resolvePhpGenericTemplateTypesForMixinClass,
       resolvePhpClassSourcePaths,
@@ -5768,7 +5771,7 @@ export function useWorkbenchController(
 
       const resolveBoundConcreteReturnType = async (): Promise<string | null> => {
         const boundConcreteClassName =
-          await resolvePhpLaravelBoundConcrete(normalizedClassName);
+          await resolvePhpFrameworkBoundConcrete(normalizedClassName);
 
         if (
           !boundConcreteClassName ||
@@ -5791,9 +5794,10 @@ export function useWorkbenchController(
       ): Promise<string | null> => {
         const constructedClassName =
           phpNewExpressionClassName(expression) ??
-          (isLaravelFrameworkActive
-            ? phpLaravelContainerExpressionClassName(expression)
-            : null);
+          phpFrameworkContainerExpressionClassName(
+            expression,
+            activePhpFrameworkProviders,
+          );
 
         if (constructedClassName) {
           return resolvePhpClassReference(ownerSource, constructedClassName);
@@ -5824,11 +5828,10 @@ export function useWorkbenchController(
           const constructedReceiverType =
             directReceiverType ??
             phpNewExpressionClassName(methodCall.receiverExpression) ??
-            (isLaravelFrameworkActive
-              ? phpLaravelContainerExpressionClassName(
-                  methodCall.receiverExpression,
-                )
-              : null);
+            phpFrameworkContainerExpressionClassName(
+              methodCall.receiverExpression,
+              activePhpFrameworkProviders,
+            );
           const resolvedReceiverType = constructedReceiverType
             ? resolvePhpClassReference(ownerSource, constructedReceiverType)
             : null;
@@ -5990,7 +5993,7 @@ export function useWorkbenchController(
       activePhpFrameworkProviders,
       isLaravelFrameworkActive,
       readPhpClassMembersFromPath,
-      resolvePhpLaravelBoundConcrete,
+      resolvePhpFrameworkBoundConcrete,
       resolvePhpClassReference,
       resolvePhpMethodDeclaredReturnType,
       resolvePhpClassSourcePaths,
@@ -6391,7 +6394,10 @@ export function useWorkbenchController(
 
         const constructedClassName =
           phpNewExpressionClassName(normalizedModelExpression) ??
-          phpLaravelContainerExpressionClassName(normalizedModelExpression);
+          phpFrameworkContainerExpressionClassName(
+            normalizedModelExpression,
+            activePhpFrameworkProviders,
+          );
 
         if (constructedClassName) {
           return resolvePhpClassReference(source, constructedClassName);
@@ -6517,9 +6523,10 @@ export function useWorkbenchController(
         const constructedReceiverType =
           directReceiverType ??
           phpNewExpressionClassName(methodCall.receiverExpression) ??
-          (isLaravelFrameworkActive
-            ? phpLaravelContainerExpressionClassName(methodCall.receiverExpression)
-            : null);
+          phpFrameworkContainerExpressionClassName(
+            methodCall.receiverExpression,
+            activePhpFrameworkProviders,
+          );
         const receiverType = constructedReceiverType
           ? resolvePhpClassReference(source, constructedReceiverType)
           : null;
@@ -6766,9 +6773,10 @@ export function useWorkbenchController(
         const constructedReceiverType =
           directReceiverType ??
           phpNewExpressionClassName(methodCall.receiverExpression) ??
-          (isLaravelFrameworkActive
-            ? phpLaravelContainerExpressionClassName(methodCall.receiverExpression)
-            : null);
+          phpFrameworkContainerExpressionClassName(
+            methodCall.receiverExpression,
+            activePhpFrameworkProviders,
+          );
         const receiverType = constructedReceiverType
           ? resolvePhpClassReference(source, constructedReceiverType)
           : null;
@@ -6896,9 +6904,10 @@ export function useWorkbenchController(
 
       const constructedClassName =
         phpNewExpressionClassName(expression) ??
-        (isLaravelFrameworkActive
-          ? phpLaravelContainerExpressionClassName(expression)
-          : null);
+        phpFrameworkContainerExpressionClassName(
+          expression,
+          activePhpFrameworkProviders,
+        );
 
       if (constructedClassName) {
         return resolvePhpClassReference(source, constructedClassName);
@@ -7763,7 +7772,7 @@ export function useWorkbenchController(
       }
 
       const boundConcreteClassName =
-        await resolvePhpLaravelBoundConcrete(className);
+        await resolvePhpFrameworkBoundConcrete(className);
 
       return boundConcreteClassName
         ? openMethodInClassHierarchy(boundConcreteClassName)
@@ -7774,7 +7783,7 @@ export function useWorkbenchController(
       openNavigationTarget,
       projectSymbolSearch,
       readNavigationFileContent,
-      resolvePhpLaravelBoundConcrete,
+      resolvePhpFrameworkBoundConcrete,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,

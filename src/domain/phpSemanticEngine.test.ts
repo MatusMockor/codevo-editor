@@ -24,7 +24,10 @@ import {
   phpDeclaredTypeCandidate,
   phpMethodReturnExpressions,
 } from "./phpTypeAnalysis";
-import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "./phpFrameworkProviders";
 
 const laravelOptions = {
   frameworkProviders: [phpLaravelFrameworkProvider],
@@ -177,6 +180,56 @@ class Comment extends Model
         "$this->type",
       ),
     ).toBeNull();
+  });
+
+  it("resolves semantic types through framework provider hooks", () => {
+    const semanticProvider: PhpFrameworkProvider = {
+      id: "semantic-test",
+      semantics: {
+        propertyTypeFromSource: ({ propertyName }) =>
+          propertyName === "publishedAt" ? "DateTimeImmutable" : null,
+        methodCallReturnTypeFromSource: ({ methodName, receiverType }) =>
+          methodName === "fetchPublished" && receiverType === "PostRepository"
+            ? "Domain\\Post"
+            : null,
+      },
+    };
+    const options = { frameworkProviders: [semanticProvider] };
+    const source = `<?php
+namespace App\\Http;
+
+class Controller
+{
+    public function __construct(private PostRepository $posts)
+    {
+    }
+
+    public function show(): void
+    {
+        $post = $this->posts->fetchPublished();
+
+        $post->tit
+        $this->publishedAt->format('c');
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+        options,
+      ),
+    ).toBe("Domain\\Post");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$this->publishedAt"),
+        "$this->publishedAt",
+        options,
+      ),
+    ).toBe("DateTimeImmutable");
   });
 
   it("resolves Laravel repository finder assignments from model return types", () => {

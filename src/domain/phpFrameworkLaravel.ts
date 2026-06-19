@@ -7,6 +7,7 @@ import {
   phpMethodReturnExpressions,
 } from "./phpTypeAnalysis";
 import { phpExtendsClassName, resolvePhpClassName } from "./phpNavigation";
+import { PHP_CLASS_NAME_CAPTURE_PATTERN } from "./phpReceiverExpressions";
 
 const laravelEloquentStaticBuilderMethods = new Set([
   "chunk",
@@ -330,6 +331,11 @@ export interface PhpLaravelDynamicWhereAttributeTarget {
   position: EditorPosition;
 }
 
+export interface PhpLaravelContainerBinding {
+  abstractClassName: string;
+  concreteClassName: string;
+}
+
 export function isLaravelEloquentStaticBuilderMethod(methodName: string): boolean {
   return laravelEloquentStaticBuilderMethods.has(methodName.toLowerCase());
 }
@@ -457,6 +463,55 @@ export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
   return returnTypes
     .map((returnType) => phpLaravelModelTypeFromReturnType(source, returnType))
     .find((returnType): returnType is string => Boolean(returnType)) ?? null;
+}
+
+export function phpLaravelContainerExpressionClassName(
+  expression: string,
+): string | null {
+  const normalized = expression.trim();
+  const match =
+    new RegExp(
+      `^(?:app|resolve|make)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
+    ).exec(normalized) ??
+    new RegExp(
+      `(?:->|::)make\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
+    ).exec(normalized);
+
+  return match?.[1]?.replace(/^\\+/, "") ?? null;
+}
+
+export function phpLaravelContainerBindingsFromSource(
+  source: string,
+): PhpLaravelContainerBinding[] {
+  const bindings: PhpLaravelContainerBinding[] = [];
+  const directBindingPattern = new RegExp(
+    `(?:->|::)(?:bind|singleton|scoped)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\s*,\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class`,
+    "g",
+  );
+  const contextualBindingPattern = new RegExp(
+    `->\\s*needs\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\s*\\)\\s*->\\s*give\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class`,
+    "g",
+  );
+
+  for (const match of source.matchAll(directBindingPattern)) {
+    const abstractClassName = match[1]?.replace(/^\\+/, "");
+    const concreteClassName = match[2]?.replace(/^\\+/, "");
+
+    if (abstractClassName && concreteClassName) {
+      bindings.push({ abstractClassName, concreteClassName });
+    }
+  }
+
+  for (const match of source.matchAll(contextualBindingPattern)) {
+    const abstractClassName = match[1]?.replace(/^\\+/, "");
+    const concreteClassName = match[2]?.replace(/^\\+/, "");
+
+    if (abstractClassName && concreteClassName) {
+      bindings.push({ abstractClassName, concreteClassName });
+    }
+  }
+
+  return bindings;
 }
 
 export function phpLaravelScopeMethodName(scopeName: string): string | null {
