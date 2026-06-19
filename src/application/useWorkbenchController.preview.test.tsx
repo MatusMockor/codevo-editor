@@ -5149,6 +5149,159 @@ class Comment
     ]);
   });
 
+  it("infers model completions from untyped repository body terminal Eloquent finder returns", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\CommentRepository;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepository $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $comment = $this->commentRepository->findOrFail(1);
+        $comment->
+
+        $staticComment = $this->commentRepository->findStaticOrFail(1);
+        $staticComment->get
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Repositories\\CommentRepository",
+          kind: "class",
+          lineNumber: 7,
+          name: "CommentRepository",
+          path: repositoryPath,
+          relativePath: "app/Repositories/CommentRepository.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 5,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryPath) {
+          return `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Comment;
+
+class CommentRepository
+{
+    public function findOrFail(int $id)
+    {
+        return Comment::query()->whereKey($id)->firstOrFail();
+    }
+
+    public function findStaticOrFail(int $id)
+    {
+        return Comment::findOrFail($id);
+    }
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+/**
+ * @property string $body
+ */
+class Comment
+{
+    protected $fillable = ['content'];
+
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->"),
+      ),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "body",
+          parameters: "",
+          returnType: "string",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          kind: "property",
+          name: "content",
+          parameters: "",
+          returnType: "mixed",
+        },
+        {
+          declaringClassName: "App\\Models\\Comment",
+          name: "getContent",
+          parameters: "",
+          returnType: "string",
+        },
+      ]),
+    );
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$staticComment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("offers PHPDoc mixin members on inferred model receivers", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

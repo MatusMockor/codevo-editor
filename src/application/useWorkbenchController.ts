@@ -5480,6 +5480,19 @@ export function useWorkbenchController(
         const methodCall = phpMethodCallExpression(expression);
 
         if (methodCall) {
+          if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
+            const builderModelType =
+              await resolvePhpEloquentBuilderModelTypeRef.current(
+                ownerSource,
+                { column: 1, lineNumber: 1 },
+                methodCall.receiverExpression,
+              );
+
+            if (builderModelType) {
+              return builderModelType;
+            }
+          }
+
           const directReceiverType = phpReceiverExpressionTypeInSource(
             ownerSource,
             { column: 1, lineNumber: 1 },
@@ -5509,6 +5522,13 @@ export function useWorkbenchController(
             ownerSource,
             staticCall.className,
           );
+
+          if (
+            className &&
+            isLaravelEloquentBuilderTerminalModelMethod(staticCall.methodName)
+          ) {
+            return className;
+          }
 
           return className
             ? resolvePhpMethodReturnType(
