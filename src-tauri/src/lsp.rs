@@ -243,12 +243,6 @@ where
         tools: &JavaScriptTypeScriptToolAvailability,
         settings: TypeScriptLanguageServerSettings,
     ) -> LanguageServerPlan {
-        if !is_javascript_typescript_workspace(root) {
-            return unavailable_javascript_typescript_plan(
-                "This workspace does not look like a JavaScript or TypeScript project.",
-            );
-        }
-
         let Some(server) = tools.typescript_language_server.as_ref() else {
             return unavailable_javascript_typescript_plan(
                 "Managed TypeScript language server was not found.",
@@ -578,12 +572,6 @@ fn unavailable_javascript_typescript_plan(message: &str) -> LanguageServerPlan {
     }
 }
 
-fn is_javascript_typescript_workspace(root: &Path) -> bool {
-    ["package.json", "tsconfig.json", "jsconfig.json"]
-        .iter()
-        .any(|file_name| root.join(file_name).is_file())
-}
-
 pub fn file_uri(root: &Path) -> String {
     let path = root
         .canonicalize()
@@ -899,8 +887,8 @@ mod tests {
     }
 
     #[test]
-    fn non_javascript_typescript_workspace_reports_unavailable_plan() {
-        let root = create_temp_dir("lsp-typescript-unavailable");
+    fn plain_workspace_gets_typescript_inferred_project_plan() {
+        let root = create_temp_dir("lsp-typescript-inferred-project");
         let planner = TypeScriptLanguageServerPlanner::new();
         let plan = planner.plan(
             &root,
@@ -912,9 +900,9 @@ mod tests {
             plan.provider,
             LanguageServerProvider::TypeScriptLanguageServer
         ));
-        assert!(matches!(plan.status, LanguageServerPlanStatus::Unavailable));
-        assert!(plan.command.is_none());
-        assert!(plan.initialize_request.is_none());
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
+        assert!(plan.command.is_some());
+        assert!(plan.initialize_request.is_some());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
