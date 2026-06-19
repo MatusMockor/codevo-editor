@@ -3966,29 +3966,40 @@ export function useWorkbenchController(
         return;
       }
 
+      const requestedRoot = workspaceRoot;
+
       try {
         const edit =
           await javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles(
-            workspaceRoot,
+            requestedRoot,
             oldPath,
             newPath,
           );
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
 
         if (!edit) {
           return;
         }
 
-        const rootEdit = workspaceEditForRoot(edit, workspaceRoot);
+        const rootEdit = workspaceEditForRoot(edit, requestedRoot);
         const openDocumentPaths = Object.keys(documentsRef.current);
         const editedOpenPaths = applyWorkspaceEditToOpenDocuments(
           rootEdit,
-          workspaceRoot,
+          requestedRoot,
         );
         const changedClosedFiles = await workspaceFiles.applyWorkspaceEdit(
-          workspaceRoot,
+          requestedRoot,
           rootEdit,
           openDocumentPaths,
         );
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
         const changedFiles = changedClosedFiles + editedOpenPaths.length;
 
         if (changedFiles > 0) {
@@ -4021,13 +4032,23 @@ export function useWorkbenchController(
         return;
       }
 
+      const requestedRoot = workspaceRoot;
+
       try {
         await javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles(
-          workspaceRoot,
+          requestedRoot,
           oldPath,
           newPath,
         );
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
       } catch (error) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
         reportError("JavaScript/TypeScript Rename", error);
       }
     },
@@ -4056,12 +4077,18 @@ export function useWorkbenchController(
         return;
       }
 
+      const requestedRoot = workspaceRoot;
+
       try {
         await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles(
-          workspaceRoot,
+          requestedRoot,
           relevantChanges,
         );
       } catch (error) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
         reportError("JavaScript/TypeScript", error);
       }
     },
@@ -9015,6 +9042,11 @@ export function useWorkbenchController(
       return;
     }
 
+    const requestedRoot = workspaceRoot;
+    if (!requestedRoot) {
+      return;
+    }
+
     const nextName = prompter.prompt("Rename file", activeDocument.name);
 
     if (!nextName || nextName === activeDocument.name) {
@@ -9029,12 +9061,25 @@ export function useWorkbenchController(
         await applyJavaScriptTypeScriptRenameEdits(activeDocument.path, nextPath);
       }
 
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       await workspaceFiles.renamePath(activeDocument.path, nextPath);
       if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
         await notifyJavaScriptTypeScriptFileRenamed(activeDocument.path, nextPath);
       }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       await syncClosedDocument(activeDocument);
       await syncClosedJavaScriptTypeScriptDocument(activeDocument);
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
 
       setDocuments((current) => {
         const currentDocument = current[activeDocument.path] ?? activeDocument;
@@ -9068,6 +9113,7 @@ export function useWorkbenchController(
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
     workspaceFiles,
+    workspaceRoot,
   ]);
 
   const deleteActiveDocument = useCallback(async () => {
@@ -10553,11 +10599,12 @@ export function useWorkbenchController(
         return [];
       }
 
+      const requestedRoot = workspaceRoot;
       const searches: Array<Promise<ProjectSymbolSearchResult[]>> = [];
 
       if (shouldIndexWorkspace(intelligenceMode)) {
         searches.push(
-          projectSymbolSearch.searchProjectSymbols(workspaceRoot, query, limit),
+          projectSymbolSearch.searchProjectSymbols(requestedRoot, query, limit),
         );
       }
 
@@ -10570,12 +10617,12 @@ export function useWorkbenchController(
       ) {
         searches.push(
           javaScriptTypeScriptLanguageServerFeaturesGateway
-            .workspaceSymbols(workspaceRoot, query)
+            .workspaceSymbols(requestedRoot, query)
             .then((symbols) =>
               symbols
                 .map((symbol) =>
                   projectSymbolFromLanguageServerWorkspaceSymbol(
-                    workspaceRoot,
+                    requestedRoot,
                     symbol,
                   ),
                 )
@@ -10585,6 +10632,15 @@ export function useWorkbenchController(
                 ),
             )
             .catch((error) => {
+              if (
+                !workspaceRootKeysEqual(
+                  currentWorkspaceRootRef.current,
+                  requestedRoot,
+                )
+              ) {
+                return [];
+              }
+
               reportError("JavaScript/TypeScript Workspace Symbols", error);
               return [];
             }),
@@ -10592,6 +10648,10 @@ export function useWorkbenchController(
       }
 
       const results = (await Promise.all(searches)).flat();
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return [];
+      }
+
       return uniqueProjectSymbols(results).slice(0, limit);
     },
     [

@@ -49,10 +49,13 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentBuilderMethodName("firstOrNew")).toBe(true);
   });
 
-  it("treats withRelations as a Laravel Eloquent builder method", () => {
-    expect(isLaravelEloquentStaticBuilderMethod("withRelations")).toBe(true);
-    expect(isLaravelEloquentBuilderFluentMethod("withRelations")).toBe(true);
-    expect(isLaravelEloquentBuilderMethodName("withRelations")).toBe(true);
+  it("treats local scopes as model-specific Laravel magic, not global builder methods", () => {
+    expect(isLaravelEloquentStaticBuilderMethod("withRelations")).toBe(false);
+    expect(isLaravelEloquentBuilderFluentMethod("withRelations")).toBe(false);
+    expect(isLaravelEloquentBuilderMethodName("withRelations")).toBe(false);
+    expect(isLaravelEloquentStaticBuilderMethod("withTrashed")).toBe(true);
+    expect(isLaravelEloquentBuilderFluentMethod("withTrashed")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("withTrashed")).toBe(true);
   });
 
   it("detects member access completion context", () => {

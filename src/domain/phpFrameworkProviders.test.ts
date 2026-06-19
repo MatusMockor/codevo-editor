@@ -77,18 +77,18 @@ class Comment extends Model
     );
   });
 
-  it("recognizes Laravel static builder methods only through the Laravel provider", () => {
+  it("recognizes only global Laravel static builder methods through the Laravel provider", () => {
     const source = `<?php
 use App\\Models\\Album;
 `;
 
     expect(
-      isKnownPhpFrameworkStaticMethod(source, "Album", "withRelations", [
+      isKnownPhpFrameworkStaticMethod(source, "Album", "whereNull", [
         phpLaravelFrameworkProvider,
       ]),
     ).toBe(true);
     expect(
-      isKnownPhpFrameworkStaticMethod(source, "Album", "withRelations", []),
+      isKnownPhpFrameworkStaticMethod(source, "Album", "whereNull", []),
     ).toBe(false);
     expect(
       isKnownPhpFrameworkStaticMethod(
@@ -96,9 +96,14 @@ use App\\Models\\Album;
 use App\\Services\\FooService;
 `,
         "FooService",
-        "withRelations",
+        "whereNull",
         [phpLaravelFrameworkProvider],
       ),
+    ).toBe(false);
+    expect(
+      isKnownPhpFrameworkStaticMethod(source, "Album", "withRelations", [
+        phpLaravelFrameworkProvider,
+      ]),
     ).toBe(false);
   });
 

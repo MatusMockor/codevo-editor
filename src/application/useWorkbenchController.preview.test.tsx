@@ -30,6 +30,7 @@ import type {
   EditorPosition,
   LanguageServerFeaturesGateway,
   LanguageServerRange,
+  LanguageServerWorkspaceEdit,
 } from "../domain/languageServerFeatures";
 import {
   emptyLanguageServerCapabilities,
@@ -2569,6 +2570,89 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("drops stale JavaScript TypeScript rename edits after switching project tabs", async () => {
+    const oldPath = "/workspace-a/src/User.ts";
+    const newPath = "/workspace-a/src/Account.ts";
+    const consumerPath = "/workspace-a/src/Consumer.ts";
+    const renameEdit = createDeferred<LanguageServerWorkspaceEdit | null>();
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).mockImplementationOnce(async () => renameEdit.promise);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        willRenameFiles: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 26,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    let renameResolved = false;
+    const renamePromise = act(async () => {
+      await command?.run();
+      renameResolved = true;
+    });
+    await flushAsyncTurns(4);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    renameEdit.resolve({
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    });
+    await renamePromise;
+
+    expect(renameResolved).toBe(true);
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).toHaveBeenCalledWith("/workspace-a", oldPath, newPath);
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).not.toHaveBeenCalled();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
   it("notifies the JavaScript TypeScript service when a JS TS file is created", async () => {
     const newPath = "/workspace/src/NewWidget.ts";
     const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
@@ -3672,6 +3756,74 @@ describe("useWorkbenchController preview tabs", () => {
       lineNumber: 5,
       relativePath: "src/userService.ts",
     });
+  });
+
+  it("drops stale JavaScript and TypeScript workspace symbol errors after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 27,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).toHaveBeenCalledWith("/workspace-a", "User");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.reject(new Error("stale workspace symbols"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale workspace symbols");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript Workspace Symbols" &&
+          notice.message.includes("stale workspace symbols"),
+      ),
+    ).toBe(false);
   });
 
   it("uses the project index for go to definition when the language server is unavailable", async () => {

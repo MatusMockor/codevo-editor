@@ -11,7 +11,7 @@ import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
 
 describe("filterPhpLanguageServerDiagnostics", () => {
-  it("suppresses unresolved Laravel Eloquent static builder methods", () => {
+  it("suppresses unresolved global Laravel Eloquent static builder methods", () => {
     const source = `<?php
 use App\\Models\\Album;
 
@@ -33,7 +33,13 @@ $album = Album::withRelations()->findOrFail($id);
       ], {
         frameworkProviders: [phpLaravelFrameworkProvider],
       }),
-    ).toEqual([]);
+    ).toEqual([
+      diagnostic({
+        character: 16,
+        line: 4,
+        message: "Method App\\Models\\Album::withRelations() does not exist",
+      }),
+    ]);
   });
 
   it("keeps Laravel static builder method diagnostics for non-model receivers", () => {
