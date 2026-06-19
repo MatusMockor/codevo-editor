@@ -17,6 +17,7 @@ import {
 } from "../domain/phpMethodCompletions";
 import { phpVariableCompletionsAt } from "../domain/phpScopeCompletions";
 import type { EditorDocument } from "../domain/workspace";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -835,13 +836,7 @@ function featureRequestContext(
     return null;
   }
 
-  const status = context.getRuntimeStatus();
-
-  if (status?.kind !== "running") {
-    return null;
-  }
-
-  if (!canUseLanguageServerFeature(status.capabilities, feature)) {
+  if (!canUseRuntimeFeatureForRoot(context, rootPath, feature)) {
     return null;
   }
 
@@ -850,6 +845,20 @@ function featureRequestContext(
     position: toLanguageServerTextDocumentPosition(path, position),
     rootPath,
   };
+}
+
+function canUseRuntimeFeatureForRoot(
+  context: LanguageServerMonacoProviderContext,
+  rootPath: string,
+  feature: "completion" | "hover",
+): boolean {
+  const status = context.getRuntimeStatus();
+
+  return (
+    status?.kind === "running" &&
+    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath)) &&
+    canUseLanguageServerFeature(status.capabilities, feature)
+  );
 }
 
 function modelPath(model: MonacoModel): string | null {

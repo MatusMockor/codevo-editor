@@ -1323,6 +1323,8 @@ fn text_document_did_open(
     document: TextDocumentContent,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
+
     let factory = LspTextDocumentSyncNotificationFactory;
     registry.send_notification(&root_path, &factory.did_open(&document))
 }
@@ -1333,6 +1335,8 @@ fn text_document_did_change(
     document: TextDocumentContent,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
+
     let factory = LspTextDocumentSyncNotificationFactory;
     registry.send_notification(&root_path, &factory.did_change(&document))
 }
@@ -1343,6 +1347,8 @@ fn text_document_did_save(
     document: TextDocumentContent,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
+
     let factory = LspTextDocumentSyncNotificationFactory;
     registry.send_notification(&root_path, &factory.did_save(&document))
 }
@@ -1353,6 +1359,8 @@ fn text_document_did_close(
     document: TextDocumentPath,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_text_document_path_in_workspace(&root_path, &document)?;
+
     let factory = LspTextDocumentSyncNotificationFactory;
     registry.send_notification(&root_path, &factory.did_close(&document))
 }
@@ -1411,6 +1419,8 @@ fn text_document_hover(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerHover>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1444,6 +1454,8 @@ fn text_document_completion(
     context: Option<LanguageServerCompletionContext>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionList, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&TextDocumentCompletion { position, context });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1483,6 +1495,8 @@ fn text_document_completion_resolve(
     item: LanguageServerCompletionItem,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionItem, String> {
+    ensure_lsp_completion_item_payload_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_completion_item(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1517,6 +1531,8 @@ fn text_document_definition(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1549,6 +1565,8 @@ fn text_document_implementation(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.implementation(&position);
     let result = match registry.send_request(&root_path, &request.method, request.params)? {
@@ -1583,6 +1601,8 @@ fn text_document_type_definition(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_definition(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1615,6 +1635,8 @@ fn text_document_references(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.references(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1647,6 +1669,8 @@ fn text_document_prepare_rename(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerPrepareRenameResult>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_rename(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1680,6 +1704,8 @@ fn text_document_rename(
     new_name: String,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.rename(&TextDocumentRename {
         character: position.character,
@@ -1725,6 +1751,8 @@ fn text_document_code_actions(
     context: LanguageServerCodeActionContext,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCodeAction>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1759,6 +1787,8 @@ fn text_document_code_action_resolve(
     action: LanguageServerCodeAction,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeAction, String> {
+    ensure_lsp_code_action_payload_in_workspace(&root_path, &action)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_action(&action);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1793,6 +1823,8 @@ fn text_document_code_lenses(
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCodeLens>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_lenses(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1827,6 +1859,8 @@ fn text_document_code_lens_resolve(
     lens: LanguageServerCodeLens,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeLens, String> {
+    ensure_lsp_code_lens_payload_in_workspace(&root_path, &lens)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_lens(&lens);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1861,6 +1895,8 @@ fn text_document_prepare_call_hierarchy(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCallHierarchyItem>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_call_hierarchy(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1893,6 +1929,8 @@ fn text_document_incoming_calls(
     item: LanguageServerCallHierarchyItem,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerIncomingCall>, String> {
+    ensure_lsp_call_hierarchy_item_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.incoming_calls(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1925,6 +1963,8 @@ fn text_document_outgoing_calls(
     item: LanguageServerCallHierarchyItem,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerOutgoingCall>, String> {
+    ensure_lsp_call_hierarchy_item_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.outgoing_calls(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1957,6 +1997,8 @@ fn text_document_prepare_type_hierarchy(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_type_hierarchy(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1989,6 +2031,8 @@ fn text_document_type_hierarchy_supertypes(
     item: LanguageServerTypeHierarchyItem,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    ensure_lsp_type_hierarchy_item_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_hierarchy_supertypes(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2021,6 +2065,8 @@ fn text_document_type_hierarchy_subtypes(
     item: LanguageServerTypeHierarchyItem,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    ensure_lsp_type_hierarchy_item_in_workspace(&root_path, &item)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_hierarchy_subtypes(&item);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2053,6 +2099,8 @@ fn language_server_execute_command(
     command: LanguageServerCodeActionCommand,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_command_payload_paths_in_workspace(&root_path, &command)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.execute_command(&command);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2068,6 +2116,8 @@ fn javascript_typescript_language_server_execute_command(
     command: LanguageServerCodeActionCommand,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_command_payload_paths_in_workspace(&root_path, &command)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.execute_command(&command);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2173,6 +2223,8 @@ fn text_document_formatting(
     options: LanguageServerFormattingOptions,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTextEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.formatting(&TextDocumentFormatting { path, options });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2209,6 +2261,8 @@ fn text_document_on_type_formatting(
     options: LanguageServerFormattingOptions,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTextEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.on_type_formatting(&TextDocumentOnTypeFormatting {
         path,
@@ -2256,6 +2310,8 @@ fn text_document_range_formatting(
     options: LanguageServerFormattingOptions,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTextEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.range_formatting(&TextDocumentRangeFormatting {
         path,
@@ -2299,6 +2355,8 @@ fn text_document_inlay_hints(
     range: LanguageServerRange,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerInlayHint>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.inlay_hints(&TextDocumentInlayHintRange { path, range });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2332,6 +2390,8 @@ fn text_document_document_symbols(
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerDocumentSymbol>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_symbols(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2364,6 +2424,8 @@ fn text_document_document_highlights(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerDocumentHighlight>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_highlights(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2396,6 +2458,8 @@ fn text_document_document_links(
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerDocumentLink>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_links(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2428,6 +2492,8 @@ fn text_document_document_link_resolve(
     link: LanguageServerDocumentLink,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerDocumentLink, String> {
+    ensure_lsp_document_link_payload_in_workspace(&root_path, &link)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_document_link(&link);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2462,6 +2528,8 @@ fn text_document_folding_ranges(
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerFoldingRange>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.folding_ranges(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2525,6 +2593,8 @@ fn text_document_selection_ranges(
     positions: Vec<LanguageServerPosition>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerSelectionRange>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.selection_ranges(&TextDocumentSelectionRange { path, positions });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2558,6 +2628,8 @@ fn text_document_linked_editing_ranges(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerLinkedEditingRanges>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.linked_editing_ranges(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2598,6 +2670,8 @@ fn text_document_semantic_tokens(
     path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerSemanticTokens>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.semantic_tokens(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2630,6 +2704,8 @@ fn text_document_signature_help(
     position: TextDocumentPosition,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerSignatureHelp>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.signature_help(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2755,15 +2831,18 @@ mod tests {
         ensure_lsp_call_hierarchy_item_in_workspace, ensure_lsp_code_action_payload_in_workspace,
         ensure_lsp_code_lens_payload_in_workspace, ensure_lsp_completion_item_payload_in_workspace,
         ensure_lsp_document_link_payload_in_workspace, ensure_lsp_path_in_workspace,
-        ensure_lsp_type_hierarchy_item_in_workspace, ensure_path_in_workspace, normalize_path,
-        path_from_file_uri, workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
+        ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
+        ensure_path_in_workspace, normalize_path, path_from_file_uri, workspace_root_for_disposal,
+        workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
+    use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeLens,
         LanguageServerCompletionItem, LanguageServerDocumentLink, LanguageServerPosition,
         LanguageServerRange, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
-        LanguageServerWorkspaceEdit,
+        LanguageServerWorkspaceEdit, TextDocumentPosition,
     };
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
@@ -2817,6 +2896,46 @@ mod tests {
         assert!(ensure_lsp_path_in_workspace(
             &path_string(&root),
             &path_string(&sibling.join("App.ts"))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn lsp_path_guard_rejects_php_document_sync_and_feature_paths_outside_workspace_root() {
+        let root = temp_workspace("php-lsp-guard-root");
+        let outside = temp_workspace("php-lsp-guard-outside");
+        let source_directory = root.join("src");
+        fs::create_dir_all(&source_directory).expect("source directory");
+        fs::write(source_directory.join("User.php"), "<?php").expect("source file");
+        fs::write(outside.join("Secret.php"), "<?php").expect("outside file");
+        let root_path = path_string(&root);
+        let inside_path = path_string(&source_directory.join("User.php"));
+        let outside_path = path_string(&outside.join("Secret.php"));
+
+        assert!(ensure_lsp_text_document_content_in_workspace(
+            &root_path,
+            &php_document_content(&inside_path)
+        )
+        .is_ok());
+        assert!(ensure_lsp_text_document_content_in_workspace(
+            &root_path,
+            &php_document_content(&outside_path)
+        )
+        .is_err());
+        assert!(ensure_lsp_text_document_path_in_workspace(
+            &root_path,
+            &TextDocumentPath {
+                path: outside_path.clone()
+            }
+        )
+        .is_err());
+        assert!(ensure_lsp_position_in_workspace(
+            &root_path,
+            &TextDocumentPosition {
+                path: outside_path,
+                line: 0,
+                character: 0,
+            }
         )
         .is_err());
     }
@@ -3080,6 +3199,15 @@ mod tests {
 
     fn path_string(path: &Path) -> String {
         path.to_string_lossy().to_string()
+    }
+
+    fn php_document_content(path: &str) -> TextDocumentContent {
+        TextDocumentContent {
+            path: path.to_string(),
+            language_id: "php".to_string(),
+            version: 1,
+            text: "<?php".to_string(),
+        }
     }
 
     fn completion_item(data: Value) -> LanguageServerCompletionItem {

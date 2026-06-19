@@ -52,6 +52,37 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.hover).not.toHaveBeenCalled();
   });
 
+  it("does not request hover when the PHP runtime status belongs to another workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      hover: { contents: "**Other project**" },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        path: "/workspace/src/User.php",
+      },
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      getWorkspaceRoot: () => "/workspace",
+      runtimeStatus: {
+        ...runningStatus(),
+        rootPath: "/other",
+      },
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.hoverProvider.provideHover(
+        model({ path: "/workspace/src/User.php" }),
+        position(),
+      ),
+    ).resolves.toBeNull();
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.hover).not.toHaveBeenCalled();
+  });
+
   it("flushes pending changes and maps hover responses", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -142,6 +173,64 @@ describe("registerLanguageServerMonacoProviders", () => {
         path: "/project/src/User.php",
       },
     );
+  });
+
+  it("does not request completion when the PHP runtime status belongs to another workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "class",
+            documentation: "A user",
+            insertText: "User",
+            kind: 7,
+            label: "User",
+          },
+        ],
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        path: "/workspace/src/User.php",
+      },
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      getWorkspaceRoot: () => "/workspace",
+      runtimeStatus: {
+        ...runningStatus(),
+        rootPath: "/other",
+      },
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({ path: "/workspace/src/User.php" }),
+        position(),
+      ),
+    ).resolves.toEqual({
+      suggestions: [
+        {
+          detail: "local variable",
+          insertText: "$user",
+          kind: 6,
+          label: "$user",
+          range: {
+            endColumn: 5,
+            endLineNumber: 11,
+            startColumn: 1,
+            startLineNumber: 11,
+          },
+          sortText: "0_0000",
+        },
+      ],
+    });
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.completion).not.toHaveBeenCalled();
   });
 
   it("inserts parentheses and parameter cursor for LSP method completions with parameters", async () => {
@@ -1067,6 +1156,7 @@ function providerContext(
     activeDocument: EditorDocument | null;
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
+    getWorkspaceRoot(): string | null;
     providePhpMethodCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodCompletions"]
     >;
@@ -1085,7 +1175,7 @@ function providerContext(
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: () => activeDocument,
     getRuntimeStatus: () => runtimeStatus,
-    getWorkspaceRoot: () => "/project",
+    getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
     reportError: vi.fn(),
