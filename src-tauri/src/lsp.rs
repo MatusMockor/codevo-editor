@@ -399,6 +399,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                                     ]
                                 }
                             },
+                            "disabledSupport": true,
                             "dynamicRegistration": false,
                             "isPreferredSupport": true,
                             "resolveSupport": {
@@ -756,6 +757,10 @@ mod tests {
         assert_eq!(
             request.params["initializationOptions"]["preferences"]
                 ["provideRefactorNotApplicableReason"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["codeAction"]["disabledSupport"],
             true
         );
         assert_eq!(

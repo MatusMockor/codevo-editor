@@ -645,6 +645,17 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       kind: "quickfix",
       title: "Fix all unused identifiers",
     };
+    const disabledRefactorAction = {
+      command: null,
+      data: null,
+      disabled: {
+        reason: "Cannot extract from this selection.",
+      },
+      edit: null,
+      isPreferred: false,
+      kind: "refactor.extract",
+      title: "Extract function",
+    };
     const gateway = featuresGateway({
       codeActions: [
         {
@@ -656,6 +667,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           title: "Rename symbol",
         },
         commandOnlyAction,
+        disabledRefactorAction,
       ],
       executeCommandEdit: workspaceEdit("file:///project/src/user.ts", "CommandEdit"),
       formatting: [
@@ -865,6 +877,11 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         }),
         kind: "quickfix",
         title: "Fix all unused identifiers",
+      }),
+      expect.objectContaining({
+        disabled: "Cannot extract from this selection.",
+        kind: "refactor.extract",
+        title: "Extract function",
       }),
     ]);
 

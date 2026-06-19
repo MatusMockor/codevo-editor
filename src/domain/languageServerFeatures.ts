@@ -223,6 +223,7 @@ export interface LanguageServerCodeActionContext {
 export interface LanguageServerCodeAction {
   command: LanguageServerCodeActionCommand | null;
   data: unknown | null;
+  disabled?: { reason: string } | null;
   edit: LanguageServerWorkspaceEdit | null;
   isPreferred: boolean;
   kind: string | null;

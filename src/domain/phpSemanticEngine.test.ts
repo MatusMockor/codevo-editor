@@ -572,6 +572,14 @@ Album::query()->whereHasMorph('commentable', [Post::class], function ($morphQuer
     $morphQuery->ord
 });
 
+Album::query()->whereHasMorph('taggable', Post::class, function ($singleMorphQuery): void {
+    $singleMorphQuery->ord
+});
+
+Album::query()->orWhereHasMorph('commentable', [Post::class, Video::class, '*'], function ($multipleMorphQuery): void {
+    $multipleMorphQuery->ord
+});
+
 Album::whereDoesntHaveMorph(
     relation: 'authorable',
     types: [User::class],
@@ -610,6 +618,33 @@ Album::with(relations: ['tracks' => function ($namedEagerQuery): void {
     ).toEqual({
       methodName: "whereHasMorph",
       modelClassName: null,
+      morphTypeClassNames: ["Post"],
+      receiverExpression: "Album::query()",
+      relationName: "commentable",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$singleMorphQuery->ord"),
+        "singleMorphQuery",
+      ),
+    ).toEqual({
+      methodName: "whereHasMorph",
+      modelClassName: null,
+      morphTypeClassNames: ["Post"],
+      receiverExpression: "Album::query()",
+      relationName: "taggable",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$multipleMorphQuery->ord"),
+        "multipleMorphQuery",
+      ),
+    ).toEqual({
+      methodName: "orWhereHasMorph",
+      modelClassName: null,
+      morphTypeClassNames: ["Post", "Video"],
       receiverExpression: "Album::query()",
       relationName: "commentable",
     });
@@ -622,6 +657,7 @@ Album::with(relations: ['tracks' => function ($namedEagerQuery): void {
     ).toEqual({
       methodName: "whereDoesntHaveMorph",
       modelClassName: "Album",
+      morphTypeClassNames: ["User"],
       receiverExpression: null,
       relationName: "authorable",
     });

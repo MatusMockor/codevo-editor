@@ -76,6 +76,7 @@ export interface PhpDocGenericInheritance {
 export interface PhpLaravelQueryCallbackContext {
   methodName: string;
   modelClassName: string | null;
+  morphTypeClassNames?: string[];
   receiverExpression: string | null;
   relationName: string | null;
 }
@@ -212,6 +213,9 @@ export function phpLaravelQueryCallbackContextForVariable(
         methodCallContext.receiverOrClassName,
       ),
       relationName: methodCallContext.relationName,
+      ...(methodCallContext.morphTypeClassNames
+        ? { morphTypeClassNames: methodCallContext.morphTypeClassNames }
+        : {}),
     };
   }
 
@@ -225,6 +229,9 @@ export function phpLaravelQueryCallbackContextForVariable(
     return {
       methodName: staticCallContext.methodName,
       modelClassName: staticCallContext.receiverOrClassName.replace(/^\\+/, ""),
+      ...(staticCallContext.morphTypeClassNames
+        ? { morphTypeClassNames: staticCallContext.morphTypeClassNames }
+        : {}),
       receiverExpression: null,
       relationName: staticCallContext.relationName,
     };
@@ -823,11 +830,13 @@ function phpCallbackMethodCallContext(
   pattern: RegExp,
 ): {
   methodName: string;
+  morphTypeClassNames?: string[];
   receiverOrClassName: string;
   relationName: string | null;
 } | null {
   let context: {
     methodName: string;
+    morphTypeClassNames?: string[];
     receiverOrClassName: string;
     relationName: string | null;
     startOffset: number;
@@ -863,8 +872,17 @@ function phpCallbackMethodCallContext(
       continue;
     }
 
+    const morphTypeClassNames = phpMorphTypeClassNamesBeforeCallbackArgument(
+      methodName,
+      source,
+      openOffset + 1,
+      closeOffset,
+      callbackStartOffset,
+    );
+
     context = {
       methodName,
+      ...(morphTypeClassNames ? { morphTypeClassNames } : {}),
       receiverOrClassName,
       relationName: phpRelationNameBeforeCallbackArgument(
         source,
@@ -879,10 +897,107 @@ function phpCallbackMethodCallContext(
   return context
     ? {
         methodName: context.methodName,
+        ...(context.morphTypeClassNames
+          ? { morphTypeClassNames: context.morphTypeClassNames }
+          : {}),
         receiverOrClassName: context.receiverOrClassName,
         relationName: context.relationName,
       }
     : null;
+}
+
+function phpMorphTypeClassNamesBeforeCallbackArgument(
+  methodName: string,
+  source: string,
+  argumentsStartOffset: number,
+  argumentsEndOffset: number,
+  callbackStartOffset: number,
+): string[] | undefined {
+  if (!/where(?:Has|DoesntHave)Morph$/i.test(methodName)) {
+    return undefined;
+  }
+
+  const argumentsSource = source.slice(argumentsStartOffset, argumentsEndOffset);
+  const callbackRelativeOffset = callbackStartOffset - argumentsStartOffset;
+  const argumentsList = splitPhpArgumentsWithOffsets(argumentsSource);
+  const callbackArgumentIndex = argumentsList.findIndex(
+    (argument) =>
+      argument.start <= callbackRelativeOffset &&
+      callbackRelativeOffset <= argument.end,
+  );
+
+  if (callbackArgumentIndex < 0) {
+    return undefined;
+  }
+
+  for (let index = callbackArgumentIndex - 1; index >= 0; index -= 1) {
+    const namedArgument = phpNamedArgument(argumentsList[index]?.value ?? "");
+
+    if (namedArgument?.name.toLowerCase() !== "types") {
+      continue;
+    }
+
+    return phpMorphTypeClassNamesFromExpression(namedArgument.value);
+  }
+
+  if (callbackArgumentIndex <= 1) {
+    return undefined;
+  }
+
+  const positionalTypesArgument = argumentsList[1]?.value;
+
+  return positionalTypesArgument
+    ? phpMorphTypeClassNamesFromExpression(
+        phpNamedArgumentValue(positionalTypesArgument),
+      )
+    : undefined;
+}
+
+function phpMorphTypeClassNamesFromExpression(
+  expression: string,
+): string[] | undefined {
+  const normalizedExpression = expression.trim();
+
+  if (!normalizedExpression || phpStringLiteralValue(normalizedExpression) === "*") {
+    return [];
+  }
+
+  const directClassName = phpClassConstantClassName(normalizedExpression);
+
+  if (directClassName) {
+    return [directClassName];
+  }
+
+  if (normalizedExpression.startsWith("[") && normalizedExpression.endsWith("]")) {
+    const entries = splitPhpArgumentsWithOffsets(
+      normalizedExpression.slice(1, -1),
+    );
+    const classNames = entries.flatMap((entry) => {
+      const value = phpNamedArgumentValue(entry.value);
+
+      if (phpStringLiteralValue(value) === "*") {
+        return [];
+      }
+
+      const className = phpClassConstantClassName(value);
+
+      return className ? [className] : [];
+    });
+
+    return classNames;
+  }
+
+  return undefined;
+}
+
+function phpClassConstantClassName(expression: string): string | null {
+  const match = new RegExp(
+    String.raw`^\s*` +
+      PHP_CLASS_NAME_CAPTURE_PATTERN +
+      String.raw`\s*::\s*class\s*$`,
+  ).exec(expression);
+
+  return match?.[1]?.replace(/^\\+/, "") ?? null;
 }
 
 function phpRelationNameBeforeCallbackArgument(
@@ -1130,11 +1245,21 @@ function splitPhpArgumentsWithOffsets(
 }
 
 function phpNamedArgumentValue(argument: string): string {
+  const match = phpNamedArgument(argument);
+
+  return match?.value ?? argument.trim();
+}
+
+function phpNamedArgument(
+  argument: string,
+): { name: string; value: string } | null {
   const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!:)\s*([\s\S]+)$/.exec(
     argument.trim(),
   );
 
-  return match?.[2]?.trim() ?? argument.trim();
+  return match?.[1] && match[2] !== undefined
+    ? { name: match[1], value: match[2].trim() }
+    : null;
 }
 
 function phpStringLiteralValue(expression: string): string | null {

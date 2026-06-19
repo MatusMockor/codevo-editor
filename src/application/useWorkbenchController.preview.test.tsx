@@ -8812,6 +8812,7 @@ class Builder
   it("infers Laravel relation query callback builders", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumPath = "/workspace/app/Models/Album.php";
+    const postPath = "/workspace/app/Models/Post.php";
     const trackPath = "/workspace/app/Models/Track.php";
     const builderPath =
       "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
@@ -8819,6 +8820,7 @@ class Builder
 namespace App\\Http\\Controllers;
 
 use App\\Models\\Album;
+use App\\Models\\Post;
 
 class AlbumController
 {
@@ -8832,6 +8834,13 @@ class AlbumController
         });
 
         Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->pub);
+
+        Album::query()->whereHasMorph('commentable', [Post::class], function ($morphQuery): void {
+            $morphQuery->pub
+            $morphQuery->published()->ord
+            $post = $morphQuery->first();
+            $post->get
+        });
     }
 }
 `;
@@ -8854,6 +8863,16 @@ class AlbumController
         {
           column: 7,
           containerName: null,
+          fullyQualifiedName: "App\\Models\\Post",
+          kind: "class",
+          lineNumber: 7,
+          name: "Post",
+          path: postPath,
+          relativePath: "app/Models/Post.php",
+        },
+        {
+          column: 7,
+          containerName: null,
           fullyQualifiedName: "App\\Models\\Track",
           kind: "class",
           lineNumber: 7,
@@ -8872,6 +8891,7 @@ class AlbumController
 namespace App\\Models;
 
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
 
 class Album
 {
@@ -8880,6 +8900,26 @@ class Album
         $related = Track::class;
         return $this->hasMany($related);
     }
+
+    public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+`;
+        }
+
+        if (path === postPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Post
+{
+    public function getTitle(): string {}
+
+    public function scopePublished(Builder $query): Builder {}
 }
 `;
         }
@@ -8977,6 +9017,45 @@ class Builder
         name: "published",
         parameters: "",
         returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$morphQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Post",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$morphQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$post->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Post",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
       },
     ]);
   });

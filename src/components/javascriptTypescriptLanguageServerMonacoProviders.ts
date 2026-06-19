@@ -1890,7 +1890,7 @@ function toMonacoCodeAction(
   action: LanguageServerCodeAction,
   context: Monaco.languages.CodeActionContext,
 ): Monaco.languages.CodeAction[] {
-  if (!action.edit && !action.command && action.data == null) {
+  if (!action.edit && !action.command && action.data == null && !action.disabled) {
     return [];
   }
 
@@ -1921,6 +1921,11 @@ function toMonacoCodeAction(
             action.edit,
             rootPath,
           ),
+        }
+      : {}),
+    ...(action.disabled
+      ? {
+          disabled: action.disabled.reason,
         }
       : {}),
     isPreferred: action.isPreferred,

@@ -117,9 +117,17 @@ pub struct LanguageServerCodeAction {
     pub kind: Option<String>,
     #[serde(default)]
     pub is_preferred: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<LanguageServerCodeActionDisabled>,
     pub edit: Option<LanguageServerWorkspaceEdit>,
     pub command: Option<LanguageServerCodeActionCommand>,
     pub data: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerCodeActionDisabled {
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1734,6 +1742,9 @@ fn parse_code_action_item(value: &Value) -> Option<LanguageServerCodeAction> {
             .get("isPreferred")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        disabled: value
+            .get("disabled")
+            .and_then(|disabled| serde_json::from_value(disabled.clone()).ok()),
         edit,
         command,
         data: value.get("data").cloned(),
@@ -2748,10 +2759,36 @@ mod tests {
         assert!(actions[0].is_preferred);
         assert_eq!(actions[0].command, None);
         assert_eq!(actions[0].data, None);
+        assert_eq!(actions[0].disabled, None);
         assert_eq!(
             actions[0].edit.as_ref().expect("edit").changes["file:///tmp/User.ts"][0].new_text,
             "import { User } from './user';\n"
         );
+    }
+
+    #[test]
+    fn parses_disabled_code_actions_without_edits_or_commands() {
+        let actions = parse_code_action_result(&json!([
+            {
+                "title": "Extract function",
+                "kind": "refactor.extract",
+                "disabled": {
+                    "reason": "Cannot extract from this selection."
+                }
+            }
+        ]))
+        .expect("code actions");
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Extract function");
+        assert_eq!(actions[0].kind.as_deref(), Some("refactor.extract"));
+        assert_eq!(
+            actions[0].disabled.as_ref().expect("disabled").reason,
+            "Cannot extract from this selection."
+        );
+        assert_eq!(actions[0].edit, None);
+        assert_eq!(actions[0].command, None);
+        assert_eq!(actions[0].data, None);
     }
 
     #[test]
@@ -3306,6 +3343,7 @@ mod tests {
             title: "Fix all unused identifiers".to_string(),
             kind: Some("quickfix".to_string()),
             is_preferred: false,
+            disabled: None,
             edit: None,
             command: Some(LanguageServerCodeActionCommand {
                 title: "Fix all unused identifiers".to_string(),

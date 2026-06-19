@@ -6424,6 +6424,18 @@ export function useWorkbenchController(
         );
 
         if (callbackContext) {
+          const callbackMorphModelType =
+            callbackContext.morphTypeClassNames?.length === 1
+              ? resolvePhpClassReference(
+                  source,
+                  callbackContext.morphTypeClassNames[0] ?? "",
+                )
+              : null;
+
+          if (callbackMorphModelType) {
+            return callbackMorphModelType;
+          }
+
           const callbackHostModelType = callbackContext.modelClassName
             ? resolvePhpClassReference(source, callbackContext.modelClassName)
             : callbackContext.receiverExpression
