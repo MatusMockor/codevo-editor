@@ -138,6 +138,35 @@ export function phpReceiverExpressionTypeInSource(
     return phpThisPropertyType(source, thisPropertyMatch[1], options);
   }
 
+  const methodCall = phpMethodCallExpression(normalizedExpression);
+
+  if (methodCall) {
+    return phpFrameworkMethodCallReturnTypeFromSource(
+      source,
+      methodCall.methodName,
+      phpReceiverExpressionTypeInSource(
+        source,
+        position,
+        methodCall.receiverExpression,
+        options,
+      ),
+      methodCall.receiverExpression,
+      options.frameworkProviders,
+    );
+  }
+
+  const staticCall = phpStaticCallExpression(normalizedExpression);
+
+  if (staticCall) {
+    return phpFrameworkMethodCallReturnTypeFromSource(
+      source,
+      staticCall.methodName,
+      staticCall.className,
+      normalizedExpression,
+      options.frameworkProviders,
+    );
+  }
+
   const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
     normalizedExpression,
   );
@@ -312,7 +341,19 @@ function phpFrameworkMethodCallAssignmentReturnType(
   const methodCall = phpMethodCallExpression(assignmentExpression);
 
   if (!methodCall) {
-    return null;
+    const staticCall = phpStaticCallExpression(assignmentExpression);
+
+    if (!staticCall) {
+      return null;
+    }
+
+    return phpFrameworkMethodCallReturnTypeFromSource(
+      source,
+      staticCall.methodName,
+      staticCall.className,
+      assignmentExpression,
+      options.frameworkProviders,
+    );
   }
 
   if (
@@ -332,6 +373,7 @@ function phpFrameworkMethodCallAssignmentReturnType(
       methodCall.receiverExpression,
       options,
     ),
+    methodCall.receiverExpression,
     options.frameworkProviders,
   );
 }

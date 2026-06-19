@@ -175,6 +175,19 @@ const laravelEloquentBuilderCollectionMethods = new Set([
   "get",
 ]);
 
+const laravelEloquentBuilderNonModelTerminalMethods = new Set([
+  "chunk",
+  "count",
+  "doesntexist",
+  "exists",
+  "forcedelete",
+  "insert",
+  "paginate",
+  "pluck",
+  "restore",
+  "simplepaginate",
+]);
+
 const laravelEloquentModelBuilderFactoryMethods = new Set([
   "newmodelquery",
   "newquery",
@@ -354,6 +367,18 @@ export function isLaravelEloquentBuilderCollectionMethod(
   return laravelEloquentBuilderCollectionMethods.has(methodName.toLowerCase());
 }
 
+function isLaravelEloquentBuilderPreservingMethod(methodName: string): boolean {
+  const normalizedMethodName = methodName.toLowerCase();
+
+  return (
+    (laravelEloquentBuilderFluentMethods.has(normalizedMethodName) ||
+      laravelEloquentModelBuilderFactoryMethods.has(normalizedMethodName)) &&
+    !laravelEloquentBuilderTerminalModelMethods.has(normalizedMethodName) &&
+    !laravelEloquentBuilderCollectionMethods.has(normalizedMethodName) &&
+    !laravelEloquentBuilderNonModelTerminalMethods.has(normalizedMethodName)
+  );
+}
+
 export function isLaravelEloquentModelBuilderFactoryMethod(
   methodName: string,
 ): boolean {
@@ -470,6 +495,32 @@ export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
   return returnTypes
     .map((returnType) => phpLaravelModelTypeFromReturnType(source, returnType))
     .find((returnType): returnType is string => Boolean(returnType)) ?? null;
+}
+
+export function phpLaravelMethodCallReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+  receiverExpression: string | null,
+): string | null {
+  return (
+    phpLaravelRepositoryMethodModelReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+    ) ??
+    phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+    ) ??
+    phpLaravelEloquentMethodCallReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+      receiverExpression,
+    )
+  );
 }
 
 export function phpLaravelContainerExpressionClassName(
@@ -839,6 +890,333 @@ function phpLaravelRepositoryPhpDocMethodReturnTypes(
       return returnTypes;
     },
   );
+}
+
+function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+): string | null {
+  if (!isLaravelRepositoryType(receiverType)) {
+    return null;
+  }
+
+  const receiverClassName = phpLaravelResolvedClassName(source, receiverType ?? "");
+  const genericModelType = [
+    ...phpLaravelRepositoryDeclaredMethodReturnTypes(
+      source,
+      methodName,
+      receiverClassName,
+    ),
+    ...phpLaravelRepositoryPhpDocMethodReturnTypes(
+      source,
+      methodName,
+      receiverClassName,
+    ),
+  ]
+    .map((returnType) =>
+      phpLaravelResolvedModelTypeCandidate(
+        source,
+        phpLaravelEloquentBuilderModelTypeCandidate(source, returnType),
+      ),
+    )
+    .find((modelType): modelType is string => Boolean(modelType));
+
+  if (genericModelType) {
+    return phpLaravelEloquentBuilderType(genericModelType);
+  }
+
+  const expressionModelType = phpLaravelRepositoryMethodReturnExpressions(
+    source,
+    methodName,
+    receiverClassName,
+  )
+    .map((expression) =>
+      phpLaravelEloquentBuilderModelTypeFromExpression(source, expression),
+    )
+    .find((modelType): modelType is string => Boolean(modelType));
+
+  return expressionModelType
+    ? phpLaravelEloquentBuilderType(expressionModelType)
+    : null;
+}
+
+function phpLaravelRepositoryMethodReturnExpressions(
+  source: string,
+  methodName: string,
+  receiverClassName: string | null,
+): string[] {
+  return phpLaravelRepositoryTypeBodyRanges(source, receiverClassName).flatMap(
+    (range) =>
+      phpMethodReturnExpressions(
+        source.slice(range.bodyStart, range.bodyEnd),
+        methodName,
+      ),
+  );
+}
+
+function phpLaravelEloquentMethodCallReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+  receiverExpression: string | null,
+): string | null {
+  const builderModelType =
+    phpLaravelEloquentBuilderModelTypeFromReceiverType(source, receiverType) ??
+    phpLaravelEloquentBuilderModelTypeFromExpression(
+      source,
+      receiverExpression ?? "",
+    );
+
+  if (builderModelType) {
+    return phpLaravelEloquentBuilderCallReturnType(
+      source,
+      builderModelType,
+      methodName,
+    );
+  }
+
+  const modelType = phpLaravelStaticModelReceiverType(source, receiverType);
+
+  return modelType
+    ? phpLaravelStaticModelCallReturnType(source, modelType, methodName)
+    : null;
+}
+
+function phpLaravelEloquentBuilderModelTypeFromReceiverType(
+  source: string,
+  receiverType: string | null,
+): string | null {
+  return phpLaravelResolvedModelTypeCandidate(
+    source,
+    phpLaravelEloquentBuilderModelTypeCandidate(source, receiverType),
+  );
+}
+
+function phpLaravelStaticModelReceiverType(
+  source: string,
+  receiverType: string | null,
+): string | null {
+  return phpLaravelResolvedModelTypeCandidate(source, receiverType);
+}
+
+function phpLaravelResolvedModelTypeCandidate(
+  source: string,
+  typeName: string | null,
+): string | null {
+  const resolvedClassName = phpLaravelResolvedClassName(source, typeName ?? "");
+
+  return resolvedClassName && isLaravelModelType(resolvedClassName)
+    ? resolvedClassName
+    : null;
+}
+
+function phpLaravelStaticModelCallReturnType(
+  source: string,
+  modelType: string,
+  methodName: string,
+): string | null {
+  return phpLaravelEloquentBuilderCallReturnType(source, modelType, methodName);
+}
+
+function phpLaravelEloquentBuilderCallReturnType(
+  source: string,
+  modelType: string,
+  methodName: string,
+): string | null {
+  if (isLaravelEloquentBuilderTerminalModelMethod(methodName)) {
+    return modelType;
+  }
+
+  if (
+    phpLaravelEloquentBuilderCallPreservesBuilder(source, modelType, methodName)
+  ) {
+    return phpLaravelEloquentBuilderType(modelType);
+  }
+
+  return null;
+}
+
+function phpLaravelEloquentBuilderCallPreservesBuilder(
+  source: string,
+  modelType: string,
+  methodName: string,
+): boolean {
+  return (
+    isLaravelEloquentBuilderPreservingMethod(methodName) ||
+    phpLaravelModelHasLocalScope(source, modelType, methodName)
+  );
+}
+
+function phpLaravelEloquentBuilderType(modelType: string): string {
+  return `Illuminate\\Database\\Eloquent\\Builder<${modelType}>`;
+}
+
+interface PhpLaravelStaticCallChain {
+  className: string;
+  methodNames: string[];
+}
+
+function phpLaravelEloquentBuilderModelTypeFromExpression(
+  source: string,
+  expression: string,
+): string | null {
+  const chain = phpLaravelStaticCallChain(expression);
+  const modelType = phpLaravelResolvedModelTypeCandidate(
+    source,
+    chain?.className ?? null,
+  );
+
+  if (!chain || !modelType) {
+    return null;
+  }
+
+  for (const methodName of chain.methodNames) {
+    if (
+      !phpLaravelEloquentBuilderCallPreservesBuilder(
+        source,
+        modelType,
+        methodName,
+      )
+    ) {
+      return null;
+    }
+  }
+
+  return modelType;
+}
+
+function phpLaravelStaticCallChain(
+  expression: string,
+): PhpLaravelStaticCallChain | null {
+  const normalized = expression
+    .trim()
+    .replace(/\s*->\s*/g, "->")
+    .replace(/\s*::\s*/g, "::");
+  const staticCallPattern = new RegExp(
+    `^${PHP_CLASS_NAME_CAPTURE_PATTERN}::([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
+  );
+  const staticMatch = staticCallPattern.exec(normalized);
+
+  if (!staticMatch?.[1] || !staticMatch[2]) {
+    return null;
+  }
+
+  const methodNames = [staticMatch[2]];
+  let openOffset = staticMatch[0].lastIndexOf("(");
+  let closeOffset = matchingPairOffset(normalized, openOffset, "(", ")");
+
+  if (closeOffset === null) {
+    return null;
+  }
+
+  let offset = closeOffset + 1;
+
+  while (offset < normalized.length) {
+    const rest = normalized.slice(offset);
+
+    if (!rest.trim()) {
+      return {
+        className: staticMatch[1].replace(/^\\+/, ""),
+        methodNames,
+      };
+    }
+
+    const memberMatch = /^\s*->([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(rest);
+
+    if (!memberMatch?.[1]) {
+      return null;
+    }
+
+    openOffset = offset + (memberMatch[0].lastIndexOf("(") ?? -1);
+    closeOffset = matchingPairOffset(normalized, openOffset, "(", ")");
+
+    if (openOffset < offset || closeOffset === null) {
+      return null;
+    }
+
+    methodNames.push(memberMatch[1]);
+    offset = closeOffset + 1;
+  }
+
+  return {
+    className: staticMatch[1].replace(/^\\+/, ""),
+    methodNames,
+  };
+}
+
+function phpLaravelModelHasLocalScope(
+  source: string,
+  modelType: string,
+  scopeName: string,
+): boolean {
+  const scopeMethodName = phpLaravelScopeMethodName(scopeName);
+
+  if (!scopeMethodName) {
+    return false;
+  }
+
+  return phpLaravelClassBodyRanges(source, modelType).some((range) => {
+    const body = maskPhpStringsAndComments(
+      source.slice(range.bodyStart, range.bodyEnd),
+    );
+    const pattern = new RegExp(
+      `(?:^|\\n)\\s*((?:(?:abstract|final|private|protected|public|static)\\s+)*)function\\s+&?\\s*${escapeRegExp(
+        scopeMethodName,
+      )}\\s*\\(`,
+      "g",
+    );
+
+    for (const match of body.matchAll(pattern)) {
+      const modifiers = (match[1] ?? "").toLowerCase();
+
+      if (!/\b(?:private|static)\b/.test(modifiers)) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+}
+
+function phpLaravelClassBodyRanges(
+  source: string,
+  className: string,
+): Array<{ bodyEnd: number; bodyStart: number }> {
+  const ranges: Array<{ bodyEnd: number; bodyStart: number }> = [];
+  const targetClassName = normalizedLaravelClassName(className);
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /\b(?:class|interface|trait)\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\{/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const candidateClassName = match[1] ?? "";
+    const resolvedClassName = phpLaravelResolvedClassName(
+      source,
+      candidateClassName,
+    );
+
+    if (
+      normalizedLaravelClassName(resolvedClassName ?? candidateClassName) !==
+      targetClassName
+    ) {
+      continue;
+    }
+
+    const openOffset = (match.index ?? 0) + match[0].lastIndexOf("{");
+    const closeOffset = matchingPairOffset(source, openOffset, "{", "}");
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    ranges.push({
+      bodyEnd: closeOffset,
+      bodyStart: openOffset + 1,
+    });
+  }
+
+  return ranges;
 }
 
 function phpLaravelRepositoryTypeBodyRanges(

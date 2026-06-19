@@ -411,6 +411,96 @@ class AlbumRepository
     ).toBe("App\\Models\\Album");
   });
 
+  it("resolves Laravel model assignments from Eloquent builder chains", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Album;
+
+class AlbumController
+{
+    public function show(): void
+    {
+        $album = Album::query()
+            ->whereNull('parent_id')
+            ->firstOrFail();
+        $query = Album::query()->whereKey(1);
+        $latest = $query->first();
+
+        $album->tit
+        $query->whe
+        $latest->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$query->whe"),
+        "query",
+        laravelOptions,
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$latest->tit"),
+        "latest",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
+  it("resolves Laravel repository builder chains from model return expressions", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class AlbumRepository
+{
+    public function query(): Builder
+    {
+        return Album::query()->withRelations();
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->query()->whereKey($id)->firstOrFail();
+
+        $album->tit
+    }
+}
+
+class Album extends Model
+{
+    public function scopeWithRelations(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
   it("does not infer Laravel repository assignments without an active Laravel provider", () => {
     const source = `<?php
 namespace App\\Repositories;

@@ -632,6 +632,17 @@ export function useWorkbenchController(
     ]);
   }, []);
 
+  const reportErrorForActiveWorkspaceRoot = useCallback(
+    (rootPath: string | null | undefined, source: string, error: unknown) => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return;
+      }
+
+      reportError(source, error);
+    },
+    [reportError],
+  );
+
   const reportLanguageServerError = useCallback((error: unknown) => {
     const nextMessage = String(error);
     setMessage(nextMessage);
@@ -991,11 +1002,15 @@ export function useWorkbenchController(
           setJavaScriptTypeScriptLanguageServerPlan(null);
         }
 
-        reportError("JavaScript/TypeScript", error);
+        reportErrorForActiveWorkspaceRoot(
+          rootPath,
+          "JavaScript/TypeScript",
+          error,
+        );
         return null;
       }
     },
-    [languageServerGateway, reportError],
+    [languageServerGateway, reportErrorForActiveWorkspaceRoot],
   );
 
   const cacheJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
@@ -1028,9 +1043,18 @@ export function useWorkbenchController(
 
       void javaScriptTypeScriptLanguageServerRuntimeGateway
         .stop(rootPath)
-        .catch((error) => reportError("JavaScript/TypeScript", error));
+        .catch((error) =>
+          reportErrorForActiveWorkspaceRoot(
+            rootPath,
+            "JavaScript/TypeScript",
+            error,
+          ),
+        );
     },
-    [javaScriptTypeScriptLanguageServerRuntimeGateway, reportError],
+    [
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      reportErrorForActiveWorkspaceRoot,
+    ],
   );
 
   const handleLanguageServerRuntimeStatus = useCallback(
@@ -1417,14 +1441,18 @@ export function useWorkbenchController(
 
       return status;
     } catch (error) {
-      reportError("JavaScript/TypeScript", error);
+      reportErrorForActiveWorkspaceRoot(
+        targetRootPath,
+        "JavaScript/TypeScript",
+        error,
+      );
       return null;
     }
   }, [
     cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     resetJavaScriptTypeScriptLanguageServerDocuments,
   ]);
 
@@ -1591,7 +1619,11 @@ export function useWorkbenchController(
       } catch (error) {
         javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(syncKey);
         delete javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey];
-        reportError("JavaScript/TypeScript", error);
+        reportErrorForActiveWorkspaceRoot(
+          rootPath,
+          "JavaScript/TypeScript",
+          error,
+        );
       }
     },
     [
@@ -1599,7 +1631,7 @@ export function useWorkbenchController(
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       nextJavaScriptTypeScriptDocumentVersion,
-      reportError,
+      reportErrorForActiveWorkspaceRoot,
     ],
   );
 
@@ -1761,7 +1793,13 @@ export function useWorkbenchController(
               rootPath,
               pendingDocument,
             ),
-          ).catch((error) => reportError("JavaScript/TypeScript", error));
+          ).catch((error) =>
+            reportErrorForActiveWorkspaceRoot(
+              rootPath,
+              "JavaScript/TypeScript",
+              error,
+            ),
+          );
         }, 150);
     },
     [
@@ -1770,7 +1808,7 @@ export function useWorkbenchController(
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       nextJavaScriptTypeScriptDocumentVersion,
-      reportError,
+      reportErrorForActiveWorkspaceRoot,
     ],
   );
 
@@ -1931,14 +1969,18 @@ export function useWorkbenchController(
           ),
         );
       } catch (error) {
-        reportError("JavaScript/TypeScript", error);
+        reportErrorForActiveWorkspaceRoot(
+          rootPath,
+          "JavaScript/TypeScript",
+          error,
+        );
       }
     },
     [
       enqueueJavaScriptTypeScriptDocumentSync,
       flushPendingJavaScriptTypeScriptDocumentChange,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-      reportError,
+      reportErrorForActiveWorkspaceRoot,
     ],
   );
 
@@ -2010,14 +2052,18 @@ export function useWorkbenchController(
           ),
         );
       } catch (error) {
-        reportError("JavaScript/TypeScript", error);
+        reportErrorForActiveWorkspaceRoot(
+          rootPath,
+          "JavaScript/TypeScript",
+          error,
+        );
       }
     },
     [
       clearJavaScriptTypeScriptDocumentChangeTimer,
       enqueueJavaScriptTypeScriptDocumentSync,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-      reportError,
+      reportErrorForActiveWorkspaceRoot,
     ],
   );
 
@@ -2094,7 +2140,11 @@ export function useWorkbenchController(
               ),
             );
           } catch (error) {
-            reportError("JavaScript/TypeScript", error);
+            reportErrorForActiveWorkspaceRoot(
+              rootPath,
+              "JavaScript/TypeScript",
+              error,
+            );
           }
         }),
       );
@@ -2103,7 +2153,7 @@ export function useWorkbenchController(
       clearJavaScriptTypeScriptDocumentChangeTimer,
       enqueueJavaScriptTypeScriptDocumentSync,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
-      reportError,
+      reportErrorForActiveWorkspaceRoot,
     ],
   );
 
@@ -4006,6 +4056,10 @@ export function useWorkbenchController(
           setMessage(`Updated ${changedFiles} import path${changedFiles === 1 ? "" : "s"}.`);
         }
       } catch (error) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
         reportError("JavaScript/TypeScript Rename", error);
       }
     },
@@ -4575,6 +4629,45 @@ export function useWorkbenchController(
       return resolvePhpClassName(source, classReference);
     },
     [],
+  );
+
+  const isKnownPhpNamespaceRootClassName = useCallback(
+    (className: string): boolean => {
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+      if (!workspaceDescriptor?.php || !normalizedClassName.includes("\\")) {
+        return false;
+      }
+
+      const namespaceRoots = [
+        ...workspaceDescriptor.php.psr4Roots,
+        ...workspaceDescriptor.php.packages.flatMap((composerPackage) =>
+          composerPackage.psr4Roots,
+        ),
+      ];
+
+      return namespaceRoots.some((root) => {
+        const namespace = root.namespace.trim().replace(/^\\+/, "");
+
+        return Boolean(namespace && normalizedClassName.startsWith(namespace));
+      });
+    },
+    [workspaceDescriptor],
+  );
+
+  const resolvePhpSemanticTypeReference = useCallback(
+    (source: string, typeName: string | null): string | null => {
+      const candidate = typeName ? phpDeclaredTypeCandidate(typeName) : null;
+
+      if (!candidate) {
+        return null;
+      }
+
+      return isKnownPhpNamespaceRootClassName(candidate)
+        ? candidate
+        : resolvePhpClassReference(source, candidate);
+    },
+    [isKnownPhpNamespaceRootClassName, resolvePhpClassReference],
   );
 
   const resolvePhpDeclaredType = useCallback(
@@ -6882,7 +6975,7 @@ export function useWorkbenchController(
       );
 
       if (directType) {
-        return resolvePhpClassReference(source, directType);
+        return resolvePhpSemanticTypeReference(source, directType);
       }
 
       const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
@@ -8864,6 +8957,10 @@ export function useWorkbenchController(
       });
       setMessage(null);
     } catch (error) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       reportError("Call Hierarchy", error);
     }
   }, [
@@ -8967,6 +9064,10 @@ export function useWorkbenchController(
       });
       setMessage(null);
     } catch (error) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       reportError("Type Hierarchy", error);
     }
   }, [
@@ -9379,13 +9480,18 @@ export function useWorkbenchController(
       return;
     }
 
+    const requestedRoot = workspaceRoot;
     autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
-    await stopJavaScriptTypeScriptLanguageServerRuntime(workspaceRoot);
+    await stopJavaScriptTypeScriptLanguageServerRuntime(requestedRoot);
 
     const plan = await refreshJavaScriptTypeScriptLanguageServerPlan(
-      workspaceRoot,
+      requestedRoot,
       currentSettings.javaScriptTypeScriptVersion,
     );
+
+    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      return;
+    }
 
     if (plan?.status !== "ready") {
       setMessage(plan?.message ?? "JavaScript/TypeScript service is unavailable.");
@@ -9394,7 +9500,7 @@ export function useWorkbenchController(
 
     try {
       const status =
-        await javaScriptTypeScriptLanguageServerRuntimeGateway.start(workspaceRoot, {
+        await javaScriptTypeScriptLanguageServerRuntimeGateway.start(requestedRoot, {
           autoImportsEnabled: currentSettings.javaScriptTypeScriptAutoImports,
           codeLensEnabled: currentSettings.javaScriptTypeScriptCodeLens,
           inlayHintsEnabled: currentSettings.javaScriptTypeScriptInlayHints,
@@ -9402,16 +9508,25 @@ export function useWorkbenchController(
             currentSettings.javaScriptTypeScriptVersion,
           validationEnabled: currentSettings.javaScriptTypeScriptValidation,
         });
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       handleJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
       setMessage("JavaScript/TypeScript service restarted.");
     } catch (error) {
-      reportError("JavaScript/TypeScript", error);
+      reportErrorForActiveWorkspaceRoot(
+        requestedRoot,
+        "JavaScript/TypeScript",
+        error,
+      );
     }
   }, [
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     refreshJavaScriptTypeScriptLanguageServerPlan,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     stopJavaScriptTypeScriptLanguageServerRuntime,
     workspaceRoot,
   ]);
@@ -9422,11 +9537,17 @@ export function useWorkbenchController(
       return;
     }
 
+    const requestedRoot = workspaceRoot;
+
     try {
       const logPath =
         await javaScriptTypeScriptLanguageServerRuntimeGateway.openLog(
-          workspaceRoot,
+          requestedRoot,
         );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
 
       setMessage(
         logPath
@@ -9434,11 +9555,15 @@ export function useWorkbenchController(
           : "JavaScript/TypeScript service log is unavailable in this runtime.",
       );
     } catch (error) {
-      reportError("JavaScript/TypeScript", error);
+      reportErrorForActiveWorkspaceRoot(
+        requestedRoot,
+        "JavaScript/TypeScript",
+        error,
+      );
     }
   }, [
     javaScriptTypeScriptLanguageServerRuntimeGateway,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     workspaceRoot,
   ]);
 
@@ -10163,9 +10288,10 @@ export function useWorkbenchController(
       return;
     }
 
-    autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = workspaceRoot;
+    const requestedRoot = workspaceRoot;
+    autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = requestedRoot;
     javaScriptTypeScriptLanguageServerRuntimeGateway
-      .start(workspaceRoot, {
+      .start(requestedRoot, {
         autoImportsEnabled: workspaceSettings.javaScriptTypeScriptAutoImports,
         codeLensEnabled: workspaceSettings.javaScriptTypeScriptCodeLens,
         inlayHintsEnabled: workspaceSettings.javaScriptTypeScriptInlayHints,
@@ -10173,15 +10299,27 @@ export function useWorkbenchController(
           workspaceSettings.javaScriptTypeScriptVersion,
         validationEnabled: workspaceSettings.javaScriptTypeScriptValidation,
       })
-      .then(handleJavaScriptTypeScriptLanguageServerRuntimeStatus)
-      .catch((error) => reportError("JavaScript/TypeScript", error));
+      .then((status) => {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
+        handleJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+      })
+      .catch((error) =>
+        reportErrorForActiveWorkspaceRoot(
+          requestedRoot,
+          "JavaScript/TypeScript",
+          error,
+        ),
+      );
   }, [
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerPlan,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     shouldAutoStartJavaScriptTypeScriptLanguageServer,
     workspaceSettings.javaScriptTypeScriptAutoImports,
     workspaceSettings.javaScriptTypeScriptCodeLens,

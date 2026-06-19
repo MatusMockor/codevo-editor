@@ -186,6 +186,42 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("drops stale TypeScript provider errors after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const completion =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>
+      >();
+    const reportError = vi.fn();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+        reportError,
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const completionPromise = completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    completion.reject(new Error("stale completion"));
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
   it("does not request TypeScript completions after switching project tabs during document sync", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";

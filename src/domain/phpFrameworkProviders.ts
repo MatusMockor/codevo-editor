@@ -3,10 +3,10 @@ import {
   isLaravelEloquentStaticBuilderReceiver,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
+  phpLaravelMethodCallReturnTypeFromSource,
   phpLaravelModelAttributeClassTypeFromSource,
   phpLaravelModelAttributeCompletionsFromSource,
   phpLaravelRelationPropertyCompletionsFromSource,
-  phpLaravelRepositoryMethodModelReturnTypeFromSource,
 } from "./phpFrameworkLaravel";
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
 import type { PhpProjectDescriptor } from "./workspace";
@@ -29,6 +29,7 @@ export interface PhpFrameworkPropertyTypeContext {
 
 export interface PhpFrameworkMethodCallReturnTypeContext {
   methodName: string;
+  receiverExpression: string | null;
   receiverType: string | null;
   source: string;
 }
@@ -91,11 +92,17 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   semantics: {
     propertyTypeFromSource: ({ propertyName, source }) =>
       phpLaravelModelAttributeClassTypeFromSource(source, propertyName),
-    methodCallReturnTypeFromSource: ({ methodName, receiverType, source }) =>
-      phpLaravelRepositoryMethodModelReturnTypeFromSource(
+    methodCallReturnTypeFromSource: ({
+      methodName,
+      receiverExpression,
+      receiverType,
+      source,
+    }) =>
+      phpLaravelMethodCallReturnTypeFromSource(
         source,
         methodName,
         receiverType,
+        receiverExpression,
       ),
     containerExpressionClassName: ({ expression }) =>
       phpLaravelContainerExpressionClassName(expression),
@@ -183,11 +190,13 @@ export function phpFrameworkMethodCallReturnTypeFromSource(
   source: string,
   methodName: string,
   receiverType: string | null,
+  receiverExpression: string | null,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
 ): string | null {
   for (const provider of providers) {
     const returnType = provider.semantics?.methodCallReturnTypeFromSource?.({
       methodName,
+      receiverExpression,
       receiverType,
       source,
     });

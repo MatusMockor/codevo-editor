@@ -3505,6 +3505,89 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("drops stale JavaScript and TypeScript call hierarchy errors after switching project tabs", async () => {
+    const path = "/workspace-a/src/userService.ts";
+    const prepareCallHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareCallHierarchy"]>
+        >
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 28,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockImplementationOnce(async () => prepareCallHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => "export function loadUser() {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 17,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    const commandPromise = act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+      commandResolved = true;
+    });
+    await flushAsyncTurns(4);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy,
+    ).toHaveBeenCalledWith("/workspace-a", {
+      character: 16,
+      line: 0,
+      path,
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    prepareCallHierarchy.reject(new Error("stale call hierarchy"));
+    await commandPromise;
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale call hierarchy");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Call Hierarchy" &&
+          notice.message.includes("stale call hierarchy"),
+      ),
+    ).toBe(false);
+  });
+
   it("opens JavaScript and TypeScript type hierarchy from command palette actions", async () => {
     const path = "/workspace/src/user.ts";
     const subtypePath = "/workspace/src/adminUser.ts";

@@ -190,7 +190,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           applyWorkspaceEditToOpenModels(monaco, edit, payload.rootPath);
         }
       } catch (error) {
-        context.reportError(error);
+        reportErrorForActiveRoot(context, payload.rootPath, error);
       }
     },
   });
@@ -457,7 +457,7 @@ async function provideHover(
 
     return hover ? { contents: [{ value: hover.contents }] } : null;
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -518,7 +518,7 @@ async function provideCompletionItems(
       }),
     };
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return { suggestions: [] };
   }
 }
@@ -573,7 +573,7 @@ async function resolveCompletionItem(
       ),
     };
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, backedItem.__workspaceRoot, error);
     return item;
   }
 }
@@ -606,7 +606,7 @@ async function provideDefinition(
 
     return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -644,7 +644,7 @@ async function provideImplementation(
 
     return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -677,7 +677,7 @@ async function provideTypeDefinition(
 
     return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -710,7 +710,7 @@ async function provideSignatureHelp(
 
     return signatureHelp ? toMonacoSignatureHelp(signatureHelp) : null;
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -743,7 +743,7 @@ async function provideReferences(
 
     return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -783,7 +783,7 @@ async function provideDocumentHighlights(
       toMonacoDocumentHighlight(monaco, highlight),
     );
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -820,7 +820,7 @@ async function provideDocumentLinks(
       ),
     };
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return emptyLinksList();
   }
 }
@@ -855,7 +855,7 @@ async function resolveDocumentLink(
       ...toMonacoDocumentLink(monaco, backedLink.__workspaceRoot, resolved),
     };
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, backedLink.__workspaceRoot, error);
     return link;
   }
 }
@@ -887,7 +887,7 @@ async function provideFoldingRanges(
 
     return ranges.map((range) => toMonacoFoldingRange(monaco, range));
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -929,7 +929,7 @@ async function provideRenameEdits(
         )
       : null;
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -968,7 +968,7 @@ async function provideSelectionRanges(
       flattenSelectionRange(monaco, selectionRange),
     );
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -999,7 +999,7 @@ async function provideDocumentSemanticTokens(
 
     return toMonacoSemanticTokens(tokens);
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -1037,7 +1037,7 @@ async function provideLinkedEditingRanges(
 
     return toMonacoLinkedEditingRanges(monaco, ranges);
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
 }
@@ -1131,7 +1131,7 @@ async function provideCodeActions(
       dispose: () => undefined,
     };
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return emptyCodeActionList();
   }
 }
@@ -1178,7 +1178,7 @@ async function resolveCodeAction(
 
     return mapped ? { ...action, ...mapped } : action;
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, backedAction.__workspaceRoot, error);
     return action;
   }
 }
@@ -1215,7 +1215,7 @@ async function provideCodeLenses(
       dispose: () => undefined,
     };
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return emptyCodeLensList();
   }
 }
@@ -1250,7 +1250,7 @@ async function resolveCodeLens(
       ...toMonacoCodeLens(monaco, backedCodeLens.__workspaceRoot, resolved),
     };
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, backedCodeLens.__workspaceRoot, error);
     return codeLens;
   }
 }
@@ -1284,7 +1284,7 @@ async function provideDocumentFormattingEdits(
 
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return [];
   }
 }
@@ -1320,7 +1320,7 @@ async function provideDocumentRangeFormattingEdits(
 
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return [];
   }
 }
@@ -1361,7 +1361,7 @@ async function provideOnTypeFormattingEdits(
 
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return [];
   }
 }
@@ -1398,7 +1398,7 @@ async function provideInlayHints(
       dispose: () => undefined,
     };
   } catch (error) {
-    context.reportError(error);
+    reportErrorForActiveRoot(context, request.rootPath, error);
     return emptyInlayHintList();
   }
 }
@@ -1513,6 +1513,18 @@ function isStoredWorkspaceRootActive(
   const activeRootPath = context.getWorkspaceRoot?.() ?? null;
 
   return !activeRootPath || workspaceRootKeysEqual(activeRootPath, rootPath);
+}
+
+function reportErrorForActiveRoot(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  rootPath: string,
+  error: unknown,
+): void {
+  if (!isStoredWorkspaceRootActive(context, rootPath)) {
+    return;
+  }
+
+  context.reportError(error);
 }
 
 function defaultRenameLocation(

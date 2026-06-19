@@ -16,6 +16,7 @@ import {
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelMethodCallReturnTypeFromSource,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
 import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
@@ -56,6 +57,56 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentStaticBuilderMethod("withTrashed")).toBe(true);
     expect(isLaravelEloquentBuilderFluentMethod("withTrashed")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("withTrashed")).toBe(true);
+  });
+
+  it("infers Laravel builder return types without global local-scope leakage", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Album extends Model
+{
+    public function scopeWithRelations(Builder $query): Builder
+    {
+        return $query;
+    }
+}
+`;
+
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "query",
+        "Album",
+        "Album::query()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "withRelations",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        "Album::query()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "withRelations",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Track>",
+        null,
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "count",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        null,
+      ),
+    ).toBeNull();
   });
 
   it("detects member access completion context", () => {
