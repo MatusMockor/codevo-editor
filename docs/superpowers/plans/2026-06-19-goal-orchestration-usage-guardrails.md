@@ -12,7 +12,7 @@ Move Codevo Editor toward two product targets without losing work or looping aft
 This is an execution estimate, not a completion claim:
 
 - JavaScript/TypeScript Basic mode: about 75-85% toward a VS Code-like daily workflow. The managed TypeScript language-server runtime, workspace isolation, navigation, completions, diagnostics, code actions, symbols, hierarchy, settings, and inferred workspace planning are in place. Remaining risk is mostly exact VS Code parity, real-project UI QA, and edge cases around tsserver behavior.
-- PHP IDE mode: about 45-60% toward PhpStorm-like Laravel/OOP assistance. The provider architecture, Laravel gating, receiver inference, local scopes, Eloquent/builder helpers, snippets, and workspace-aware routing are in place. Remaining work is a deeper semantic engine: richer symbol table, stronger type resolver, trait/context-aware diagnostics, framework plugins, and real Laravel project QA.
+- PHP IDE mode: about 55-70% toward PhpStorm-like Laravel/OOP assistance. The provider architecture, Laravel gating, receiver inference, local scopes, Eloquent/builder helpers, snippets, workspace-aware routing, contextual trait diagnostic filtering, richer model metadata, dynamic relations, scope completions, and multiline navigation are in place. Remaining work is a deeper semantic engine: richer cross-file symbol table, stronger type resolver for polymorphic/framework edge cases, more framework plugins, and real Laravel project QA.
 - Multi-project runtime isolation: materially improved, but still needs continuous regression coverage as PHP/JS/TS runtime features expand.
 
 ## Usage and Fanout Mode
@@ -84,7 +84,7 @@ If the same subproblem reappears after compaction, check recent commits/tests be
 3. Move to PHP IDE mode semantic depth:
    - framework provider boundaries
    - Laravel model/repository/service typing
-   - trait/context-aware diagnostics
-   - implementation chooser behavior
+   - remaining trait/context-aware diagnostics
+   - implementation chooser behavior on real projects
    - completion quality and method/property presentation
 4. Add PhpStorm-like Laravel QA scenarios against the user's Laravel project when GUI/computer access is available.

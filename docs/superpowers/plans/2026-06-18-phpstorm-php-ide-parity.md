@@ -47,6 +47,7 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 - Laravel `$casts` class constants such as `CommentType::class` now resolve through imports and surface the enum/class type in model property completions instead of falling back to `mixed`.
 - Modern Laravel `casts()` methods now feed the same model property completion path as the legacy `$casts` property, including scalar/date and class-constant cast types.
 - Laravel model completions now also expose magic attributes declared through `$attributes`, with conservative literal-derived types for string, bool, int, float, array, null/mixed defaults.
+- Laravel model metadata now resolves local string constants in `$fillable`, `$attributes`, `$casts`, and `$appends`, including conservative `self::`, `static::`, and same-class constant indirections.
 - Laravel model completions now expose accessor-backed magic attributes from `$appends`, legacy `getFooAttribute()` accessors, and modern `Attribute<T, ...>` accessors, including nested generic value types like `Attribute<array<string, mixed>, never>`.
 - Laravel model-builder factory calls now preserve their model context. `$model->newQuery()`, `$model->newModelQuery()`, `newQueryWithoutScopes()`, `on()`, and related factory calls behave as Eloquent builders while still feeding local scopes and terminal methods back to the original model type.
 - PHPDoc `@mixin` declarations now participate in the same class hierarchy pipeline as traits and parents. Completion, signature help, return inference, property/relation inference, and method navigation can use members declared on mixin classes.
@@ -54,6 +55,7 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 - PHPDoc model properties with spaced generic collection types are now preserved, and relation collection chains like `@property-read Collection<int, User> $reviewers` followed by `$model->reviewers->first()->...` infer `User` completions.
 - Custom collection classes with PHPDoc `@extends` / `@implements` generic collection types now feed terminal collection inference, so `AlbumCollection extends Collection<int, Album>` followed by `$albums->first()->...` keeps `Album` completions.
 - Laravel relation factory calls now return typed relation objects and propagate related model types through relation chains and assignments. Explicit related-class factories such as `$this->hasMany(Post::class)->firstOrFail()`, `$this->belongsTo($related)->first()`, and `$this->morphMany(Post::class, 'commentable')->get()->first()` infer the related model, while self-referential factories keep the declaring model type.
+- Laravel dynamic relation declarations through `Model::resolveRelationUsing(...)` now expose relation properties when the callback returns a Laravel relation factory, including named arguments, static arrow callbacks, and fully-qualified model receivers.
 - Laravel relation query callbacks now infer the related model builder. In `Model::query()->whereHas('tracks', function ($query) { ... })` and `fn ($query) => ...` arrow callbacks, `$query` gets Eloquent builder methods, local scopes from the `Track` model, and terminal calls like `$query->first()` resolve back to `Track`.
 - Class-body trait use parsing now supports adaptation blocks like `use SoftDeletes { restore as restoreModel; }`, improving shared hierarchy lookup for completions, navigation, and contextual trait diagnostics.
 - PHPDoc generic trait usage now participates in return-type inference and completion display. `@use FindsModels<Comment>` maps trait templates like `@return TModel` back to `Comment`, while template declarations no longer misread `@template-use` as a new template name.
@@ -61,9 +63,14 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 - Laravel relation targets now understand self-referential class constants. Relations like `$this->hasMany(self::class)` or `$this->hasOne(static::class)` feed the current model type into relation-property and terminal-chain completions.
 - Legacy Laravel relation targets using `__CLASS__` now resolve to the declaring model too, matching projects that still use `$this->belongsTo(__CLASS__, ...)` or `$this->hasMany(__CLASS__, ...)`.
 - PHPactor unresolved member-method diagnostics on Eloquent builders now reuse the semantic builder model resolver before being shown. Calls such as `Album::query()->withRelations()` are suppressed only when the inferred model really defines `scopeWithRelations`, while unknown builder magic remains visible.
+- PHPactor unresolved trait property diagnostics are now reconciled through host class context, reducing false positives for trait code while preserving app-level unknown-property errors.
+- PHP variable completion now understands anonymous functions, `use ($x)` captures, arrow-function implicit captures, `foreach` variables, and `catch` variables while preventing closed closure locals from leaking into the parent scope.
+- Cmd+B / Go to Definition now recognizes fluent PHP method chains split across lines, so multiline Laravel chains like `Model::query()->whereNull()->firstOrFail()` can navigate from terminal calls.
+- PHP smart selection can use LSP selection ranges, and stale selection range responses from a previous project tab are dropped for PHP and JS/TS providers.
+- Implementation fallback detection now handles multiline abstract method declarations, so implementation gutter/fallback behavior remains available for PhpStorm-style wrapped signatures.
 
 ## Next Tasks
 
-- Improve PHPDoc inheritance and trait host-context diagnostics to reduce false positives without hiding app bugs.
-- Add relation return inference for remaining implicit targets, especially `morphTo()` inverse relations, through-relations with intermediate generics, and polymorphic edge cases not covered by explicit related-class factories.
+- Improve PHPDoc inheritance and remaining trait host-context diagnostics beyond member/property false positives without hiding app bugs.
+- Add relation return inference for remaining implicit targets, especially multi-target `morphTo()` inverse relations, through-relations with intermediate generics, and polymorphic edge cases not covered by explicit related-class factories.
 - Add UI smoke tests for IDE Mode on a real Laravel workspace.
