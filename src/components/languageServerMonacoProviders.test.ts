@@ -1439,6 +1439,45 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.selectionRanges).not.toHaveBeenCalled();
   });
 
+  it("drops in-flight PHP selection ranges after switching project tabs", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot = "/project";
+    const selectionRanges =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.selectionRanges).mockImplementationOnce(
+      async () => selectionRanges.promise,
+    );
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const selectionRangesPromise =
+      registered.selectionRangeProvider.provideSelectionRanges(model(), [
+        { column: 12, lineNumber: 4 },
+      ]);
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    selectionRanges.resolve([
+      {
+        parent: null,
+        range: range(3, 8, 3, 20),
+      },
+    ]);
+
+    await expect(selectionRangesPromise).resolves.toBeNull();
+    expect(gateway.selectionRanges).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      [{ character: 11, line: 3 }],
+    );
+  });
+
   it("resolves LSP-backed code actions", async () => {
     const registered = createRegisteredProviders();
     const unresolvedAction = {
@@ -1852,6 +1891,29 @@ function runningStatus(
     },
     kind: "running",
     sessionId: 1,
+  };
+}
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  reject(reason?: unknown): void;
+  resolve(value: T): void;
+} {
+  let rejectValue: ((reason?: unknown) => void) | null = null;
+  let resolveValue: ((value: T) => void) | null = null;
+  const promise = new Promise<T>((resolve, reject) => {
+    rejectValue = reject;
+    resolveValue = resolve;
+  });
+
+  return {
+    promise,
+    reject(reason?: unknown): void {
+      rejectValue?.(reason);
+    },
+    resolve(value: T): void {
+      resolveValue?.(value);
+    },
   };
 }
 

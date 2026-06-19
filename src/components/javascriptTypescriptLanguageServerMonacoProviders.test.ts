@@ -638,6 +638,49 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("drops in-flight TypeScript selection ranges after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const selectionRanges =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.selectionRanges).mockImplementationOnce(
+      async () => selectionRanges.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const selectionRangeProvider = (
+      monaco.languages.registerSelectionRangeProvider as any
+    ).mock.calls[0][1];
+    const selectionRangesPromise = selectionRangeProvider.provideSelectionRanges(
+      textModel(),
+      [{ column: 12, lineNumber: 4 }],
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    selectionRanges.resolve([
+      {
+        parent: null,
+        range: range(3, 8, 3, 20),
+      },
+    ]);
+
+    await expect(selectionRangesPromise).resolves.toBeNull();
+    expect(gateway.selectionRanges).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      [{ character: 11, line: 3 }],
+    );
+  });
+
   it("maps TypeScript semantic tokens through the language server", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({

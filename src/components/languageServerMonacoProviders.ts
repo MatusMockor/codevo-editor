@@ -824,6 +824,11 @@ async function provideSelectionRanges(
 
   try {
     await context.flushPendingDocumentChange(request.path);
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     const selectionRanges = await context.featuresGateway.selectionRanges(
       request.rootPath,
       request.path,
@@ -833,11 +838,17 @@ async function provideSelectionRanges(
       })),
     );
 
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     return selectionRanges.map((selectionRange) =>
       flattenSelectionRange(monaco, selectionRange),
     );
   } catch (error) {
-    context.reportError(error);
+    if (isStoredWorkspaceRootActive(context, request.rootPath)) {
+      context.reportError(error);
+    }
     return null;
   }
 }
@@ -1382,6 +1393,15 @@ function isRuntimeActiveForRoot(
     status?.kind === "running" &&
     (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath))
   );
+}
+
+function isStoredWorkspaceRootActive(
+  context: LanguageServerMonacoProviderContext,
+  rootPath: string,
+): boolean {
+  const activeRootPath = context.getWorkspaceRoot?.() ?? null;
+
+  return !activeRootPath || workspaceRootKeysEqual(activeRootPath, rootPath);
 }
 
 function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
