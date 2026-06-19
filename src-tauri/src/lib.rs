@@ -2742,10 +2742,12 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
 
 #[tauri::command]
 fn apply_workspace_edit(
+    root_path: String,
     edit: LanguageServerWorkspaceEdit,
     skipped_paths: Vec<String>,
 ) -> Result<usize, String> {
     let repository = LocalWorkspaceFileRepository;
+    ensure_lsp_workspace_edit_paths_in_workspace(&root_path, &edit)?;
     let edits = workspace_text_edits_from_language_server(edit)?;
 
     apply_text_edits_to_files(&repository, &edits, &skipped_paths)
@@ -2833,8 +2835,8 @@ mod tests {
         ensure_lsp_document_link_payload_in_workspace, ensure_lsp_path_in_workspace,
         ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
         ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
-        ensure_path_in_workspace, normalize_path, path_from_file_uri, workspace_root_for_disposal,
-        workspace_text_edits_from_language_server,
+        ensure_lsp_workspace_edit_paths_in_workspace, ensure_path_in_workspace, normalize_path,
+        path_from_file_uri, workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -2896,6 +2898,31 @@ mod tests {
         assert!(ensure_lsp_path_in_workspace(
             &path_string(&root),
             &path_string(&sibling.join("App.ts"))
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn lsp_workspace_edit_guard_rejects_paths_outside_workspace_root() {
+        let root = temp_workspace("workspace-edit-guard-root");
+        let outside = temp_workspace("workspace-edit-guard-outside");
+        let mut inside_changes = BTreeMap::new();
+        inside_changes.insert(file_uri(&root.join("src/App.ts")), Vec::new());
+        let mut outside_changes = BTreeMap::new();
+        outside_changes.insert(file_uri(&outside.join("Secret.ts")), Vec::new());
+
+        assert!(ensure_lsp_workspace_edit_paths_in_workspace(
+            &path_string(&root),
+            &LanguageServerWorkspaceEdit {
+                changes: inside_changes,
+            }
+        )
+        .is_ok());
+        assert!(ensure_lsp_workspace_edit_paths_in_workspace(
+            &path_string(&root),
+            &LanguageServerWorkspaceEdit {
+                changes: outside_changes,
+            }
         )
         .is_err());
     }

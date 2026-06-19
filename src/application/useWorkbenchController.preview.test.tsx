@@ -2461,7 +2461,7 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
     expect(
       dependencies.workspaceGateways.files.applyWorkspaceEdit,
-    ).toHaveBeenCalledWith(edit, [oldPath]);
+    ).toHaveBeenCalledWith("/workspace", edit, [oldPath]);
     expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
       oldPath,
       newPath,
@@ -2469,6 +2469,104 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
     ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+  });
+
+  it("filters JavaScript TypeScript rename edits to the active workspace root", async () => {
+    const oldPath = "/workspace/src/User.ts";
+    const newPath = "/workspace/src/Account.ts";
+    const consumerPath = "/workspace/src/Consumer.ts";
+    const outsidePath = "/other/src/Consumer.ts";
+    const filteredEdit = {
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const edit = {
+      changes: {
+        ...filteredEdit.changes,
+        [fileUriFromPath(outsidePath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).mockResolvedValue(edit);
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 24,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        if (path === outsidePath) {
+          return "import { User } from '../workspace/src/User';\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(outsidePath, "Consumer.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      filteredEdit,
+      expect.arrayContaining([oldPath, outsidePath]),
+    );
+    expect(
+      getWorkbench().openDocuments.find((document) => document.path === outsidePath)
+        ?.content,
+    ).toBe("import { User } from '../workspace/src/User';\n");
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
   });
 
   it("notifies the JavaScript TypeScript service when a JS TS file is created", async () => {

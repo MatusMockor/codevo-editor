@@ -155,6 +155,7 @@ export type IntelligenceMode = "basic" | "lightSmart" | "fullSmart";
 
 export interface WorkspaceFileGateway {
   applyWorkspaceEdit(
+    rootPath: string,
     edit: LanguageServerWorkspaceEdit,
     skippedPaths: string[],
   ): Promise<number>;

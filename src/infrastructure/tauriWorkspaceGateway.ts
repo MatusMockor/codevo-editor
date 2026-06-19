@@ -22,10 +22,15 @@ export class TauriWorkspaceGateway
     WorkspaceFileGateway
 {
   applyWorkspaceEdit(
+    rootPath: string,
     edit: LanguageServerWorkspaceEdit,
     skippedPaths: string[],
   ): Promise<number> {
-    return invoke<number>("apply_workspace_edit", { edit, skippedPaths });
+    return invoke<number>("apply_workspace_edit", {
+      edit,
+      rootPath,
+      skippedPaths,
+    });
   }
 
   createDirectory(path: string): Promise<void> {

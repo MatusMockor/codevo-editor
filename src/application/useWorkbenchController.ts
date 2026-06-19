@@ -3900,10 +3900,11 @@ export function useWorkbenchController(
   );
 
   const applyWorkspaceEditToOpenDocuments = useCallback(
-    (edit: LanguageServerWorkspaceEdit): string[] => {
+    (edit: LanguageServerWorkspaceEdit, rootPath?: string): string[] => {
       const editedPaths = changedOpenDocumentPathsForWorkspaceEdit(
         edit,
         documentsRef.current,
+        rootPath,
       );
 
       setDocuments((current) => {
@@ -3914,6 +3915,10 @@ export function useWorkbenchController(
           const path = pathFromLanguageServerUri(uri);
 
           if (!path) {
+            continue;
+          }
+
+          if (rootPath && !isSessionPathInWorkspace(rootPath, path)) {
             continue;
           }
 
@@ -3972,10 +3977,15 @@ export function useWorkbenchController(
           return;
         }
 
+        const rootEdit = workspaceEditForRoot(edit, workspaceRoot);
         const openDocumentPaths = Object.keys(documentsRef.current);
-        const editedOpenPaths = applyWorkspaceEditToOpenDocuments(edit);
+        const editedOpenPaths = applyWorkspaceEditToOpenDocuments(
+          rootEdit,
+          workspaceRoot,
+        );
         const changedClosedFiles = await workspaceFiles.applyWorkspaceEdit(
-          edit,
+          workspaceRoot,
+          rootEdit,
           openDocumentPaths,
         );
         const changedFiles = changedClosedFiles + editedOpenPaths.length;
@@ -11723,11 +11733,16 @@ function applyLanguageServerTextEdits(
 function changedOpenDocumentPathsForWorkspaceEdit(
   edit: LanguageServerWorkspaceEdit,
   documents: Record<string, EditorDocument>,
+  rootPath?: string,
 ): string[] {
   return Object.entries(edit.changes).flatMap(([uri, textEdits]) => {
     const path = pathFromLanguageServerUri(uri);
 
     if (!path) {
+      return [];
+    }
+
+    if (rootPath && !isSessionPathInWorkspace(rootPath, path)) {
       return [];
     }
 
@@ -11742,6 +11757,21 @@ function changedOpenDocumentPathsForWorkspaceEdit(
       ? []
       : [path];
   });
+}
+
+function workspaceEditForRoot(
+  edit: LanguageServerWorkspaceEdit,
+  rootPath: string,
+): LanguageServerWorkspaceEdit {
+  return {
+    changes: Object.fromEntries(
+      Object.entries(edit.changes).filter(([uri]) => {
+        const path = pathFromLanguageServerUri(uri);
+
+        return !path || isSessionPathInWorkspace(rootPath, path);
+      }),
+    ),
+  };
 }
 
 function byteOffsetForLanguageServerPosition(
