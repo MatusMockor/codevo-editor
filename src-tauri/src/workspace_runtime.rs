@@ -167,6 +167,41 @@ mod tests {
         assert!(!php_lsp.contains(&root_key));
     }
 
+    #[test]
+    fn disposal_stops_runtime_parts_for_missing_roots() {
+        let root = PathBuf::from("/missing-workspace");
+        let root_key = root_key(&root);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let index = RecordingRootDisposer::new("index", [&root_key], &calls);
+        let watch = RecordingRootDisposer::new("watch", [&root_key], &calls);
+        let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
+        let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
+        let terminals = RecordingTerminalDisposer::new("terminal", [&root], &calls);
+
+        dispose_workspace_root(
+            &root,
+            WorkspaceRuntimeDisposal {
+                index_lifecycle: &index,
+                javascript_typescript_language_servers: &js_lsp,
+                javascript_typescript_watch_registry: &watch,
+                php_language_servers: &php_lsp,
+                terminal_sessions: &terminals,
+            },
+        )
+        .expect("dispose missing workspace root");
+
+        assert_eq!(
+            calls.lock().expect("calls").as_slice(),
+            &[
+                "index:/missing-workspace",
+                "watch:/missing-workspace",
+                "js-lsp:/missing-workspace",
+                "php-lsp:/missing-workspace",
+                "terminal:/missing-workspace",
+            ]
+        );
+    }
+
     struct RecordingRootDisposer {
         label: &'static str,
         roots: Mutex<HashSet<String>>,

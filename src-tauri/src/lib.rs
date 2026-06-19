@@ -212,7 +212,7 @@ fn dispose_workspace_root(
     php_language_servers: State<'_, PhpLanguageServerRegistry>,
     terminal_sessions: State<'_, TerminalSupervisor>,
 ) -> Result<(), String> {
-    let root = canonicalize_workspace_root(&root_path)?;
+    let root = workspace_root_for_disposal(&root_path);
 
     dispose_workspace_runtime_root(
         &root,
@@ -430,6 +430,13 @@ fn canonicalize_workspace_root(root_path: &str) -> Result<PathBuf, String> {
     PathBuf::from(root_path)
         .canonicalize()
         .map_err(|error| format!("Failed to resolve workspace root: {error}"))
+}
+
+fn workspace_root_for_disposal(root_path: &str) -> PathBuf {
+    let root = PathBuf::from(root_path);
+
+    root.canonicalize()
+        .unwrap_or_else(|_| normalize_path(&root))
 }
 
 fn ensure_path_in_workspace(root_path: &Path, path: &str) -> Result<(), String> {
@@ -2437,7 +2444,7 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_path_in_workspace, normalize_path, path_from_file_uri,
+        ensure_path_in_workspace, normalize_path, path_from_file_uri, workspace_root_for_disposal,
         workspace_text_edits_from_language_server,
     };
     use crate::lsp_features::{
@@ -2570,6 +2577,29 @@ mod tests {
         assert_eq!(
             normalize_path(Path::new("/workspace/project/../project/./src")),
             Path::new("/workspace/project/src")
+        );
+    }
+
+    #[test]
+    fn disposal_workspace_root_falls_back_to_normalized_missing_paths() {
+        let root = temp_workspace("disposal-fallback-root");
+        let missing = root.join("missing").join("..").join("missing-again");
+
+        assert_eq!(
+            workspace_root_for_disposal(&path_string(&missing)),
+            root.join("missing-again")
+        );
+    }
+
+    #[test]
+    fn disposal_workspace_root_uses_canonical_existing_paths() {
+        let root = temp_workspace("disposal-canonical-root");
+        let nested = root.join("src");
+        fs::create_dir_all(&nested).expect("nested directory");
+
+        assert_eq!(
+            workspace_root_for_disposal(&path_string(&root.join(".").join("src"))),
+            nested.canonicalize().expect("canonical nested")
         );
     }
 
