@@ -46,6 +46,10 @@ const laravelRouteDefinitionMethods = new Set([
   "redirect",
   "view",
 ]);
+const laravelResourceRouteActions = new Map<string, string[]>([
+  ["apiresource", ["index", "store", "show", "update", "destroy"]],
+  ["resource", ["index", "create", "store", "show", "edit", "update", "destroy"]],
+]);
 
 export function phpLaravelNamedRouteReferenceContextAt(
   source: string,
@@ -95,13 +99,38 @@ export function phpLaravelNamedRouteDefinitions(
     const routeMethod = match[1]?.toLowerCase() ?? "";
 
     if (
-      !laravelRouteDefinitionMethods.has(routeMethod) ||
-      !isPhpCodeOffset(source, routeStart)
+      !laravelRouteDefinitionMethods.has(routeMethod) &&
+      !laravelResourceRouteActions.has(routeMethod)
     ) {
       continue;
     }
 
+    if (!isPhpCodeOffset(source, routeStart)) {
+      continue;
+    }
+
     const openParen = routeStart + match[0].lastIndexOf("(");
+    const resourceActions = laravelResourceRouteActions.get(routeMethod);
+
+    if (resourceActions) {
+      const literal = firstLiteralArgumentAtOpenParen(source, openParen);
+
+      if (!literal) {
+        continue;
+      }
+
+      const routeNamePrefix = routeNamePrefixAtOffset(routeGroups, routeStart);
+
+      for (const action of resourceActions) {
+        definitions.push({
+          name: `${routeNamePrefix}${literal.value}.${action}`,
+          position: editorPositionAtOffset(source, literal.quoteStart + 1),
+        });
+      }
+
+      continue;
+    }
+
     const closeParen = matchingBracketOffset(source, openParen, "(", ")");
 
     if (closeParen === null) {
@@ -281,6 +310,27 @@ function firstClosedLiteralArgumentAtOpenParen(
   source: string,
   openParen: number,
 ): PhpStringLiteral | null {
+  const literal = firstLiteralArgumentAtOpenParen(source, openParen);
+
+  if (!literal) {
+    return null;
+  }
+
+  const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+  if (closeParen === null) {
+    return null;
+  }
+
+  const afterLiteral = source.slice(literal.quoteEnd + 1, closeParen);
+
+  return /^\s*$/.test(afterLiteral) ? literal : null;
+}
+
+function firstLiteralArgumentAtOpenParen(
+  source: string,
+  openParen: number,
+): PhpStringLiteral | null {
   const argumentStart = skipWhitespace(source, openParen + 1);
   const literal = stringLiteralStartingAt(source, argumentStart);
 
@@ -296,7 +346,7 @@ function firstClosedLiteralArgumentAtOpenParen(
 
   const afterLiteral = source.slice(literal.quoteEnd + 1, closeParen);
 
-  if (!/^\s*$/.test(afterLiteral)) {
+  if (!/^\s*(?:,|$)/.test(afterLiteral)) {
     return null;
   }
 

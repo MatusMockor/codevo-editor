@@ -5179,10 +5179,14 @@ export function useWorkbenchController(
         currentSource,
       );
 
-      const results = await textSearch.searchText(workspaceRoot, "->name(", 200);
+      const searchResults = await Promise.all(
+        ["->name(", "Route::resource", "Route::apiResource"].map((query) =>
+          textSearch.searchText(workspaceRoot, query, 200),
+        ),
+      );
       const visitedPaths = new Set([currentPath]);
 
-      for (const result of results) {
+      for (const result of searchResults.flat()) {
         if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
           continue;
         }

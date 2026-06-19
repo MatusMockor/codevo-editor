@@ -194,12 +194,11 @@ Route::view('/dashboard', 'dashboard')->name('dashboard.index');
     ]);
   });
 
-  it("combines group prefixes and ignores dynamic/resource/unrelated route names", () => {
+  it("combines group prefixes and ignores dynamic/unrelated route names", () => {
     const source = `<?php
 Route::name('admin.')->group(function () {
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
 });
-Route::resource('comments', CommentController::class);
 Route::get('/comments/{comment}', [CommentController::class, 'show'])->name('comments.' . $suffix);
 $builder->name('not.a.route');
 // Route::get('/draft')->name('comments.draft');
@@ -209,6 +208,95 @@ $builder->name('not.a.route');
       {
         name: "admin.dashboard",
         position: positionOf(source, "dashboard');"),
+      },
+    ]);
+  });
+
+  it("expands literal Laravel resource route names", () => {
+    const source = `<?php
+Route::resource('comments', CommentController::class);
+Route::apiResource('api.comments', ApiCommentController::class);
+Route::name('admin.')->group(function () {
+    Route::resource('reports', ReportController::class);
+});
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "comments.index",
+        position: positionOf(source, "comments"),
+      },
+      {
+        name: "comments.create",
+        position: positionOf(source, "comments"),
+      },
+      {
+        name: "comments.store",
+        position: positionOf(source, "comments"),
+      },
+      {
+        name: "comments.show",
+        position: positionOf(source, "comments"),
+      },
+      {
+        name: "comments.edit",
+        position: positionOf(source, "comments"),
+      },
+      {
+        name: "comments.update",
+        position: positionOf(source, "comments"),
+      },
+      {
+        name: "comments.destroy",
+        position: positionOf(source, "comments"),
+      },
+      {
+        name: "api.comments.index",
+        position: positionOf(source, "api.comments"),
+      },
+      {
+        name: "api.comments.store",
+        position: positionOf(source, "api.comments"),
+      },
+      {
+        name: "api.comments.show",
+        position: positionOf(source, "api.comments"),
+      },
+      {
+        name: "api.comments.update",
+        position: positionOf(source, "api.comments"),
+      },
+      {
+        name: "api.comments.destroy",
+        position: positionOf(source, "api.comments"),
+      },
+      {
+        name: "admin.reports.index",
+        position: positionOf(source, "reports"),
+      },
+      {
+        name: "admin.reports.create",
+        position: positionOf(source, "reports"),
+      },
+      {
+        name: "admin.reports.store",
+        position: positionOf(source, "reports"),
+      },
+      {
+        name: "admin.reports.show",
+        position: positionOf(source, "reports"),
+      },
+      {
+        name: "admin.reports.edit",
+        position: positionOf(source, "reports"),
+      },
+      {
+        name: "admin.reports.update",
+        position: positionOf(source, "reports"),
+      },
+      {
+        name: "admin.reports.destroy",
+        position: positionOf(source, "reports"),
       },
     ]);
   });

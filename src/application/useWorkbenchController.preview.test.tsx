@@ -9162,6 +9162,79 @@ Route::post('/comments', [CommentController::class, 'store'])
     ]);
   });
 
+  it("suggests Laravel resource route names from resource-only route files", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const routesPath = "/workspace/routes/web.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function edit(): string
+    {
+        return route('comments.ed');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === routesPath) {
+          return `<?php
+Route::resource('comments', CommentController::class);
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "Route::resource"
+          ? [
+              {
+                column: 1,
+                lineNumber: 2,
+                lineText: "Route::resource('comments', CommentController::class);",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.ed"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "routes/web.php",
+        insertText: "edit",
+        kind: "route",
+        name: "comments.edit",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("opens Laravel named route definitions before LSP fallback", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace/routes/web.php";
