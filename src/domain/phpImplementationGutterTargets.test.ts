@@ -44,4 +44,37 @@ final class SearchService
 `),
     ).toEqual([]);
   });
+
+  it("finds abstract methods declared inside abstract PHP classes", () => {
+    expect(
+      phpImplementationGutterTargets(`<?php
+
+abstract class BaseRepository
+{
+    abstract protected function modelClass(): string;
+
+    public function query(): Builder
+    {
+    }
+
+    abstract public static function makeDefault(): self;
+}
+`),
+    ).toEqual([
+      {
+        methodName: "modelClass",
+        position: {
+          column: 33,
+          lineNumber: 5,
+        },
+      },
+      {
+        methodName: "makeDefault",
+        position: {
+          column: 37,
+          lineNumber: 11,
+        },
+      },
+    ]);
+  });
 });

@@ -7,21 +7,53 @@ export interface PhpImplementationGutterTarget {
 
 const interfaceDeclarationPattern =
   /\binterface\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+extends\s+[^{]+)?\s*\{/g;
-const methodDeclarationPattern =
+const interfaceMethodDeclarationPattern =
   /\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+const abstractClassDeclarationPattern =
+  /\babstract\s+class\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+[^{]+)?\s*\{/g;
+const abstractMethodDeclarationPattern =
+  /\babstract\s+(?:(?:public|protected|private|static)\s+)*function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
 export function phpImplementationGutterTargets(
   source: string,
 ): PhpImplementationGutterTarget[] {
   const targets: PhpImplementationGutterTarget[] = [];
 
-  for (const declaration of source.matchAll(interfaceDeclarationPattern)) {
+  targets.push(
+    ...targetsFromDeclarations(source, {
+      declarationPattern: interfaceDeclarationPattern,
+      methodPattern: interfaceMethodDeclarationPattern,
+    }),
+  );
+  targets.push(
+    ...targetsFromDeclarations(source, {
+      declarationPattern: abstractClassDeclarationPattern,
+      methodPattern: abstractMethodDeclarationPattern,
+    }),
+  );
+
+  return targets;
+}
+
+function targetsFromDeclarations(
+  source: string,
+  {
+    declarationPattern,
+    methodPattern,
+  }: {
+    declarationPattern: RegExp;
+    methodPattern: RegExp;
+  },
+): PhpImplementationGutterTarget[] {
+  const targets: PhpImplementationGutterTarget[] = [];
+
+  for (const declaration of source.matchAll(declarationPattern)) {
     const openBrace = (declaration.index ?? 0) + declaration[0].lastIndexOf("{");
     const closeBrace = matchingBraceOffset(source, openBrace);
     const bodyEnd = closeBrace ?? source.length;
     const body = source.slice(openBrace + 1, bodyEnd);
 
-    for (const method of body.matchAll(methodDeclarationPattern)) {
+    for (const method of body.matchAll(methodPattern)) {
       const methodName = method[1] || "";
       const methodOffset =
         openBrace + 1 + (method.index ?? 0) + method[0].indexOf(methodName);
