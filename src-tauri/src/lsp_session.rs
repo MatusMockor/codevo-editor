@@ -1575,6 +1575,24 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
         .unwrap_or(true);
 
     json!({
+        "format": {
+            "enable": true,
+            "insertSpaceAfterCommaDelimiter": true,
+            "insertSpaceAfterConstructor": false,
+            "insertSpaceAfterFunctionKeywordForAnonymousFunctions": true,
+            "insertSpaceAfterKeywordsInControlFlowStatements": true,
+            "insertSpaceAfterOpeningAndBeforeClosingEmptyBraces": true,
+            "insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces": false,
+            "insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces": true,
+            "insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets": false,
+            "insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis": false,
+            "insertSpaceAfterSemicolonInForStatements": true,
+            "insertSpaceBeforeAndAfterBinaryOperators": true,
+            "insertSpaceBeforeFunctionParenthesis": false,
+            "placeOpenBraceOnNewLineForControlBlocks": false,
+            "placeOpenBraceOnNewLineForFunctions": false,
+            "semicolons": "ignore",
+        },
         "formattingOptions": {
             "insertSpaces": true,
             "tabSize": 2,
@@ -1589,6 +1607,9 @@ fn server_configuration_from_initialize_request(initialize_request: &JsonRpcRequ
             "target": 11,
         },
         "preferences": preferences,
+        "updateImportsOnFileMove": {
+            "enabled": if auto_imports_enabled { "always" } else { "never" },
+        },
         "validate": {
             "enable": validation_enabled,
         },
@@ -2587,6 +2608,9 @@ mod tests {
                         { "section": "typescript.referencesCodeLens" },
                         { "section": "typescript.implementationsCodeLens" },
                         { "section": "typescript.validate" },
+                        { "section": "typescript.format" },
+                        { "section": "javascript.format" },
+                        { "section": "typescript.updateImportsOnFileMove" },
                         { "section": "formattingOptions" },
                         { "section": "typescript.implicitProjectConfiguration" },
                         { "section": "editor" }
@@ -2608,12 +2632,19 @@ mod tests {
         assert_eq!(response["result"][3]["showOnAllFunctions"], false);
         assert_eq!(response["result"][4]["enabled"], true);
         assert_eq!(response["result"][5]["enable"], false);
-        assert_eq!(response["result"][6]["tabSize"], 2);
-        assert_eq!(response["result"][6]["insertSpaces"], true);
-        assert_eq!(response["result"][7]["strict"], true);
-        assert_eq!(response["result"][7]["module"], 99);
-        assert_eq!(response["result"][7]["target"], 11);
-        assert_eq!(response["result"][8], json!({}));
+        assert_eq!(response["result"][6]["enable"], true);
+        assert_eq!(
+            response["result"][6]["insertSpaceAfterCommaDelimiter"],
+            true
+        );
+        assert_eq!(response["result"][7]["semicolons"], "ignore");
+        assert_eq!(response["result"][8]["enabled"], "never");
+        assert_eq!(response["result"][9]["tabSize"], 2);
+        assert_eq!(response["result"][9]["insertSpaces"], true);
+        assert_eq!(response["result"][10]["strict"], true);
+        assert_eq!(response["result"][10]["module"], 99);
+        assert_eq!(response["result"][10]["target"], 11);
+        assert_eq!(response["result"][11], json!({}));
     }
 
     #[test]
@@ -2649,6 +2680,9 @@ mod tests {
                     "enabled": true,
                     "showOnAllFunctions": false,
                 },
+                "updateImportsOnFileMove": {
+                    "enabled": "never",
+                },
                 "validate": {
                     "enable": false,
                 },
@@ -2666,7 +2700,8 @@ mod tests {
                         { "section": "typescript.suggest" },
                         { "section": "javascript.preferences" },
                         { "section": "typescript.referencesCodeLens" },
-                        { "section": "javascript.validate" }
+                        { "section": "javascript.validate" },
+                        { "section": "javascript.updateImportsOnFileMove" }
                     ]
                 }
             }),
@@ -2683,6 +2718,7 @@ mod tests {
         assert_eq!(response["result"][1]["mockorCodeLensEnabled"], true);
         assert_eq!(response["result"][2]["enabled"], true);
         assert_eq!(response["result"][3]["enable"], false);
+        assert_eq!(response["result"][4]["enabled"], "never");
     }
 
     #[test]
