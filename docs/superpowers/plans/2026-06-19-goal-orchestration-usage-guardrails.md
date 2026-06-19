@@ -15,11 +15,18 @@ This is an execution estimate, not a completion claim:
 - PHP IDE mode: about 45-60% toward PhpStorm-like Laravel/OOP assistance. The provider architecture, Laravel gating, receiver inference, local scopes, Eloquent/builder helpers, snippets, and workspace-aware routing are in place. Remaining work is a deeper semantic engine: richer symbol table, stronger type resolver, trait/context-aware diagnostics, framework plugins, and real Laravel project QA.
 - Multi-project runtime isolation: materially improved, but still needs continuous regression coverage as PHP/JS/TS runtime features expand.
 
-## Usage Limit Reality
+## Usage and Fanout Mode
 
 Codex app usage quota is not exposed through the local goal API or repo tools. The app UI can show usage-limit warnings before tools can report a numeric percentage.
 
-Operational rule:
+Default mode after a quota reset:
+
+- Use parallel agents aggressively when tasks are independent.
+- Prefer several bounded workers over one large monolithic implementation pass.
+- Keep shared architecture and integration in the main agent.
+- Keep checkpoint discipline even when usage is healthy.
+
+Near-limit fallback:
 
 - If the app UI shows usage-limit or near-limit warnings, stop fanout immediately.
 - Finish only the smallest safe checkpoint.
@@ -32,11 +39,13 @@ Do not use `get_goal` as a Codex quota meter. It is goal/task metadata, not app 
 
 - Main agent owns architecture, integration, final review, tests, commits, and pushes.
 - Use subagents only for bounded, independent work.
-- Prefer 1-2 subagents maximum at a time.
+- In normal/reset usage mode, spawn as many subagents as are useful when their ownership is truly independent.
+- In near-limit mode, reduce to 0-2 subagents and prioritize checkpointing over breadth.
 - Give every subagent a disjoint file/module ownership boundary.
 - Never let subagents edit the same core controller/runtime files in parallel unless one is read-only.
 - If the task touches shared contracts, the main agent implements or serializes that part.
 - Close subagents after their result is integrated or rejected.
+- Track outstanding subagent work explicitly before starting another implementation wave.
 
 ## Checkpoint Rules
 
@@ -79,4 +88,3 @@ If the same subproblem reappears after compaction, check recent commits/tests be
    - implementation chooser behavior
    - completion quality and method/property presentation
 4. Add PhpStorm-like Laravel QA scenarios against the user's Laravel project when GUI/computer access is available.
-
