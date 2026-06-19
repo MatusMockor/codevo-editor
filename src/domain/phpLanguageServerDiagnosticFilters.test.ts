@@ -13,6 +13,7 @@ import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
 describe("filterPhpLanguageServerDiagnostics", () => {
   it("suppresses unresolved Laravel Eloquent static builder methods", () => {
     const source = `<?php
+use App\\Models\\Album;
 
 $queryBuilder = Album::whereNull('parent_id');
 $album = Album::withRelations()->findOrFail($id);
@@ -21,18 +22,37 @@ $album = Album::withRelations()->findOrFail($id);
       filterPhpLanguageServerDiagnostics(source, [
         diagnostic({
           character: 23,
-          line: 2,
+          line: 3,
           message: "Method App\\Models\\Album::whereNull() does not exist",
         }),
         diagnostic({
           character: 16,
-          line: 3,
+          line: 4,
           message: "Method App\\Models\\Album::withRelations() does not exist",
         }),
       ], {
         frameworkProviders: [phpLaravelFrameworkProvider],
       }),
     ).toEqual([]);
+  });
+
+  it("keeps Laravel static builder method diagnostics for non-model receivers", () => {
+    const source = `<?php
+use App\\Services\\FooService;
+
+$queryBuilder = FooService::whereNull('parent_id');
+`;
+    const unresolved = diagnostic({
+      character: 28,
+      line: 3,
+      message: "Method App\\Services\\FooService::whereNull() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [phpLaravelFrameworkProvider],
+      }),
+    ).toEqual([unresolved]);
   });
 
   it("keeps unresolved diagnostics for unknown static methods", () => {

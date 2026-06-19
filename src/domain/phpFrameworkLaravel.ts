@@ -405,6 +405,15 @@ export function isLaravelEloquentBuilderMethodName(methodName: string): boolean 
   );
 }
 
+export function isLaravelEloquentStaticBuilderReceiver(
+  source: string,
+  className: string,
+): boolean {
+  const resolvedClassName = phpLaravelResolvedClassName(source, className);
+
+  return Boolean(resolvedClassName && isLaravelModelType(resolvedClassName));
+}
+
 export function phpLaravelEloquentBuilderModelTypeCandidate(
   source: string,
   typeName: string | null,

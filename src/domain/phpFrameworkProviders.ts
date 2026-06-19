@@ -1,5 +1,6 @@
 import {
   isLaravelEloquentBuilderMethodName,
+  isLaravelEloquentStaticBuilderReceiver,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
   phpLaravelModelAttributeClassTypeFromSource,
@@ -83,8 +84,9 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     ],
   },
   diagnostics: {
-    isKnownStaticMethod: ({ methodName }) =>
-      isLaravelEloquentBuilderMethodName(methodName),
+    isKnownStaticMethod: ({ className, methodName, source }) =>
+      isLaravelEloquentBuilderMethodName(methodName) &&
+      isLaravelEloquentStaticBuilderReceiver(source, className),
   },
   semantics: {
     propertyTypeFromSource: ({ propertyName, source }) =>
