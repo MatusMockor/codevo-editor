@@ -374,14 +374,17 @@ const laravelRelationStringMethods = new Set([
   "loadmissing",
   "loadmorph",
   "loadsum",
+  "ordoesnthave",
   "orhas",
   "orwherehas",
   "orwherehasmorph",
   "orwheredoesnthave",
+  "orwhererelation",
   "with",
   "withavg",
   "withcount",
   "withexists",
+  "withonly",
   "withmax",
   "withmin",
   "withsum",
@@ -391,6 +394,7 @@ const laravelRelationStringMethods = new Set([
   "wheremorphedto",
   "wheredoesnthave",
   "whererelation",
+  "without",
 ]);
 
 function laravelRelationStringContextAt(

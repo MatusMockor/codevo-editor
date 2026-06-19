@@ -202,6 +202,102 @@ class AlbumRepository
     ).toBe("App\\Models\\Album");
   });
 
+  it("resolves Laravel repository creation-helper assignments from declared interface return types", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+
+interface AlbumRepository
+{
+    public function firstOrCreate(array $attributes): Album;
+    public function firstOrNew(array $attributes): Album;
+    public function updateOrCreate(array $attributes, array $values): Album;
+}
+
+class AlbumService
+{
+    public function __construct(private AlbumRepository $albums)
+    {
+    }
+
+    public function store(): void
+    {
+        $created = $this->albums->firstOrCreate(['slug' => 'kind-of-blue']);
+        $new = $this->albums->firstOrNew(['slug' => 'blue-train']);
+        $updated = $this->albums->updateOrCreate(['slug' => 'giant-steps'], ['title' => 'Giant Steps']);
+
+        $created->tit
+        $new->tit
+        $updated->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$created->tit"),
+        "created",
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(source, positionAfter(source, "$new->tit"), "new"),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$updated->tit"),
+        "updated",
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
+  it("resolves Laravel repository creation-helper assignments from PHPDoc methods", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+
+/**
+ * @method Album firstOrCreate(array $attributes)
+ * @method Album firstOrNew(array $attributes)
+ * @method Album updateOrCreate(array $attributes, array $values)
+ */
+class AlbumRepository
+{
+    public function store(): void
+    {
+        $created = $this->firstOrCreate(['slug' => 'kind-of-blue']);
+        $new = $this->firstOrNew(['slug' => 'blue-train']);
+        $updated = $this->updateOrCreate(['slug' => 'giant-steps'], ['title' => 'Giant Steps']);
+
+        $created->tit
+        $new->tit
+        $updated->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$created->tit"),
+        "created",
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(source, positionAfter(source, "$new->tit"), "new"),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$updated->tit"),
+        "updated",
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
   it("does not infer finder assignment model types from non-repository receivers", () => {
     const source = `<?php
 namespace App\\Services;

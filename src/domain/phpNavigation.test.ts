@@ -156,6 +156,10 @@ class CommentController
         Comment::with('children.parent')->first();
         Comment::query()->whereHas('attachments', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_visible', true);
+        Comment::query()->orWhereRelation('visibleChildren', 'is_visible', true);
+        Comment::query()->orDoesntHave('archivedChildren');
+        Comment::withOnly('primaryParent')->first();
+        $comment->without('hiddenChildren');
     }
 }
 `;
@@ -202,6 +206,42 @@ class CommentController
     ).toEqual({
       kind: "classIdentifier",
       name: "is_visible",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'visibleChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "orWhereRelation",
+      receiverExpression: "Comment::query()",
+      relationName: "visibleChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'archivedChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "orDoesntHave",
+      receiverExpression: "Comment::query()",
+      relationName: "archivedChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'primaryParent'")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "withOnly",
+      receiverExpression: null,
+      relationName: "primaryParent",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'hiddenChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "without",
+      receiverExpression: "$comment",
+      relationName: "hiddenChildren",
     });
   });
 
@@ -285,6 +325,10 @@ class CommentController
         Comment::with('children.parent');
         Comment::query()->whereHas('attachments', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_visible', true);
+        Comment::query()->orWhereRelation('visibleChi', 'is_visible', true);
+        Comment::query()->orDoesntHave('archivedChi');
+        Comment::withOnly('primaryPar');
+        $comment->without('hiddenChi');
     }
 }
 `;
@@ -349,6 +393,50 @@ class CommentController
         cursorAfter(source, "whereRelation('children', 'is_vis"),
       ),
     ).toBeNull();
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "orWhereRelation('visibleChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "orWhereRelation",
+      prefix: "visibleChi",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "orDoesntHave('archivedChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "orDoesntHave",
+      prefix: "archivedChi",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "withOnly('primaryPar"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      methodName: "withOnly",
+      prefix: "primaryPar",
+      receiverExpression: null,
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "without('hiddenChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "without",
+      prefix: "hiddenChi",
+      receiverExpression: "$comment",
+    });
   });
 
   it("detects Laravel relation string completion contexts in first argument arrays", () => {

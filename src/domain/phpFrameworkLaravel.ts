@@ -294,8 +294,11 @@ const laravelRepositoryModelReturnMethods = new Set([
   "find",
   "findorfail",
   "first",
+  "firstorcreate",
   "firstorfail",
+  "firstornew",
   "sole",
+  "updateorcreate",
 ]);
 
 const laravelEloquentRelationTypes = new Set([
