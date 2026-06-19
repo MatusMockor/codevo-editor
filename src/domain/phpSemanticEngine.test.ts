@@ -3,8 +3,6 @@ import {
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
   phpCurrentClassName,
-  phpDeclaredGenericTypeCandidates,
-  phpDeclaredTypeCandidate,
   phpDocGenericInheritances,
   phpDocGenericMixins,
   phpDocTemplateNames,
@@ -14,7 +12,6 @@ import {
   phpLaravelContainerExpressionClassName,
   phpLaravelQueryCallbackContextForVariable,
   phpMethodCallExpression,
-  phpMethodReturnExpressions,
   phpNewExpressionClassName,
   phpPropertyAccessExpression,
   phpReceiverExpressionTypeInSource,
@@ -22,6 +19,11 @@ import {
   phpThisPropertyType,
   phpVariableTypeInSource,
 } from "./phpSemanticEngine";
+import {
+  phpDeclaredGenericTypeCandidates,
+  phpDeclaredTypeCandidate,
+  phpMethodReturnExpressions,
+} from "./phpTypeAnalysis";
 
 function positionAfter(source: string, needle: string) {
   const offset = source.indexOf(needle);

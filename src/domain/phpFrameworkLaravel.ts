@@ -5,7 +5,7 @@ import {
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
   phpMethodReturnExpressions,
-} from "./phpSemanticEngine";
+} from "./phpTypeAnalysis";
 import { phpExtendsClassName, resolvePhpClassName } from "./phpNavigation";
 
 const laravelEloquentStaticBuilderMethods = new Set([

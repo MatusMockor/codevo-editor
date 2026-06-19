@@ -180,15 +180,12 @@ import {
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
   phpCurrentClassName,
-  phpDeclaredGenericTypeCandidates,
-  phpDeclaredTypeCandidate,
   phpDocGenericInheritances,
   phpDocGenericMixins,
   phpDocRawTypeForVariableBefore,
   phpDocTemplateNames,
   phpLaravelContainerExpressionClassName,
   phpMethodCallExpression,
-  phpMethodReturnExpressions,
   phpNewExpressionClassName,
   phpPropertyAccessExpression,
   phpReceiverExpressionTypeInSource,
@@ -197,6 +194,11 @@ import {
   phpLaravelContainerBindingsFromSource,
   phpLaravelQueryCallbackContextForVariable,
 } from "../domain/phpSemanticEngine";
+import {
+  phpDeclaredGenericTypeCandidates,
+  phpDeclaredTypeCandidate,
+  phpMethodReturnExpressions,
+} from "../domain/phpTypeAnalysis";
 import {
   phpClassPathCandidates,
   phpExtendsClassName,
