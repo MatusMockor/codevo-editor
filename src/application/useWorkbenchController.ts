@@ -1807,12 +1807,41 @@ export function useWorkbenchController(
       const syncKey = rootPath
         ? languageServerDocumentSyncKey(rootPath, path)
         : null;
-      const pendingDocument = syncKey
-        ? javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey]
-        : null;
 
-      if (!rootPath || !syncKey || !pendingDocument) {
+      if (!rootPath || !syncKey) {
         return;
+      }
+
+      if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)) {
+        const document =
+          activeDocumentRef.current?.path === path
+            ? activeDocumentRef.current
+            : documentsRef.current[path];
+
+        if (
+          document &&
+          isJavaScriptTypeScriptLanguageServerDocument(document)
+        ) {
+          await syncOpenJavaScriptTypeScriptDocument(document);
+        }
+      }
+
+      if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)) {
+        await javaScriptTypeScriptDocumentSyncQueuesRef.current[syncKey];
+        return;
+      }
+
+      let pendingDocument =
+        javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
+
+      if (!pendingDocument) {
+        await javaScriptTypeScriptDocumentSyncQueuesRef.current[syncKey];
+        pendingDocument =
+          javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
+
+        if (!pendingDocument) {
+          return;
+        }
       }
 
       clearJavaScriptTypeScriptDocumentChangeTimer(syncKey);
@@ -1829,6 +1858,7 @@ export function useWorkbenchController(
       clearJavaScriptTypeScriptDocumentChangeTimer,
       enqueueJavaScriptTypeScriptDocumentSync,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+      syncOpenJavaScriptTypeScriptDocument,
     ],
   );
 

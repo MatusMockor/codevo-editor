@@ -937,6 +937,94 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("waits for JavaScript and TypeScript didOpen before first-use document flushes", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 53,
+    };
+    const path = "/workspace/src/App.ts";
+    const didOpen = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? "export const value = 1;\n" : "",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+    vi.mocked(syncGateway.didOpen).mockImplementation(
+      async () => didOpen.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    let initialFlushResolved = false;
+    const initialFlushPromise =
+      getWorkbench()
+        .flushPendingJavaScriptTypeScriptLanguageServerDocument(path)
+        .then(() => {
+          initialFlushResolved = true;
+        });
+    await flushAsyncTurns(4);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path,
+        text: "export const value = 1;\n",
+      }),
+    );
+    expect(initialFlushResolved).toBe(false);
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await flushAsyncTurns(4);
+
+    let changeFlushResolved = false;
+    const changeFlushPromise =
+      getWorkbench()
+        .flushPendingJavaScriptTypeScriptLanguageServerDocument(path)
+        .then(() => {
+          changeFlushResolved = true;
+        });
+    await flushAsyncTurns(4);
+
+    expect(changeFlushResolved).toBe(false);
+    expect(syncGateway.didChange).not.toHaveBeenCalled();
+
+    await act(async () => {
+      didOpen.resolve(undefined);
+      await Promise.all([initialFlushPromise, changeFlushPromise]);
+    });
+
+    expect(initialFlushResolved).toBe(true);
+    expect(changeFlushResolved).toBe(true);
+    expect(syncGateway.didChange).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path,
+        text: "export const value = 2;\n",
+      }),
+    );
+    expect(
+      vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(syncGateway.didChange).mock.invocationCallOrder[0],
+    );
+  });
+
   it("does not flush pending JavaScript and TypeScript edits after switching project tabs", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),
