@@ -117,6 +117,7 @@ import {
 import {
   cachedLanguageServerRuntimeStatusForRoot,
   cacheLanguageServerRuntimeStatus,
+  normalizedWorkspaceRootKey,
   removeCachedLanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntimeStatusCache";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
@@ -740,7 +741,7 @@ export function useWorkbenchController(
       if (
         event.rootPath &&
         currentWorkspaceRootRef.current &&
-        event.rootPath !== currentWorkspaceRootRef.current
+        !workspaceRootKeysEqual(event.rootPath, currentWorkspaceRootRef.current)
       ) {
         return;
       }
@@ -826,7 +827,7 @@ export function useWorkbenchController(
       if (
         event.rootPath &&
         currentWorkspaceRootRef.current &&
-        event.rootPath !== currentWorkspaceRootRef.current
+        !workspaceRootKeysEqual(event.rootPath, currentWorkspaceRootRef.current)
       ) {
         return;
       }
@@ -993,7 +994,7 @@ export function useWorkbenchController(
       if (
         statusRootPath &&
         currentWorkspaceRootRef.current &&
-        statusRootPath !== currentWorkspaceRootRef.current
+        !workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)
       ) {
         return;
       }
@@ -1040,7 +1041,7 @@ export function useWorkbenchController(
       if (
         statusRootPath &&
         currentWorkspaceRootRef.current &&
-        statusRootPath !== currentWorkspaceRootRef.current
+        !workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)
       ) {
         return;
       }
@@ -1070,7 +1071,7 @@ export function useWorkbenchController(
 
   const handleMetadataScanCompletion = useCallback(
     (event: MetadataScanCompletionEvent) => {
-      if (currentWorkspaceRootRef.current !== event.rootPath) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.rootPath)) {
         return;
       }
 
@@ -1083,7 +1084,10 @@ export function useWorkbenchController(
         return;
       }
 
-      if (!pendingIndexScanRef.current && activeIndexRootRef.current !== event.rootPath) {
+      if (
+        !pendingIndexScanRef.current &&
+        !workspaceRootKeysEqual(activeIndexRootRef.current, event.rootPath)
+      ) {
         return;
       }
 
@@ -1318,7 +1322,7 @@ export function useWorkbenchController(
         status,
       );
 
-      if (targetRootPath === currentWorkspaceRootRef.current) {
+      if (workspaceRootKeysEqual(targetRootPath, currentWorkspaceRootRef.current)) {
         setLanguageServerRuntimeStatus(rootedStatus);
         setLanguageServerRuntimeStatusRoot(targetRootPath);
         lastLanguageServerCrashRef.current = null;
@@ -1355,7 +1359,7 @@ export function useWorkbenchController(
           status,
         );
 
-      if (targetRootPath === currentWorkspaceRootRef.current) {
+      if (workspaceRootKeysEqual(targetRootPath, currentWorkspaceRootRef.current)) {
         setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
         setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(targetRootPath);
         clearJavaScriptTypeScriptLanguageServerDiagnostics();
@@ -1405,7 +1409,7 @@ export function useWorkbenchController(
         stoppedStatus,
       );
 
-      if (targetRootPath !== currentWorkspaceRootRef.current) {
+      if (!workspaceRootKeysEqual(targetRootPath, currentWorkspaceRootRef.current)) {
         return;
       }
 
@@ -2086,7 +2090,7 @@ export function useWorkbenchController(
         }
       }
 
-      if (currentWorkspaceRootRef.current !== rootPath) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
         return;
       }
 
@@ -2247,7 +2251,7 @@ export function useWorkbenchController(
       try {
         const trust = await workspaceTrustGateway.getTrust(path);
 
-        if (currentWorkspaceRootRef.current !== path) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
           return;
         }
 
@@ -2259,7 +2263,7 @@ export function useWorkbenchController(
       try {
         descriptor = await workspaceDetection.detectWorkspace(path);
 
-        if (currentWorkspaceRootRef.current !== path) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
           return;
         }
 
@@ -2273,7 +2277,7 @@ export function useWorkbenchController(
       } else {
         await restoreWorkspaceSession(path, workspaceSettings.session);
 
-        if (currentWorkspaceRootRef.current !== path) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
           return;
         }
 
@@ -2298,7 +2302,7 @@ export function useWorkbenchController(
         const tools = await phpToolGateway.detectPhpTools(path);
         const phpSetupNoticeGroup = `phpactor-setup:${path}`;
 
-        if (currentWorkspaceRootRef.current !== path) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
           return;
         }
 
@@ -2405,7 +2409,10 @@ export function useWorkbenchController(
           languageServerRuntimeStatusByRootRef.current,
           path,
         );
-        delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
+        removeCachedLanguageServerRuntimeStatus(
+          javaScriptTypeScriptRuntimeStatusByRootRef.current,
+          path,
+        );
         await closeSyncedJavaScriptTypeScriptDocumentsForRoot(path);
         await stopProjectRuntimes(path);
 
@@ -2439,7 +2446,10 @@ export function useWorkbenchController(
         languageServerRuntimeStatusByRootRef.current,
         path,
       );
-      delete javaScriptTypeScriptRuntimeStatusByRootRef.current[path];
+      removeCachedLanguageServerRuntimeStatus(
+        javaScriptTypeScriptRuntimeStatusByRootRef.current,
+        path,
+      );
       await Promise.allSettled([
         closeSyncedLanguageServerDocumentsForRoot(path),
         closeSyncedJavaScriptTypeScriptDocumentsForRoot(path),
@@ -2499,49 +2509,58 @@ export function useWorkbenchController(
         return;
       }
 
-        const requestedRoot = workspaceRoot;
-        const requestToken = gitDiffRequestTokenRef.current + 1;
-        gitDiffRequestTokenRef.current = requestToken;
-        recordCurrentNavigationLocation();
-        setSelectedGitChange(gitChange);
-        setGitDiffPreview(null);
-        setGitDiffLoading(true);
-        setActivePath(path);
+      const requestedRoot = workspaceRoot;
+      const requestToken = gitDiffRequestTokenRef.current + 1;
+      gitDiffRequestTokenRef.current = requestToken;
+      recordCurrentNavigationLocation();
+      setSelectedGitChange(gitChange);
+      setGitDiffPreview(null);
+      setGitDiffLoading(true);
+      setActivePath(path);
 
-        void gitGateway
-          .getDiff(requestedRoot, gitChange)
-          .then((diff) => {
-            if (
-              currentWorkspaceRootRef.current !== requestedRoot ||
-              gitDiffRequestTokenRef.current !== requestToken
-            ) {
-              return;
-            }
+      void gitGateway
+        .getDiff(requestedRoot, gitChange)
+        .then((diff) => {
+          if (
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            ) ||
+            gitDiffRequestTokenRef.current !== requestToken
+          ) {
+            return;
+          }
 
-            setGitDiffPreview(diff);
-            setMessage(`Diff ${gitChange.relativePath}`);
-          })
-          .catch((error) => {
-            if (
-              currentWorkspaceRootRef.current !== requestedRoot ||
-              gitDiffRequestTokenRef.current !== requestToken
-            ) {
-              return;
-            }
+          setGitDiffPreview(diff);
+          setMessage(`Diff ${gitChange.relativePath}`);
+        })
+        .catch((error) => {
+          if (
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            ) ||
+            gitDiffRequestTokenRef.current !== requestToken
+          ) {
+            return;
+          }
 
-            setGitDiffPreview(null);
-            reportError("Git Diff", error);
-          })
-          .finally(() => {
-            if (
-              currentWorkspaceRootRef.current !== requestedRoot ||
-              gitDiffRequestTokenRef.current !== requestToken
-            ) {
-              return;
-            }
+          setGitDiffPreview(null);
+          reportError("Git Diff", error);
+        })
+        .finally(() => {
+          if (
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            ) ||
+            gitDiffRequestTokenRef.current !== requestToken
+          ) {
+            return;
+          }
 
-            setGitDiffLoading(false);
-          });
+          setGitDiffLoading(false);
+        });
     },
     [gitGateway, recordCurrentNavigationLocation, reportError, workspaceRoot],
   );
@@ -2822,21 +2841,21 @@ export function useWorkbenchController(
     try {
       const status = await gitGateway.getStatus(requestedRoot);
 
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
       setGitStatus(status);
       setMessage(null);
     } catch (error) {
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
       setGitStatus(emptyGitStatus(requestedRoot));
       reportError("Git", error);
     } finally {
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -2861,7 +2880,7 @@ export function useWorkbenchController(
         if (
           !active ||
           token !== editorGitBaselineRequestTokenRef.current ||
-          currentWorkspaceRootRef.current !== requestedRoot
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
         ) {
           return;
         }
@@ -2887,7 +2906,7 @@ export function useWorkbenchController(
         if (
           !active ||
           token !== editorGitBaselineRequestTokenRef.current ||
-          currentWorkspaceRootRef.current !== requestedRoot
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
         ) {
           return;
         }
@@ -2900,7 +2919,7 @@ export function useWorkbenchController(
         if (
           !active ||
           token !== editorGitBaselineRequestTokenRef.current ||
-          currentWorkspaceRootRef.current !== requestedRoot
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
         ) {
           return;
         }
@@ -2936,7 +2955,10 @@ export function useWorkbenchController(
         const diff = await gitGateway.getDiff(requestedRoot, change);
 
         if (
-          currentWorkspaceRootRef.current !== requestedRoot ||
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) ||
           gitDiffRequestTokenRef.current !== requestToken
         ) {
           return;
@@ -2998,7 +3020,10 @@ export function useWorkbenchController(
         setMessage(`Diff ${change.relativePath}`);
       } catch (error) {
         if (
-          currentWorkspaceRootRef.current !== requestedRoot ||
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) ||
           gitDiffRequestTokenRef.current !== requestToken
         ) {
           return;
@@ -3008,7 +3033,10 @@ export function useWorkbenchController(
         reportError("Git Diff", error);
       } finally {
         if (
-          currentWorkspaceRootRef.current !== requestedRoot ||
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) ||
           gitDiffRequestTokenRef.current !== requestToken
         ) {
           return;
@@ -3127,18 +3155,18 @@ export function useWorkbenchController(
       try {
         const status = await gitGateway.stageFiles(requestedRoot, changes);
 
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         applyGitOperationStatus(status);
         setMessage(null);
       } catch (error) {
-        if (currentWorkspaceRootRef.current === requestedRoot) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git", error);
         }
       } finally {
-        if (currentWorkspaceRootRef.current === requestedRoot) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitOperationLoading(false);
         }
       }
@@ -3158,18 +3186,18 @@ export function useWorkbenchController(
       try {
         const status = await gitGateway.unstageFiles(requestedRoot, changes);
 
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         applyGitOperationStatus(status);
         setMessage(null);
       } catch (error) {
-        if (currentWorkspaceRootRef.current === requestedRoot) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git", error);
         }
       } finally {
-        if (currentWorkspaceRootRef.current === requestedRoot) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitOperationLoading(false);
         }
       }
@@ -3193,18 +3221,18 @@ export function useWorkbenchController(
       try {
         const status = await gitGateway.revertFiles(requestedRoot, changes);
 
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         applyGitOperationStatus(status);
         setMessage(null);
       } catch (error) {
-        if (currentWorkspaceRootRef.current === requestedRoot) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git", error);
         }
       } finally {
-        if (currentWorkspaceRootRef.current === requestedRoot) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitOperationLoading(false);
         }
       }
@@ -3234,7 +3262,7 @@ export function useWorkbenchController(
         if (changesToCommit.some((change) => !change.isStaged)) {
           await gitGateway.stageFiles(requestedRoot, changesToCommit);
 
-          if (currentWorkspaceRootRef.current !== requestedRoot) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
             return;
           }
         }
@@ -3245,7 +3273,7 @@ export function useWorkbenchController(
           changesToCommit,
         );
 
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3261,23 +3289,23 @@ export function useWorkbenchController(
         try {
           const pushStatus = await gitGateway.push(requestedRoot);
 
-          if (currentWorkspaceRootRef.current !== requestedRoot) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
             return;
           }
 
           applyGitOperationStatus(pushStatus);
           setMessage("Pushed current branch");
         } catch (error) {
-          if (currentWorkspaceRootRef.current === requestedRoot) {
+          if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
             reportError("Git Push", error);
           }
         }
       } catch (error) {
-        if (currentWorkspaceRootRef.current === requestedRoot) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git", error);
         }
       } finally {
-        if (currentWorkspaceRootRef.current === requestedRoot) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitOperationLoading(false);
         }
       }
@@ -3317,21 +3345,21 @@ export function useWorkbenchController(
     try {
       const tree = await phpTreeGateway.getPhpTree(requestedRoot);
 
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
       setPhpTree(tree);
       setMessage(null);
     } catch (error) {
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
       setPhpTree(emptyPhpTree());
       reportError("PHP Tree", error);
     } finally {
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -3412,7 +3440,7 @@ export function useWorkbenchController(
           path,
         );
 
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3423,7 +3451,7 @@ export function useWorkbenchController(
           outline = await phpFileOutlineGateway.parsePhpFileOutline(path, source);
         }
 
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3433,7 +3461,7 @@ export function useWorkbenchController(
         }));
         setMessage(null);
       } catch (error) {
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3443,7 +3471,7 @@ export function useWorkbenchController(
         }));
         reportError("PHP File Outline", error);
       } finally {
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3484,7 +3512,7 @@ export function useWorkbenchController(
             path,
           );
 
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3498,7 +3526,7 @@ export function useWorkbenchController(
         }));
         setMessage(null);
       } catch (error) {
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3508,7 +3536,7 @@ export function useWorkbenchController(
         }));
         reportError("JavaScript/TypeScript File Structure", error);
       } finally {
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3564,7 +3592,7 @@ export function useWorkbenchController(
               parentSource,
             );
 
-            if (currentWorkspaceRootRef.current !== requestedRoot) {
+            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
               return;
             }
 
@@ -3579,7 +3607,7 @@ export function useWorkbenchController(
           }
         }
 
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3588,7 +3616,7 @@ export function useWorkbenchController(
           [path]: emptyPhpFileOutline(),
         }));
       } catch (error) {
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -3598,7 +3626,7 @@ export function useWorkbenchController(
         }));
         reportError("PHP Inherited Structure", error);
       } finally {
-        if (currentWorkspaceRootRef.current !== requestedRoot) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -7882,7 +7910,7 @@ export function useWorkbenchController(
           toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
         );
 
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -7902,7 +7930,7 @@ export function useWorkbenchController(
         ),
       ]);
 
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -7985,7 +8013,7 @@ export function useWorkbenchController(
           toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
         );
 
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -8005,7 +8033,7 @@ export function useWorkbenchController(
         ),
       ]);
 
-      if (currentWorkspaceRootRef.current !== requestedRoot) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
@@ -8487,13 +8515,23 @@ export function useWorkbenchController(
     try {
       await phpToolGateway.installManagedPhpactor();
 
-      if (currentWorkspaceRootRef.current !== targetWorkspaceRoot) {
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
         return;
       }
 
       const tools = await phpToolGateway.detectPhpTools(targetWorkspaceRoot);
 
-      if (currentWorkspaceRootRef.current !== targetWorkspaceRoot) {
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
         return;
       }
 
@@ -9107,7 +9145,7 @@ export function useWorkbenchController(
       return;
     }
 
-    if (languageServerRuntimeStatusRoot !== workspaceRoot) {
+    if (!workspaceRootKeysEqual(languageServerRuntimeStatusRoot, workspaceRoot)) {
       return;
     }
 
@@ -9119,7 +9157,7 @@ export function useWorkbenchController(
       return;
     }
 
-    if (autoStartedLanguageServerRootRef.current === workspaceRoot) {
+    if (workspaceRootKeysEqual(autoStartedLanguageServerRootRef.current, workspaceRoot)) {
       return;
     }
 
@@ -9153,7 +9191,12 @@ export function useWorkbenchController(
       return;
     }
 
-    if (javaScriptTypeScriptLanguageServerRuntimeStatusRoot !== workspaceRoot) {
+    if (
+      !workspaceRootKeysEqual(
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       return;
     }
 
@@ -9166,8 +9209,10 @@ export function useWorkbenchController(
     }
 
     if (
-      autoStartedJavaScriptTypeScriptLanguageServerRootRef.current ===
-      workspaceRoot
+      workspaceRootKeysEqual(
+        autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+        workspaceRoot,
+      )
     ) {
       return;
     }
@@ -9840,8 +9885,10 @@ export function useWorkbenchController(
     let unsubscribe: UnsubscribeFn | null = null;
 
     if (workspaceRoot) {
-      const cachedStatus =
-        javaScriptTypeScriptRuntimeStatusByRootRef.current[workspaceRoot] ?? null;
+      const cachedStatus = cachedLanguageServerRuntimeStatusForRoot(
+        javaScriptTypeScriptRuntimeStatusByRootRef.current,
+        workspaceRoot,
+      );
 
       if (cachedStatus) {
         setJavaScriptTypeScriptLanguageServerRuntimeStatus(cachedStatus);
@@ -10945,6 +10992,13 @@ const laravelEloquentSingularRelationTypes = new Set([
 
 function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;
+}
+
+function workspaceRootKeysEqual(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  return normalizedWorkspaceRootKey(left) === normalizedWorkspaceRootKey(right);
 }
 
 function applyLanguageServerTextEdits(

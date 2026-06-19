@@ -5,11 +5,32 @@ export type LanguageServerRuntimeStatusByRoot = Record<
   LanguageServerRuntimeStatus
 >;
 
+export function normalizedWorkspaceRootKey(
+  root: string | null | undefined,
+): string {
+  if (!root) {
+    return "";
+  }
+
+  const minimumLength = minimumWorkspaceRootKeyLength(root);
+  let end = root.length;
+
+  while (end > minimumLength && isWorkspaceRootSeparator(root[end - 1])) {
+    end -= 1;
+  }
+
+  return root.slice(0, end);
+}
+
 export function languageServerRuntimeStatusWithRoot(
   status: LanguageServerRuntimeStatus,
   rootPath: string,
 ): LanguageServerRuntimeStatus {
-  if (status.rootPath === rootPath) {
+  if (
+    status.rootPath &&
+    normalizedWorkspaceRootKey(status.rootPath) ===
+      normalizedWorkspaceRootKey(rootPath)
+  ) {
     return status;
   }
 
@@ -25,7 +46,7 @@ export function cacheLanguageServerRuntimeStatus(
   status: LanguageServerRuntimeStatus,
 ): LanguageServerRuntimeStatus {
   const rootedStatus = languageServerRuntimeStatusWithRoot(status, rootPath);
-  cache[rootPath] = rootedStatus;
+  cache[normalizedWorkspaceRootKey(rootPath)] = rootedStatus;
 
   return rootedStatus;
 }
@@ -38,12 +59,28 @@ export function cachedLanguageServerRuntimeStatusForRoot(
     return null;
   }
 
-  return cache[rootPath] ?? null;
+  return cache[normalizedWorkspaceRootKey(rootPath)] ?? null;
 }
 
 export function removeCachedLanguageServerRuntimeStatus(
   cache: LanguageServerRuntimeStatusByRoot,
   rootPath: string,
 ): void {
-  delete cache[rootPath];
+  delete cache[normalizedWorkspaceRootKey(rootPath)];
+}
+
+function minimumWorkspaceRootKeyLength(root: string): number {
+  if (/^[A-Za-z]:[\\/]/.test(root)) {
+    return 3;
+  }
+
+  if (root.startsWith("/") || root.startsWith("\\")) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function isWorkspaceRootSeparator(character: string | undefined): boolean {
+  return character === "/" || character === "\\";
 }

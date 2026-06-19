@@ -575,7 +575,7 @@ describe("useWorkbenchController preview tabs", () => {
         definition: true,
       },
       kind: "running",
-      rootPath: "/workspace-a",
+      rootPath: "/workspace-a/",
       sessionId: 44,
     };
     const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
@@ -610,7 +610,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(
       getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
-    ).toEqual(expect.objectContaining({ kind: "running", rootPath: "/workspace-a" }));
+    ).toEqual(expect.objectContaining({ kind: "running", rootPath: "/workspace-a/" }));
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");

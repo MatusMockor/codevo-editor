@@ -1352,6 +1352,49 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("uses runtime status when the workspace root only differs by a trailing slash", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "const",
+            documentation: null,
+            insertText: "account",
+            kind: 6,
+            label: "account",
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          rootPath: "/project/",
+        }),
+        getWorkspaceRoot: () => "/project",
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      expect.any(Object),
+    );
+    expect(result.suggestions).toHaveLength(1);
+  });
+
   it("resolves TypeScript completion items through the language server", async () => {
     const monaco = createMonaco();
     const resolvedCommand = {
@@ -1668,7 +1711,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             },
           },
           label: "Organize imports",
-          rootPath: "/project",
+          rootPath: "/project/",
           sessionId: 1,
         });
         listener({

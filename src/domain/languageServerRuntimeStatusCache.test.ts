@@ -4,9 +4,19 @@ import {
   cachedLanguageServerRuntimeStatusForRoot,
   cacheLanguageServerRuntimeStatus,
   languageServerRuntimeStatusWithRoot,
+  normalizedWorkspaceRootKey,
   removeCachedLanguageServerRuntimeStatus,
   type LanguageServerRuntimeStatusByRoot,
 } from "./languageServerRuntimeStatusCache";
+
+describe("normalizedWorkspaceRootKey", () => {
+  it("collapses trailing workspace root separators conservatively", () => {
+    expect(normalizedWorkspaceRootKey("/workspace-a/")).toBe("/workspace-a");
+    expect(normalizedWorkspaceRootKey("/workspace-a\\\\")).toBe("/workspace-a");
+    expect(normalizedWorkspaceRootKey("/")).toBe("/");
+    expect(normalizedWorkspaceRootKey("C:\\")).toBe("C:\\");
+  });
+});
 
 describe("languageServerRuntimeStatusWithRoot", () => {
   it("adds the workspace root to runtime statuses", () => {
@@ -20,6 +30,16 @@ describe("languageServerRuntimeStatusWithRoot", () => {
     const status: LanguageServerRuntimeStatus = {
       kind: "starting",
       rootPath: "/workspace",
+      sessionId: 4,
+    };
+
+    expect(languageServerRuntimeStatusWithRoot(status, "/workspace")).toBe(status);
+  });
+
+  it("keeps the same object when the root only differs by trailing separators", () => {
+    const status: LanguageServerRuntimeStatus = {
+      kind: "starting",
+      rootPath: "/workspace/",
       sessionId: 4,
     };
 
@@ -55,6 +75,23 @@ describe("runtime status cache", () => {
     removeCachedLanguageServerRuntimeStatus(cache, "/workspace/api");
 
     expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace/api")).toBeNull();
+  });
+
+  it("uses normalized workspace root keys for trailing slash variants", () => {
+    const cache: LanguageServerRuntimeStatusByRoot = {};
+
+    cacheLanguageServerRuntimeStatus(cache, "/workspace-a/", running(11));
+
+    expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace-a")).toEqual({
+      capabilities: expect.any(Object),
+      kind: "running",
+      rootPath: "/workspace-a/",
+      sessionId: 11,
+    });
+
+    removeCachedLanguageServerRuntimeStatus(cache, "/workspace-a");
+
+    expect(cachedLanguageServerRuntimeStatusForRoot(cache, "/workspace-a/")).toBeNull();
   });
 });
 

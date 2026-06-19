@@ -31,6 +31,7 @@ import {
   type LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { normalizedWorkspaceRootKey } from "../domain/languageServerRuntimeStatusCache";
 import type { EditorDocument } from "../domain/workspace";
 
 type MonacoApi = typeof Monaco;
@@ -1496,7 +1497,7 @@ function canUseRuntimeFeatureForRoot(
 
   return (
     status?.kind === "running" &&
-    (!status.rootPath || status.rootPath === rootPath) &&
+    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath)) &&
     canUseLanguageServerFeature(status.capabilities, feature)
   );
 }
@@ -1507,7 +1508,7 @@ function isStoredWorkspaceRootActive(
 ): boolean {
   const activeRootPath = context.getWorkspaceRoot?.() ?? null;
 
-  return !activeRootPath || activeRootPath === rootPath;
+  return !activeRootPath || workspaceRootKeysEqual(activeRootPath, rootPath);
 }
 
 function defaultRenameLocation(
@@ -2074,11 +2075,22 @@ function applyWorkspaceEditEvent(
 ): void {
   const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
 
-  if (event.rootPath && workspaceRoot && event.rootPath !== workspaceRoot) {
+  if (
+    event.rootPath &&
+    workspaceRoot &&
+    !workspaceRootKeysEqual(event.rootPath, workspaceRoot)
+  ) {
     return;
   }
 
   applyWorkspaceEditToOpenModels(monaco, event.edit, event.rootPath ?? undefined);
+}
+
+function workspaceRootKeysEqual(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  return normalizedWorkspaceRootKey(left) === normalizedWorkspaceRootKey(right);
 }
 
 function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
