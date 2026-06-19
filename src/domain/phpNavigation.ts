@@ -10,6 +10,7 @@ import {
   type PhpProjectDescriptor,
   type Psr4Root,
 } from "./workspace";
+import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
 
 export type PhpIdentifierContext =
   | {
@@ -28,6 +29,10 @@ export type PhpIdentifierContext =
       previousRelationNames?: string[];
       receiverExpression: string | null;
       relationName: string;
+    }
+  | {
+      kind: "laravelNamedRouteString";
+      routeName: string;
     }
   | {
       kind: "methodCall";
@@ -69,6 +74,15 @@ export function phpIdentifierContextAt(
   source: string,
   position: EditorPosition,
 ): PhpIdentifierContext | null {
+  const namedRoute = phpLaravelNamedRouteReferenceContextAt(source, position);
+
+  if (namedRoute) {
+    return {
+      kind: "laravelNamedRouteString",
+      routeName: namedRoute.name,
+    };
+  }
+
   const offset = offsetAtPosition(source, position);
   const identifier = identifierAtOffset(source, offset);
 

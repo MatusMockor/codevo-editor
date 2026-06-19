@@ -310,6 +310,7 @@ async function phpMethodSuggestions(
       command:
         item.kind !== "property" &&
         item.kind !== "relation" &&
+        item.kind !== "route" &&
         phpMethodParameters(item.parameters).length
           ? {
               id: "editor.action.triggerParameterHints",
@@ -324,6 +325,8 @@ async function phpMethodSuggestions(
       kind:
         item.kind === "relation"
           ? monaco.languages.CompletionItemKind.Reference
+          : item.kind === "route"
+          ? monaco.languages.CompletionItemKind.Value
           : item.kind === "property"
           ? monaco.languages.CompletionItemKind.Property
           : monaco.languages.CompletionItemKind.Method,
@@ -397,6 +400,10 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
     return `${item.declaringClassName}::$${item.name}${returnType}`;
   }
 
+  if (item.kind === "route") {
+    return `Laravel route - ${item.declaringClassName}`;
+  }
+
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
@@ -410,6 +417,10 @@ function phpMethodDocumentation(item: PhpMethodCompletion): string {
 
   if (item.kind === "property") {
     return `Property\n\n${item.declaringClassName}::$${item.name}`;
+  }
+
+  if (item.kind === "route") {
+    return `Laravel named route\n\n${item.name}`;
   }
 
   const parameters = phpMethodParameters(item.parameters);
@@ -434,10 +445,15 @@ function phpMethodCompletionLabel(
     description:
       item.kind === "relation"
         ? `relation - ${item.declaringClassName}`
+        : item.kind === "route"
+        ? `route - ${item.declaringClassName}`
         : item.kind === "property"
         ? `property - ${item.declaringClassName}`
         : `method - ${item.declaringClassName}`,
-    detail: item.kind === "property" || item.kind === "relation" ? "" : "()",
+    detail:
+      item.kind === "property" || item.kind === "relation" || item.kind === "route"
+        ? ""
+        : "()",
     label: item.name,
   };
 }
@@ -450,7 +466,11 @@ function phpMethodSignatureLabel(item: PhpMethodCompletion): string {
 }
 
 function phpMethodSnippet(item: PhpMethodCompletion): string {
-  if (item.kind === "property" || item.kind === "relation") {
+  if (item.insertText) {
+    return item.insertText;
+  }
+
+  if (item.kind === "property" || item.kind === "relation" || item.kind === "route") {
     return item.name;
   }
 

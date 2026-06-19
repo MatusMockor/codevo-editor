@@ -23,8 +23,9 @@ export interface PhpMemberAccessCompletionContext {
 export interface PhpMethodCompletion {
   classStringTemplate?: string;
   declaringClassName: string;
+  insertText?: string;
   isStatic?: boolean;
-  kind?: "property" | "relation";
+  kind?: "property" | "relation" | "route";
   name: string;
   parameters: string;
   returnType: string | null;

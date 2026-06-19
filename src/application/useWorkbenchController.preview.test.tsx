@@ -9071,6 +9071,186 @@ Route::post('/reactions', [ReactionController::class, 'store']);
     });
   });
 
+  it("suggests Laravel named routes inside route helper strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const routesPath = "/workspace/routes/web.php";
+    const apiRoutesPath = "/workspace/routes/api.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): string
+    {
+        return route('comments.sh');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === routesPath) {
+          return `<?php
+Route::get('/comments/{comment}', [CommentController::class, 'show'])
+    ->name('comments.show');
+Route::get('/comments', [CommentController::class, 'index'])
+    ->name('comments.index');
+`;
+        }
+
+        if (path === apiRoutesPath) {
+          return `<?php
+Route::post('/comments', [CommentController::class, 'store'])
+    ->name('comments.store');
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "->name("
+          ? [
+              {
+                column: 5,
+                lineNumber: 3,
+                lineText: "    ->name('comments.show');",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+              {
+                column: 5,
+                lineNumber: 3,
+                lineText: "    ->name('comments.store');",
+                path: apiRoutesPath,
+                relativePath: "routes/api.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.sh"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "routes/web.php",
+        insertText: "show",
+        kind: "route",
+        name: "comments.show",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel named route definitions before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const routesPath = "/workspace/routes/web.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): string
+    {
+        return route('comments.show');
+    }
+}
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === routesPath) {
+          return `<?php
+Route::get('/comments/{comment}', [CommentController::class, 'show'])
+    ->name('comments.show');
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      searchText: vi.fn(async (_root, query) =>
+        query === "->name("
+          ? [
+              {
+                column: 5,
+                lineNumber: 3,
+                lineText: "    ->name('comments.show');",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "comments.show"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(routesPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: routesPath,
+      position: {
+        column: 13,
+        lineNumber: 3,
+      },
+    });
+  });
+
   it("resolves imported FormRequest to vendor instead of a local substring class", async () => {
     const requestPath = "/workspace/app/Http/Request/AiHub/StoreCommentRequest.php";
     const baseRequestPath = "/workspace/app/Http/Request/BaseFormRequest.php";

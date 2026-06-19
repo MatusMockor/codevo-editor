@@ -177,6 +177,11 @@ import {
   phpLaravelScopeMethodName,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
+import {
+  phpLaravelNamedRouteDefinitions,
+  phpLaravelNamedRouteReferenceContextAt,
+  type PhpLaravelNamedRouteDefinition,
+} from "../domain/phpLaravelRoutes";
 import { firstPhpDocTypeToken } from "../domain/phpDocTemplates";
 import {
   phpAssignmentExpressionForVariableBefore,
@@ -287,6 +292,11 @@ interface PhpClassMemberCacheEntry {
 interface PhpClassMemberReadResult {
   content: string;
   members: PhpMethodCompletion[];
+}
+
+interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
+  path: string;
+  relativePath: string | null;
 }
 
 interface CachedWorkspaceWorkbenchState {
@@ -5133,6 +5143,81 @@ export function useWorkbenchController(
     ],
   );
 
+  const collectPhpLaravelNamedRouteTargets = useCallback(
+    async (
+      currentSource: string,
+      currentPath: string,
+    ): Promise<PhpLaravelNamedRouteTarget[]> => {
+      if (!isLaravelFrameworkActive || !workspaceRoot) {
+        return [];
+      }
+
+      const targets = new Map<string, PhpLaravelNamedRouteTarget>();
+      const addDefinitions = (
+        path: string,
+        relativePath: string | null,
+        source: string,
+      ) => {
+        for (const definition of phpLaravelNamedRouteDefinitions(source)) {
+          const key = `${path}:${definition.position.lineNumber}:${definition.position.column}:${definition.name.toLowerCase()}`;
+
+          if (targets.has(key)) {
+            continue;
+          }
+
+          targets.set(key, {
+            ...definition,
+            path,
+            relativePath,
+          });
+        }
+      };
+
+      addDefinitions(
+        currentPath,
+        workspaceRoot ? relativeWorkspacePath(workspaceRoot, currentPath) : null,
+        currentSource,
+      );
+
+      const results = await textSearch.searchText(workspaceRoot, "->name(", 200);
+      const visitedPaths = new Set([currentPath]);
+
+      for (const result of results) {
+        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+          continue;
+        }
+
+        visitedPaths.add(result.path);
+
+        try {
+          addDefinitions(
+            result.path,
+            result.relativePath,
+            await readNavigationFileContent(result.path),
+          );
+        } catch {
+          continue;
+        }
+      }
+
+      return Array.from(targets.values()).sort((left, right) => {
+        const nameOrder = left.name.localeCompare(right.name);
+
+        if (nameOrder !== 0) {
+          return nameOrder;
+        }
+
+        return left.path.localeCompare(right.path);
+      });
+    },
+    [
+      isLaravelFrameworkActive,
+      readNavigationFileContent,
+      textSearch,
+      workspaceRoot,
+    ],
+  );
+
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
       const methodLookup = methodName.toLowerCase();
@@ -7101,6 +7186,36 @@ export function useWorkbenchController(
       source: string,
       position: EditorPosition,
     ): Promise<PhpMethodCompletion[]> => {
+      const namedRouteContext = phpLaravelNamedRouteReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && namedRouteContext && activeDocument) {
+        const normalizedPrefix = namedRouteContext.prefix.toLowerCase();
+        const routes = await collectPhpLaravelNamedRouteTargets(
+          source,
+          activeDocument.path,
+        );
+
+        return routes
+          .filter((route) =>
+            route.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((route) => ({
+            declaringClassName: route.relativePath ?? getFileName(route.path),
+            insertText: phpNamedRouteCompletionInsertText(
+              route.name,
+              namedRouteContext.prefix,
+            ),
+            kind: "route",
+            name: route.name,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const relationContext = phpLaravelRelationStringCompletionContextAt(
         source,
         position,
@@ -7201,6 +7316,8 @@ export function useWorkbenchController(
     },
     [
       collectPhpLaravelRelationCompletionsForClass,
+      collectPhpLaravelNamedRouteTargets,
+      activeDocument,
       isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpEloquentBuilderModelType,
@@ -7726,6 +7843,37 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelNamedRouteDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "laravelNamedRouteString" }>,
+    ): Promise<boolean> => {
+      if (!activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const routes = await collectPhpLaravelNamedRouteTargets(
+        activeDocument.content,
+        activeDocument.path,
+      );
+      const target = routes.find(
+        (route) => route.name.toLowerCase() === context.routeName.toLowerCase(),
+      );
+
+      if (!target) {
+        setMessage(`No Laravel route named ${context.routeName} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.name);
+    },
+    [
+      activeDocument,
+      collectPhpLaravelNamedRouteTargets,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+    ],
+  );
+
   const goToPhpClassIdentifierDefinition = useCallback(
     async (name: string): Promise<boolean> => {
       if (!activeDocument) {
@@ -7772,6 +7920,10 @@ export function useWorkbenchController(
       return goToPhpLaravelRelationStringDefinition(context);
     }
 
+    if (context.kind === "laravelNamedRouteString") {
+      return goToPhpLaravelNamedRouteDefinition(context);
+    }
+
     if (context.kind === "laravelRouteActionMethod") {
       const className = resolvePhpClassName(
         activeDocument.content,
@@ -7797,6 +7949,7 @@ export function useWorkbenchController(
     return false;
   }, [
     activeDocument,
+    goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
@@ -8007,6 +8160,10 @@ export function useWorkbenchController(
           return goToPhpLaravelRelationStringDefinition(context);
         }
 
+        if (context.kind === "laravelNamedRouteString") {
+          return goToPhpLaravelNamedRouteDefinition(context);
+        }
+
         if (context.kind === "laravelRouteActionMethod") {
           const className = resolvePhpClassName(
             activeDocument.content,
@@ -8093,6 +8250,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpClassIdentifierDefinition,
+    goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
@@ -11556,6 +11714,19 @@ function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
 
 function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
+}
+
+function phpNamedRouteCompletionInsertText(
+  routeName: string,
+  prefix: string,
+): string {
+  const lastDotIndex = prefix.lastIndexOf(".");
+
+  if (lastDotIndex < 0) {
+    return routeName;
+  }
+
+  return routeName.slice(lastDotIndex + 1);
 }
 
 function javaScriptTypeScriptLanguageServerConfiguration(
