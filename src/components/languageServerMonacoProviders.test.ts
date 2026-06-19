@@ -404,7 +404,7 @@ describe("registerLanguageServerMonacoProviders", () => {
       expect.objectContaining({
         detail:
           "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
-        insertText: "forceDestroy($0)",
+        insertText: "forceDestroy(${1:ids})$0",
         label: {
           description: "method - Illuminate\\Database\\Eloquent\\Model",
           detail: "()",
@@ -759,7 +759,7 @@ describe("registerLanguageServerMonacoProviders", () => {
             "Symfony\\Component\\HttpFoundation\\Request::get(string $key, mixed $default = null): mixed",
           documentation:
             "Method\n\nSymfony\\Component\\HttpFoundation\\Request::get()\n\n- string $key\n- mixed $default = null",
-          insertText: "get($0)",
+          insertText: "get(${1:key})$0",
           insertTextRules: 4,
           kind: 2,
           label: {

@@ -8493,6 +8493,11 @@ class AlbumController
         $album = Album::query()->whereNull('parent_id')->first();
         $album->get
 
+        $multilineAlbum = Album::query()
+            ->whereNull('parent_id')
+            ->first();
+        $multilineAlbum->get
+
         $factoryAlbum = $existingAlbum->newQuery()->whereNull('parent_id')->first();
         $factoryAlbum->get
 
@@ -8680,6 +8685,19 @@ class Builder
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$album->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$multilineAlbum->get"),
       ),
     ).resolves.toEqual([
       {

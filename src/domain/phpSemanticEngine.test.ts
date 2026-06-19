@@ -479,6 +479,25 @@ class AlbumFinder
         "agent",
       ),
     ).toBe("new CommentService()");
+    expect(
+      phpAssignmentExpressionForVariableBefore(
+        `<?php
+class Controller
+{
+    public function show(): void
+    {
+        $album = Album::query()
+            ->whereNull('parent_id')
+            ->first();
+
+        $album->tit
+    }
+}
+`,
+        { column: 16, lineNumber: 10 },
+        "album",
+      ),
+    ).toBe("Album::query()\n            ->whereNull('parent_id')\n            ->first()");
     expect(phpNewExpressionClassName("new CommentService()")).toBe(
       "CommentService",
     );

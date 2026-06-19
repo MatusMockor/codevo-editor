@@ -482,7 +482,18 @@ function phpMethodSnippet(item: PhpMethodCompletion): string {
     return `${item.name}()$0`;
   }
 
-  return `${item.name}($0)`;
+  const requiredParameters = parameters.filter((parameter) => !parameter.optional);
+
+  if (!requiredParameters.length) {
+    return `${item.name}($0)`;
+  }
+
+  const placeholders = requiredParameters.map(
+    (parameter, index) =>
+      `\${${index + 1}:${snippetPlaceholderText(parameter.name)}}`,
+  );
+
+  return `${item.name}(${placeholders.join(", ")})$0`;
 }
 
 function phpParameterLabel(parameter: PhpMethodParameter): string {
@@ -491,6 +502,12 @@ function phpParameterLabel(parameter: PhpMethodParameter): string {
     parameter.defaultValue !== null ? ` = ${parameter.defaultValue}` : "";
 
   return `${type}${parameter.name}${defaultValue}`;
+}
+
+function snippetPlaceholderText(value: string): string {
+  const name = value.replace(/^\.\.\./, "").replace(/^\$/, "") || "value";
+
+  return name.replace(/[$}\\]/g, "\\$&");
 }
 
 function lspCompletionInsert(

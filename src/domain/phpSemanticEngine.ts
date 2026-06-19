@@ -269,16 +269,28 @@ export function phpAssignmentExpressionForVariableBefore(
   const offset = offsetAtPosition(source, position);
   const before = source.slice(0, offset);
   const pattern = new RegExp(
-    `\\$${escapeRegExp(variableName)}\\s*=\\s*([^;\\n]+)`,
+    `\\$${escapeRegExp(variableName)}\\s*=\\s*`,
     "g",
   );
   let expression: string | null = null;
 
   for (const match of before.matchAll(pattern)) {
-    expression = match[1]?.trim() || null;
+    const assignmentStart = (match.index ?? 0) + match[0].length;
+    expression =
+      phpAssignmentExpressionAfterEquals(before, assignmentStart)?.trim() || null;
   }
 
   return expression;
+}
+
+function phpAssignmentExpressionAfterEquals(
+  source: string,
+  startOffset: number,
+): string | null {
+  const semicolonOffset = source.indexOf(";", startOffset);
+  const endOffset = semicolonOffset >= 0 ? semicolonOffset : source.length;
+
+  return source.slice(startOffset, endOffset).trim() || null;
 }
 
 export function phpNewExpressionClassName(expression: string): string | null {
