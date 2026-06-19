@@ -381,6 +381,16 @@ Album::whereHas(relation: 'artist', callback: function ($builder): void {
 });
 
 Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->ord);
+
+Album::with(['tracks' => function ($eagerQuery): void {
+    $eagerQuery->ord
+}]);
+
+Album::query()->with(['tracks.artist' => fn ($nestedQuery) => $nestedQuery->ord]);
+
+Album::with(relations: ['tracks' => function ($namedEagerQuery): void {
+    $namedEagerQuery->ord
+}]);
 `;
 
     expect(
@@ -417,6 +427,42 @@ Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->ord);
       methodName: "whereHas",
       modelClassName: null,
       receiverExpression: "Album::query()",
+      relationName: "tracks",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$eagerQuery->ord"),
+        "eagerQuery",
+      ),
+    ).toEqual({
+      methodName: "with",
+      modelClassName: "Album",
+      receiverExpression: null,
+      relationName: "tracks",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$nestedQuery->ord"),
+        "nestedQuery",
+      ),
+    ).toEqual({
+      methodName: "with",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: "tracks",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$namedEagerQuery->ord"),
+        "namedEagerQuery",
+      ),
+    ).toEqual({
+      methodName: "with",
+      modelClassName: "Album",
+      receiverExpression: null,
       relationName: "tracks",
     });
   });

@@ -1022,12 +1022,165 @@ function phpRelationNameBeforeCallbackArgument(
     return null;
   }
 
+  const callbackArgument = argumentsList[callbackArgumentIndex];
+  const relationNameFromArrayKey = callbackArgument
+    ? phpRelationNameFromArrayArgumentKey(
+        argumentsSource.slice(callbackArgument.start, callbackArgument.end),
+        callbackRelativeOffset - callbackArgument.start,
+      )
+    : null;
+
+  if (relationNameFromArrayKey) {
+    return relationNameFromArrayKey;
+  }
+
   for (let index = callbackArgumentIndex - 1; index >= 0; index -= 1) {
     const value = phpNamedArgumentValue(argumentsList[index]?.value ?? "");
     const relationName = phpStringLiteralValue(value);
 
     if (relationName) {
       return relationName.split(".")[0]?.trim() || null;
+    }
+  }
+
+  return null;
+}
+
+function phpRelationNameFromArrayArgumentKey(
+  argumentSource: string,
+  callbackOffset: number,
+): string | null {
+  const arrayRange = phpTopLevelArrayRangeContainingOffset(
+    argumentSource,
+    callbackOffset,
+  );
+
+  if (!arrayRange) {
+    return null;
+  }
+
+  const arraySource = argumentSource.slice(arrayRange.start + 1, arrayRange.end);
+  const callbackArrayOffset = callbackOffset - arrayRange.start - 1;
+  const entries = splitPhpArgumentsWithOffsets(arraySource);
+  const entry = entries.find(
+    (candidate) =>
+      candidate.start <= callbackArrayOffset &&
+      callbackArrayOffset <= candidate.end,
+  );
+
+  if (!entry) {
+    return null;
+  }
+
+  const entrySource = arraySource.slice(entry.start, entry.end);
+  const separatorIndex = topLevelFatArrowIndexBefore(
+    entrySource,
+    callbackArrayOffset - entry.start,
+  );
+
+  if (separatorIndex === null) {
+    return null;
+  }
+
+  const relationName = phpStringLiteralValue(entrySource.slice(0, separatorIndex));
+
+  return relationName?.split(".")[0]?.trim() || null;
+}
+
+function phpTopLevelArrayRangeContainingOffset(
+  source: string,
+  offset: number,
+): { end: number; start: number } | null {
+  let quote: string | null = null;
+  let depth = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "[") {
+      if (depth === 0) {
+        const end = matchingPairOffset(source, index, "[", "]");
+
+        if (end !== null && index < offset && offset < end) {
+          return { end, start: index };
+        }
+      }
+
+      depth += 1;
+      continue;
+    }
+
+    if (character === "(" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "]" || character === ")" || character === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return null;
+}
+
+function topLevelFatArrowIndexBefore(
+  source: string,
+  beforeOffset: number,
+): number | null {
+  let quote: string | null = null;
+  let depth = 0;
+
+  for (let index = 0; index < source.length && index < beforeOffset; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "=" && source[index + 1] === ">" && depth === 0) {
+      return index;
     }
   }
 
