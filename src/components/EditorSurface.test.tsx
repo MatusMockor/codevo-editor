@@ -1414,6 +1414,7 @@ function createMonaco(model: FakeModel) {
       registerCodeActionProvider: vi.fn(() => ({ dispose: vi.fn() })),
       registerCompletionItemProvider: vi.fn(() => ({ dispose: vi.fn() })),
       registerHoverProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      registerSelectionRangeProvider: vi.fn(() => ({ dispose: vi.fn() })),
       registerSignatureHelpProvider: vi.fn(() => ({ dispose: vi.fn() })),
       SignatureHelpTriggerKind: { Invoke: 1 },
     },

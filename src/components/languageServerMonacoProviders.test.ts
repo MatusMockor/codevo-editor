@@ -14,7 +14,7 @@ import type {
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature and code action providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action and selection range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -26,6 +26,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.completionLanguage).toBe("php");
     expect(registered.signatureLanguage).toBe("php");
     expect(registered.codeActionLanguage).toBe("php");
+    expect(registered.selectionRangeLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
         "quickfix",
@@ -43,6 +44,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.completionDispose).toHaveBeenCalled();
     expect(registered.signatureDispose).toHaveBeenCalled();
     expect(registered.codeActionDispose).toHaveBeenCalled();
+    expect(registered.selectionRangeDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -1301,6 +1303,142 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("requests LSP selection ranges and flattens parent ranges for Monaco", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      selectionRanges: [
+        {
+          parent: {
+            parent: null,
+            range: range(3, 2, 5, 3),
+          },
+          range: range(3, 8, 3, 20),
+        },
+        {
+          parent: null,
+          range: range(9, 4, 9, 12),
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const selectionRanges =
+      await registered.selectionRangeProvider.provideSelectionRanges(model(), [
+        { column: 12, lineNumber: 4 },
+        { column: 7, lineNumber: 10 },
+      ]);
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.selectionRanges).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      [
+        { character: 11, line: 3 },
+        { character: 6, line: 9 },
+      ],
+    );
+    expect(selectionRanges).toEqual([
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 21,
+            endLineNumber: 4,
+            startColumn: 9,
+            startLineNumber: 4,
+          }),
+        },
+        {
+          range: expect.objectContaining({
+            endColumn: 4,
+            endLineNumber: 6,
+            startColumn: 3,
+            startLineNumber: 4,
+          }),
+        },
+      ],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 13,
+            endLineNumber: 10,
+            startColumn: 5,
+            startLineNumber: 10,
+          }),
+        },
+      ],
+    ]);
+  });
+
+  it("does not request selection ranges when the provider capability is disabled", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      selectionRanges: [
+        {
+          parent: null,
+          range: range(3, 8, 3, 20),
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      runtimeStatus: runningStatus({ selectionRange: false }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.selectionRangeProvider.provideSelectionRanges(model(), [
+        { column: 12, lineNumber: 4 },
+      ]),
+    ).resolves.toBeNull();
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.selectionRanges).not.toHaveBeenCalled();
+  });
+
+  it("does not request selection ranges when the PHP runtime status belongs to another workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      selectionRanges: [
+        {
+          parent: null,
+          range: range(3, 8, 3, 20),
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        path: "/workspace/src/User.php",
+      },
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      getWorkspaceRoot: () => "/workspace",
+      runtimeStatus: {
+        ...runningStatus(),
+        rootPath: "/other",
+      },
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.selectionRangeProvider.provideSelectionRanges(
+        model({ path: "/workspace/src/User.php" }),
+        [{ column: 12, lineNumber: 4 }],
+      ),
+    ).resolves.toBeNull();
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.selectionRanges).not.toHaveBeenCalled();
+  });
+
   it("resolves LSP-backed code actions", async () => {
     const registered = createRegisteredProviders();
     const unresolvedAction = {
@@ -1449,6 +1587,7 @@ function createRegisteredProviders() {
   const commandDispose = vi.fn();
   const hoverDispose = vi.fn();
   const completionDispose = vi.fn();
+  const selectionRangeDispose = vi.fn();
   const signatureDispose = vi.fn();
   const registered: {
     codeActionDispose: ReturnType<typeof vi.fn>;
@@ -1463,6 +1602,9 @@ function createRegisteredProviders() {
     hoverLanguage: string | null;
     hoverProvider: any;
     monaco: any;
+    selectionRangeDispose: ReturnType<typeof vi.fn>;
+    selectionRangeLanguage: string | null;
+    selectionRangeProvider: any;
     signatureDispose: ReturnType<typeof vi.fn>;
     signatureLanguage: string | null;
     signatureProvider: any;
@@ -1479,6 +1621,9 @@ function createRegisteredProviders() {
     hoverLanguage: null,
     hoverProvider: null,
     monaco: null,
+    selectionRangeDispose,
+    selectionRangeLanguage: null,
+    selectionRangeProvider: null,
     signatureDispose,
     signatureLanguage: null,
     signatureProvider: null,
@@ -1536,6 +1681,11 @@ function createRegisteredProviders() {
         registered.hoverLanguage = language;
         registered.hoverProvider = provider;
         return { dispose: hoverDispose };
+      }),
+      registerSelectionRangeProvider: vi.fn((language, provider) => {
+        registered.selectionRangeLanguage = language;
+        registered.selectionRangeProvider = provider;
+        return { dispose: selectionRangeDispose };
       }),
       registerSignatureHelpProvider: vi.fn((language, provider) => {
         registered.signatureLanguage = language;
@@ -1606,6 +1756,9 @@ function featuresGateway(
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
     >;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
+    selectionRanges: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>
+    >;
     signatureHelp: Awaited<
       ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
     >;
@@ -1646,7 +1799,7 @@ function featuresGateway(
     rangeFormatting: vi.fn(async () => []),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
-    selectionRanges: vi.fn(async () => []),
+    selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
     semanticTokens: vi.fn(async () => null),
     signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
     typeDefinition: vi.fn(async () => []),

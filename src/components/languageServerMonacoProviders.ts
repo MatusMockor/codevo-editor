@@ -8,6 +8,7 @@ import {
   type LanguageServerCodeActionContext,
   type LanguageServerFeaturesGateway,
   type LanguageServerRange,
+  type LanguageServerSelectionRange,
   type LanguageServerTextEdit,
   type LanguageServerWorkspaceEdit,
 } from "../domain/languageServerFeatures";
@@ -133,6 +134,10 @@ export function registerLanguageServerMonacoProviders(
       ],
     },
   );
+  const selectionRange = monaco.languages.registerSelectionRangeProvider("php", {
+    provideSelectionRanges: (model, positions) =>
+      provideSelectionRanges(monaco, context, model, positions),
+  });
 
   return {
     dispose: () => {
@@ -141,6 +146,7 @@ export function registerLanguageServerMonacoProviders(
       completion.dispose();
       signature.dispose();
       codeActions.dispose();
+      selectionRange.dispose();
     },
   };
 }
@@ -539,6 +545,21 @@ function toMonacoRange(
   );
 }
 
+function flattenSelectionRange(
+  monaco: MonacoApi,
+  selectionRange: LanguageServerSelectionRange,
+): Monaco.languages.SelectionRange[] {
+  const ranges: Monaco.languages.SelectionRange[] = [];
+  let current: LanguageServerSelectionRange | null = selectionRange;
+
+  while (current) {
+    ranges.push({ range: toMonacoRange(monaco, current.range) });
+    current = current.parent;
+  }
+
+  return ranges;
+}
+
 function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {
   return {
     path: modelPath(model),
@@ -783,6 +804,38 @@ async function provideSignatureHelp(
         ],
       },
     };
+  } catch (error) {
+    context.reportError(error);
+    return null;
+  }
+}
+
+async function provideSelectionRanges(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  positions: MonacoPosition[],
+): Promise<Monaco.languages.SelectionRange[][] | null> {
+  const request = featureDocumentRequestContext(context, model, "selectionRange");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(request.path);
+    const selectionRanges = await context.featuresGateway.selectionRanges(
+      request.rootPath,
+      request.path,
+      positions.map((position) => ({
+        character: Math.max(0, position.column - 1),
+        line: Math.max(0, position.lineNumber - 1),
+      })),
+    );
+
+    return selectionRanges.map((selectionRange) =>
+      flattenSelectionRange(monaco, selectionRange),
+    );
   } catch (error) {
     context.reportError(error);
     return null;
@@ -1279,7 +1332,7 @@ function featureRequestContext(
 function featureDocumentRequestContext(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
-  feature: "codeAction" | "completion" | "hover",
+  feature: "codeAction" | "completion" | "hover" | "selectionRange",
 ) {
   const activeDocument = context.getActiveDocument();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
@@ -1308,7 +1361,7 @@ function featureDocumentRequestContext(
 function canUseRuntimeFeatureForRoot(
   context: LanguageServerMonacoProviderContext,
   rootPath: string,
-  feature: "codeAction" | "completion" | "hover",
+  feature: "codeAction" | "completion" | "hover" | "selectionRange",
 ): boolean {
   const status = context.getRuntimeStatus();
 
