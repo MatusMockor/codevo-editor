@@ -513,6 +513,60 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(suggestion).not.toHaveProperty("command");
   });
 
+  it("places the cursor after parentheses for text LSP method detail completions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "App\\Models\\Comment::refresh(): App\\Models\\Comment",
+            documentation: null,
+            insertText: "refresh",
+            kind: null,
+            label: "refresh",
+          },
+        ],
+      },
+    });
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(Comment $comment): void\n{\n    $comment->ref\n}\n",
+      },
+      featuresGateway: gateway,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    $comment->ref",
+        word: {
+          endColumn: 18,
+          startColumn: 15,
+        },
+      }),
+      {
+        column: 18,
+        lineNumber: 4,
+      },
+    );
+    const suggestion = result.suggestions.find(
+      (item: { label: string }) => item.label === "refresh",
+    );
+
+    expect(suggestion).toEqual(
+      expect.objectContaining({
+        insertText: "refresh()$0",
+        insertTextRules: 4,
+        kind: 1,
+        label: "refresh",
+      }),
+    );
+    expect(suggestion).not.toHaveProperty("command");
+  });
+
   it("prioritizes typed PHP receiver method completions for member access", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [

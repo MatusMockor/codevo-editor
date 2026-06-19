@@ -496,7 +496,32 @@ function lspCompletionInsert(
   }
 
   if (!isCallableCompletionKind(monaco, kind)) {
-    return { insertText };
+    const textCallableName = phpCallableCompletionName(item.label) ??
+      phpCallableCompletionName(insertText);
+
+    if (
+      !textCallableName ||
+      !completionItemValuesLookLikeSignature(item, insertText, textCallableName)
+    ) {
+      return { insertText };
+    }
+
+    const parameterState = lspCompletionParameterState(item, textCallableName);
+    const hasParameters = parameterState !== "none";
+
+    return {
+      command: hasParameters
+        ? {
+            id: "editor.action.triggerParameterHints",
+            title: "Trigger parameter hints",
+          }
+        : undefined,
+      insertText: hasParameters
+        ? `${textCallableName}($0)`
+        : `${textCallableName}()$0`,
+      insertTextRules:
+        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    };
   }
 
   const name =
@@ -524,6 +549,30 @@ function lspCompletionInsert(
 
 function containsSnippetPlaceholder(insertText: string): boolean {
   return /\$(?:\d+|\{)/.test(insertText);
+}
+
+function completionItemValuesLookLikeSignature(
+  item: {
+    detail?: string | null;
+    documentation?: unknown;
+    insertText?: string | null;
+    label: Monaco.languages.CompletionItem["label"] | string;
+  },
+  insertText: string | null | undefined,
+  name: string,
+): boolean {
+  const documentation =
+    typeof item.documentation === "string" ? item.documentation : null;
+
+  return [
+    completionItemLabelText(item.label),
+    item.insertText,
+    insertText,
+    item.detail,
+    documentation,
+  ]
+    .filter((candidate): candidate is string => typeof candidate === "string")
+    .some((candidate) => completionLabelLooksLikeSignature(candidate, name));
 }
 
 function isCallableCompletionKind(
@@ -689,11 +738,7 @@ function completionItemCallableDedupeName(
     return callableName;
   }
 
-  if (
-    [label, item.insertText, item.detail, item.documentation]
-      .filter((candidate): candidate is string => typeof candidate === "string")
-      .some((candidate) => completionLabelLooksLikeSignature(candidate, callableName))
-  ) {
+  if (completionItemValuesLookLikeSignature(item, item.insertText, callableName)) {
     return callableName;
   }
 
