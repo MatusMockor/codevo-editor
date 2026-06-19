@@ -127,6 +127,8 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - Managed JS/TS LSP sessions now answer `workspace/workspaceFolders` with the session root folder instead of `null`, giving TypeScript-language-server a VS Code-like workspace context per project tab.
 - Managed JS/TS LSP sessions now receive `workspace/didChangeConfiguration` when per-workspace JS/TS settings change, and the backend updates that session's configuration cache before answering later `workspace/configuration` requests. This keeps validation, auto-import, inlay hint, and CodeLens settings scoped to the active project runtime instead of relying only on process restart.
 - Plain workspaces without `package.json`, `tsconfig.json`, or `jsconfig.json` now still get a managed JS/TS service plan. This matches VS Code's inferred-project behavior for opened JavaScript and TypeScript files instead of requiring an explicit project manifest.
+- Monaco's built-in TypeScript/JavaScript worker is now treated as a fallback when the managed JS/TS language server is not running. When the managed service owns JS/TS intelligence, Monaco built-in completions, hover, navigation, code actions, formatting, symbols, highlights, inlay hints, and diagnostics are disabled to avoid duplicate VS Code-like features and double squiggles.
+- The JavaScript/TypeScript validation workspace setting now also gates Monaco worker diagnostics, not only managed LSP diagnostics, so Validation Off does not leak built-in TypeScript/JavaScript squiggles.
 
 ## Full VS Code-Like Target
 
