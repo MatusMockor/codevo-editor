@@ -106,6 +106,41 @@ class AlbumController
     });
   });
 
+  it("detects multiline chained method calls under the cursor", () => {
+    const source = `<?php
+class AlbumController
+{
+    public function index(): void
+    {
+        $query
+            ->whereNull('parent_id')
+            ->first();
+
+        Album::query()
+            ->whereNull('parent_id')
+            ->firstOrFail();
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "->first")),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "first",
+      receiverExpression: "$query->whereNull('parent_id')",
+      variableName: "",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "->firstOrFail")),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "firstOrFail",
+      receiverExpression: "Album::query()->whereNull('parent_id')",
+      variableName: "",
+    });
+  });
+
   it("detects static method calls under the cursor", () => {
     const source = `<?php
 class AlbumController

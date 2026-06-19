@@ -398,16 +398,19 @@ function methodCallContextAt(
   source: string,
   identifier: IdentifierAtOffset,
 ): PhpIdentifierContext | null {
-  const lineStart = source.lastIndexOf("\n", identifier.start - 1) + 1;
-  const lineEnd = source.indexOf("\n", identifier.end);
-  const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+  const contextStart = Math.max(0, identifier.start - 800);
+  const contextEnd = source.indexOf("\n", identifier.end);
+  const context = source.slice(
+    contextStart,
+    contextEnd < 0 ? source.length : contextEnd,
+  );
   const methodPattern = new RegExp(
     `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
     "g",
   );
 
-  for (const match of line.matchAll(methodPattern)) {
-    const matchStart = lineStart + (match.index ?? 0);
+  for (const match of context.matchAll(methodPattern)) {
+    const matchStart = contextStart + (match.index ?? 0);
     const methodStart = matchStart + match[0].lastIndexOf(identifier.name);
     const methodEnd = methodStart + identifier.name.length;
 
@@ -432,16 +435,19 @@ function staticMethodCallContextAt(
     return null;
   }
 
-  const lineStart = source.lastIndexOf("\n", identifier.start - 1) + 1;
-  const lineEnd = source.indexOf("\n", identifier.end);
-  const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+  const contextStart = Math.max(0, identifier.start - 800);
+  const contextEnd = source.indexOf("\n", identifier.end);
+  const context = source.slice(
+    contextStart,
+    contextEnd < 0 ? source.length : contextEnd,
+  );
   const staticMethodPattern = new RegExp(
     `((?:\\\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\\s*::\\s*${escapeRegExp(identifier.name)}\\b`,
     "g",
   );
 
-  for (const match of line.matchAll(staticMethodPattern)) {
-    const matchStart = lineStart + (match.index ?? 0);
+  for (const match of context.matchAll(staticMethodPattern)) {
+    const matchStart = contextStart + (match.index ?? 0);
     const methodStart = matchStart + match[0].lastIndexOf(identifier.name);
     const methodEnd = methodStart + identifier.name.length;
 
