@@ -5741,6 +5741,67 @@ export function useWorkbenchController(
     ],
   );
 
+  const resolvePhpLaravelMethodGenericModelType = useCallback(
+    async (
+      carrierKind: "builder" | "collection",
+      className: string,
+      methodName: string,
+    ): Promise<string | null> => {
+      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
+        return null;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+      if (!normalizedClassName) {
+        return null;
+      }
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        try {
+          const { content, members } = await readPhpClassMembersFromPath(
+            path,
+            normalizedClassName,
+          );
+          const method = members.find(
+            (candidate) =>
+              candidate.kind !== "property" &&
+              candidate.name.toLowerCase() === methodName.toLowerCase(),
+          );
+          const modelTypeCandidate =
+            carrierKind === "builder"
+              ? phpLaravelEloquentBuilderModelTypeCandidate(
+                  content,
+                  method?.returnType ?? null,
+                )
+              : phpLaravelCollectionModelTypeCandidate(
+                  content,
+                  method?.returnType ?? null,
+                );
+          const modelType = modelTypeCandidate
+            ? resolvePhpClassReference(content, modelTypeCandidate)
+            : null;
+
+          if (modelType) {
+            return modelType;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return null;
+    },
+    [
+      isLaravelFrameworkActive,
+      readPhpClassMembersFromPath,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const resolvePhpClassPropertyOrRelationType = useCallback(
     async (
       className: string,
@@ -6164,6 +6225,35 @@ export function useWorkbenchController(
 
       const methodCall = phpMethodCallExpression(normalizedExpression);
 
+      if (methodCall) {
+        const directReceiverType = phpReceiverExpressionTypeInSource(
+          source,
+          position,
+          methodCall.receiverExpression,
+          { frameworkProviders: activePhpFrameworkProviders },
+        );
+        const constructedReceiverType =
+          directReceiverType ??
+          phpNewExpressionClassName(methodCall.receiverExpression) ??
+          (isLaravelFrameworkActive
+            ? phpLaravelContainerExpressionClassName(methodCall.receiverExpression)
+            : null);
+        const receiverType = constructedReceiverType
+          ? resolvePhpClassReference(source, constructedReceiverType)
+          : null;
+        const methodGenericModelType = receiverType
+          ? await resolvePhpLaravelMethodGenericModelType(
+              "builder",
+              receiverType,
+              methodCall.methodName,
+            )
+          : null;
+
+        if (methodGenericModelType) {
+          return methodGenericModelType;
+        }
+      }
+
       if (
         methodCall &&
         isLaravelEloquentModelBuilderFactoryMethod(methodCall.methodName)
@@ -6251,6 +6341,19 @@ export function useWorkbenchController(
         return staticCallClassName;
       }
 
+      if (staticCall && staticCallClassName) {
+        const staticGenericModelType =
+          await resolvePhpLaravelMethodGenericModelType(
+            "builder",
+            staticCallClassName,
+            staticCall.methodName,
+          );
+
+        if (staticGenericModelType) {
+          return staticGenericModelType;
+        }
+      }
+
       return null;
     },
     [
@@ -6260,6 +6363,7 @@ export function useWorkbenchController(
       isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
+      resolvePhpLaravelMethodGenericModelType,
       resolvePhpMethodReturnType,
     ],
   );
@@ -6370,6 +6474,51 @@ export function useWorkbenchController(
         );
       }
 
+      if (methodCall) {
+        const directReceiverType = phpReceiverExpressionTypeInSource(
+          source,
+          position,
+          methodCall.receiverExpression,
+          { frameworkProviders: activePhpFrameworkProviders },
+        );
+        const constructedReceiverType =
+          directReceiverType ??
+          phpNewExpressionClassName(methodCall.receiverExpression) ??
+          (isLaravelFrameworkActive
+            ? phpLaravelContainerExpressionClassName(methodCall.receiverExpression)
+            : null);
+        const receiverType = constructedReceiverType
+          ? resolvePhpClassReference(source, constructedReceiverType)
+          : null;
+        const methodGenericModelType = receiverType
+          ? await resolvePhpLaravelMethodGenericModelType(
+              "collection",
+              receiverType,
+              methodCall.methodName,
+            )
+          : null;
+
+        if (methodGenericModelType) {
+          return methodGenericModelType;
+        }
+      }
+
+      const staticCall = phpStaticCallExpression(normalizedExpression);
+      const staticCallClassName = staticCall
+        ? resolvePhpClassReference(source, staticCall.className)
+        : null;
+      const staticGenericModelType = staticCall && staticCallClassName
+        ? await resolvePhpLaravelMethodGenericModelType(
+            "collection",
+            staticCallClassName,
+            staticCall.methodName,
+          )
+        : null;
+
+      if (staticGenericModelType) {
+        return staticGenericModelType;
+      }
+
       return null;
     },
     [
@@ -6377,6 +6526,7 @@ export function useWorkbenchController(
       resolvePhpClassReference,
       resolvePhpCollectionModelTypeFromClass,
       resolvePhpEloquentBuilderModelType,
+      resolvePhpLaravelMethodGenericModelType,
       isLaravelFrameworkActive,
     ],
   );

@@ -7345,6 +7345,7 @@ class Comment
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumCollectionPath = "/workspace/app/Collections/AlbumCollection.php";
     const albumPath = "/workspace/app/Models/Album.php";
+    const albumRepositoryPath = "/workspace/app/Repositories/AlbumRepository.php";
     const builderPath =
       "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/Builder.php";
     const controllerSource = `<?php
@@ -7352,10 +7353,11 @@ namespace App\\Http\\Controllers;
 
 use App\\Collections\\AlbumCollection;
 use App\\Models\\Album;
+use App\\Repositories\\AlbumRepository;
 
 class AlbumController
 {
-    public function index(Album $existingAlbum): void
+    public function index(Album $existingAlbum, AlbumRepository $albums): void
     {
         $album = Album::query()->whereNull('parent_id')->first();
         $album->get
@@ -7419,6 +7421,15 @@ class AlbumController
         $customAlbum = $customAlbums->first();
         $customAlbum->get
 
+        $repositoryQuery = $albums->query();
+        $repositoryQuery->pub
+        $repositoryQuery->published()->ord
+        $repositoryAlbum = $albums->query()->published()->first();
+        $repositoryAlbum->get
+
+        $repositoryCollectionAlbum = $albums->matching()->first();
+        $repositoryCollectionAlbum->get
+
         /** @var Result<Album> $result */
         $resultAlbum = $result->first();
         $resultAlbum->get
@@ -7434,6 +7445,18 @@ class AlbumController
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",
       },
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Repositories\\AlbumRepository",
+          kind: "class",
+          lineNumber: 8,
+          name: "AlbumRepository",
+          path: albumRepositoryPath,
+          relativePath: "app/Repositories/AlbumRepository.php",
+        },
+      ],
       readTextFile: vi.fn(async (path: string) => {
         if (path === controllerPath) {
           return controllerSource;
@@ -7465,6 +7488,25 @@ use Illuminate\\Database\\Eloquent\\Collection;
 /** @phpstan-extends Collection<int, Album> */
 class AlbumCollection extends Collection
 {
+}
+`;
+        }
+
+        if (path === albumRepositoryPath) {
+          return `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Collection;
+
+class AlbumRepository
+{
+    /** @return Builder<Album> */
+    public function query(): Builder {}
+
+    /** @return Collection<int, Album> */
+    public function matching(): Collection {}
 }
 `;
         }
@@ -7507,6 +7549,58 @@ class Builder
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$album->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$repositoryQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "published",
+        parameters: "bool $strict = true",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$repositoryQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$repositoryAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$repositoryCollectionAlbum->get"),
       ),
     ).resolves.toEqual([
       {
