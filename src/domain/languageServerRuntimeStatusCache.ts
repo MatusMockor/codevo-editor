@@ -1,26 +1,11 @@
 import type { LanguageServerRuntimeStatus } from "./languageServerRuntime";
+import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
+export { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 
 export type LanguageServerRuntimeStatusByRoot = Record<
   string,
   LanguageServerRuntimeStatus
 >;
-
-export function normalizedWorkspaceRootKey(
-  root: string | null | undefined,
-): string {
-  if (!root) {
-    return "";
-  }
-
-  const minimumLength = minimumWorkspaceRootKeyLength(root);
-  let end = root.length;
-
-  while (end > minimumLength && isWorkspaceRootSeparator(root[end - 1])) {
-    end -= 1;
-  }
-
-  return root.slice(0, end);
-}
 
 export function languageServerRuntimeStatusWithRoot(
   status: LanguageServerRuntimeStatus,
@@ -67,20 +52,4 @@ export function removeCachedLanguageServerRuntimeStatus(
   rootPath: string,
 ): void {
   delete cache[normalizedWorkspaceRootKey(rootPath)];
-}
-
-function minimumWorkspaceRootKeyLength(root: string): number {
-  if (/^[A-Za-z]:[\\/]/.test(root)) {
-    return 3;
-  }
-
-  if (root.startsWith("/") || root.startsWith("\\")) {
-    return 1;
-  }
-
-  return 0;
-}
-
-function isWorkspaceRootSeparator(character: string | undefined): boolean {
-  return character === "/" || character === "\\";
 }

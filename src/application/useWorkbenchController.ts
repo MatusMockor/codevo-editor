@@ -117,9 +117,9 @@ import {
 import {
   cachedLanguageServerRuntimeStatusForRoot,
   cacheLanguageServerRuntimeStatus,
-  normalizedWorkspaceRootKey,
   removeCachedLanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntimeStatusCache";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import {
   createNavigationHistory,
@@ -1451,9 +1451,10 @@ export function useWorkbenchController(
       const rootPaths =
         policy === "singleActive" || previousRootPath === null
           ? appSettingsRef.current.workspaceTabs.filter(
-              (rootPath) => rootPath !== activeRootPath,
+              (rootPath) => !workspaceRootKeysEqual(rootPath, activeRootPath),
             )
-          : previousRootPath && previousRootPath !== activeRootPath
+          : previousRootPath &&
+              !workspaceRootKeysEqual(previousRootPath, activeRootPath)
             ? [previousRootPath]
             : [];
 
@@ -2370,7 +2371,7 @@ export function useWorkbenchController(
 
   const activateWorkspaceTab = useCallback(
     async (path: string) => {
-      if (path === workspaceRoot) {
+      if (workspaceRootKeysEqual(path, workspaceRoot)) {
         return;
       }
 
@@ -2383,14 +2384,21 @@ export function useWorkbenchController(
     async (path: string) => {
       const currentSettings = appSettingsRef.current;
       const currentTabs = currentSettings.workspaceTabs;
+      const tabPath = workspaceTabPathForPath(currentTabs, path) ?? path;
+      const closingActiveWorkspace = workspaceRootKeysEqual(tabPath, workspaceRoot);
+      const targetRootPath =
+        closingActiveWorkspace && workspaceRoot ? workspaceRoot : tabPath;
       const nextTabs = workspaceTabsWithoutPath(currentTabs, path);
-      const cachedWorkspaceState = workspaceStateCacheRef.current[path] ?? null;
+      const cachedWorkspaceState =
+        workspaceStateCacheRef.current[tabPath] ??
+        workspaceStateCacheRef.current[targetRootPath] ??
+        null;
 
       if (nextTabs.length === currentTabs.length) {
         return;
       }
 
-      if (path !== workspaceRoot) {
+      if (!closingActiveWorkspace) {
         if (
           cachedWorkspaceState &&
           cachedWorkspaceHasDirtyDocuments(cachedWorkspaceState) &&
@@ -2400,21 +2408,22 @@ export function useWorkbenchController(
         }
 
         const nextRecentPath =
-          currentSettings.recentWorkspacePath === path
+          workspaceRootKeysEqual(currentSettings.recentWorkspacePath, tabPath)
             ? workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null
             : currentSettings.recentWorkspacePath;
 
-        delete workspaceStateCacheRef.current[path];
+        delete workspaceStateCacheRef.current[tabPath];
+        delete workspaceStateCacheRef.current[targetRootPath];
         removeCachedLanguageServerRuntimeStatus(
           languageServerRuntimeStatusByRootRef.current,
-          path,
+          targetRootPath,
         );
         removeCachedLanguageServerRuntimeStatus(
           javaScriptTypeScriptRuntimeStatusByRootRef.current,
-          path,
+          targetRootPath,
         );
-        await closeSyncedJavaScriptTypeScriptDocumentsForRoot(path);
-        await stopProjectRuntimes(path);
+        await closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath);
+        await stopProjectRuntimes(targetRootPath);
 
         try {
           await persistAppSettings({
@@ -2435,26 +2444,27 @@ export function useWorkbenchController(
         return;
       }
 
-      const currentIndex = currentTabs.indexOf(path);
+      const currentIndex = workspaceTabIndexForPath(currentTabs, tabPath);
       const nextPath =
         nextTabs[Math.min(currentIndex, nextTabs.length - 1)] ??
         nextTabs[nextTabs.length - 1] ??
         null;
 
-      delete workspaceStateCacheRef.current[path];
+      delete workspaceStateCacheRef.current[tabPath];
+      delete workspaceStateCacheRef.current[targetRootPath];
       removeCachedLanguageServerRuntimeStatus(
         languageServerRuntimeStatusByRootRef.current,
-        path,
+        targetRootPath,
       );
       removeCachedLanguageServerRuntimeStatus(
         javaScriptTypeScriptRuntimeStatusByRootRef.current,
-        path,
+        targetRootPath,
       );
       await Promise.allSettled([
-        closeSyncedLanguageServerDocumentsForRoot(path),
-        closeSyncedJavaScriptTypeScriptDocumentsForRoot(path),
+        closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
+        closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
       ]);
-      await stopProjectRuntimes(path);
+      await stopProjectRuntimes(targetRootPath);
 
       try {
         await persistAppSettings({
@@ -10994,13 +11004,6 @@ function indexProgressNoticeGroup(rootPath: string): string {
   return `index-progress:${rootPath}`;
 }
 
-function workspaceRootKeysEqual(
-  left: string | null | undefined,
-  right: string | null | undefined,
-): boolean {
-  return normalizedWorkspaceRootKey(left) === normalizedWorkspaceRootKey(right);
-}
-
 function applyLanguageServerTextEdits(
   content: string,
   edits: LanguageServerTextEdit[],
@@ -11313,7 +11316,7 @@ function cachedWorkspaceHasDirtyDocuments(
 }
 
 function workspaceTabsWithPath(tabs: string[], path: string): string[] {
-  if (tabs.includes(path)) {
+  if (workspaceTabPathForPath(tabs, path)) {
     return tabs;
   }
 
@@ -11321,5 +11324,19 @@ function workspaceTabsWithPath(tabs: string[], path: string): string[] {
 }
 
 function workspaceTabsWithoutPath(tabs: string[], path: string): string[] {
-  return tabs.filter((tabPath) => tabPath !== path);
+  return tabs.filter((tabPath) => !workspaceRootKeysEqual(tabPath, path));
+}
+
+function workspaceTabPathForPath(
+  tabs: string[],
+  path: string | null | undefined,
+): string | null {
+  return tabs.find((tabPath) => workspaceRootKeysEqual(tabPath, path)) ?? null;
+}
+
+function workspaceTabIndexForPath(
+  tabs: string[],
+  path: string | null | undefined,
+): number {
+  return tabs.findIndex((tabPath) => workspaceRootKeysEqual(tabPath, path));
 }

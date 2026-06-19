@@ -5,8 +5,9 @@ use crate::lsp_transport::{read_message, write_message};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{self, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -350,14 +351,89 @@ fn signal_process_group(process_group_id: i32, signal: i32) -> io::Result<()> {
 }
 
 fn workspace_runtime_id(root_path: &str) -> String {
-    let path = PathBuf::from(root_path);
-    let normalized = path
-        .canonicalize()
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/");
+    primary_workspace_runtime_id(&PathBuf::from(root_path))
+}
 
-    normalized.trim_end_matches('/').to_string()
+fn workspace_runtime_id_candidates(root_path: &str) -> Vec<String> {
+    let path = PathBuf::from(root_path);
+    let mut candidates = Vec::new();
+
+    push_unique_key(&mut candidates, primary_workspace_runtime_id(&path));
+
+    if let Some(resolved) = resolve_existing_or_parent_path(&path) {
+        push_unique_path_key(&mut candidates, &resolved);
+    }
+
+    push_unique_path_key(&mut candidates, &normalize_path(&path));
+    candidates
+}
+
+fn primary_workspace_runtime_id(path: &Path) -> String {
+    if let Ok(canonical) = path.canonicalize() {
+        return path_key(&canonical);
+    }
+
+    path_key(path)
+}
+
+fn resolve_existing_or_parent_path(path: &Path) -> Option<PathBuf> {
+    if let Ok(canonical) = path.canonicalize() {
+        return Some(canonical);
+    }
+
+    let mut cursor = path.to_path_buf();
+    let mut missing_components: Vec<OsString> = Vec::new();
+
+    while !cursor.exists() {
+        missing_components.push(cursor.file_name()?.to_os_string());
+
+        if !cursor.pop() {
+            return None;
+        }
+    }
+
+    let mut resolved = cursor.canonicalize().ok()?;
+
+    while let Some(component) = missing_components.pop() {
+        resolved.push(component);
+    }
+
+    Some(normalize_path(&resolved))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+        }
+    }
+
+    normalized
+}
+
+fn push_unique_path_key(candidates: &mut Vec<String>, path: &Path) {
+    push_unique_key(candidates, path_key(path));
+}
+
+fn push_unique_key(candidates: &mut Vec<String>, key: String) {
+    if !candidates.contains(&key) {
+        candidates.push(key);
+    }
+}
+
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 enum HandshakeOutcome {
@@ -587,18 +663,27 @@ impl LanguageServerRegistry {
     }
 
     fn existing_supervisor(&self, root_path: &str) -> Option<Arc<LanguageServerSupervisor>> {
-        self.supervisors
-            .lock()
-            .ok()?
-            .get(&workspace_runtime_id(root_path))
-            .cloned()
+        let supervisors = self.supervisors.lock().ok()?;
+
+        for runtime_id in workspace_runtime_id_candidates(root_path) {
+            if let Some(supervisor) = supervisors.get(&runtime_id) {
+                return Some(Arc::clone(supervisor));
+            }
+        }
+
+        None
     }
 
     fn remove_supervisor(&self, root_path: &str) -> Option<Arc<LanguageServerSupervisor>> {
-        self.supervisors
-            .lock()
-            .ok()?
-            .remove(&workspace_runtime_id(root_path))
+        let mut supervisors = self.supervisors.lock().ok()?;
+
+        for runtime_id in workspace_runtime_id_candidates(root_path) {
+            if let Some(supervisor) = supervisors.remove(&runtime_id) {
+                return Some(supervisor);
+            }
+        }
+
+        None
     }
 
     fn drain_supervisors(&self) -> Vec<Arc<LanguageServerSupervisor>> {
@@ -1699,7 +1784,9 @@ mod tests {
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
     use crate::lsp_transport::{read_message, write_message};
     use serde_json::{json, Value};
+    use std::fs;
     use std::io::{self, PipeWriter, Write};
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Arc, Mutex};
@@ -1846,6 +1933,45 @@ mod tests {
         );
 
         assert_eq!(registry.stop_all(), LanguageServerRuntimeStatus::Stopped);
+        assert!(registry.running_roots().is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn registry_stop_resolves_missing_symlink_alias_root() {
+        use std::os::unix::fs::symlink;
+
+        let registry = LanguageServerRegistry::new_with_label("Test server");
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let (sink, _rx) = ChannelSink::new();
+        let parent = temp_workspace("lsp-stop-alias-parent");
+        let root = parent.join("workspace");
+        fs::create_dir_all(&root).expect("workspace root");
+        let root = root.canonicalize().expect("canonical workspace root");
+        let alias_parent = temp_path("lsp-stop-alias-link");
+        symlink(&parent, &alias_parent).expect("workspace parent symlink");
+        let alias_root = alias_parent.join("workspace");
+
+        registry
+            .start(
+                &path_string(&root),
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace");
+        fs::remove_dir_all(&root).expect("remove workspace root");
+
+        assert!(matches!(
+            registry.status(&path_string(&alias_root)),
+            LanguageServerRuntimeStatus::Running { .. }
+        ));
+        assert_eq!(
+            registry.stop(&path_string(&alias_root)),
+            LanguageServerRuntimeStatus::Stopped
+        );
         assert!(registry.running_roots().is_empty());
     }
 
@@ -3252,6 +3378,27 @@ mod tests {
         fn emit_diagnostics(&self, _event: LanguageServerDiagnosticEvent) {
             // no-op for status-only tests
         }
+    }
+
+    fn temp_workspace(label: &str) -> PathBuf {
+        let root = temp_path(label);
+        fs::create_dir_all(&root).expect("temp workspace");
+        root.canonicalize().expect("canonical temp workspace")
+    }
+
+    fn temp_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("editor-lsp-{label}-{}", unique_suffix()))
+    }
+
+    fn unique_suffix() -> u128 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
+    }
+
+    fn path_string(path: &Path) -> String {
+        path.to_string_lossy().to_string()
     }
 
     fn _unique_label(prefix: &str) -> String {

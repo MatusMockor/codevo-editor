@@ -107,6 +107,21 @@ describe("normalizeAppSettings", () => {
     });
   });
 
+  it("deduplicates workspace tabs by normalized root key", () => {
+    expect(
+      normalizeAppSettings({
+        recentWorkspacePath: "/project/api",
+        workspaceTabs: ["/project/api/", "/project/web", "/project/api"],
+      }),
+    ).toEqual({
+      keymap: defaultKeymapSettings(),
+      recentWorkspacePath: "/project/api",
+      runtimePolicy: "keepAlive",
+      theme: "dark",
+      workspaceTabs: ["/project/api/", "/project/web"],
+    });
+  });
+
   it("falls back for invalid app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: 1 })).toEqual(
       defaultAppSettings(),

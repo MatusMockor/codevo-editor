@@ -31,7 +31,7 @@ import {
   type LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import { normalizedWorkspaceRootKey } from "../domain/languageServerRuntimeStatusCache";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { EditorDocument } from "../domain/workspace";
 
 type MonacoApi = typeof Monaco;
@@ -2086,12 +2086,6 @@ function applyWorkspaceEditEvent(
   applyWorkspaceEditToOpenModels(monaco, event.edit, event.rootPath ?? undefined);
 }
 
-function workspaceRootKeysEqual(
-  left: string | null | undefined,
-  right: string | null | undefined,
-): boolean {
-  return normalizedWorkspaceRootKey(left) === normalizedWorkspaceRootKey(right);
-}
 
 function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {
   const normalizedRootPath = normalizedWorkspacePath(rootPath);

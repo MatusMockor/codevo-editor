@@ -4,6 +4,7 @@ import {
   normalizeKeymapSettings,
   type KeymapSettings,
 } from "./keymap";
+import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 
 export const appThemeOptions = [
   { id: "dark", label: "Dark" },
@@ -726,7 +727,21 @@ function normalizePathList(value: unknown): string[] {
     .map((path) => path.trim())
     .filter(Boolean);
 
-  return Array.from(new Set(paths));
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const path of paths) {
+    const key = normalizedWorkspaceRootKey(path);
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalized.push(path);
+  }
+
+  return normalized;
 }
 
 function normalizeWorkspaceTabs(
@@ -739,7 +754,13 @@ function normalizeWorkspaceTabs(
     return tabs;
   }
 
-  if (tabs.includes(recentWorkspacePath)) {
+  if (
+    tabs.some(
+      (path) =>
+        normalizedWorkspaceRootKey(path) ===
+        normalizedWorkspaceRootKey(recentWorkspacePath),
+    )
+  ) {
     return tabs;
   }
 

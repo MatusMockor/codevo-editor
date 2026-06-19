@@ -2,7 +2,10 @@ use crate::job_scheduler::WorkspaceIndexLifecycle;
 use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use crate::lsp_session::{JavaScriptTypeScriptLanguageServerRegistry, PhpLanguageServerRegistry};
 use crate::terminal_session::TerminalSupervisor;
-use std::path::Path;
+use std::{
+    ffi::OsString,
+    path::{Component, Path, PathBuf},
+};
 
 pub trait WorkspaceIndexLifecycleDisposer {
     fn cancel_workspace_index_lifecycle(&self, root_path: &str);
@@ -32,7 +35,7 @@ pub fn dispose_workspace_root(
     root_path: &Path,
     runtime: WorkspaceRuntimeDisposal<'_>,
 ) -> Result<(), String> {
-    let root_key = root_path.to_string_lossy().to_string();
+    let root_key = workspace_root_disposal_key(root_path);
 
     runtime
         .index_lifecycle
@@ -45,6 +48,62 @@ pub fn dispose_workspace_root(
         .stop_language_server(&root_key);
     runtime.php_language_servers.stop_language_server(&root_key);
     runtime.terminal_sessions.stop_terminal_sessions(root_path)
+}
+
+fn workspace_root_disposal_key(root_path: &Path) -> String {
+    path_key(
+        &resolve_existing_or_parent_path(root_path).unwrap_or_else(|| normalize_path(root_path)),
+    )
+}
+
+fn resolve_existing_or_parent_path(path: &Path) -> Option<PathBuf> {
+    if let Ok(canonical) = path.canonicalize() {
+        return Some(canonical);
+    }
+
+    let mut cursor = path.to_path_buf();
+    let mut missing_components: Vec<OsString> = Vec::new();
+
+    while !cursor.exists() {
+        missing_components.push(cursor.file_name()?.to_os_string());
+
+        if !cursor.pop() {
+            return None;
+        }
+    }
+
+    let mut resolved = cursor.canonicalize().ok()?;
+
+    while let Some(component) = missing_components.pop() {
+        resolved.push(component);
+    }
+
+    Some(normalize_path(&resolved))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+        }
+    }
+
+    normalized
+}
+
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 impl WorkspaceIndexLifecycleDisposer for WorkspaceIndexLifecycle {
@@ -85,8 +144,10 @@ mod tests {
     };
     use std::{
         collections::HashSet,
+        fs,
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     #[test]
@@ -202,6 +263,57 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn disposal_resolves_missing_symlink_alias_roots_for_string_keyed_runtime_parts() {
+        use std::os::unix::fs::symlink;
+
+        let parent = temp_workspace("runtime-alias-parent");
+        let root = parent.join("workspace");
+        fs::create_dir_all(&root).expect("workspace root");
+        let root = root.canonicalize().expect("canonical workspace root");
+        let root_key = root_key(&root);
+        let alias_parent = temp_path("runtime-alias-link");
+        symlink(&parent, &alias_parent).expect("workspace parent symlink");
+        let alias_root = alias_parent.join("workspace");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let index = RecordingRootDisposer::new("index", [&root_key], &calls);
+        let watch = RecordingRootDisposer::new("watch", [&root_key], &calls);
+        let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
+        let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
+        let terminals = RecordingTerminalDisposer::new("terminal", [&alias_root], &calls);
+
+        fs::remove_dir_all(&root).expect("remove workspace root");
+
+        dispose_workspace_root(
+            &alias_root,
+            WorkspaceRuntimeDisposal {
+                index_lifecycle: &index,
+                javascript_typescript_language_servers: &js_lsp,
+                javascript_typescript_watch_registry: &watch,
+                php_language_servers: &php_lsp,
+                terminal_sessions: &terminals,
+            },
+        )
+        .expect("dispose workspace root");
+
+        assert!(!index.contains(&root_key));
+        assert!(!watch.contains(&root_key));
+        assert!(!js_lsp.contains(&root_key));
+        assert!(!php_lsp.contains(&root_key));
+        assert!(!terminals.contains(&alias_root));
+        assert_eq!(
+            calls.lock().expect("calls").as_slice(),
+            &[
+                format!("index:{root_key}"),
+                format!("watch:{root_key}"),
+                format!("js-lsp:{root_key}"),
+                format!("php-lsp:{root_key}"),
+                format!("terminal:{}", alias_root.to_string_lossy()),
+            ]
+        );
+    }
+
     struct RecordingRootDisposer {
         label: &'static str,
         roots: Mutex<HashSet<String>>,
@@ -308,5 +420,22 @@ mod tests {
 
     fn root_key(path: &Path) -> String {
         path.to_string_lossy().to_string()
+    }
+
+    fn temp_workspace(label: &str) -> PathBuf {
+        let root = temp_path(label);
+        fs::create_dir_all(&root).expect("temp workspace");
+        root.canonicalize().expect("canonical temp workspace")
+    }
+
+    fn temp_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("editor-runtime-{label}-{}", unique_suffix()))
+    }
+
+    fn unique_suffix() -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
     }
 }

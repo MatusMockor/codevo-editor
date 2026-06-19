@@ -492,6 +492,58 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("treats trailing-separator project tabs as the active workspace", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        runtimePolicy: "singleActive",
+        workspaceTabs: ["/workspace-a/", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockClear();
+    vi.mocked(dependencies.settingsGateway.saveAppSettings).mockClear();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a/");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.settingsGateway.saveAppSettings).not.toHaveBeenCalled();
+  });
+
+  it("closes the active normalized project tab through the current workspace root", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a/", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-a/");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).not.toHaveBeenCalledWith("/workspace-a/");
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
+  });
+
   it("restores cached JavaScript and TypeScript runtime status when activating a kept-alive project tab", async () => {
     let publishRuntimeStatus:
       | ((status: LanguageServerRuntimeStatus) => void)
