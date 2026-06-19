@@ -1818,6 +1818,109 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("maps TypeScript workspace edit file operations through Monaco and the workspace applier", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const codeActionEdit = {
+      changes: {},
+      fileOperations: [
+        {
+          kind: "create" as const,
+          options: { ignoreIfExists: true },
+          uri: "file:///project/src/created.ts",
+        },
+        {
+          kind: "rename" as const,
+          newUri: "file:///project/src/NewName.ts",
+          oldUri: "file:///project/src/OldName.ts",
+          options: { overwrite: true },
+        },
+        {
+          kind: "delete" as const,
+          options: { ignoreIfNotExists: true, recursive: true },
+          uri: "file:///project/src/stale.ts",
+        },
+        {
+          kind: "create" as const,
+          uri: "file:///project-neighbor/src/leak.ts",
+        },
+      ],
+    };
+    const filteredEdit = {
+      changes: {},
+      fileOperations: codeActionEdit.fileOperations.slice(0, 3),
+    };
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: null,
+          data: null,
+          edit: codeActionEdit,
+          isPreferred: true,
+          kind: "quickfix",
+          title: "Apply file operation edits",
+        },
+      ],
+    });
+    monaco.editor.getModels.mockReturnValue([model]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+      }),
+    );
+    const codeActionProvider = (
+      monaco.languages.registerCodeActionProvider as any
+    ).mock.calls[0][1];
+
+    const actions = await codeActionProvider.provideCodeActions(
+      model,
+      new monaco.Range(1, 1, 1, 5),
+      {
+        markers: [],
+        only: "quickfix",
+      },
+    );
+
+    expect(actions.actions[0].edit.edits).toEqual([
+      {
+        newResource: {
+          fsPath: "/project/src/created.ts",
+          path: "/project/src/created.ts",
+        },
+        options: { ignoreIfExists: true },
+      },
+      {
+        newResource: {
+          fsPath: "/project/src/NewName.ts",
+          path: "/project/src/NewName.ts",
+        },
+        oldResource: {
+          fsPath: "/project/src/OldName.ts",
+          path: "/project/src/OldName.ts",
+        },
+        options: { overwrite: true },
+      },
+      {
+        oldResource: {
+          fsPath: "/project/src/stale.ts",
+          path: "/project/src/stale.ts",
+        },
+        options: { ignoreIfNotExists: true, recursive: true },
+      },
+    ]);
+
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+    await commandDescriptor.run(null, actions.actions[0].command.arguments[0]);
+
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(filteredEdit, {
+      editedOpenPaths: [],
+      rootPath: "/project",
+    });
+  });
+
   it("drops stale TypeScript prepare-rename rejection after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";

@@ -154,6 +154,7 @@ export function phpReceiverExpressionTypeInSource(
       ),
       methodCall.receiverExpression,
       options.frameworkProviders,
+      normalizedExpression,
     );
   }
 
@@ -166,6 +167,7 @@ export function phpReceiverExpressionTypeInSource(
       staticCall.className,
       normalizedExpression,
       options.frameworkProviders,
+      normalizedExpression,
     );
   }
 
@@ -359,6 +361,7 @@ function phpFrameworkMethodCallAssignmentReturnType(
       staticCall.className,
       assignmentExpression,
       options.frameworkProviders,
+      assignmentExpression,
     );
   }
 
@@ -381,6 +384,7 @@ function phpFrameworkMethodCallAssignmentReturnType(
     ),
     methodCall.receiverExpression,
     options.frameworkProviders,
+    assignmentExpression,
   );
 }
 

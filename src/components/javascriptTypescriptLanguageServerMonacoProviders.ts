@@ -27,6 +27,8 @@ import {
   type LanguageServerSignatureParameter,
   type LanguageServerTextEdit,
   type LanguageServerWorkspaceEdit,
+  type LanguageServerWorkspaceFileOperation,
+  type LanguageServerWorkspaceFileOperationOptions,
   type LanguageServerWorkspaceEditEvent,
   type LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
@@ -1835,28 +1837,113 @@ function toMonacoWorkspaceEdit(
   edit: LanguageServerWorkspaceEdit,
   rootPath?: string,
 ): Monaco.languages.WorkspaceEdit {
+  const fileEdits = (edit.fileOperations ?? []).flatMap((operation) =>
+    toMonacoWorkspaceFileEdit(monaco, operation, rootPath),
+  );
+  const textEdits = Object.entries(edit.changes).flatMap(([uri, edits]) => {
+    const path = pathFromLanguageServerUri(uri);
+
+    if (!path) {
+      return [];
+    }
+
+    if (rootPath && !isPathInWorkspaceRoot(rootPath, path)) {
+      return [];
+    }
+
+    const resource = monaco.Uri.file(path);
+    const versionId = context.path === path ? context.versionId : undefined;
+
+    return edits.map((textEdit) => ({
+      resource,
+      textEdit: toMonacoTextEdit(monaco, textEdit),
+      versionId,
+    }));
+  });
+
   return {
-    edits: Object.entries(edit.changes).flatMap(([uri, edits]) => {
-      const path = pathFromLanguageServerUri(uri);
-
-      if (!path) {
-        return [];
-      }
-
-      if (rootPath && !isPathInWorkspaceRoot(rootPath, path)) {
-        return [];
-      }
-
-      const resource = monaco.Uri.file(path);
-      const versionId = context.path === path ? context.versionId : undefined;
-
-      return edits.map((textEdit) => ({
-        resource,
-        textEdit: toMonacoTextEdit(monaco, textEdit),
-        versionId,
-      }));
-    }),
+    edits: [...fileEdits, ...textEdits],
   };
+}
+
+function toMonacoWorkspaceFileEdit(
+  monaco: MonacoApi,
+  operation: LanguageServerWorkspaceFileOperation,
+  rootPath?: string,
+): Monaco.languages.IWorkspaceFileEdit[] {
+  if (!isFileOperationInWorkspaceRoot(operation, rootPath)) {
+    return [];
+  }
+
+  if (operation.kind === "create") {
+    const path = pathFromLanguageServerUri(operation.uri);
+    const options = toMonacoWorkspaceFileEditOptions(operation.options);
+
+    return path
+      ? [
+          {
+            newResource: monaco.Uri.file(path),
+            ...(options ? { options } : {}),
+          },
+        ]
+      : [];
+  }
+
+  if (operation.kind === "rename") {
+    const oldPath = pathFromLanguageServerUri(operation.oldUri);
+    const newPath = pathFromLanguageServerUri(operation.newUri);
+    const options = toMonacoWorkspaceFileEditOptions(operation.options);
+
+    return oldPath && newPath
+      ? [
+          {
+            newResource: monaco.Uri.file(newPath),
+            oldResource: monaco.Uri.file(oldPath),
+            ...(options ? { options } : {}),
+          },
+        ]
+      : [];
+  }
+
+  const path = pathFromLanguageServerUri(operation.uri);
+  const options = toMonacoWorkspaceFileEditOptions(operation.options);
+
+  return path
+    ? [
+        {
+          oldResource: monaco.Uri.file(path),
+          ...(options ? { options } : {}),
+        },
+      ]
+    : [];
+}
+
+function toMonacoWorkspaceFileEditOptions(
+  options: LanguageServerWorkspaceFileOperationOptions | null | undefined,
+): Monaco.languages.WorkspaceFileEditOptions | undefined {
+  if (!options) {
+    return undefined;
+  }
+
+  const monacoOptions: Monaco.languages.WorkspaceFileEditOptions = {};
+
+  if (typeof options.ignoreIfExists === "boolean") {
+    monacoOptions.ignoreIfExists = options.ignoreIfExists;
+  }
+
+  if (typeof options.ignoreIfNotExists === "boolean") {
+    monacoOptions.ignoreIfNotExists = options.ignoreIfNotExists;
+  }
+
+  if (typeof options.overwrite === "boolean") {
+    monacoOptions.overwrite = options.overwrite;
+  }
+
+  if (typeof options.recursive === "boolean") {
+    monacoOptions.recursive = options.recursive;
+  }
+
+  return Object.keys(monacoOptions).length > 0 ? monacoOptions : undefined;
 }
 
 function toMonacoTextEdit(
@@ -2250,15 +2337,46 @@ function workspaceEditForRoot(
     return edit;
   }
 
-  return {
-    changes: Object.fromEntries(
-      Object.entries(edit.changes).filter(([uri]) => {
-        const path = pathFromLanguageServerUri(uri);
+  const changes = Object.fromEntries(
+    Object.entries(edit.changes).filter(([uri]) => {
+      const path = pathFromLanguageServerUri(uri);
 
-        return path ? isPathInWorkspaceRoot(rootPath, path) : false;
-      }),
-    ),
+      return path ? isPathInWorkspaceRoot(rootPath, path) : false;
+    }),
+  );
+  const fileOperations = (edit.fileOperations ?? []).filter((operation) =>
+    isFileOperationInWorkspaceRoot(operation, rootPath),
+  );
+
+  return {
+    ...(fileOperations.length > 0 ? { fileOperations } : {}),
+    changes,
   };
+}
+
+function isFileOperationInWorkspaceRoot(
+  operation: LanguageServerWorkspaceFileOperation,
+  rootPath?: string,
+): boolean {
+  if (!rootPath) {
+    return true;
+  }
+
+  return fileOperationUris(operation).every((uri) => {
+    const path = pathFromLanguageServerUri(uri);
+
+    return path ? isPathInWorkspaceRoot(rootPath, path) : false;
+  });
+}
+
+function fileOperationUris(
+  operation: LanguageServerWorkspaceFileOperation,
+): string[] {
+  if (operation.kind === "rename") {
+    return [operation.oldUri, operation.newUri];
+  }
+
+  return [operation.uri];
 }
 
 function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {

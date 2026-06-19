@@ -580,6 +580,88 @@ class Album extends Model
     ).toBeNull();
   });
 
+  it("resolves Laravel relation factory chains to related model assignments", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    public function preview(): void
+    {
+        $direct = $this->hasMany(Post::class)
+            ->whereNull('archived_at')
+            ->firstOrFail();
+        $related = Post::class;
+        $parent = $this->belongsTo($related)->first();
+        $morphed = $this->morphMany(Post::class, 'commentable')->get()->first();
+        $relation = $this->hasOne(self::class);
+        $selfComment = $relation->first();
+
+        $direct->tit
+        $parent->tit
+        $morphed->tit
+        $selfComment->bod
+    }
+}
+
+class Post extends Model
+{
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$direct->tit"),
+        "$this->hasMany(Post::class)",
+        laravelOptions,
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
+    );
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$direct->tit"),
+        "direct",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$parent->tit"),
+        "parent",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$morphed->tit"),
+        "morphed",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$selfComment->bod"),
+        "selfComment",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Comment");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$direct->tit"),
+        "direct",
+      ),
+    ).toBeNull();
+  });
+
   it("resolves Laravel repository builder chains from model return expressions", () => {
     const source = `<?php
 namespace App\\Models;

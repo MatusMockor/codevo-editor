@@ -337,6 +337,19 @@ const laravelEloquentSingularRelationTypes = new Set([
   "morphto",
 ]);
 
+const laravelEloquentRelationFactoryClassNames = new Map([
+  ["belongsto", "BelongsTo"],
+  ["belongstomany", "BelongsToMany"],
+  ["hasmany", "HasMany"],
+  ["hasmanythrough", "HasManyThrough"],
+  ["hasone", "HasOne"],
+  ["hasonethrough", "HasOneThrough"],
+  ["morphmany", "MorphMany"],
+  ["morphone", "MorphOne"],
+  ["morphedbymany", "MorphedByMany"],
+  ["morphtomany", "MorphToMany"],
+]);
+
 export interface PhpLaravelDynamicWhereAttributeTarget {
   attributeName: string;
   position: EditorPosition;
@@ -503,6 +516,7 @@ export function phpLaravelMethodCallReturnTypeFromSource(
   methodName: string,
   receiverType: string | null,
   receiverExpression: string | null,
+  callExpression: string | null = null,
 ): string | null {
   return (
     phpLaravelRepositoryMethodModelReturnTypeFromSource(
@@ -525,6 +539,7 @@ export function phpLaravelMethodCallReturnTypeFromSource(
       methodName,
       receiverType,
       receiverExpression,
+      callExpression,
     )
   );
 }
@@ -967,7 +982,34 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
   methodName: string,
   receiverType: string | null,
   receiverExpression: string | null,
+  callExpression: string | null,
 ): string | null {
+  const relationFactoryReturnType =
+    phpLaravelRelationFactoryCallReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+      receiverExpression,
+      callExpression,
+    );
+
+  if (relationFactoryReturnType) {
+    return relationFactoryReturnType;
+  }
+
+  const relationModelType = phpLaravelEloquentRelationModelTypeFromReceiverType(
+    source,
+    receiverType,
+  );
+
+  if (relationModelType) {
+    return phpLaravelEloquentBuilderCallReturnType(
+      source,
+      relationModelType,
+      methodName,
+    );
+  }
+
   const builderModelType =
     phpLaravelEloquentBuilderModelTypeFromReceiverType(source, receiverType) ??
     phpLaravelEloquentBuilderModelTypeFromExpression(
@@ -1025,6 +1067,16 @@ function phpLaravelEloquentBuilderModelTypeFromReceiverType(
   );
 }
 
+function phpLaravelEloquentRelationModelTypeFromReceiverType(
+  source: string,
+  receiverType: string | null,
+): string | null {
+  return phpLaravelResolvedModelTypeCandidate(
+    source,
+    phpLaravelRelationModelTypeFromReturnType(receiverType),
+  );
+}
+
 function phpLaravelStaticModelReceiverType(
   source: string,
   receiverType: string | null,
@@ -1049,6 +1101,51 @@ function phpLaravelStaticModelCallReturnType(
   methodName: string,
 ): string | null {
   return phpLaravelEloquentBuilderCallReturnType(source, modelType, methodName);
+}
+
+function phpLaravelRelationFactoryCallReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+  receiverExpression: string | null,
+  callExpression: string | null,
+): string | null {
+  const relationClassName = phpLaravelRelationFactoryClassName(methodName);
+
+  if (!relationClassName) {
+    return null;
+  }
+
+  const declaringModelType = phpLaravelStaticModelReceiverType(source, receiverType);
+
+  if (!declaringModelType) {
+    return null;
+  }
+
+  const expression = callExpression ?? receiverExpression ?? "";
+  const targetClassName = phpLaravelRelationTargetClassNameFromExpression(
+    expression,
+    true,
+    phpLocalClassStringResolverBeforeExpression(source, expression),
+  );
+  const relatedModelType = phpLaravelResolvedModelTypeCandidate(
+    source,
+    phpLaravelRelationTypeForDeclaringClass(
+      targetClassName,
+      declaringModelType,
+      source,
+    ),
+  );
+
+  return relatedModelType
+    ? `Illuminate\\Database\\Eloquent\\Relations\\${relationClassName}<${relatedModelType}>`
+    : null;
+}
+
+function phpLaravelRelationFactoryClassName(methodName: string): string | null {
+  return (
+    laravelEloquentRelationFactoryClassNames.get(methodName.toLowerCase()) ?? null
+  );
 }
 
 function phpLaravelEloquentBuilderCallReturnType(
@@ -2292,6 +2389,22 @@ function phpLocalClassStringResolverForMethodReturnExpression(
 
   return (variableName: string) =>
     phpLocalClassStringAssignmentBefore(bodyBeforeReturn, variableName);
+}
+
+function phpLocalClassStringResolverBeforeExpression(
+  source: string,
+  expression: string,
+): ((variableName: string) => string | null) | undefined {
+  const expressionOffset = source.indexOf(expression.trim());
+
+  if (expressionOffset < 0) {
+    return undefined;
+  }
+
+  const sourceBeforeExpression = source.slice(0, expressionOffset);
+
+  return (variableName: string) =>
+    phpLocalClassStringAssignmentBefore(sourceBeforeExpression, variableName);
 }
 
 function phpMethodBodyBeforeReturnExpression(

@@ -83,6 +83,45 @@ pub struct LanguageServerCompletionItemLabelDetails {
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerWorkspaceEdit {
     pub changes: BTreeMap<String, Vec<LanguageServerTextEdit>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_operations: Vec<LanguageServerWorkspaceFileOperation>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerWorkspaceFileOperationOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_if_exists: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_if_not_exists: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overwrite: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recursive: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum LanguageServerWorkspaceFileOperation {
+    #[serde(rename_all = "camelCase")]
+    Create {
+        uri: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<LanguageServerWorkspaceFileOperationOptions>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Rename {
+        old_uri: String,
+        new_uri: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<LanguageServerWorkspaceFileOperationOptions>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Delete {
+        uri: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options: Option<LanguageServerWorkspaceFileOperationOptions>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1689,6 +1728,7 @@ fn slice_by_char_offsets(value: &str, start: usize, end: usize) -> Option<String
 
 fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, String> {
     let mut changes = BTreeMap::new();
+    let mut file_operations = Vec::new();
 
     if let Some(change_map) = value.get("changes").and_then(Value::as_object) {
         for (uri, edits) in change_map {
@@ -1702,21 +1742,37 @@ fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, St
 
     if let Some(document_changes) = value.get("documentChanges").and_then(Value::as_array) {
         for document_change in document_changes {
-            let Some(text_document) = document_change.get("textDocument") else {
-                continue;
-            };
-            let Some(uri) = text_document.get("uri").and_then(Value::as_str) else {
-                continue;
-            };
-            let Some(items) = document_change.get("edits").and_then(Value::as_array) else {
-                continue;
-            };
+            if let Some(text_document) = document_change.get("textDocument") {
+                let Some(uri) = text_document.get("uri").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(items) = document_change.get("edits").and_then(Value::as_array) else {
+                    continue;
+                };
 
-            changes.insert(uri.to_string(), parse_text_edits(items)?);
+                changes.insert(uri.to_string(), parse_text_edits(items)?);
+                continue;
+            }
+
+            if document_change.get("kind").is_some() {
+                file_operations.push(
+                    serde_json::from_value::<LanguageServerWorkspaceFileOperation>(
+                        document_change.clone(),
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "Language server returned a malformed workspace file operation: {error}"
+                        )
+                    })?,
+                );
+            }
         }
     }
 
-    Ok(LanguageServerWorkspaceEdit { changes })
+    Ok(LanguageServerWorkspaceEdit {
+        changes,
+        file_operations,
+    })
 }
 
 fn parse_text_edits(items: &[Value]) -> Result<Vec<LanguageServerTextEdit>, String> {
@@ -1808,12 +1864,12 @@ mod tests {
         LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
-        LanguageServerTypeHierarchyItem, LspTextDocumentFeatureRequestFactory,
-        TextDocumentCompletion, TextDocumentFeatureRequestFactory, TextDocumentFormatting,
-        TextDocumentInlayHintRange, TextDocumentOnTypeFormatting, TextDocumentPosition,
-        TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
-        TextDocumentSelectionRange, WorkspaceFileChange, WorkspaceFileChangeType,
-        WorkspaceFileRename,
+        LanguageServerTypeHierarchyItem, LanguageServerWorkspaceFileOperation,
+        LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
+        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+        TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
+        TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
+        WorkspaceFileChange, WorkspaceFileChangeType, WorkspaceFileRename,
     };
     use serde_json::json;
 
@@ -2689,6 +2745,25 @@ mod tests {
                             "newText": "import { Account } from './account';\n"
                         }
                     ]
+                },
+                {
+                    "kind": "create",
+                    "uri": "file:///tmp/Created.ts",
+                    "options": { "ignoreIfExists": true }
+                },
+                {
+                    "kind": "rename",
+                    "oldUri": "file:///tmp/Old.ts",
+                    "newUri": "file:///tmp/New.ts",
+                    "options": { "overwrite": true }
+                },
+                {
+                    "kind": "delete",
+                    "uri": "file:///tmp/Deleted.ts",
+                    "options": {
+                        "ignoreIfNotExists": true,
+                        "recursive": true
+                    }
                 }
             ]
         }))
@@ -2705,6 +2780,39 @@ mod tests {
         assert_eq!(
             edit.changes["file:///tmp/Other.ts"][0].new_text,
             "import { Account } from './account';\n"
+        );
+        assert_eq!(edit.file_operations.len(), 3);
+        assert_eq!(
+            edit.file_operations[0],
+            LanguageServerWorkspaceFileOperation::Create {
+                uri: "file:///tmp/Created.ts".to_string(),
+                options: Some(super::LanguageServerWorkspaceFileOperationOptions {
+                    ignore_if_exists: Some(true),
+                    ..Default::default()
+                }),
+            }
+        );
+        assert_eq!(
+            edit.file_operations[1],
+            LanguageServerWorkspaceFileOperation::Rename {
+                old_uri: "file:///tmp/Old.ts".to_string(),
+                new_uri: "file:///tmp/New.ts".to_string(),
+                options: Some(super::LanguageServerWorkspaceFileOperationOptions {
+                    overwrite: Some(true),
+                    ..Default::default()
+                }),
+            }
+        );
+        assert_eq!(
+            edit.file_operations[2],
+            LanguageServerWorkspaceFileOperation::Delete {
+                uri: "file:///tmp/Deleted.ts".to_string(),
+                options: Some(super::LanguageServerWorkspaceFileOperationOptions {
+                    ignore_if_not_exists: Some(true),
+                    recursive: Some(true),
+                    ..Default::default()
+                }),
+            }
         );
         assert_eq!(
             parse_workspace_edit_result(&json!(null)).expect("null edit"),

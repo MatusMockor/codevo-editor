@@ -70,6 +70,7 @@ This gives a stronger Basic-mode partial experience without starting any PHP IDE
 - Executed language-server commands can apply returned workspace edits to open Monaco models.
 - TypeScript `source.organizeImports` and direct-edit quick fixes now flow through the same executable path as VS Code-style actions.
 - Server-initiated `workspace/applyEdit` requests now emit Tauri workspace-edit events and are applied to open Monaco models, which covers TypeScript command paths that do not return edits directly.
+- WorkspaceEdit `documentChanges` resource operations (`create`, `rename`, `delete`) are now preserved, root-guarded, mapped to Monaco file edits, and applied through the Tauri workspace edit path instead of being dropped.
 - Completion items now preserve richer LSP metadata (`textEdit`, `additionalTextEdits`, `sortText`, `filterText`, `commitCharacters`, snippet format) so auto imports and exact replacement ranges are not dropped.
 - Completion lists now preserve LSP `isIncomplete`, and completion items preserve `preselect`, so Monaco can keep requesting narrowed suggestions and select the server-preferred item more like VS Code.
 - `completionItem/resolve` is wired through the JS/TS language-server gateway and Monaco provider, matching the VS Code pattern of lazily resolving documentation and import edits for focused suggestions.

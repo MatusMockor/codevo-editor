@@ -174,6 +174,97 @@ class Album extends Model
     ).toBeNull();
   });
 
+  it("infers Laravel relation factory and relation chain return types", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    public function relations(): void
+    {
+        $related = Post::class;
+
+        $this->belongsTo($related);
+    }
+}
+
+class Post extends Model
+{
+}
+`;
+
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "hasMany",
+        "App\\Models\\Comment",
+        "$this",
+        "$this->hasMany(Post::class)",
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
+    );
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "belongsTo",
+        "App\\Models\\Comment",
+        "$this",
+        "$this->belongsTo($related)",
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\Post>",
+    );
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "morphMany",
+        "App\\Models\\Comment",
+        "$this",
+        "$this->morphMany(Post::class, 'commentable')",
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\MorphMany<App\\Models\\Post>",
+    );
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "hasOne",
+        "App\\Models\\Comment",
+        "$this",
+        "$this->hasOne(self::class)",
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\HasOne<App\\Models\\Comment>",
+    );
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "first",
+        "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
+        "$this->hasMany(Post::class)",
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "get",
+        "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
+        "$this->hasMany(Post::class)",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Post>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "whereNull",
+        "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
+        "$this->hasMany(Post::class)",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Post>");
+  });
+
   it("detects member access completion context", () => {
     const source = `<?php
 class Controller

@@ -86,6 +86,31 @@ export interface LanguageServerTextEdit {
   newText: string;
 }
 
+export interface LanguageServerWorkspaceFileOperationOptions {
+  ignoreIfExists?: boolean;
+  ignoreIfNotExists?: boolean;
+  overwrite?: boolean;
+  recursive?: boolean;
+}
+
+export type LanguageServerWorkspaceFileOperation =
+  | {
+      kind: "create";
+      options?: LanguageServerWorkspaceFileOperationOptions | null;
+      uri: string;
+    }
+  | {
+      kind: "rename";
+      newUri: string;
+      oldUri: string;
+      options?: LanguageServerWorkspaceFileOperationOptions | null;
+    }
+  | {
+      kind: "delete";
+      options?: LanguageServerWorkspaceFileOperationOptions | null;
+      uri: string;
+    };
+
 export interface LanguageServerInlayHint {
   kind: number | null;
   label: string;
@@ -166,6 +191,7 @@ export interface LanguageServerSignatureHelp {
 
 export interface LanguageServerWorkspaceEdit {
   changes: Record<string, LanguageServerTextEdit[]>;
+  fileOperations?: LanguageServerWorkspaceFileOperation[];
 }
 
 export type LanguageServerWorkspaceFileChangeType =

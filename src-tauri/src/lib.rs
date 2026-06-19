@@ -74,7 +74,8 @@ use lsp_features::{
     LanguageServerOutgoingCall, LanguageServerPosition, LanguageServerPrepareRenameResult,
     LanguageServerRange, LanguageServerSelectionRange, LanguageServerSemanticTokens,
     LanguageServerSignatureHelp, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
-    LanguageServerWorkspaceEdit, LanguageServerWorkspaceSymbol,
+    LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
+    LanguageServerWorkspaceFileOperationOptions, LanguageServerWorkspaceSymbol,
     LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
     TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
     TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
@@ -500,7 +501,23 @@ fn ensure_lsp_workspace_edit_paths_in_workspace(
         ensure_lsp_uri_in_workspace(root_path, uri)?;
     }
 
+    for operation in &edit.file_operations {
+        for uri in workspace_file_operation_uris(operation) {
+            ensure_lsp_uri_in_workspace(root_path, uri)?;
+        }
+    }
+
     Ok(())
+}
+
+fn workspace_file_operation_uris(operation: &LanguageServerWorkspaceFileOperation) -> Vec<&str> {
+    match operation {
+        LanguageServerWorkspaceFileOperation::Create { uri, .. }
+        | LanguageServerWorkspaceFileOperation::Delete { uri, .. } => vec![uri.as_str()],
+        LanguageServerWorkspaceFileOperation::Rename {
+            old_uri, new_uri, ..
+        } => vec![old_uri.as_str(), new_uri.as_str()],
+    }
 }
 
 fn ensure_lsp_completion_item_payload_in_workspace(
@@ -2748,10 +2765,157 @@ fn apply_workspace_edit(
 ) -> Result<usize, String> {
     let repository = LocalWorkspaceFileRepository;
     ensure_lsp_workspace_edit_paths_in_workspace(&root_path, &edit)?;
+    let file_operation_count = apply_workspace_file_operations(&repository, &edit.file_operations)?;
     let edits = workspace_text_edits_from_language_server(edit)?;
 
-    apply_text_edits_to_files(&repository, &edits, &skipped_paths)
-        .map_err(|error| error.to_string())
+    let text_edit_count = apply_text_edits_to_files(&repository, &edits, &skipped_paths)
+        .map_err(|error| error.to_string())?;
+
+    Ok(file_operation_count + text_edit_count)
+}
+
+fn apply_workspace_file_operations(
+    repository: &dyn WorkspaceFileRepository,
+    operations: &[LanguageServerWorkspaceFileOperation],
+) -> Result<usize, String> {
+    let mut changed_paths = 0;
+
+    for operation in operations {
+        changed_paths += apply_workspace_file_operation(repository, operation)?;
+    }
+
+    Ok(changed_paths)
+}
+
+fn apply_workspace_file_operation(
+    repository: &dyn WorkspaceFileRepository,
+    operation: &LanguageServerWorkspaceFileOperation,
+) -> Result<usize, String> {
+    match operation {
+        LanguageServerWorkspaceFileOperation::Create { uri, options } => {
+            apply_create_file_operation(repository, uri, options.as_ref())
+        }
+        LanguageServerWorkspaceFileOperation::Rename {
+            old_uri,
+            new_uri,
+            options,
+        } => apply_rename_file_operation(repository, old_uri, new_uri, options.as_ref()),
+        LanguageServerWorkspaceFileOperation::Delete { uri, options } => {
+            apply_delete_file_operation(repository, uri, options.as_ref())
+        }
+    }
+}
+
+fn apply_create_file_operation(
+    repository: &dyn WorkspaceFileRepository,
+    uri: &str,
+    options: Option<&LanguageServerWorkspaceFileOperationOptions>,
+) -> Result<usize, String> {
+    let Some(path) = path_from_file_uri(uri).map(PathBuf::from) else {
+        return Ok(0);
+    };
+
+    if path.exists() {
+        if workspace_file_option(options, |options| options.ignore_if_exists) {
+            return Ok(0);
+        }
+
+        if workspace_file_option(options, |options| options.overwrite) {
+            repository
+                .write_text_file(&path, "")
+                .map_err(|error| error.to_string())?;
+            return Ok(1);
+        }
+
+        return Err("Cannot create file because target already exists.".to_string());
+    }
+
+    repository
+        .create_text_file(&path)
+        .map_err(|error| error.to_string())?;
+
+    Ok(1)
+}
+
+fn apply_rename_file_operation(
+    repository: &dyn WorkspaceFileRepository,
+    old_uri: &str,
+    new_uri: &str,
+    options: Option<&LanguageServerWorkspaceFileOperationOptions>,
+) -> Result<usize, String> {
+    let Some(old_path) = path_from_file_uri(old_uri).map(PathBuf::from) else {
+        return Ok(0);
+    };
+    let Some(new_path) = path_from_file_uri(new_uri).map(PathBuf::from) else {
+        return Ok(0);
+    };
+
+    if old_path == new_path {
+        return Ok(0);
+    }
+
+    if !old_path.exists() {
+        if workspace_file_option(options, |options| options.ignore_if_not_exists) {
+            return Ok(0);
+        }
+
+        return Err("Cannot rename file because source does not exist.".to_string());
+    }
+
+    if new_path.exists() {
+        if workspace_file_option(options, |options| options.ignore_if_exists) {
+            return Ok(0);
+        }
+
+        if workspace_file_option(options, |options| options.overwrite) {
+            repository
+                .delete_path(&new_path)
+                .map_err(|error| error.to_string())?;
+        } else {
+            return Err("Cannot rename file because target already exists.".to_string());
+        }
+    }
+
+    repository
+        .rename_path(&old_path, &new_path)
+        .map_err(|error| error.to_string())?;
+
+    Ok(1)
+}
+
+fn apply_delete_file_operation(
+    repository: &dyn WorkspaceFileRepository,
+    uri: &str,
+    options: Option<&LanguageServerWorkspaceFileOperationOptions>,
+) -> Result<usize, String> {
+    let Some(path) = path_from_file_uri(uri).map(PathBuf::from) else {
+        return Ok(0);
+    };
+
+    if !path.exists() {
+        if workspace_file_option(options, |options| options.ignore_if_not_exists) {
+            return Ok(0);
+        }
+
+        return Err("Cannot delete file because path does not exist.".to_string());
+    }
+
+    if path.is_dir() && !workspace_file_option(options, |options| options.recursive) {
+        return Err("Cannot delete directory without the recursive option.".to_string());
+    }
+
+    repository
+        .delete_path(&path)
+        .map_err(|error| error.to_string())?;
+
+    Ok(1)
+}
+
+fn workspace_file_option(
+    options: Option<&LanguageServerWorkspaceFileOperationOptions>,
+    pick: impl FnOnce(&LanguageServerWorkspaceFileOperationOptions) -> Option<bool>,
+) -> bool {
+    options.and_then(pick).unwrap_or(false)
 }
 
 fn workspace_text_edits_from_language_server(
@@ -2830,8 +2994,9 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_lsp_call_hierarchy_item_in_workspace, ensure_lsp_code_action_payload_in_workspace,
-        ensure_lsp_code_lens_payload_in_workspace, ensure_lsp_completion_item_payload_in_workspace,
+        apply_workspace_edit, ensure_lsp_call_hierarchy_item_in_workspace,
+        ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
+        ensure_lsp_completion_item_payload_in_workspace,
         ensure_lsp_document_link_payload_in_workspace, ensure_lsp_path_in_workspace,
         ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
         ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
@@ -2844,7 +3009,8 @@ mod tests {
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeLens,
         LanguageServerCompletionItem, LanguageServerDocumentLink, LanguageServerPosition,
         LanguageServerRange, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
-        LanguageServerWorkspaceEdit, TextDocumentPosition,
+        LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
+        LanguageServerWorkspaceFileOperationOptions, TextDocumentPosition,
     };
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
@@ -2910,11 +3076,32 @@ mod tests {
         inside_changes.insert(file_uri(&root.join("src/App.ts")), Vec::new());
         let mut outside_changes = BTreeMap::new();
         outside_changes.insert(file_uri(&outside.join("Secret.ts")), Vec::new());
+        let inside_operations = vec![
+            LanguageServerWorkspaceFileOperation::Create {
+                uri: file_uri(&root.join("src/Created.ts")),
+                options: None,
+            },
+            LanguageServerWorkspaceFileOperation::Rename {
+                old_uri: file_uri(&root.join("src/Old.ts")),
+                new_uri: file_uri(&root.join("src/New.ts")),
+                options: None,
+            },
+            LanguageServerWorkspaceFileOperation::Delete {
+                uri: file_uri(&root.join("src/Deleted.ts")),
+                options: None,
+            },
+        ];
+        let outside_operations = vec![LanguageServerWorkspaceFileOperation::Rename {
+            old_uri: file_uri(&root.join("src/Old.ts")),
+            new_uri: file_uri(&outside.join("Secret.ts")),
+            options: None,
+        }];
 
         assert!(ensure_lsp_workspace_edit_paths_in_workspace(
             &path_string(&root),
             &LanguageServerWorkspaceEdit {
                 changes: inside_changes,
+                file_operations: inside_operations,
             }
         )
         .is_ok());
@@ -2922,6 +3109,15 @@ mod tests {
             &path_string(&root),
             &LanguageServerWorkspaceEdit {
                 changes: outside_changes,
+                file_operations: Vec::new(),
+            }
+        )
+        .is_err());
+        assert!(ensure_lsp_workspace_edit_paths_in_workspace(
+            &path_string(&root),
+            &LanguageServerWorkspaceEdit {
+                changes: BTreeMap::new(),
+                file_operations: outside_operations,
             }
         )
         .is_err());
@@ -3130,15 +3326,83 @@ mod tests {
             }],
         );
 
-        let edits =
-            workspace_text_edits_from_language_server(LanguageServerWorkspaceEdit { changes })
-                .expect("workspace edits");
+        let edits = workspace_text_edits_from_language_server(LanguageServerWorkspaceEdit {
+            changes,
+            file_operations: Vec::new(),
+        })
+        .expect("workspace edits");
 
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].path, "/tmp/User.ts");
         assert_eq!(edits[0].new_text, "Account");
         assert_eq!(edits[0].range.start.line, 1);
         assert_eq!(edits[0].range.end.character, 5);
+    }
+
+    #[test]
+    fn apply_workspace_edit_applies_file_operations_before_text_edits() {
+        let root = temp_workspace("workspace-edit-file-operations");
+        let source_directory = root.join("src");
+        fs::create_dir_all(&source_directory).expect("source directory");
+        let created_path = source_directory.join("Created.ts");
+        let old_path = source_directory.join("Old.ts");
+        let renamed_path = source_directory.join("Renamed.ts");
+        let deleted_path = source_directory.join("Deleted.ts");
+        fs::write(&old_path, "export const oldName = true;\n").expect("old file");
+        fs::write(&deleted_path, "delete me\n").expect("deleted file");
+
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            file_uri(&created_path),
+            vec![LanguageServerTextEdit {
+                range: LanguageServerRange {
+                    start: LanguageServerPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: LanguageServerPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                },
+                new_text: "export const created = true;\n".to_string(),
+            }],
+        );
+        let changed_paths = apply_workspace_edit(
+            path_string(&root),
+            LanguageServerWorkspaceEdit {
+                changes,
+                file_operations: vec![
+                    LanguageServerWorkspaceFileOperation::Create {
+                        uri: file_uri(&created_path),
+                        options: None,
+                    },
+                    LanguageServerWorkspaceFileOperation::Rename {
+                        old_uri: file_uri(&old_path),
+                        new_uri: file_uri(&renamed_path),
+                        options: None,
+                    },
+                    LanguageServerWorkspaceFileOperation::Delete {
+                        uri: file_uri(&deleted_path),
+                        options: Some(LanguageServerWorkspaceFileOperationOptions {
+                            ignore_if_not_exists: Some(false),
+                            ..Default::default()
+                        }),
+                    },
+                ],
+            },
+            Vec::new(),
+        )
+        .expect("apply workspace edit");
+
+        assert_eq!(changed_paths, 4);
+        assert_eq!(
+            fs::read_to_string(&created_path).expect("created file"),
+            "export const created = true;\n"
+        );
+        assert!(!old_path.exists());
+        assert!(renamed_path.exists());
+        assert!(!deleted_path.exists());
     }
 
     #[cfg(unix)]

@@ -12231,14 +12231,29 @@ function workspaceEditForRoot(
   edit: LanguageServerWorkspaceEdit,
   rootPath: string,
 ): LanguageServerWorkspaceEdit {
-  return {
-    changes: Object.fromEntries(
-      Object.entries(edit.changes).filter(([uri]) => {
-        const path = pathFromLanguageServerUri(uri);
+  const changes = Object.fromEntries(
+    Object.entries(edit.changes).filter(([uri]) => {
+      const path = pathFromLanguageServerUri(uri);
 
-        return path ? isSessionPathInWorkspace(rootPath, path) : false;
-      }),
-    ),
+      return path ? isSessionPathInWorkspace(rootPath, path) : false;
+    }),
+  );
+  const fileOperations = (edit.fileOperations ?? []).filter((operation) => {
+    const uris =
+      operation.kind === "rename"
+        ? [operation.oldUri, operation.newUri]
+        : [operation.uri];
+
+    return uris.every((uri) => {
+      const path = pathFromLanguageServerUri(uri);
+
+      return path ? isSessionPathInWorkspace(rootPath, path) : false;
+    });
+  });
+
+  return {
+    ...(fileOperations.length > 0 ? { fileOperations } : {}),
+    changes,
   };
 }
 
@@ -12253,6 +12268,9 @@ function workspaceEditWithoutPaths(
   const skippedPaths = new Set(paths.map(normalizedSessionPath));
 
   return {
+    ...(edit.fileOperations && edit.fileOperations.length > 0
+      ? { fileOperations: edit.fileOperations }
+      : {}),
     changes: Object.fromEntries(
       Object.entries(edit.changes).filter(([uri]) => {
         const path = pathFromLanguageServerUri(uri);

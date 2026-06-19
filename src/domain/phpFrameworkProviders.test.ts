@@ -139,6 +139,65 @@ class Album extends Model
     ).toBeNull();
   });
 
+  it("routes Laravel relation return types only through the Laravel provider", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+}
+
+class Post extends Model
+{
+}
+`;
+
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "hasMany",
+        "App\\Models\\Comment",
+        "$this",
+        [phpLaravelFrameworkProvider],
+        "$this->hasMany(Post::class)",
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
+    );
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "first",
+        "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
+        "$this->hasMany(Post::class)",
+        [phpLaravelFrameworkProvider],
+        "$this->hasMany(Post::class)->first()",
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "hasMany",
+        "App\\Models\\Comment",
+        "$this",
+        [],
+        "$this->hasMany(Post::class)",
+      ),
+    ).toBeNull();
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "first",
+        "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
+        "$this->hasMany(Post::class)",
+        [],
+        "$this->hasMany(Post::class)->first()",
+      ),
+    ).toBeNull();
+  });
+
   it("supports framework-specific providers without changing the core parser", () => {
     const netteProvider: PhpFrameworkProvider = {
       id: "nette",

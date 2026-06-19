@@ -28,6 +28,7 @@ export interface PhpFrameworkPropertyTypeContext {
 }
 
 export interface PhpFrameworkMethodCallReturnTypeContext {
+  callExpression: string | null;
   methodName: string;
   receiverExpression: string | null;
   receiverType: string | null;
@@ -93,6 +94,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     propertyTypeFromSource: ({ propertyName, source }) =>
       phpLaravelModelAttributeClassTypeFromSource(source, propertyName),
     methodCallReturnTypeFromSource: ({
+      callExpression,
       methodName,
       receiverExpression,
       receiverType,
@@ -103,6 +105,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
         methodName,
         receiverType,
         receiverExpression,
+        callExpression,
       ),
     containerExpressionClassName: ({ expression }) =>
       phpLaravelContainerExpressionClassName(expression),
@@ -192,9 +195,11 @@ export function phpFrameworkMethodCallReturnTypeFromSource(
   receiverType: string | null,
   receiverExpression: string | null,
   providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  callExpression: string | null = null,
 ): string | null {
   for (const provider of providers) {
     const returnType = provider.semantics?.methodCallReturnTypeFromSource?.({
+      callExpression,
       methodName,
       receiverExpression,
       receiverType,

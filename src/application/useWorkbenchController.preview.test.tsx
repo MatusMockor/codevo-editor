@@ -2769,6 +2769,18 @@ describe("useWorkbenchController preview tabs", () => {
           },
         ],
       },
+      fileOperations: [
+        {
+          kind: "create" as const,
+          options: { ignoreIfExists: true },
+          uri: fileUriFromPath("/workspace/src/Created.ts"),
+        },
+        {
+          kind: "rename" as const,
+          newUri: fileUriFromPath("/workspace/src/NewName.ts"),
+          oldUri: fileUriFromPath("/workspace/src/OldName.ts"),
+        },
+      ],
     };
     const edit = {
       changes: {
@@ -2792,6 +2804,13 @@ describe("useWorkbenchController preview tabs", () => {
           },
         ],
       },
+      fileOperations: [
+        ...filteredEdit.fileOperations,
+        {
+          kind: "delete" as const,
+          uri: fileUriFromPath("/other/src/OutsideDelete.ts"),
+        },
+      ],
     };
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -7840,6 +7859,134 @@ class Comment
     expect(getWorkbench().languageServerDiagnosticsByPath[softDeletesPath]).toEqual(
       [diagnostic],
     );
+  });
+
+  it("suppresses app trait host-method diagnostics per confirmed method", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const baseModelPath = "/workspace/app/Models/BaseModel.php";
+    const dispatchesEventsPath =
+      "/workspace/app/Models/Concerns/DispatchesEvents.php";
+    const dispatchesEventsSource = `<?php
+namespace App\\Models\\Concerns;
+
+trait DispatchesEvents
+{
+    public function dispatchSaved(): void
+    {
+        $this->knownHostHook();
+        $this->missingHostHook();
+    }
+}
+`;
+    const missingDiagnostic = {
+      character: 15,
+      line: lineNumberOf(dispatchesEventsSource, "missingHostHook") - 1,
+      message:
+        'Method "missingHostHook" does not exist on trait "App\\Models\\Concerns\\DispatchesEvents"',
+      severity: "error" as const,
+      source: "phpactor",
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 23,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use App\\Models\\Concerns\\DispatchesEvents;
+
+class Comment extends BaseModel
+{
+    use DispatchesEvents;
+}
+`;
+        }
+
+        if (path === baseModelPath) {
+          return `<?php
+namespace App\\Models;
+
+class BaseModel
+{
+    protected function knownHostHook(): void
+    {
+    }
+}
+`;
+        }
+
+        if (path === dispatchesEventsPath) {
+          return dispatchesEventsSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchText: vi.fn(async (_root, query) =>
+        query === "DispatchesEvents"
+          ? [
+              {
+                column: 5,
+                lineNumber: 8,
+                lineText: "    use DispatchesEvents;",
+                path: commentPath,
+                relativePath: "app/Models/Comment.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 15,
+            line: lineNumberOf(dispatchesEventsSource, "knownHostHook") - 1,
+            message:
+              'Method "knownHostHook" does not exist on trait "App\\Models\\Concerns\\DispatchesEvents"',
+            severity: "error",
+            source: "phpactor",
+          },
+          missingDiagnostic,
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(dispatchesEventsPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[dispatchesEventsPath],
+    ).toEqual([missingDiagnostic]);
   });
 
   it("suppresses trait host-method diagnostics through an intermediate trait and parent method", async () => {
