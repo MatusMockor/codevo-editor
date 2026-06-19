@@ -6,6 +6,7 @@ import {
   pathFromLanguageServerUri,
   toEditorPosition,
 } from "./languageServerFeatures";
+import type { ProjectSymbolSearchResult } from "./projectSymbols";
 import { getFileName } from "./workspace";
 
 export interface ImplementationTarget {
@@ -36,6 +37,34 @@ export function implementationTargetFromLocation(
     id: `${path}:${position.lineNumber}:${position.column}`,
     label,
     path,
+    position,
+  };
+}
+
+export function implementationTargetFromProjectSymbol(
+  symbol: ProjectSymbolSearchResult,
+): ImplementationTarget {
+  const position = {
+    column: Math.max(1, Number(symbol.column)),
+    lineNumber: Math.max(1, Number(symbol.lineNumber)),
+  };
+  const containerName =
+    symbol.containerName ??
+    containerNameFromFullyQualifiedSymbolName(
+      symbol.fullyQualifiedName,
+      symbol.name,
+    );
+  const namespace = containerName?.includes("\\")
+    ? containerName.split("\\").slice(0, -1).join("\\")
+    : "";
+
+  return {
+    detail: namespace
+      ? `\\${namespace}`
+      : symbol.relativePath || getFileName(symbol.path),
+    id: `${symbol.path}:${position.lineNumber}:${position.column}`,
+    label: containerName ? shortPhpName(containerName) : getFileName(symbol.path),
+    path: symbol.path,
     position,
   };
 }
@@ -78,4 +107,27 @@ function nearestPhpTypeName(
   }
 
   return null;
+}
+
+function containerNameFromFullyQualifiedSymbolName(
+  fullyQualifiedName: string,
+  symbolName: string,
+): string | null {
+  const suffixes = [`::${symbolName}`, `.${symbolName}`];
+
+  for (const suffix of suffixes) {
+    if (
+      fullyQualifiedName.toLowerCase().endsWith(suffix.toLowerCase()) &&
+      fullyQualifiedName.length > suffix.length
+    ) {
+      return fullyQualifiedName.slice(0, -suffix.length);
+    }
+  }
+
+  return null;
+}
+
+function shortPhpName(className: string): string {
+  const parts = className.split("\\");
+  return parts[parts.length - 1] || className;
 }

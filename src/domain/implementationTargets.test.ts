@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   implementationChooserTitle,
   implementationTargetFromLocation,
+  implementationTargetFromProjectSymbol,
 } from "./implementationTargets";
 
 describe("implementation target helpers", () => {
@@ -49,5 +50,32 @@ final class FacebookAdapterService
       "Choose implementation of getPlatform",
     );
     expect(implementationChooserTitle(null)).toBe("Choose implementation");
+  });
+
+  it("labels indexed implementation targets by container class and namespace", () => {
+    expect(
+      implementationTargetFromProjectSymbol({
+        column: 21,
+        containerName:
+          "App\\Services\\Analytics\\Adapters\\Facebook\\FacebookAdapterService",
+        fullyQualifiedName:
+          "App\\Services\\Analytics\\Adapters\\Facebook\\FacebookAdapterService::getPlatform",
+        kind: "method",
+        lineNumber: 10,
+        name: "getPlatform",
+        path: "/workspace/app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php",
+        relativePath:
+          "app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php",
+      }),
+    ).toEqual({
+      detail: "\\App\\Services\\Analytics\\Adapters\\Facebook",
+      id: "/workspace/app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php:10:21",
+      label: "FacebookAdapterService",
+      path: "/workspace/app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php",
+      position: {
+        column: 21,
+        lineNumber: 10,
+      },
+    });
   });
 });

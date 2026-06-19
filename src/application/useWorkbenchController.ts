@@ -100,6 +100,7 @@ import {
 } from "../domain/keymap";
 import {
   implementationChooserTitle,
+  implementationTargetFromProjectSymbol,
   implementationTargetFromLocation,
   type ImplementationTarget,
 } from "../domain/implementationTargets";
@@ -7791,6 +7792,196 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpSourceInheritsOrImplementsType = useCallback(
+    async (
+      source: string,
+      targetClassName: string,
+      visitedClassNames = new Set<string>(),
+    ): Promise<boolean> => {
+      const normalizedTargetClassName = targetClassName
+        .trim()
+        .replace(/^\\+/, "")
+        .toLowerCase();
+
+      if (!normalizedTargetClassName) {
+        return false;
+      }
+
+      const currentClassName = phpCurrentClassName(source);
+      const currentKey = currentClassName?.toLowerCase() ?? "";
+
+      if (currentKey && visitedClassNames.has(currentKey)) {
+        return false;
+      }
+
+      if (currentKey) {
+        visitedClassNames.add(currentKey);
+      }
+
+      for (const reference of phpSuperTypeReferences(source)) {
+        const resolvedClassName = resolvePhpClassReference(source, reference);
+        const resolvedKey = resolvedClassName?.toLowerCase();
+
+        if (!resolvedClassName || !resolvedKey) {
+          continue;
+        }
+
+        if (resolvedKey === normalizedTargetClassName) {
+          return true;
+        }
+
+        for (const path of await resolvePhpClassSourcePaths(resolvedClassName)) {
+          try {
+            if (
+              await phpSourceInheritsOrImplementsType(
+                await readNavigationFileContent(path),
+                targetClassName,
+                visitedClassNames,
+              )
+            ) {
+              return true;
+            }
+          } catch {
+            continue;
+          }
+        }
+      }
+
+      return false;
+    },
+    [
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+    ],
+  );
+
+  const indexedPhpImplementationTargets = useCallback(
+    async (
+      editorPosition: EditorPosition,
+    ): Promise<ImplementationTarget[]> => {
+      if (
+        !activeDocument ||
+        activeDocument.language !== "php" ||
+        !workspaceRoot ||
+        !shouldIndexWorkspace(intelligenceMode)
+      ) {
+        return [];
+      }
+
+      const methodName = phpMethodDeclarationNameAtPosition(
+        activeDocument.content,
+        editorPosition,
+      );
+      const targetClassName = phpCurrentClassName(activeDocument.content);
+      const targetTypeKind = phpCurrentTypeKind(activeDocument.content);
+
+      if (
+        !methodName ||
+        !targetClassName ||
+        (targetTypeKind !== "interface" &&
+          !phpCurrentTypeIsAbstractClass(activeDocument.content))
+      ) {
+        return [];
+      }
+
+      const normalizedMethodName = methodName.toLowerCase();
+      const normalizedTargetClassName = targetClassName.toLowerCase();
+      const symbols = await projectSymbolSearch.searchProjectSymbols(
+        workspaceRoot,
+        methodName,
+        200,
+      );
+      const targets = new Map<string, ImplementationTarget>();
+
+      for (const symbol of symbols) {
+        if (
+          symbol.kind !== "method" ||
+          symbol.path === activeDocument.path ||
+          symbol.name.toLowerCase() !== normalizedMethodName
+        ) {
+          continue;
+        }
+
+        try {
+          const source = await readNavigationFileContent(symbol.path);
+          const candidateClassName =
+            symbol.containerName ?? phpCurrentClassName(source);
+
+          if (
+            !candidateClassName ||
+            candidateClassName.toLowerCase() === normalizedTargetClassName
+          ) {
+            continue;
+          }
+
+          if (
+            !(await phpSourceInheritsOrImplementsType(
+              source,
+              targetClassName,
+            ))
+          ) {
+            continue;
+          }
+
+          const target = implementationTargetFromProjectSymbol(symbol);
+          targets.set(target.id, target);
+        } catch {
+          continue;
+        }
+      }
+
+      return [...targets.values()];
+    },
+    [
+      activeDocument,
+      intelligenceMode,
+      phpSourceInheritsOrImplementsType,
+      projectSymbolSearch,
+      readNavigationFileContent,
+      workspaceRoot,
+    ],
+  );
+
+  const goToIndexedPhpImplementation = useCallback(
+    async (requestedPosition?: EditorPosition): Promise<boolean> => {
+      const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
+
+      if (!editorPosition) {
+        return false;
+      }
+
+      const targets = await indexedPhpImplementationTargets(editorPosition);
+
+      if (targets.length === 0) {
+        return false;
+      }
+
+      const symbolName = activeDocument
+        ? identifierAtEditorPosition(activeDocument.content, editorPosition)
+        : null;
+
+      if (targets.length > 1) {
+        setImplementationChooser({
+          targets,
+          title: implementationChooserTitle(symbolName),
+        });
+        return true;
+      }
+
+      const [target] = targets;
+
+      if (!target) {
+        return false;
+      }
+
+      setImplementationChooser(null);
+      await openNavigationTarget(target.path, target.position, target.label);
+      return true;
+    },
+    [activeDocument, indexedPhpImplementationTargets, openNavigationTarget],
+  );
+
   const openPhpLaravelDynamicWhereTarget = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
       if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
@@ -8492,16 +8683,31 @@ export function useWorkbenchController(
   ]);
 
   const goToImplementation = useCallback(async () => {
-    await goToLanguageServerLocation("implementation", "implementation");
-  }, [goToLanguageServerLocation]);
+    const openedLanguageServerTarget = await goToLanguageServerLocation(
+      "implementation",
+      "implementation",
+    );
+
+    if (openedLanguageServerTarget) {
+      return;
+    }
+
+    await goToIndexedPhpImplementation();
+  }, [goToIndexedPhpImplementation, goToLanguageServerLocation]);
 
   const goToImplementationAt = useCallback(async (position: EditorPosition) => {
-    await goToLanguageServerLocation(
+    const openedLanguageServerTarget = await goToLanguageServerLocation(
       "implementation",
       "implementation",
       position,
     );
-  }, [goToLanguageServerLocation]);
+
+    if (openedLanguageServerTarget) {
+      return;
+    }
+
+    await goToIndexedPhpImplementation(position);
+  }, [goToIndexedPhpImplementation, goToLanguageServerLocation]);
 
   const openCallHierarchyRow = useCallback(
     async (row: CallHierarchyRow) => {
@@ -11431,6 +11637,57 @@ function phpCurrentTypeKind(
   }
 
   return null;
+}
+
+function phpCurrentTypeIsAbstractClass(source: string): boolean {
+  return /^\s*abstract\s+class\s+[A-Za-z_][A-Za-z0-9_]*\b/m.test(source);
+}
+
+function phpMethodDeclarationNameAtPosition(
+  source: string,
+  position: EditorPosition,
+): string | null {
+  const methodName = identifierAtEditorPosition(source, position);
+
+  if (!methodName) {
+    return null;
+  }
+
+  const line = source.split(/\r?\n/)[position.lineNumber - 1] ?? "";
+  const pattern = new RegExp(
+    `\\bfunction\\s+${escapeRegExp(methodName)}\\b`,
+  );
+
+  return pattern.test(line) ? methodName : null;
+}
+
+function phpSuperTypeReferences(source: string): string[] {
+  const declaration = /\b(?:abstract\s+|final\s+)?(?:class|interface|trait|enum)\s+[A-Za-z_][A-Za-z0-9_]*\b[\s\S]*?\{/.exec(
+    source,
+  );
+
+  if (!declaration) {
+    return [];
+  }
+
+  const header = declaration[0].slice(0, -1);
+  const references: string[] = [];
+  const extendsMatch = /\bextends\s+([\s\S]*?)(?=\bimplements\b|$)/.exec(
+    header,
+  );
+  const implementsMatch = /\bimplements\s+([\s\S]*?)$/.exec(header);
+
+  references.push(...phpClassReferenceList(extendsMatch?.[1] ?? ""));
+  references.push(...phpClassReferenceList(implementsMatch?.[1] ?? ""));
+
+  return references;
+}
+
+function phpClassReferenceList(source: string): string[] {
+  return source
+    .split(",")
+    .map((part) => /\\?[A-Za-z_][A-Za-z0-9_\\]*/.exec(part.trim())?.[0] ?? "")
+    .filter(Boolean);
 }
 
 function phpClassMemberCacheKey(
