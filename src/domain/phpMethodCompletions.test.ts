@@ -1304,6 +1304,11 @@ class User extends Model
     {
         return Attribute::make(get: fn () => '');
     }
+
+    protected function avatar(): Attribute
+    {
+        return Attribute::make(get: static fn () => new ProfileAvatar('default'));
+    }
 }
 `,
         "User",
@@ -1349,7 +1354,14 @@ class User extends Model
         kind: "property",
         name: "profile_url",
         parameters: "",
-        returnType: "mixed",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "User",
+        kind: "property",
+        name: "avatar",
+        parameters: "",
+        returnType: "ProfileAvatar",
       },
     ]);
   });

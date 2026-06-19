@@ -1325,6 +1325,79 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("does not restore stale JavaScript and TypeScript runtime status from a closed project tab", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const workspaceBStatus = createDeferred<LanguageServerRuntimeStatus>();
+    const stoppedStatus = (rootPath: string): LanguageServerRuntimeStatus => ({
+      kind: "stopped",
+      rootPath,
+    });
+    const runningWorkspaceBStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 67,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn((rootPath) =>
+          rootPath === "/workspace-b"
+            ? workspaceBStatus.promise
+            : Promise.resolve(stoppedStatus(rootPath)),
+        ),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async (rootPath) => stoppedStatus(rootPath)),
+        stop: vi.fn(async (rootPath) => stoppedStatus(rootPath)),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      publishRuntimeStatus?.(runningWorkspaceBStatus);
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toBeNull();
+
+    workspaceBStatus.resolve(stoppedStatus("/workspace-b"));
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({ kind: "stopped", rootPath: "/workspace-b" }),
+    );
+  });
+
   it("stops active project runtimes before switching to the next project tab", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {

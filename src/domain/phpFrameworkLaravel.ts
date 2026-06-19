@@ -1498,7 +1498,9 @@ function phpLaravelAccessorAttributes(
     if (phpLaravelAttributeAccessorReturnType(returnType)) {
       attributes.push([
         phpCamelCaseToSnakeCase(name),
-        phpLaravelAttributeAccessorValueType(returnType) ?? "mixed",
+        phpLaravelAttributeAccessorValueType(returnType) ??
+          phpLaravelAttributeAccessorValueTypeFromReturnExpression(source, name) ??
+          "mixed",
       ]);
     }
   }
@@ -1784,6 +1786,250 @@ function phpLaravelAttributeAccessorValueType(
   }
 
   return normalizeReturnType(firstPhpGenericTypeArgument(returnType));
+}
+
+function phpLaravelAttributeAccessorValueTypeFromReturnExpression(
+  source: string,
+  methodName: string,
+): string | null {
+  return phpMethodReturnExpressions(source, methodName)
+    .map((expression) =>
+      phpLaravelAttributeAccessorValueTypeFromExpression(source, expression),
+    )
+    .find((returnType): returnType is string => Boolean(returnType)) ?? null;
+}
+
+function phpLaravelAttributeAccessorValueTypeFromExpression(
+  source: string,
+  expression: string,
+): string | null {
+  const factoryCall = phpLaravelAttributeAccessorFactoryCall(expression);
+
+  if (!factoryCall) {
+    return null;
+  }
+
+  const getterExpression =
+    factoryCall.methodName === "get"
+      ? phpFirstPositionalArgument(factoryCall.argumentsSource)
+      : phpNamedArgumentExpression(factoryCall.argumentsSource, "get") ??
+        phpFirstPositionalArgument(factoryCall.argumentsSource);
+
+  return getterExpression
+    ? phpLaravelClosureValueType(source, getterExpression)
+    : null;
+}
+
+interface PhpLaravelAttributeAccessorFactoryCall {
+  argumentsSource: string;
+  methodName: "get" | "make";
+}
+
+function phpLaravelAttributeAccessorFactoryCall(
+  expression: string,
+): PhpLaravelAttributeAccessorFactoryCall | null {
+  const normalized = expression.trim();
+  const pattern =
+    /(?:^|[^A-Za-z0-9_\\])(?:\\?[A-Za-z_][A-Za-z0-9_]*\\)*Attribute\s*::\s*(make|get)\s*\(/g;
+
+  for (const match of normalized.matchAll(pattern)) {
+    const methodName = match[1];
+
+    if (methodName !== "make" && methodName !== "get") {
+      continue;
+    }
+
+    const openOffset = (match.index ?? 0) + match[0].lastIndexOf("(");
+    const closeOffset = matchingPairOffset(normalized, openOffset, "(", ")");
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    return {
+      argumentsSource: normalized.slice(openOffset + 1, closeOffset),
+      methodName,
+    };
+  }
+
+  return null;
+}
+
+function phpNamedArgumentExpression(
+  argumentsSource: string,
+  argumentName: string,
+): string | null {
+  const normalizedArgumentName = argumentName.toLowerCase();
+
+  for (const argument of splitPhpParameterList(argumentsSource)) {
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!:)\s*([\s\S]+)$/.exec(
+      argument,
+    );
+
+    if (match?.[1]?.toLowerCase() === normalizedArgumentName) {
+      return match[2]?.trim() || null;
+    }
+  }
+
+  return null;
+}
+
+function phpFirstPositionalArgument(argumentsSource: string): string | null {
+  const firstArgument = splitPhpParameterList(argumentsSource)[0]?.trim();
+
+  if (!firstArgument || /^[A-Za-z_][A-Za-z0-9_]*\s*:(?!:)/.test(firstArgument)) {
+    return null;
+  }
+
+  return firstArgument;
+}
+
+function phpLaravelClosureValueType(
+  source: string,
+  expression: string,
+): string | null {
+  const declaredReturnType = phpClosureDeclaredReturnType(expression);
+
+  if (declaredReturnType) {
+    return phpLaravelAccessorValueType(source, declaredReturnType);
+  }
+
+  const arrowIndex = topLevelArrowIndex(expression);
+
+  if (arrowIndex < 0) {
+    return null;
+  }
+
+  return phpLaravelValueExpressionType(source, expression.slice(arrowIndex + 2));
+}
+
+function phpClosureDeclaredReturnType(expression: string): string | null {
+  const normalized = expression.trim();
+  const arrowFunctionMatch = /^(?:static\s+)?fn\s*\(/.exec(normalized);
+
+  if (arrowFunctionMatch) {
+    const parametersStart = normalized.indexOf("(", arrowFunctionMatch.index ?? 0);
+    const parametersEnd = matchingPairOffset(normalized, parametersStart, "(", ")");
+
+    if (parametersEnd === null) {
+      return null;
+    }
+
+    const afterParameters = normalized.slice(parametersEnd + 1);
+    const match = /^\s*:\s*([\s\S]+?)\s*=>/.exec(afterParameters);
+
+    return normalizeReturnType(match?.[1] ?? null);
+  }
+
+  const anonymousFunctionMatch =
+    /^(?:static\s+)?function\s*&?\s*\(/.exec(normalized);
+
+  if (!anonymousFunctionMatch) {
+    return null;
+  }
+
+  const parametersStart = normalized.indexOf(
+    "(",
+    anonymousFunctionMatch.index ?? 0,
+  );
+  const parametersEnd = matchingPairOffset(normalized, parametersStart, "(", ")");
+
+  if (parametersEnd === null) {
+    return null;
+  }
+
+  let afterParameters = normalized.slice(parametersEnd + 1).trimStart();
+
+  if (afterParameters.startsWith("use")) {
+    const useParametersStart = afterParameters.indexOf("(");
+    const useParametersEnd =
+      useParametersStart >= 0
+        ? matchingPairOffset(afterParameters, useParametersStart, "(", ")")
+        : null;
+
+    if (useParametersEnd !== null) {
+      afterParameters = afterParameters.slice(useParametersEnd + 1).trimStart();
+    }
+  }
+
+  const match = /^:\s*([^{]+)\s*\{/.exec(afterParameters);
+
+  return normalizeReturnType(match?.[1] ?? null);
+}
+
+function phpLaravelAccessorValueType(
+  source: string,
+  returnType: string,
+): string | null {
+  const normalized = normalizeReturnType(returnType)?.replace(/^\?/, "") ?? null;
+
+  if (!normalized) {
+    return null;
+  }
+
+  const candidate = phpDeclaredTypeCandidate(normalized);
+  const resolvedCandidate = candidate ? resolvePhpClassName(source, candidate) : null;
+
+  return resolvedCandidate ?? normalized;
+}
+
+function phpLaravelValueExpressionType(
+  source: string,
+  expression: string,
+): string | null {
+  const value = stripOuterParentheses(expression.trim());
+
+  if (!value) {
+    return null;
+  }
+
+  if (phpStringLiteralValue(value) !== null) {
+    return "string";
+  }
+
+  if (/^(?:true|false)$/i.test(value)) {
+    return "bool";
+  }
+
+  if (/^-?\d+$/.test(value)) {
+    return "int";
+  }
+
+  if (/^-?(?:\d+\.\d+|\d+e[+-]?\d+)$/i.test(value)) {
+    return "float";
+  }
+
+  if (/^null$/i.test(value)) {
+    return "mixed";
+  }
+
+  if (/^(?:\[|array\s*\()/i.test(value)) {
+    return "array";
+  }
+
+  const newExpressionMatch =
+    /^new\s+((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\s*\(/.exec(
+      value,
+    );
+  const className = newExpressionMatch?.[1]?.replace(/^\\+/, "") ?? null;
+
+  return className ? resolvePhpClassName(source, className) ?? className : null;
+}
+
+function stripOuterParentheses(expression: string): string {
+  let value = expression.trim();
+
+  while (value.startsWith("(")) {
+    const closeOffset = matchingPairOffset(value, 0, "(", ")");
+
+    if (closeOffset !== value.length - 1) {
+      break;
+    }
+
+    value = value.slice(1, -1).trim();
+  }
+
+  return value;
 }
 
 export function phpLaravelRelationTargetClassNameFromExpression(
@@ -2132,6 +2378,10 @@ function firstPhpGenericTypeArgument(typeName: string): string | null {
 }
 
 function topLevelArrayArrowIndex(source: string): number {
+  return topLevelArrowIndex(source);
+}
+
+function topLevelArrowIndex(source: string): number {
   let depth = 0;
   let quote: string | null = null;
 

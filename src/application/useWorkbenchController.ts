@@ -1035,6 +1035,30 @@ export function useWorkbenchController(
     [],
   );
 
+  const forgetLanguageServerRuntimeStatuses = useCallback((rootPath: string) => {
+    removeCachedLanguageServerRuntimeStatus(
+      languageServerRuntimeStatusByRootRef.current,
+      rootPath,
+    );
+    removeCachedLanguageServerRuntimeStatus(
+      javaScriptTypeScriptRuntimeStatusByRootRef.current,
+      rootPath,
+    );
+  }, []);
+
+  const isOpenWorkspaceRuntimeRoot = useCallback(
+    (rootPath: string) => {
+      if (workspaceRootKeysEqual(rootPath, currentWorkspaceRootRef.current)) {
+        return true;
+      }
+
+      return appSettingsRef.current.workspaceTabs.some((tabPath) =>
+        workspaceRootKeysEqual(tabPath, rootPath),
+      );
+    },
+    [],
+  );
+
   const cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime = useCallback(
     (rootPath: string | null, status: LanguageServerRuntimeStatus) => {
       if (!rootPath || !languageServerCrashMessage(status)) {
@@ -1098,6 +1122,10 @@ export function useWorkbenchController(
     (status: LanguageServerRuntimeStatus) => {
       const statusRootPath = status.rootPath ?? currentWorkspaceRootRef.current;
 
+      if (statusRootPath && !isOpenWorkspaceRuntimeRoot(statusRootPath)) {
+        return;
+      }
+
       const rootedStatus = statusRootPath
         ? cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
             statusRootPath,
@@ -1138,6 +1166,7 @@ export function useWorkbenchController(
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
       cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime,
+      isOpenWorkspaceRuntimeRoot,
       reportError,
     ],
   );
@@ -2543,16 +2572,10 @@ export function useWorkbenchController(
 
         delete workspaceStateCacheRef.current[tabPath];
         delete workspaceStateCacheRef.current[targetRootPath];
-        removeCachedLanguageServerRuntimeStatus(
-          languageServerRuntimeStatusByRootRef.current,
-          targetRootPath,
-        );
-        removeCachedLanguageServerRuntimeStatus(
-          javaScriptTypeScriptRuntimeStatusByRootRef.current,
-          targetRootPath,
-        );
+        forgetLanguageServerRuntimeStatuses(targetRootPath);
         await closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath);
         await stopProjectRuntimes(targetRootPath);
+        forgetLanguageServerRuntimeStatuses(targetRootPath);
 
         try {
           await persistAppSettings({
@@ -2581,19 +2604,13 @@ export function useWorkbenchController(
 
       delete workspaceStateCacheRef.current[tabPath];
       delete workspaceStateCacheRef.current[targetRootPath];
-      removeCachedLanguageServerRuntimeStatus(
-        languageServerRuntimeStatusByRootRef.current,
-        targetRootPath,
-      );
-      removeCachedLanguageServerRuntimeStatus(
-        javaScriptTypeScriptRuntimeStatusByRootRef.current,
-        targetRootPath,
-      );
+      forgetLanguageServerRuntimeStatuses(targetRootPath);
       await Promise.allSettled([
         closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
         closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
       ]);
       await stopProjectRuntimes(targetRootPath);
+      forgetLanguageServerRuntimeStatuses(targetRootPath);
 
       try {
         await persistAppSettings({
@@ -2618,6 +2635,7 @@ export function useWorkbenchController(
       closeSyncedJavaScriptTypeScriptDocumentsForRoot,
       closeSyncedLanguageServerDocumentsForRoot,
       dirtyCount,
+      forgetLanguageServerRuntimeStatuses,
       openWorkspacePath,
       persistAppSettings,
       prompter,
