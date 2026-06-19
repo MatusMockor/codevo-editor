@@ -14,6 +14,11 @@ export interface PhpTraitHostMethodDiagnosticContext {
   traitName: string;
 }
 
+export interface PhpTraitHostPropertyDiagnosticContext {
+  propertyName: string;
+  traitName: string;
+}
+
 export interface PhpMemberMethodDiagnosticContext {
   methodName: string;
   receiverExpression: string;
@@ -48,6 +53,7 @@ export function filterPhpLanguageServerDiagnostics(
     contextualExistingMethods?: ReadonlySet<string>;
     contextualMemberMethods?: ReadonlySet<string>;
     contextualTraitHostMethods?: ReadonlySet<string>;
+    contextualTraitHostProperties?: ReadonlySet<string>;
     frameworkProviders?: readonly PhpFrameworkProvider[];
     path?: string | null;
   } = {},
@@ -73,6 +79,11 @@ export function filterPhpLanguageServerDiagnostics(
         Boolean(options.allowDependencyTraitFallback),
         options.contextualTraitHostMethods,
         options.path,
+      ) &&
+      !isPhpactorTraitHostPropertyDiagnostic(
+        source,
+        diagnostic,
+        options.contextualTraitHostProperties,
       ) &&
       !isKnownPhpFrameworkStaticMethodDiagnostic(
         source,
@@ -220,6 +231,26 @@ function isPhpactorTraitHostMethodDiagnostic(
   return allowDependencyTraitFallback && isDependencyPath(path);
 }
 
+function isPhpactorTraitHostPropertyDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  contextualTraitHostProperties: ReadonlySet<string> | undefined,
+): boolean {
+  if (!contextualTraitHostProperties?.size) {
+    return false;
+  }
+
+  const context = phpTraitHostPropertyDiagnosticContext(source, diagnostic);
+
+  if (!context) {
+    return false;
+  }
+
+  return contextualTraitHostProperties.has(
+    phpTraitHostPropertyDiagnosticKey(context.traitName, context.propertyName),
+  );
+}
+
 export function phpTraitHostMethodDiagnosticContext(
   source: string,
   diagnostic: LanguageServerDiagnostic,
@@ -256,6 +287,46 @@ export function phpTraitHostMethodDiagnosticContext(
   };
 }
 
+export function phpTraitHostPropertyDiagnosticContext(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): PhpTraitHostPropertyDiagnosticContext | null {
+  if (diagnostic.source?.toLowerCase() !== "phpactor") {
+    return null;
+  }
+
+  const context = traitHostPropertyDiagnosticContextFromMessage(
+    diagnostic.message,
+  );
+  const propertyName = context?.propertyName ?? "";
+  const traitName = context?.traitName ?? "";
+
+  if (!propertyName || !traitName) {
+    return null;
+  }
+
+  const line = lineAt(source, diagnostic.line);
+
+  if (
+    !line ||
+    !new RegExp(
+      String.raw`(?:\$this\s*->\s*${escapeRegExp(
+        propertyName,
+      )}\b(?!\s*\()|(?:self|static|parent)\s*::\s*\$${escapeRegExp(
+        propertyName,
+      )}\b)`,
+      "i",
+    ).test(line)
+  ) {
+    return null;
+  }
+
+  return {
+    propertyName,
+    traitName,
+  };
+}
+
 function traitHostMethodDiagnosticContextFromMessage(
   message: string,
 ): PhpTraitHostMethodDiagnosticContext | null {
@@ -282,6 +353,34 @@ function traitHostMethodDiagnosticContextFromMessage(
   const methodName = traitFirstMatch?.[2]?.trim() ?? "";
 
   return methodName && traitName ? { methodName, traitName } : null;
+}
+
+function traitHostPropertyDiagnosticContextFromMessage(
+  message: string,
+): PhpTraitHostPropertyDiagnosticContext | null {
+  const propertyFirstPatterns = [
+    /\bproperty\s+["']?\$?([A-Za-z_][A-Za-z0-9_]*)["']?\s+does not exist on trait\s+["']?([^"']+)["']?/i,
+    /\bundefined\s+property\s+["']?\$?([A-Za-z_][A-Za-z0-9_]*)["']?\s+on trait\s+["']?([^"']+)["']?/i,
+  ];
+
+  for (const pattern of propertyFirstPatterns) {
+    const match = pattern.exec(message);
+    const propertyName = match?.[1]?.trim() ?? "";
+    const traitName = match?.[2]?.trim().replace(/^\\+/, "") ?? "";
+
+    if (propertyName && traitName) {
+      return { propertyName, traitName };
+    }
+  }
+
+  const traitFirstMatch =
+    /\btrait\s+["']?([^"']+)["']?\s+(?:has no|does not have)\s+property\s+["']?\$?([A-Za-z_][A-Za-z0-9_]*)["']?/i.exec(
+      message,
+    );
+  const traitName = traitFirstMatch?.[1]?.trim().replace(/^\\+/, "") ?? "";
+  const propertyName = traitFirstMatch?.[2]?.trim() ?? "";
+
+  return propertyName && traitName ? { propertyName, traitName } : null;
 }
 
 export function phpUnresolvedMemberMethodDiagnosticContext(
@@ -364,6 +463,16 @@ export function phpTraitHostMethodDiagnosticKey(
 ): string {
   return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#${methodName
     .trim()
+    .toLowerCase()}`;
+}
+
+export function phpTraitHostPropertyDiagnosticKey(
+  traitName: string,
+  propertyName: string,
+): string {
+  return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#$${propertyName
+    .trim()
+    .replace(/^\$+/, "")
     .toLowerCase()}`;
 }
 

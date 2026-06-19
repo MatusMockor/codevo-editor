@@ -4,6 +4,8 @@ import {
   phpMemberMethodDiagnosticKey,
   phpMethodDiagnosticKey,
   phpTraitHostMethodDiagnosticKey,
+  phpTraitHostPropertyDiagnosticContext,
+  phpTraitHostPropertyDiagnosticKey,
   phpUnresolvedMemberMethodDiagnosticContext,
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "./phpLanguageServerDiagnosticFilters";
@@ -642,6 +644,148 @@ trait SoftDeletes
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
         path: "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
+      }),
+    ).toEqual([unresolved]);
+  });
+
+  it("suppresses trait host-property diagnostics when host context is confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait UsesConnection
+{
+    public function connectionName(): string
+    {
+        return $this->connectionName;
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 22,
+      line: 7,
+      message:
+        'Property "$connectionName" does not exist on trait "App\\Support\\UsesConnection"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostProperties: new Set([
+          phpTraitHostPropertyDiagnosticKey(
+            "App\\Support\\UsesConnection",
+            "connectionName",
+          ),
+        ]),
+        path: "/workspace/app/Support/UsesConnection.php",
+      }),
+    ).toEqual([]);
+  });
+
+  it("recognizes alternate PHPactor trait host-property diagnostic wording", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): mixed
+    {
+        return static::$hostState;
+    }
+}
+`;
+
+    expect(
+      phpTraitHostPropertyDiagnosticContext(
+        source,
+        diagnostic({
+          character: 24,
+          line: 7,
+          message:
+            'Undefined property "$hostState" on trait "App\\Support\\ResolvesHostState"',
+        }),
+      ),
+    ).toEqual({
+      propertyName: "hostState",
+      traitName: "App\\Support\\ResolvesHostState",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          diagnostic({
+            character: 24,
+            line: 7,
+            message:
+              'Trait "App\\Support\\ResolvesHostState" has no property "$hostState"',
+          }),
+        ],
+        {
+          contextualTraitHostProperties: new Set([
+            phpTraitHostPropertyDiagnosticKey(
+              "App\\Support\\ResolvesHostState",
+              "hostState",
+            ),
+          ]),
+          path: "/workspace/app/Support/ResolvesHostState.php",
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps trait host-property diagnostics when host context is not confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait UsesConnection
+{
+    public function connectionName(): string
+    {
+        return $this->connectionName;
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 22,
+      line: 7,
+      message:
+        'Property "$connectionName" does not exist on trait "App\\Support\\UsesConnection"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        path: "/workspace/app/Support/UsesConnection.php",
+      }),
+    ).toEqual([unresolved]);
+  });
+
+  it("keeps trait host-property diagnostics when the line is actually a method call", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait UsesConnection
+{
+    public function connectionName(): string
+    {
+        return $this->connectionName();
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 22,
+      line: 7,
+      message:
+        'Property "$connectionName" does not exist on trait "App\\Support\\UsesConnection"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostProperties: new Set([
+          phpTraitHostPropertyDiagnosticKey(
+            "App\\Support\\UsesConnection",
+            "connectionName",
+          ),
+        ]),
+        path: "/workspace/app/Support/UsesConnection.php",
       }),
     ).toEqual([unresolved]);
   });
