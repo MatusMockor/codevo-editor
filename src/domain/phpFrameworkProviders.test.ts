@@ -8,6 +8,7 @@ import {
   phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
+import { phpLaravelMorphMapEntriesFromSource } from "./phpFrameworkLaravel";
 import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
@@ -240,6 +241,92 @@ class Post extends Model
         "$this->hasMany(Post::class)",
         [],
         "$this->hasMany(Post::class)->first()",
+      ),
+    ).toBeNull();
+  });
+
+  it("extracts Laravel morph map aliases to model classes", () => {
+    const source = `<?php
+namespace App\\Providers;
+
+use App\\Models\\Post;
+use Illuminate\\Database\\Eloquent\\Relations\\Relation;
+
+class AppServiceProvider
+{
+    public function boot(): void
+    {
+        Relation::morphMap([
+            'post' => Post::class,
+        ]);
+
+        Relation::enforceMorphMap(map: [
+            'video' => \\App\\Models\\Video::class,
+        ]);
+    }
+}
+`;
+
+    expect(phpLaravelMorphMapEntriesFromSource(source)).toEqual([
+      {
+        alias: "post",
+        modelClassName: "App\\Models\\Post",
+      },
+      {
+        alias: "video",
+        modelClassName: "App\\Models\\Video",
+      },
+    ]);
+  });
+
+  it("uses Laravel morph maps for morphTo return types only when unambiguous", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\Relation;
+
+Relation::morphMap([
+    'post' => Post::class,
+]);
+
+class Comment extends Model
+{
+    public function commentable()
+    {
+        return $this->morphTo();
+    }
+}
+
+class Post extends Model
+{
+}
+`;
+    const ambiguousSource = source.replace(
+      "'post' => Post::class,",
+      "'post' => Post::class,\n    'video' => Video::class,",
+    );
+
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "morphTo",
+        "App\\Models\\Comment",
+        "$this",
+        [phpLaravelFrameworkProvider],
+        "$this->morphTo()",
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\MorphTo<App\\Models\\Post>",
+    );
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        ambiguousSource,
+        "morphTo",
+        "App\\Models\\Comment",
+        "$this",
+        [phpLaravelFrameworkProvider],
+        "$this->morphTo()",
       ),
     ).toBeNull();
   });

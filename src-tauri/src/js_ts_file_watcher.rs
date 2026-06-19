@@ -108,6 +108,12 @@ impl Default for JavaScriptTypeScriptWorkspaceWatchRegistry {
     }
 }
 
+impl Drop for JavaScriptTypeScriptWorkspaceWatchRegistry {
+    fn drop(&mut self) {
+        self.stop_all();
+    }
+}
+
 struct JavaScriptTypeScriptWorkspaceWatchSink {
     app: AppHandle,
     root_path: String,
@@ -412,6 +418,26 @@ mod tests {
 
         registry.stop_all();
         registry.stop_all();
+
+        let stopped = watcher.stopped_roots();
+        assert_eq!(stopped.len(), 2);
+        assert!(stopped.contains(&root_a));
+        assert!(stopped.contains(&root_b));
+    }
+
+    #[test]
+    fn watch_registry_drop_stops_all_sessions() {
+        let watcher = RecordingWatcher::default();
+        let root_a = temp_workspace("watch-drop-a");
+        let root_b = temp_workspace("watch-drop-b");
+
+        {
+            let registry = JavaScriptTypeScriptWorkspaceWatchRegistry::new();
+            start_with_watcher(&registry, &root_a, &watcher);
+            start_with_watcher(&registry, &root_b, &watcher);
+
+            assert!(watcher.stopped_roots().is_empty());
+        }
 
         let stopped = watcher.stopped_roots();
         assert_eq!(stopped.len(), 2);

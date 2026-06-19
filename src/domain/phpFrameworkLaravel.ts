@@ -361,6 +361,11 @@ export interface PhpLaravelContainerBinding {
   concreteClassName: string;
 }
 
+export interface PhpLaravelMorphMapEntry {
+  alias: string;
+  modelClassName: string;
+}
+
 export function isLaravelEloquentStaticBuilderMethod(methodName: string): boolean {
   return laravelEloquentStaticBuilderMethods.has(methodName.toLowerCase());
 }
@@ -594,6 +599,152 @@ export function phpLaravelContainerBindingsFromSource(
   return bindings;
 }
 
+export function phpLaravelMorphMapEntriesFromSource(
+  source: string,
+): PhpLaravelMorphMapEntry[] {
+  const entries: PhpLaravelMorphMapEntry[] = [];
+  const masked = maskPhpStringsAndComments(source);
+  const pattern = new RegExp(
+    String.raw`\b` +
+      PHP_CLASS_NAME_CAPTURE_PATTERN +
+      String.raw`\s*::\s*(?:morphMap|enforceMorphMap)\s*\(`,
+    "g",
+  );
+
+  for (const match of masked.matchAll(pattern)) {
+    const relationClassName = match[1] ?? "";
+
+    if (!phpLaravelRelationClassReference(source, relationClassName)) {
+      continue;
+    }
+
+    const openOffset = (match.index ?? 0) + (match[0]?.lastIndexOf("(") ?? -1);
+    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+    if (openOffset < (match.index ?? 0) || closeOffset === null) {
+      continue;
+    }
+
+    const mapBody = phpLaravelMorphMapArrayBody(
+      source.slice(openOffset + 1, closeOffset),
+    );
+
+    if (!mapBody) {
+      continue;
+    }
+
+    entries.push(...phpLaravelMorphMapEntriesFromArrayBody(source, mapBody));
+  }
+
+  return entries;
+}
+
+function phpLaravelMorphMapModelTypeFromSource(source: string): string | null {
+  const modelTypes = new Set(
+    phpLaravelMorphMapEntriesFromSource(source).map((entry) =>
+      entry.modelClassName.replace(/^\\+/, ""),
+    ),
+  );
+
+  return modelTypes.size === 1 ? Array.from(modelTypes)[0] ?? null : null;
+}
+
+function phpLaravelRelationClassReference(
+  source: string,
+  className: string,
+): boolean {
+  const resolvedClassName =
+    resolvePhpClassName(source, className)?.replace(/^\\+/, "") ??
+    className.replace(/^\\+/, "");
+  const normalized = resolvedClassName.toLowerCase();
+
+  return (
+    normalized === "relation" ||
+    normalized === "illuminate\\database\\eloquent\\relations\\relation"
+  );
+}
+
+function phpLaravelMorphMapArrayBody(argumentsSource: string): string | null {
+  for (const [index, argument] of splitPhpParameterList(
+    argumentsSource,
+  ).entries()) {
+    const namedArgumentMatch =
+      /^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!:)\s*([\s\S]+)$/.exec(argument);
+    const argumentName = namedArgumentMatch?.[1]?.toLowerCase() ?? null;
+    const value = (namedArgumentMatch?.[2] ?? argument).trim();
+
+    if (argumentName && argumentName !== "map") {
+      continue;
+    }
+
+    if (!argumentName && index > 0) {
+      continue;
+    }
+
+    const body = phpArrayExpressionBody(value);
+
+    if (body !== null) {
+      return body;
+    }
+  }
+
+  return null;
+}
+
+function phpLaravelMorphMapEntriesFromArrayBody(
+  source: string,
+  body: string,
+): PhpLaravelMorphMapEntry[] {
+  return splitPhpParameterList(body).flatMap((entry) => {
+    const arrowIndex = topLevelArrayArrowIndex(entry);
+
+    if (arrowIndex < 0) {
+      return [];
+    }
+
+    const alias = phpStringLiteralValue(entry.slice(0, arrowIndex));
+    const modelClassName = phpLaravelMorphMapModelClassNameFromExpression(
+      source,
+      entry.slice(arrowIndex + 2),
+    );
+
+    return alias && modelClassName ? [{ alias, modelClassName }] : [];
+  });
+}
+
+function phpLaravelMorphMapModelClassNameFromExpression(
+  source: string,
+  expression: string,
+): string | null {
+  const classNamePattern =
+    String.raw`^\s*` +
+      PHP_CLASS_NAME_CAPTURE_PATTERN +
+      String.raw`\s*::\s*class\s*$`;
+  const classNameMatch = new RegExp(classNamePattern).exec(expression);
+  const classConstantName = classNameMatch?.[1] ?? null;
+
+  if (classConstantName) {
+    const resolvedClassName =
+      resolvePhpClassName(source, classConstantName)?.replace(/^\\+/, "") ??
+      classConstantName.replace(/^\\+/, "");
+
+    return isLaravelModelType(resolvedClassName) ? resolvedClassName : null;
+  }
+
+  const stringClassName = phpStringLiteralValue(expression)?.replace(/^\\+/, "");
+
+  if (!stringClassName) {
+    return null;
+  }
+
+  const resolvedClassName = stringClassName.includes("\\")
+    ? stringClassName
+    : (resolvePhpClassName(source, stringClassName)?.replace(/^\\+/, "") ??
+      stringClassName);
+
+  return isLaravelModelType(resolvedClassName) ? resolvedClassName : null;
+}
+
 export function phpLaravelScopeMethodName(scopeName: string): string | null {
   const normalizedScopeName = scopeName.trim();
 
@@ -801,7 +952,11 @@ function phpLaravelRelationPropertyClassTypeFromSource(
   const classSource = phpClassSourceForClassName(source, modelType) ?? source;
   const propertyLookup = propertyName.trim().toLowerCase();
   const relationType =
-    phpLaravelRelationPropertyCompletionsFromSource(classSource, modelType).find(
+    phpLaravelRelationPropertyCompletionsFromSource(
+      classSource,
+      modelType,
+      source,
+    ).find(
       (completion) =>
         completion.kind === "property" &&
         completion.name.toLowerCase() === propertyLookup,
@@ -813,6 +968,7 @@ function phpLaravelRelationPropertyClassTypeFromSource(
 export function phpLaravelRelationPropertyCompletionsFromSource(
   source: string,
   declaringClassName: string,
+  contextSource = source,
 ): PhpMethodCompletion[] {
   const members: PhpMethodCompletion[] = [];
   const masked = maskPhpStringsAndComments(source);
@@ -860,7 +1016,12 @@ export function phpLaravelRelationPropertyCompletionsFromSource(
                 expression,
                 declaringClassName,
               ),
-            ),
+            ) ??
+              phpLaravelMorphToTargetClassNameFromContext(
+                contextSource,
+                declaringClassName,
+                expression,
+              ),
             declaringClassName,
             source,
           ),
@@ -1247,7 +1408,15 @@ function phpLaravelMorphToTargetClassNameFromContext(
     }
   }
 
-  return targets.size === 1 ? Array.from(targets)[0] ?? null : null;
+  if (targets.size === 1) {
+    return Array.from(targets)[0] ?? null;
+  }
+
+  if (targets.size > 1) {
+    return null;
+  }
+
+  return phpLaravelMorphMapModelTypeFromSource(source);
 }
 
 function isLaravelMorphToReturnType(returnType: string | null): boolean {
