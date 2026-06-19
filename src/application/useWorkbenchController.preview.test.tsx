@@ -7418,6 +7418,14 @@ class AlbumController
         /** @var AlbumCollection $customAlbums */
         $customAlbum = $customAlbums->first();
         $customAlbum->get
+
+        /** @var Result<Album> $result */
+        $resultAlbum = $result->first();
+        $resultAlbum->get
+
+        /** @var Paginator<Album> $paginator */
+        $paginatorAlbum = $paginator->first();
+        $paginatorAlbum->get
     }
 }
 `;
@@ -7813,6 +7821,18 @@ class Builder
         returnType: "string",
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$resultAlbum->get"),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$paginatorAlbum->get"),
+      ),
+    ).resolves.toEqual([]);
   });
 
   it("infers Laravel relation query callback builders", async () => {

@@ -832,6 +832,24 @@ $album = $albums->first();
     ]);
   });
 
+  it("keeps PHPDoc @var types scoped to their own docblock", () => {
+    const source = `<?php
+/** @var \\Illuminate\\Database\\Eloquent\\Builder<Album> $typedQuery */
+$typed = $typedQuery->first();
+
+/** @var Result<Album> $result */
+$resultAlbum = $result->first();
+`;
+
+    expect(
+      phpDocRawTypeForVariableBefore(
+        source,
+        positionAfter(source, "$resultAlbum"),
+        "result",
+      ),
+    ).toBe("Result<Album>");
+  });
+
   it("extracts method return expressions from concrete method bodies", () => {
     expect(
       phpMethodReturnExpressions(

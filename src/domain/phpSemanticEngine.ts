@@ -510,16 +510,20 @@ export function phpDocRawTypeForVariableBefore(
 ): string | null {
   const offset = offsetAtPosition(source, position);
   const before = source.slice(0, offset);
+  const docBlockPattern = /\/\*\*[\s\S]*?\*\//g;
   const pattern = new RegExp(
-    `\\/\\*\\*[\\s\\S]*?@var\\s+([\\s\\S]*?)\\s+\\$${escapeRegExp(
+    `@var\\s+([^\\r\\n*]+?)\\s+\\$${escapeRegExp(
       variableName,
-    )}\\b[\\s\\S]*?\\*\\/`,
-    "g",
+    )}\\b`,
   );
   let typeName: string | null = null;
 
-  for (const match of before.matchAll(pattern)) {
-    typeName = phpDocNormalizeType(match[1] ?? "") || null;
+  for (const blockMatch of before.matchAll(docBlockPattern)) {
+    const match = pattern.exec(blockMatch[0] ?? "");
+
+    if (match?.[1]) {
+      typeName = phpDocNormalizeType(match[1]) || null;
+    }
   }
 
   return typeName;

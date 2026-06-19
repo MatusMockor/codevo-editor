@@ -399,6 +399,35 @@ export function isLaravelEloquentBuilderMethodName(methodName: string): boolean 
   );
 }
 
+export function phpLaravelEloquentBuilderModelTypeCandidate(
+  source: string,
+  typeName: string | null,
+): string | null {
+  if (!phpLaravelGenericCarrierMatches(source, typeName, [
+    "builder",
+    "illuminate\\database\\eloquent\\builder",
+  ])) {
+    return null;
+  }
+
+  return phpLaravelGenericModelTypeCandidate(typeName);
+}
+
+export function phpLaravelCollectionModelTypeCandidate(
+  source: string,
+  typeName: string | null,
+): string | null {
+  if (!phpLaravelGenericCarrierMatches(source, typeName, [
+    "collection",
+    "illuminate\\database\\eloquent\\collection",
+    "illuminate\\support\\collection",
+  ])) {
+    return null;
+  }
+
+  return phpLaravelGenericModelTypeCandidate(typeName);
+}
+
 export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
   source: string,
   methodName: string,
@@ -1518,6 +1547,40 @@ function phpLaravelRelationModelTypeFromReturnType(
   }
 
   return phpDeclaredGenericTypeCandidates(returnType ?? "").find(
+    (candidate) => !isGenericLaravelRelationPlaceholder(candidate),
+  ) ?? null;
+}
+
+function phpLaravelGenericCarrierMatches(
+  source: string,
+  typeName: string | null,
+  acceptedCarriers: string[],
+): boolean {
+  const carrierType = phpDeclaredTypeCandidate(typeName ?? "");
+  const normalizedCarrierType = carrierType
+    ?.trim()
+    .replace(/^\\+/, "")
+    .toLowerCase();
+  const resolvedCarrierType = carrierType
+    ? resolvePhpClassName(source, carrierType)
+    : null;
+  const normalizedResolvedCarrierType = resolvedCarrierType
+    ?.trim()
+    .replace(/^\\+/, "")
+    .toLowerCase();
+  const carrierCandidates = new Set(
+    [normalizedCarrierType, normalizedResolvedCarrierType].filter(
+      (candidate): candidate is string => Boolean(candidate),
+    ),
+  );
+
+  return acceptedCarriers.some(
+    (acceptedCarrier) => carrierCandidates.has(acceptedCarrier),
+  );
+}
+
+function phpLaravelGenericModelTypeCandidate(typeName: string | null): string | null {
+  return phpDeclaredGenericTypeCandidates(typeName ?? "").find(
     (candidate) => !isGenericLaravelRelationPlaceholder(candidate),
   ) ?? null;
 }

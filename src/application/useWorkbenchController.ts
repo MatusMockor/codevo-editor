@@ -167,8 +167,10 @@ import {
   isLaravelEloquentModelBuilderFactoryMethod,
   isLaravelEloquentModelFluentMethod,
   isLaravelEloquentStaticBuilderMethod,
+  phpLaravelCollectionModelTypeCandidate,
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
+  phpLaravelEloquentBuilderModelTypeCandidate,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelRelationPropertyCompletionsFromSource,
   phpLaravelRelationTargetClassNameFromExpression,
@@ -6133,10 +6135,11 @@ export function useWorkbenchController(
           position,
           variableMatch[1],
         );
-        const phpDocGenericModelType = phpDocType
-          ? phpDeclaredGenericTypeCandidates(phpDocType)
-              .map((candidate) => resolvePhpClassReference(source, candidate))
-              .find((candidate): candidate is string => Boolean(candidate))
+        const phpDocGenericModelTypeCandidate = phpDocType
+          ? phpLaravelEloquentBuilderModelTypeCandidate(source, phpDocType)
+          : null;
+        const phpDocGenericModelType = phpDocGenericModelTypeCandidate
+          ? resolvePhpClassReference(source, phpDocGenericModelTypeCandidate)
           : null;
 
         if (phpDocGenericModelType) {
@@ -6305,10 +6308,11 @@ export function useWorkbenchController(
           position,
           variableMatch[1],
         );
-        const phpDocGenericModelType = phpDocType
-          ? phpDeclaredGenericTypeCandidates(phpDocType)
-              .map((candidate) => resolvePhpClassReference(source, candidate))
-              .find((candidate): candidate is string => Boolean(candidate))
+        const phpDocGenericModelTypeCandidate = phpDocType
+          ? phpLaravelCollectionModelTypeCandidate(source, phpDocType)
+          : null;
+        const phpDocGenericModelType = phpDocGenericModelTypeCandidate
+          ? resolvePhpClassReference(source, phpDocGenericModelTypeCandidate)
           : null;
 
         if (phpDocGenericModelType) {
