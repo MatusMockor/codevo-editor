@@ -46,9 +46,7 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
   },
 };
 
-export const defaultPhpFrameworkProviders: readonly PhpFrameworkProvider[] = [
-  phpLaravelFrameworkProvider,
-];
+export const defaultPhpFrameworkProviders: readonly PhpFrameworkProvider[] = [];
 
 export function phpFrameworkProvidersForProject(
   php: PhpProjectDescriptor | null,

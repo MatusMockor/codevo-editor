@@ -450,7 +450,34 @@ fn ensure_path_in_workspace(root_path: &Path, path: &str) -> Result<(), String> 
         return Ok(());
     }
 
-    Err("Index path is outside the workspace root.".to_string())
+    Err("Path is outside the workspace root.".to_string())
+}
+
+fn ensure_lsp_path_in_workspace(root_path: &str, path: &str) -> Result<(), String> {
+    let root = canonicalize_workspace_root(root_path)?;
+
+    ensure_path_in_workspace(&root, path)
+}
+
+fn ensure_lsp_text_document_content_in_workspace(
+    root_path: &str,
+    document: &TextDocumentContent,
+) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(root_path, &document.path)
+}
+
+fn ensure_lsp_text_document_path_in_workspace(
+    root_path: &str,
+    document: &TextDocumentPath,
+) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(root_path, &document.path)
+}
+
+fn ensure_lsp_position_in_workspace(
+    root_path: &str,
+    position: &TextDocumentPosition,
+) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(root_path, &position.path)
 }
 
 fn php_file_outline_node_kind_from_symbol(kind: PhpSymbolKind) -> PhpFileOutlineNodeKind {
@@ -1137,6 +1164,8 @@ fn javascript_typescript_document_did_open(
     document: TextDocumentContent,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
+
     let factory = LspTextDocumentSyncNotificationFactory;
     registry.send_notification(&root_path, &factory.did_open(&document))
 }
@@ -1147,6 +1176,8 @@ fn javascript_typescript_document_did_change(
     document: TextDocumentContent,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
+
     let factory = LspTextDocumentSyncNotificationFactory;
     registry.send_notification(&root_path, &factory.did_change(&document))
 }
@@ -1157,6 +1188,8 @@ fn javascript_typescript_document_did_save(
     document: TextDocumentContent,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
+
     let factory = LspTextDocumentSyncNotificationFactory;
     registry.send_notification(&root_path, &factory.did_save(&document))
 }
@@ -1167,6 +1200,8 @@ fn javascript_typescript_document_did_close(
     document: TextDocumentPath,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_text_document_path_in_workspace(&root_path, &document)?;
+
     let factory = LspTextDocumentSyncNotificationFactory;
     registry.send_notification(&root_path, &factory.did_close(&document))
 }
@@ -1192,6 +1227,8 @@ fn javascript_typescript_text_document_hover(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerHover>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1227,6 +1264,8 @@ fn javascript_typescript_text_document_completion(
     context: Option<LanguageServerCompletionContext>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCompletionList, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&TextDocumentCompletion { position, context });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1292,6 +1331,8 @@ fn javascript_typescript_text_document_definition(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1323,6 +1364,8 @@ fn javascript_typescript_text_document_implementation(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.implementation(&position);
     let result = match registry.send_request(&root_path, &request.method, request.params)? {
@@ -1354,6 +1397,8 @@ fn javascript_typescript_text_document_type_definition(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.type_definition(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1384,6 +1429,8 @@ fn javascript_typescript_text_document_references(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.references(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1414,6 +1461,8 @@ fn javascript_typescript_text_document_prepare_rename(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerPrepareRenameResult>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_rename(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1451,6 +1500,8 @@ fn javascript_typescript_text_document_rename(
     new_name: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.rename(&TextDocumentRename {
         character: position.character,
@@ -1490,6 +1541,8 @@ fn javascript_typescript_text_document_code_actions(
     context: LanguageServerCodeActionContext,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCodeAction>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1553,6 +1606,8 @@ fn javascript_typescript_text_document_code_lenses(
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCodeLens>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_lenses(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1616,6 +1671,8 @@ fn javascript_typescript_text_document_prepare_call_hierarchy(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCallHierarchyItem>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_call_hierarchy(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1706,6 +1763,8 @@ fn javascript_typescript_text_document_prepare_type_hierarchy(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.prepare_type_hierarchy(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1812,6 +1871,9 @@ fn javascript_typescript_workspace_will_rename_files(
     new_path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &old_path)?;
+    ensure_lsp_path_in_workspace(&root_path, &new_path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.will_rename_files(&[WorkspaceFileRename { old_path, new_path }]);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1828,6 +1890,9 @@ fn javascript_typescript_workspace_did_rename_files(
     new_path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(&root_path, &old_path)?;
+    ensure_lsp_path_in_workspace(&root_path, &new_path)?;
+
     registry.send_notification(
         &root_path,
         &JsonRpcNotification {
@@ -1851,6 +1916,10 @@ fn javascript_typescript_workspace_did_change_watched_files(
     changes: Vec<WorkspaceFileChange>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
+    for change in &changes {
+        ensure_lsp_path_in_workspace(&root_path, &change.path)?;
+    }
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.did_change_watched_files(&changes);
 
@@ -1907,6 +1976,8 @@ fn javascript_typescript_text_document_formatting(
     options: LanguageServerFormattingOptions,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTextEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.formatting(&TextDocumentFormatting { path, options });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -1948,6 +2019,8 @@ fn javascript_typescript_text_document_on_type_formatting(
     options: LanguageServerFormattingOptions,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTextEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.on_type_formatting(&TextDocumentOnTypeFormatting {
         path,
@@ -1991,6 +2064,8 @@ fn javascript_typescript_text_document_range_formatting(
     options: LanguageServerFormattingOptions,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerTextEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.range_formatting(&TextDocumentRangeFormatting {
         path,
@@ -2027,6 +2102,8 @@ fn javascript_typescript_text_document_inlay_hints(
     range: LanguageServerRange,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerInlayHint>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.inlay_hints(&TextDocumentInlayHintRange { path, range });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2057,6 +2134,8 @@ fn javascript_typescript_text_document_document_symbols(
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerDocumentSymbol>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_symbols(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2087,6 +2166,8 @@ fn javascript_typescript_text_document_document_highlights(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerDocumentHighlight>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_highlights(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2117,6 +2198,8 @@ fn javascript_typescript_text_document_document_links(
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerDocumentLink>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.document_links(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2179,6 +2262,8 @@ fn javascript_typescript_text_document_folding_ranges(
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerFoldingRange>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.folding_ranges(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2241,6 +2326,8 @@ fn javascript_typescript_text_document_selection_ranges(
     positions: Vec<LanguageServerPosition>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerSelectionRange>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.selection_ranges(&TextDocumentSelectionRange { path, positions });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2275,6 +2362,8 @@ fn javascript_typescript_text_document_linked_editing_ranges(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerLinkedEditingRanges>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.linked_editing_ranges(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2309,6 +2398,8 @@ fn javascript_typescript_text_document_semantic_tokens(
     path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerSemanticTokens>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.semantic_tokens(&path);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2339,6 +2430,8 @@ fn javascript_typescript_text_document_signature_help(
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerSignatureHelp>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.signature_help(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
@@ -2444,8 +2537,8 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_path_in_workspace, normalize_path, path_from_file_uri, workspace_root_for_disposal,
-        workspace_text_edits_from_language_server,
+        ensure_lsp_path_in_workspace, ensure_path_in_workspace, normalize_path, path_from_file_uri,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp_features::{
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
@@ -2486,6 +2579,24 @@ mod tests {
 
         assert!(ensure_path_in_workspace(&root, &path_string(&sibling.join("User.php"))).is_err());
         assert!(ensure_path_in_workspace(&root, "../outside/User.php").is_err());
+    }
+
+    #[test]
+    fn lsp_path_guard_rejects_document_paths_outside_workspace_root() {
+        let root = temp_workspace("lsp-rejects-root");
+        let sibling = root
+            .parent()
+            .expect("workspace parent")
+            .join(format!("{}-sibling", unique_suffix()));
+        fs::create_dir_all(&sibling).expect("sibling directory");
+        fs::write(sibling.join("App.ts"), "export {};").expect("sibling file");
+
+        assert!(ensure_lsp_path_in_workspace(&path_string(&root), "src/App.ts").is_ok());
+        assert!(ensure_lsp_path_in_workspace(
+            &path_string(&root),
+            &path_string(&sibling.join("App.ts"))
+        )
+        .is_err());
     }
 
     #[test]

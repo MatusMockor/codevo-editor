@@ -18,6 +18,10 @@ import {
   phpLaravelModelAttributeClassTypeFromSource,
   phpLaravelRepositoryMethodModelReturnTypeFromSource,
 } from "./phpFrameworkLaravel";
+import {
+  isPhpFrameworkProviderActive,
+  type PhpFrameworkProvider,
+} from "./phpFrameworkProviders";
 
 export {
   phpDeclaredGenericTypeCandidates,
@@ -76,6 +80,10 @@ export interface PhpLaravelQueryCallbackContext {
   relationName: string | null;
 }
 
+export interface PhpSemanticEngineOptions {
+  frameworkProviders?: readonly PhpFrameworkProvider[];
+}
+
 const laravelQueryCallbackMethods = [
   "where",
   "orWhere",
@@ -110,6 +118,7 @@ export function phpReceiverExpressionTypeInSource(
   source: string,
   position: EditorPosition,
   receiverExpression: string,
+  options: PhpSemanticEngineOptions = {},
 ): string | null {
   const normalizedExpression = phpNormalizeReceiverExpression(receiverExpression);
 
@@ -122,7 +131,7 @@ export function phpReceiverExpressionTypeInSource(
   );
 
   if (thisPropertyMatch?.[1]) {
-    return phpThisPropertyType(source, thisPropertyMatch[1]);
+    return phpThisPropertyType(source, thisPropertyMatch[1], options);
   }
 
   const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
@@ -133,13 +142,14 @@ export function phpReceiverExpressionTypeInSource(
     return null;
   }
 
-  return phpVariableTypeInSource(source, position, variableMatch[1]);
+  return phpVariableTypeInSource(source, position, variableMatch[1], options);
 }
 
 export function phpVariableTypeInSource(
   source: string,
   position: EditorPosition,
   variableName: string,
+  options: PhpSemanticEngineOptions = {},
 ): string | null {
   const assignmentExpression =
     phpAssignmentExpressionForVariableBefore(source, position, variableName) ?? "";
@@ -148,13 +158,16 @@ export function phpVariableTypeInSource(
     phpParameterTypeForVariable(source, position, variableName) ??
     phpDocTypeForVariableBefore(source, position, variableName) ??
     phpNewExpressionClassName(assignmentExpression) ??
-    phpLaravelContainerExpressionClassName(assignmentExpression) ??
-    phpLaravelRepositoryAssignmentModelType(
-      source,
-      position,
-      variableName,
-      assignmentExpression,
-    )
+    (isLaravelSemanticProviderActive(options)
+      ? phpLaravelContainerExpressionClassName(assignmentExpression) ??
+        phpLaravelRepositoryAssignmentModelType(
+          source,
+          position,
+          variableName,
+          assignmentExpression,
+          options,
+        )
+      : null)
   );
 }
 
@@ -223,12 +236,15 @@ export function phpLaravelQueryCallbackContextForVariable(
 export function phpThisPropertyType(
   source: string,
   propertyName: string,
+  options: PhpSemanticEngineOptions = {},
 ): string | null {
   return (
     phpPromotedPropertyType(source, propertyName) ??
     phpDeclaredPropertyType(source, propertyName) ??
     phpDocTypeForProperty(source, propertyName) ??
-    phpLaravelModelAttributeClassTypeFromSource(source, propertyName)
+    (isLaravelSemanticProviderActive(options)
+      ? phpLaravelModelAttributeClassTypeFromSource(source, propertyName)
+      : null)
   );
 }
 
@@ -315,6 +331,7 @@ function phpLaravelRepositoryAssignmentModelType(
   position: EditorPosition,
   variableName: string,
   assignmentExpression: string,
+  options: PhpSemanticEngineOptions,
 ): string | null {
   const methodCall = phpMethodCallExpression(assignmentExpression);
 
@@ -337,8 +354,15 @@ function phpLaravelRepositoryAssignmentModelType(
       source,
       position,
       methodCall.receiverExpression,
+      options,
     ),
   );
+}
+
+function isLaravelSemanticProviderActive(
+  options: PhpSemanticEngineOptions,
+): boolean {
+  return isPhpFrameworkProviderActive(options.frameworkProviders ?? [], "laravel");
 }
 
 export function phpClassStringCallExpression(

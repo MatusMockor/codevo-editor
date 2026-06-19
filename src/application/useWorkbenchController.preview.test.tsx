@@ -616,6 +616,44 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns(24);
   });
 
+  it("does not let a stale JavaScript and TypeScript plan overwrite the active project tab", async () => {
+    const workspaceAPlan = createDeferred<LanguageServerPlan>();
+    const workspaceBPlan = readyJavaScriptTypeScriptPlan("/workspace-b");
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    vi.mocked(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).mockImplementation(async (rootPath) =>
+      rootPath === "/workspace-a"
+        ? workspaceAPlan.promise
+        : readyJavaScriptTypeScriptPlan(rootPath),
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().javaScriptTypeScriptLanguageServerPlan).toEqual(
+      workspaceBPlan,
+    );
+
+    workspaceAPlan.resolve(readyJavaScriptTypeScriptPlan("/workspace-a"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().javaScriptTypeScriptLanguageServerPlan).toEqual(
+      workspaceBPlan,
+    );
+  });
+
   it("caches stopped JavaScript and TypeScript status when suspending an inactive project runtime", async () => {
     let publishRuntimeStatus:
       | ((status: LanguageServerRuntimeStatus) => void)
@@ -972,6 +1010,39 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
     ).not.toHaveBeenCalledWith("/workspace-a");
+  });
+
+  it("falls back to explicit per-runtime stops when workspace runtime disposal fails", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        runtimePolicy: "suspendOnBackground",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockRejectedValueOnce(new Error("dispose failed"));
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
   });
 
   it("stops every inactive project runtime when only the active project may run IDE services", async () => {
@@ -9288,6 +9359,25 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     resolveCodeAction: vi.fn(async (_rootPath, action) => action),
     resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
+  };
+}
+
+function readyJavaScriptTypeScriptPlan(rootPath: string): LanguageServerPlan {
+  return {
+    command: {
+      args: ["--stdio"],
+      executable: "typescript-language-server",
+      workingDirectory: rootPath,
+    },
+    initializeRequest: {
+      id: 1,
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: {},
+    },
+    message: "TypeScript language server is ready.",
+    provider: "typeScriptLanguageServer",
+    status: "ready",
   };
 }
 

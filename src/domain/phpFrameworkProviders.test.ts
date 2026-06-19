@@ -31,7 +31,11 @@ class Comment extends Model
 }
 `;
 
-    expect(phpFrameworkMemberCompletionsFromSource(source, "Comment")).toEqual([
+    expect(
+      phpFrameworkMemberCompletionsFromSource(source, "Comment", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toEqual([
       {
         declaringClassName: "Comment",
         kind: "property",

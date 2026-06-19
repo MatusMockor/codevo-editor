@@ -24,6 +24,11 @@ import {
   phpDeclaredTypeCandidate,
   phpMethodReturnExpressions,
 } from "./phpTypeAnalysis";
+import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
+
+const laravelOptions = {
+  frameworkProviders: [phpLaravelFrameworkProvider],
+};
 
 function positionAfter(source: string, needle: string) {
   const offset = source.indexOf(needle);
@@ -124,18 +129,54 @@ class Comment extends Model
 }
 `;
 
-    expect(phpThisPropertyType(source, "published_at")).toBe(
+    expect(phpThisPropertyType(source, "published_at", laravelOptions)).toBe(
       "Illuminate\\Support\\Carbon",
     );
-    expect(phpThisPropertyType(source, "type")).toBe("App\\Enums\\CommentType");
-    expect(phpThisPropertyType(source, "metadata")).toBeNull();
+    expect(phpThisPropertyType(source, "type", laravelOptions)).toBe(
+      "App\\Enums\\CommentType",
+    );
+    expect(phpThisPropertyType(source, "metadata", laravelOptions)).toBeNull();
     expect(
       phpReceiverExpressionTypeInSource(
         source,
         positionAfter(source, "$this->published_at"),
         "$this->published_at",
+        laravelOptions,
       ),
     ).toBe("Illuminate\\Support\\Carbon");
+  });
+
+  it("does not resolve Laravel model cast attributes without an active Laravel provider", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use App\\Enums\\CommentType;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected function casts(): array
+    {
+        return [
+            'type' => CommentType::class,
+        ];
+    }
+
+    public function publish(): void
+    {
+        $this->type->value;
+    }
+}
+`;
+
+    expect(phpThisPropertyType(source, "type")).toBeNull();
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$this->type"),
+        "$this->type",
+      ),
+    ).toBeNull();
   });
 
   it("resolves Laravel repository finder assignments from model return types", () => {
@@ -164,6 +205,7 @@ class AlbumRepository
         source,
         positionAfter(source, "$album->tit"),
         "album",
+        laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
     expect(
@@ -171,6 +213,7 @@ class AlbumRepository
         source,
         positionAfter(source, "$album->tit"),
         "$album",
+        laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
   });
@@ -200,6 +243,7 @@ class AlbumRepository
         source,
         positionAfter(source, "$album->tit"),
         "album",
+        laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
   });
@@ -241,16 +285,23 @@ class AlbumService
         source,
         positionAfter(source, "$created->tit"),
         "created",
+        laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
     expect(
-      phpVariableTypeInSource(source, positionAfter(source, "$new->tit"), "new"),
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$new->tit"),
+        "new",
+        laravelOptions,
+      ),
     ).toBe("App\\Models\\Album");
     expect(
       phpVariableTypeInSource(
         source,
         positionAfter(source, "$updated->tit"),
         "updated",
+        laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
   });
@@ -286,18 +337,55 @@ class AlbumRepository
         source,
         positionAfter(source, "$created->tit"),
         "created",
+        laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
     expect(
-      phpVariableTypeInSource(source, positionAfter(source, "$new->tit"), "new"),
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$new->tit"),
+        "new",
+        laravelOptions,
+      ),
     ).toBe("App\\Models\\Album");
     expect(
       phpVariableTypeInSource(
         source,
         positionAfter(source, "$updated->tit"),
         "updated",
+        laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
+  });
+
+  it("does not infer Laravel repository assignments without an active Laravel provider", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+
+class AlbumRepository
+{
+    public function findOrFail(int $id): Album
+    {
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->findOrFail($id);
+
+        $album->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+      ),
+    ).toBeNull();
   });
 
   it("does not infer finder assignment model types from non-repository receivers", () => {

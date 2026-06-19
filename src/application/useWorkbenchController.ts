@@ -957,10 +957,17 @@ export function useWorkbenchController(
                 workspaceSettingsRef.current.javaScriptTypeScriptValidation,
             },
           );
-        setJavaScriptTypeScriptLanguageServerPlan(plan);
+
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          setJavaScriptTypeScriptLanguageServerPlan(plan);
+        }
+
         return plan;
       } catch (error) {
-        setJavaScriptTypeScriptLanguageServerPlan(null);
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          setJavaScriptTypeScriptLanguageServerPlan(null);
+        }
+
         reportError("JavaScript/TypeScript", error);
         return null;
       }
@@ -5474,7 +5481,9 @@ export function useWorkbenchController(
 
       visitedClassNames.add(visitedKey);
 
-      const facadeTargetClassName = laravelFacadeTargetClassName(normalizedClassName);
+      const facadeTargetClassName = isLaravelFrameworkActive
+        ? laravelFacadeTargetClassName(normalizedClassName)
+        : null;
 
       if (facadeTargetClassName) {
         return resolvePhpMethodReturnType(
@@ -5510,7 +5519,9 @@ export function useWorkbenchController(
       ): Promise<string | null> => {
         const constructedClassName =
           phpNewExpressionClassName(expression) ??
-          phpLaravelContainerExpressionClassName(expression);
+          (isLaravelFrameworkActive
+            ? phpLaravelContainerExpressionClassName(expression)
+            : null);
 
         if (constructedClassName) {
           return resolvePhpClassReference(ownerSource, constructedClassName);
@@ -5536,11 +5547,16 @@ export function useWorkbenchController(
             ownerSource,
             { column: 1, lineNumber: 1 },
             methodCall.receiverExpression,
+            { frameworkProviders: activePhpFrameworkProviders },
           );
           const constructedReceiverType =
             directReceiverType ??
             phpNewExpressionClassName(methodCall.receiverExpression) ??
-            phpLaravelContainerExpressionClassName(methodCall.receiverExpression);
+            (isLaravelFrameworkActive
+              ? phpLaravelContainerExpressionClassName(
+                  methodCall.receiverExpression,
+                )
+              : null);
           const resolvedReceiverType = constructedReceiverType
             ? resolvePhpClassReference(ownerSource, constructedReceiverType)
             : null;
@@ -5699,6 +5715,8 @@ export function useWorkbenchController(
       return resolveBoundConcreteReturnType();
     },
     [
+      activePhpFrameworkProviders,
+      isLaravelFrameworkActive,
       readPhpClassMembersFromPath,
       resolvePhpLaravelBoundConcrete,
       resolvePhpClassReference,
@@ -6003,6 +6021,7 @@ export function useWorkbenchController(
           source,
           position,
           normalizedModelExpression,
+          { frameworkProviders: activePhpFrameworkProviders },
         );
 
         if (directType) {
@@ -6222,6 +6241,7 @@ export function useWorkbenchController(
       return null;
     },
     [
+      activePhpFrameworkProviders,
       phpClassHasLaravelLocalScope,
       phpClassHasLaravelDynamicWhere,
       isLaravelFrameworkActive,
@@ -6252,6 +6272,7 @@ export function useWorkbenchController(
         source,
         position,
         normalizedExpression,
+        { frameworkProviders: activePhpFrameworkProviders },
       );
       const resolvedDirectCollectionType = directCollectionType
         ? resolvePhpClassReference(source, directCollectionType)
@@ -6338,6 +6359,7 @@ export function useWorkbenchController(
       return null;
     },
     [
+      activePhpFrameworkProviders,
       resolvePhpClassReference,
       resolvePhpCollectionModelTypeFromClass,
       resolvePhpEloquentBuilderModelType,
@@ -6374,6 +6396,7 @@ export function useWorkbenchController(
         source,
         position,
         expression,
+        { frameworkProviders: activePhpFrameworkProviders },
       );
 
       if (directType) {
@@ -6811,6 +6834,7 @@ export function useWorkbenchController(
       return null;
     },
     [
+      activePhpFrameworkProviders,
       resolvePhpEloquentBuilderModelType,
       resolvePhpLaravelCollectionModelType,
       resolvePhpClassReference,

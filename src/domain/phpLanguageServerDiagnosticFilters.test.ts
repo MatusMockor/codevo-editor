@@ -8,6 +8,7 @@ import {
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "./phpLanguageServerDiagnosticFilters";
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
+import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
 
 describe("filterPhpLanguageServerDiagnostics", () => {
   it("suppresses unresolved Laravel Eloquent static builder methods", () => {
@@ -30,7 +31,9 @@ $album = Album::withRelations()->findOrFail($id);
           message: "Method App\\Models\\Album::whereNull() does not exist",
         }),
         localScopeDiagnostic,
-      ]),
+      ], {
+        frameworkProviders: [phpLaravelFrameworkProvider],
+      }),
     ).toEqual([localScopeDiagnostic]);
   });
 

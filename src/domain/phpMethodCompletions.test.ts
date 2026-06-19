@@ -16,6 +16,11 @@ import {
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
+import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
+
+const laravelCompletionOptions = {
+  frameworkProviders: [phpLaravelFrameworkProvider],
+};
 
 function positionAfter(source: string, needle: string) {
   const offset = source.indexOf(needle);
@@ -501,6 +506,7 @@ class Comment
 }
 `,
         "Comment",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
@@ -559,6 +565,7 @@ class Comment
 }
 `,
         "Comment",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
@@ -775,6 +782,7 @@ class Comment
 }
 `,
         "Comment",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
@@ -830,6 +838,7 @@ class User
 }
 `,
         "User",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
@@ -891,6 +900,7 @@ class Comment
 }
 `,
         "Comment",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
@@ -937,6 +947,7 @@ class User
 }
 `,
         "User",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
@@ -998,6 +1009,7 @@ class Comment extends Model
 }
 `,
         "Comment",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
@@ -1138,6 +1150,7 @@ class Comment extends Model
 }
 `,
         "Comment",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
@@ -1232,6 +1245,7 @@ class User extends Model
 }
 `,
         "User",
+        laravelCompletionOptions,
       ),
     ).toEqual([
       {
