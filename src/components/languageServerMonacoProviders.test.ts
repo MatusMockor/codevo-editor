@@ -1083,6 +1083,7 @@ describe("registerLanguageServerMonacoProviders", () => {
 
     const marker = {
       code: { target: "https://example.test/PHP041", value: "PHP041" },
+      data: { symbol: "User" },
       endColumn: 9,
       endLineNumber: 3,
       message: "Undefined type User",
@@ -1112,6 +1113,7 @@ describe("registerLanguageServerMonacoProviders", () => {
         diagnostics: [
           {
             code: "PHP041",
+            data: { symbol: "User" },
             message: "Undefined type User",
             range: range(2, 4, 2, 8),
             severity: 1,
@@ -1119,6 +1121,7 @@ describe("registerLanguageServerMonacoProviders", () => {
           },
         ],
         only: ["quickfix"],
+        triggerKind: 1,
       },
     );
     expect(actions.actions).toEqual([

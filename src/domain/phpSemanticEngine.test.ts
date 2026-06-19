@@ -232,6 +232,53 @@ class Controller
     ).toBe("DateTimeImmutable");
   });
 
+  it("resolves nullsafe member calls through framework provider hooks", () => {
+    const semanticProvider: PhpFrameworkProvider = {
+      id: "nullsafe-semantic-test",
+      semantics: {
+        methodCallReturnTypeFromSource: ({ methodName, receiverType }) =>
+          methodName === "fetchPublished" && receiverType === "PostRepository"
+            ? "Domain\\Post"
+            : null,
+      },
+    };
+    const options = { frameworkProviders: [semanticProvider] };
+    const source = `<?php
+namespace App\\Http;
+
+class Controller
+{
+    public function __construct(private PostRepository $posts)
+    {
+    }
+
+    public function show(): void
+    {
+        $post = $this?->posts?->fetchPublished();
+
+        $post->tit
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "$this?->posts",
+        options,
+      ),
+    ).toBe("PostRepository");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$post->tit"),
+        "post",
+        options,
+      ),
+    ).toBe("Domain\\Post");
+  });
+
   it("resolves Laravel repository finder assignments from model return types", () => {
     const source = `<?php
 namespace App\\Repositories;
@@ -640,6 +687,10 @@ class Controller
       methodName: "first",
       receiverExpression: "Album::query()->whereNull('parent_id')",
     });
+    expect(phpMethodCallExpression("$user?->profile?->getName()")).toEqual({
+      methodName: "getName",
+      receiverExpression: "$user?->profile",
+    });
     expect(phpMethodCallExpression("app(CommentService::class)->create()")).toEqual(
       {
         methodName: "create",
@@ -661,6 +712,10 @@ class Controller
     ).toEqual({
       propertyName: "author",
       receiverExpression: "$comment->parent()->first()",
+    });
+    expect(phpPropertyAccessExpression("$user?->profile?->name")).toEqual({
+      propertyName: "name",
+      receiverExpression: "$user?->profile",
     });
     expect(phpStaticCallExpression("CommentFactory::make()")).toEqual({
       className: "CommentFactory",

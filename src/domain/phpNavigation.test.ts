@@ -3,11 +3,13 @@ import {
   phpClassPathCandidates,
   phpExtendsClassName,
   phpIdentifierContextAt,
+  phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
   phpNamedTypePosition,
   phpParameterTypeForVariable,
+  phpSuperTypeReferences,
   resolvePhpClassName,
 } from "./phpNavigation";
 import type { PhpProjectDescriptor } from "./workspace";
@@ -722,6 +724,70 @@ class Comment
       column: 21,
       lineNumber: 3,
     });
+  });
+
+  it("detects PHP declarations that can use implementation fallback", () => {
+    const interfaceSource = `<?php
+interface PlatformAdapter
+{
+    public function getPlatform(): Platform;
+}
+`;
+    const abstractSource = `<?php
+abstract class PlatformAdapter
+{
+    abstract public static function getPlatform(): Platform;
+
+    public function label(): string
+    {
+        return 'platform';
+    }
+}
+`;
+
+    expect(
+      phpImplementationDeclarationContextAt(
+        interfaceSource,
+        positionAfter(interfaceSource, "getPlatform"),
+      ),
+    ).toEqual({
+      methodName: "getPlatform",
+      typeKind: "interface",
+    });
+    expect(
+      phpImplementationDeclarationContextAt(
+        abstractSource,
+        positionAfter(abstractSource, "getPlatform"),
+      ),
+    ).toEqual({
+      methodName: "getPlatform",
+      typeKind: "class",
+    });
+    expect(
+      phpImplementationDeclarationContextAt(
+        abstractSource,
+        positionAfter(abstractSource, "label"),
+      ),
+    ).toBeNull();
+  });
+
+  it("extracts PHP supertype references from class headers", () => {
+    const source = `<?php
+namespace App\\Services;
+
+use App\\Contracts\\PlatformAdapter;
+use Vendor\\Audits\\TracksEvents;
+
+final class FacebookAdapter extends BaseAdapter implements PlatformAdapter, TracksEvents
+{
+}
+`;
+
+    expect(phpSuperTypeReferences(source)).toEqual([
+      "BaseAdapter",
+      "PlatformAdapter",
+      "TracksEvents",
+    ]);
   });
 
   it("detects imported parent class names", () => {

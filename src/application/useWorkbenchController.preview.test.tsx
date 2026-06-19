@@ -11185,7 +11185,124 @@ final class FacebookAdapterService extends BaseAdapter
     });
   });
 
-  it("falls back to indexed PHP implementations when the language server returns no targets", async () => {
+  it("opens the only indexed PHP implementation when the language server is unavailable", async () => {
+    const interfacePath = "/workspace/app/Contracts/PlatformAdapter.php";
+    const facebookAdapterPath =
+      "/workspace/app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php";
+    const billingAdapterPath = "/workspace/app/Billing/InvoiceAdapter.php";
+    const interfaceSource = `<?php
+
+namespace App\\Contracts;
+
+interface PlatformAdapter
+{
+    public function getPlatform(): Platform;
+}
+`;
+    const implementation = vi.fn(async () => []);
+    const projectSymbols: ProjectSymbolSearchResult[] = [
+      {
+        column: 21,
+        containerName:
+          "App\\Services\\Analytics\\Adapters\\Facebook\\FacebookAdapterService",
+        fullyQualifiedName:
+          "App\\Services\\Analytics\\Adapters\\Facebook\\FacebookAdapterService::getPlatform",
+        kind: "method",
+        lineNumber: 10,
+        name: "getPlatform",
+        path: facebookAdapterPath,
+        relativePath:
+          "app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php",
+      },
+      {
+        column: 21,
+        containerName: "App\\Billing\\InvoiceAdapter",
+        fullyQualifiedName: "App\\Billing\\InvoiceAdapter::getPlatform",
+        kind: "method",
+        lineNumber: 5,
+        name: "getPlatform",
+        path: billingAdapterPath,
+        relativePath: "app/Billing/InvoiceAdapter.php",
+      },
+    ];
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway: {
+        ...featuresGateway(),
+        implementation,
+      },
+      projectSymbols,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === interfacePath) {
+          return interfaceSource;
+        }
+
+        if (path === facebookAdapterPath) {
+          return `<?php
+
+namespace App\\Services\\Analytics\\Adapters\\Facebook;
+
+use App\\Contracts\\PlatformAdapter;
+
+final class FacebookAdapterService implements PlatformAdapter
+{
+    public function getPlatform(): Platform
+    {
+    }
+}
+`;
+        }
+
+        if (path === billingAdapterPath) {
+          return `<?php
+namespace App\\Billing;
+
+final class InvoiceAdapter
+{
+    public function getPlatform()
+    {
+    }
+}
+`;
+        }
+
+        return "<?php\n";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(interfacePath, "PlatformAdapter.php"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().goToImplementationAt(
+        positionAfter(interfaceSource, "getPlatform"),
+      );
+    });
+
+    expect(implementation).not.toHaveBeenCalled();
+    expect(getWorkbench().implementationChooser).toBe(null);
+    expect(getWorkbench().activePath).toBe(facebookAdapterPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: facebookAdapterPath,
+      position: {
+        column: 21,
+        lineNumber: 10,
+      },
+    });
+  });
+
+  it("shows a chooser for multiple indexed PHP implementations when the language server returns no targets", async () => {
     const interfacePath = "/workspace/app/Contracts/PlatformAdapter.php";
     const baseAdapterPath =
       "/workspace/app/Services/Analytics/Adapters/BaseAdapter.php";

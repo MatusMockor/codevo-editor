@@ -209,6 +209,7 @@ export interface LanguageServerCodeActionCommand {
 
 export interface LanguageServerCodeActionDiagnostic {
   code?: string | number | null;
+  data?: unknown | null;
   message: string;
   range: LanguageServerRange;
   severity: number | null;
@@ -218,6 +219,7 @@ export interface LanguageServerCodeActionDiagnostic {
 export interface LanguageServerCodeActionContext {
   diagnostics: LanguageServerCodeActionDiagnostic[];
   only: string[] | null;
+  triggerKind?: number | null;
 }
 
 export interface LanguageServerCodeAction {

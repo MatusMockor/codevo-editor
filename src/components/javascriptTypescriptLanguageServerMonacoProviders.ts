@@ -1901,6 +1901,7 @@ function toLanguageServerCodeActionContext(
   return {
     diagnostics: context.markers.map((marker) => ({
       code: markerCode(marker),
+      data: markerData(marker),
       message: marker.message,
       range: {
         end: {
@@ -1916,6 +1917,7 @@ function toLanguageServerCodeActionContext(
       source: marker.source ?? null,
     })),
     only: context.only ? [context.only] : null,
+    triggerKind: codeActionTriggerKind(monaco, context.trigger),
   };
 }
 
@@ -1929,6 +1931,25 @@ function markerCode(marker: Monaco.editor.IMarkerData): string | number | null {
   }
 
   return marker.code.value;
+}
+
+function markerData(marker: Monaco.editor.IMarkerData): unknown | null {
+  return (marker as Monaco.editor.IMarkerData & { data?: unknown }).data ?? null;
+}
+
+function codeActionTriggerKind(
+  monaco: MonacoApi,
+  trigger: Monaco.languages.CodeActionTriggerType | undefined,
+): number | null {
+  if (trigger === monaco.languages.CodeActionTriggerType.Invoke) {
+    return 1;
+  }
+
+  if (trigger === 2) {
+    return 2;
+  }
+
+  return null;
 }
 
 function lspDiagnosticSeverity(

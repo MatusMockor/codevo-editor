@@ -877,6 +877,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         markers: [
           {
             code: "2304",
+            data: { fixId: "fixMissingImport" },
             endColumn: 5,
             endLineNumber: 1,
             message: "Cannot find name",
@@ -887,6 +888,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           },
         ],
         only: "quickfix",
+        trigger: monaco.languages.CodeActionTriggerType.Invoke,
       },
     );
 
@@ -898,6 +900,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         diagnostics: [
           {
             code: "2304",
+            data: { fixId: "fixMissingImport" },
             message: "Cannot find name",
             range: range(0, 0, 0, 4),
             severity: 1,
@@ -905,6 +908,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           },
         ],
         only: ["quickfix"],
+        triggerKind: 1,
       },
     );
     expect(actionList.actions).toEqual([

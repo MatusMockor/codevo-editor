@@ -51,6 +51,11 @@ export interface PhpMethodDefinitionHint {
   methodName: string;
 }
 
+export interface PhpImplementationDeclarationContext {
+  methodName: string;
+  typeKind: "class" | "enum" | "interface" | "trait";
+}
+
 export interface PhpLaravelRelationStringCompletionContext {
   className: string | null;
   methodName: string;
@@ -305,12 +310,88 @@ export function phpMethodPositionOrNull(
   );
 }
 
+export function phpImplementationDeclarationContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpImplementationDeclarationContext | null {
+  const methodName = phpMethodDeclarationNameAtPosition(source, position);
+
+  if (!methodName) {
+    return null;
+  }
+
+  const typeKind = phpCurrentTypeKind(source);
+
+  if (typeKind === "interface") {
+    return { methodName, typeKind };
+  }
+
+  if (typeKind !== "class") {
+    return null;
+  }
+
+  const line = source.split(/\r?\n/)[position.lineNumber - 1] ?? "";
+
+  if (
+    !/\babstract\s+(?:(?:public|protected|private)\s+)?(?:static\s+)?function\b/.test(
+      line,
+    )
+  ) {
+    return null;
+  }
+
+  return { methodName, typeKind };
+}
+
+export function phpCurrentTypeKind(
+  source: string,
+): "class" | "trait" | "enum" | "interface" | null {
+  const match = /\b(class|trait|enum|interface)\s+[A-Za-z_][A-Za-z0-9_]*\b/.exec(
+    source,
+  );
+  const kind = match?.[1];
+
+  if (
+    kind === "class" ||
+    kind === "trait" ||
+    kind === "enum" ||
+    kind === "interface"
+  ) {
+    return kind;
+  }
+
+  return null;
+}
+
 export function phpExtendsClassName(source: string): string | null {
   const match =
     /\b(?:class|interface)\s+[A-Za-z_][A-Za-z0-9_]*[^{;]*?\bextends\s+(\\?[A-Za-z_][A-Za-z0-9_\\]*)\b/m.exec(
       source,
     );
   return match?.[1]?.trim().replace(/^\\+/, "") || null;
+}
+
+export function phpSuperTypeReferences(source: string): string[] {
+  const declaration =
+    /\b(?:abstract\s+|final\s+)?(?:class|interface|trait|enum)\s+[A-Za-z_][A-Za-z0-9_]*\b[\s\S]*?\{/.exec(
+      source,
+    );
+
+  if (!declaration) {
+    return [];
+  }
+
+  const header = declaration[0].slice(0, -1);
+  const references: string[] = [];
+  const extendsMatch = /\bextends\s+([\s\S]*?)(?=\bimplements\b|$)/.exec(
+    header,
+  );
+  const implementsMatch = /\bimplements\s+([\s\S]*?)$/.exec(header);
+
+  references.push(...phpClassReferenceList(extendsMatch?.[1] ?? ""));
+  references.push(...phpClassReferenceList(implementsMatch?.[1] ?? ""));
+
+  return references;
 }
 
 function methodCallContextAt(
@@ -1093,6 +1174,32 @@ function identifierAtOffset(
   }
 
   return null;
+}
+
+function phpMethodDeclarationNameAtPosition(
+  source: string,
+  position: EditorPosition,
+): string | null {
+  const offset = offsetAtPosition(source, position);
+  const identifier = identifierAtOffset(source, offset);
+
+  if (!identifier) {
+    return null;
+  }
+
+  const line = source.split(/\r?\n/)[position.lineNumber - 1] ?? "";
+  const pattern = new RegExp(
+    `\\bfunction\\s+${escapeRegExp(identifier.name)}\\b`,
+  );
+
+  return pattern.test(line) ? identifier.name : null;
+}
+
+function phpClassReferenceList(source: string): string[] {
+  return source
+    .split(",")
+    .map((part) => /\\?[A-Za-z_][A-Za-z0-9_\\]*/.exec(part.trim())?.[0] ?? "")
+    .filter(Boolean);
 }
 
 function phpUseImports(source: string): Map<string, string> {

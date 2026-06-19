@@ -101,6 +101,8 @@ pub struct LanguageServerCodeActionDiagnostic {
     pub severity: Option<u32>,
     pub source: Option<String>,
     pub code: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -108,6 +110,8 @@ pub struct LanguageServerCodeActionDiagnostic {
 pub struct LanguageServerCodeActionContext {
     pub diagnostics: Vec<LanguageServerCodeActionDiagnostic>,
     pub only: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_kind: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -666,10 +670,7 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                     "uri": file_uri(Path::new(&range.path)),
                 },
                 "range": range.range,
-                "context": {
-                    "diagnostics": context.diagnostics,
-                    "only": context.only,
-                },
+                "context": context,
             }),
         }
     }
@@ -1801,9 +1802,10 @@ mod tests {
         parse_signature_help_result, parse_type_hierarchy_items_result,
         parse_workspace_edit_result, parse_workspace_symbols_result,
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-        LanguageServerCodeActionContext, LanguageServerCodeLens, LanguageServerCompletionContext,
-        LanguageServerCompletionItem, LanguageServerCompletionItemLabelDetails,
-        LanguageServerCompletionList, LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
+        LanguageServerCodeActionContext, LanguageServerCodeActionDiagnostic,
+        LanguageServerCodeLens, LanguageServerCompletionContext, LanguageServerCompletionItem,
+        LanguageServerCompletionItemLabelDetails, LanguageServerCompletionList,
+        LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerLocation,
         LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
         LanguageServerTypeHierarchyItem, LspTextDocumentFeatureRequestFactory,
@@ -2076,8 +2078,16 @@ mod tests {
                 range: range.clone(),
             },
             &LanguageServerCodeActionContext {
-                diagnostics: Vec::new(),
+                diagnostics: vec![LanguageServerCodeActionDiagnostic {
+                    code: Some(json!("TS2304")),
+                    data: Some(json!({ "fixId": "fixMissingImport" })),
+                    message: "Cannot find name 'User'.".to_string(),
+                    range: range.clone(),
+                    severity: Some(1),
+                    source: Some("typescript".to_string()),
+                }],
                 only: Some(vec!["quickfix".to_string()]),
+                trigger_kind: Some(1),
             },
         );
 
@@ -2088,6 +2098,11 @@ mod tests {
             .starts_with("file://"));
         assert_eq!(request.params["range"], json!(range));
         assert_eq!(request.params["context"]["only"], json!(["quickfix"]));
+        assert_eq!(request.params["context"]["triggerKind"], json!(1));
+        assert_eq!(
+            request.params["context"]["diagnostics"][0]["data"],
+            json!({ "fixId": "fixMissingImport" })
+        );
     }
 
     #[test]

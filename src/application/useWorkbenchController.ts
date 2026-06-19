@@ -214,14 +214,17 @@ import {
 } from "../domain/phpFrameworkProviders";
 import {
   phpClassPathCandidates,
+  phpCurrentTypeKind,
   phpExtendsClassName,
   phpIdentifierContextAt,
+  phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
   phpMethodPositionOrNull,
   phpNamedTypePosition,
   phpParameterTypeForVariable,
+  phpSuperTypeReferences,
   resolvePhpClassName,
   type PhpIdentifierContext,
   type PhpMethodDefinitionHint,
@@ -8037,22 +8040,17 @@ export function useWorkbenchController(
         return [];
       }
 
-      const methodName = phpMethodDeclarationNameAtPosition(
+      const declarationContext = phpImplementationDeclarationContextAt(
         activeDocument.content,
         editorPosition,
       );
       const targetClassName = phpCurrentClassName(activeDocument.content);
-      const targetTypeKind = phpCurrentTypeKind(activeDocument.content);
 
-      if (
-        !methodName ||
-        !targetClassName ||
-        (targetTypeKind !== "interface" &&
-          !phpCurrentTypeIsAbstractClass(activeDocument.content))
-      ) {
+      if (!declarationContext || !targetClassName) {
         return [];
       }
 
+      const { methodName } = declarationContext;
       const normalizedMethodName = methodName.toLowerCase();
       const normalizedTargetClassName = targetClassName.toLowerCase();
       const symbols = await projectSymbolSearch.searchProjectSymbols(
@@ -11864,77 +11862,6 @@ function editorPositionFromProjectSymbol(
 function shortPhpName(className: string): string {
   const parts = className.split("\\");
   return parts[parts.length - 1] || className;
-}
-
-function phpCurrentTypeKind(
-  source: string,
-): "class" | "trait" | "enum" | "interface" | null {
-  const match = /\b(class|trait|enum|interface)\s+[A-Za-z_][A-Za-z0-9_]*\b/.exec(
-    source,
-  );
-  const kind = match?.[1];
-
-  if (
-    kind === "class" ||
-    kind === "trait" ||
-    kind === "enum" ||
-    kind === "interface"
-  ) {
-    return kind;
-  }
-
-  return null;
-}
-
-function phpCurrentTypeIsAbstractClass(source: string): boolean {
-  return /^\s*abstract\s+class\s+[A-Za-z_][A-Za-z0-9_]*\b/m.test(source);
-}
-
-function phpMethodDeclarationNameAtPosition(
-  source: string,
-  position: EditorPosition,
-): string | null {
-  const methodName = identifierAtEditorPosition(source, position);
-
-  if (!methodName) {
-    return null;
-  }
-
-  const line = source.split(/\r?\n/)[position.lineNumber - 1] ?? "";
-  const pattern = new RegExp(
-    `\\bfunction\\s+${escapeRegExp(methodName)}\\b`,
-  );
-
-  return pattern.test(line) ? methodName : null;
-}
-
-function phpSuperTypeReferences(source: string): string[] {
-  const declaration = /\b(?:abstract\s+|final\s+)?(?:class|interface|trait|enum)\s+[A-Za-z_][A-Za-z0-9_]*\b[\s\S]*?\{/.exec(
-    source,
-  );
-
-  if (!declaration) {
-    return [];
-  }
-
-  const header = declaration[0].slice(0, -1);
-  const references: string[] = [];
-  const extendsMatch = /\bextends\s+([\s\S]*?)(?=\bimplements\b|$)/.exec(
-    header,
-  );
-  const implementsMatch = /\bimplements\s+([\s\S]*?)$/.exec(header);
-
-  references.push(...phpClassReferenceList(extendsMatch?.[1] ?? ""));
-  references.push(...phpClassReferenceList(implementsMatch?.[1] ?? ""));
-
-  return references;
-}
-
-function phpClassReferenceList(source: string): string[] {
-  return source
-    .split(",")
-    .map((part) => /\\?[A-Za-z_][A-Za-z0-9_\\]*/.exec(part.trim())?.[0] ?? "")
-    .filter(Boolean);
 }
 
 function phpClassMemberCacheKey(

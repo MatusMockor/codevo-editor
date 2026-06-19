@@ -180,6 +180,29 @@ class Controller
     });
   });
 
+  it("detects nullsafe member access completion context", () => {
+    const source = `<?php
+class Controller
+{
+    public function store(): void
+    {
+        $user?->profile?->getName
+    }
+}
+`;
+
+    expect(
+      phpMemberAccessCompletionContextAt(
+        source,
+        positionAfter(source, "?->getName"),
+      ),
+    ).toEqual({
+      prefix: "getName",
+      receiverExpression: "$user?->profile",
+      variableName: null,
+    });
+  });
+
   it("detects member access completion after fluent calls with arguments", () => {
     const source = `<?php
 class Controller
@@ -304,6 +327,20 @@ class Controller
       methodName: "get",
       receiverExpression: "$request",
       variableName: "request",
+    });
+  });
+
+  it("detects nullsafe method signature context", () => {
+    const source = "<?php\n$user?->setName(";
+
+    expect(
+      phpMethodSignatureContextAt(source, positionAfter(source, "?->setName(")),
+    ).toEqual({
+      argumentIndex: 0,
+      className: null,
+      methodName: "setName",
+      receiverExpression: "$user",
+      variableName: "user",
     });
   });
 

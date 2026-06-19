@@ -8,6 +8,8 @@ import {
   PHP_CLASS_NAME_PATTERN,
   PHP_CLASS_NAME_CAPTURE_PATTERN,
   PHP_EXPRESSION_RECEIVER_PATTERN,
+  PHP_MEMBER_ACCESS_PATTERN,
+  PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
   phpNormalizeReceiverExpression,
 } from "./phpReceiverExpressions";
 import {
@@ -130,9 +132,9 @@ export function phpReceiverExpressionTypeInSource(
     return phpCurrentClassName(source);
   }
 
-  const thisPropertyMatch = /^\$this->([A-Za-z_][A-Za-z0-9_]*)$/.exec(
-    normalizedExpression,
-  );
+  const thisPropertyMatch = new RegExp(
+    `^\\$this${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)$`,
+  ).exec(normalizedExpression);
 
   if (thisPropertyMatch?.[1]) {
     return phpThisPropertyType(source, thisPropertyMatch[1], options);
@@ -219,7 +221,11 @@ export function phpLaravelQueryCallbackContextForVariable(
   }
 
   const methodCallPattern = new RegExp(
-    String.raw`(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*)\s*->\s*(` +
+    String.raw`(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:` +
+      PHP_MEMBER_CHAIN_SEGMENT_PATTERN +
+      String.raw`)*)` +
+      PHP_MEMBER_ACCESS_PATTERN +
+      String.raw`(` +
       laravelQueryCallbackMethods +
       String.raw`)\s*\(`,
     "g",
@@ -431,7 +437,7 @@ export function phpMethodCallExpression(
 ): PhpMethodCallExpression | null {
   const match =
     new RegExp(
-      `^(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
+      `^(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:${PHP_MEMBER_CHAIN_SEGMENT_PATTERN})*)${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
     ).exec(
       expression.trim(),
     );
@@ -450,7 +456,7 @@ export function phpPropertyAccessExpression(
   expression: string,
 ): PhpPropertyAccessExpression | null {
   const match = new RegExp(
-    `^(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*$`,
+    `^(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:${PHP_MEMBER_CHAIN_SEGMENT_PATTERN})*)${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)\\s*$`,
   ).exec(expression.trim());
 
   if (!match?.[1] || !match[2]) {

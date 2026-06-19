@@ -5,6 +5,8 @@ import {
 } from "./phpDocTemplates";
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
+  PHP_MEMBER_ACCESS_PATTERN,
+  PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
   phpNormalizeReceiverExpression,
   phpSimpleVariableName,
 } from "./phpReceiverExpressions";
@@ -70,7 +72,7 @@ export function phpMemberAccessCompletionContextAt(
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
   const match = new RegExp(
-    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)?$`,
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:${PHP_MEMBER_CHAIN_SEGMENT_PATTERN})*)${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)?$`,
   ).exec(lineUntilCursor);
 
   if (!match?.[1]) {
@@ -116,7 +118,7 @@ export function phpMethodSignatureContextAt(
   const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
   const lineUntilCursor = source.slice(lineStart, offset);
   const memberMatch = new RegExp(
-    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)$`,
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:${PHP_MEMBER_CHAIN_SEGMENT_PATTERN})*)${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)$`,
   ).exec(lineUntilCursor);
 
   if (memberMatch?.[1] && memberMatch[2]) {
