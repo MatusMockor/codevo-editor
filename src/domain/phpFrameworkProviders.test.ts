@@ -4,6 +4,7 @@ import {
   phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkProviderSignature,
   phpFrameworkMemberCompletionsFromSource,
+  phpFrameworkPropertyTypeFromSource,
   phpFrameworkProvidersForProject,
   phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
@@ -95,6 +96,33 @@ class Comment extends Model
     expect(phpFrameworkMemberCompletionsFromSource(source, "Comment", [])).toEqual(
       [],
     );
+  });
+
+  it("routes Laravel model attribute types from constant metadata through the framework seam", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use App\\Enums\\CommentType;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    private const ATTR_TYPE = 'type';
+
+    protected array $casts = [
+        self::ATTR_TYPE => CommentType::class,
+    ];
+}
+`;
+
+    expect(
+      phpFrameworkPropertyTypeFromSource(source, "type", [
+        phpLaravelFrameworkProvider,
+      ], "Comment"),
+    ).toBe("App\\Enums\\CommentType");
+    expect(
+      phpFrameworkPropertyTypeFromSource(source, "type", [], "Comment"),
+    ).toBeNull();
   });
 
   it("recognizes only global Laravel static builder methods through the Laravel provider", () => {

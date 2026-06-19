@@ -801,15 +801,18 @@ export function phpLaravelDynamicWhereCompletionsFromSource(
 ): PhpMethodCompletion[] {
   const attributes = new Set<string>();
 
-  for (const attribute of phpLaravelFillableAttributes(source)) {
+  for (const attribute of phpLaravelFillableAttributes(source, declaringClassName)) {
     attributes.add(attribute);
   }
 
-  for (const [attribute] of phpLaravelDefaultAttributes(source)) {
+  for (const [attribute] of phpLaravelDefaultAttributes(
+    source,
+    declaringClassName,
+  )) {
     attributes.add(attribute);
   }
 
-  for (const [attribute] of phpLaravelCastAttributes(source)) {
+  for (const [attribute] of phpLaravelCastAttributes(source, declaringClassName)) {
     attributes.add(attribute);
   }
 
@@ -867,19 +870,28 @@ export function phpLaravelModelAttributeCompletionsFromSource(
 ): PhpMethodCompletion[] {
   const attributes = new Map<string, string | null>();
 
-  for (const attribute of phpLaravelFillableAttributes(source)) {
+  for (const attribute of phpLaravelFillableAttributes(source, declaringClassName)) {
     attributes.set(attribute, "mixed");
   }
 
-  for (const [attribute, returnType] of phpLaravelDefaultAttributes(source)) {
+  for (const [attribute, returnType] of phpLaravelDefaultAttributes(
+    source,
+    declaringClassName,
+  )) {
     attributes.set(attribute, returnType);
   }
 
-  for (const attribute of phpLaravelAppendedAttributes(source)) {
+  for (const attribute of phpLaravelAppendedAttributes(
+    source,
+    declaringClassName,
+  )) {
     attributes.set(attribute, "mixed");
   }
 
-  for (const [attribute, returnType] of phpLaravelCastAttributes(source)) {
+  for (const [attribute, returnType] of phpLaravelCastAttributes(
+    source,
+    declaringClassName,
+  )) {
     attributes.set(attribute, returnType);
   }
 
@@ -899,6 +911,7 @@ export function phpLaravelModelAttributeCompletionsFromSource(
 export function phpLaravelModelAttributeClassTypeFromSource(
   source: string,
   attributeName: string,
+  declaringClassName = "",
 ): string | null {
   const attributeLookup = attributeName.trim().toLowerCase();
 
@@ -906,9 +919,10 @@ export function phpLaravelModelAttributeClassTypeFromSource(
     return null;
   }
 
-  const attribute = phpLaravelModelAttributeCompletionsFromSource(source, "").find(
-    (completion) => completion.name.toLowerCase() === attributeLookup,
-  );
+  const attribute = phpLaravelModelAttributeCompletionsFromSource(
+    source,
+    declaringClassName,
+  ).find((completion) => completion.name.toLowerCase() === attributeLookup);
 
   return attribute?.returnType
     ? phpDeclaredTypeCandidate(attribute.returnType)
@@ -934,7 +948,11 @@ export function phpLaravelModelPropertyClassTypeFromSource(
       propertyName,
       receiverType,
     ) ??
-    phpLaravelModelAttributeClassTypeFromSource(source, propertyName)
+    phpLaravelModelAttributeClassTypeFromSource(
+      source,
+      propertyName,
+      receiverModelType ?? "",
+    )
   );
 }
 
@@ -1961,24 +1979,35 @@ function normalizedLaravelClassName(className: string): string {
   return className.trim().replace(/^\\+/, "").toLowerCase();
 }
 
-function phpLaravelFillableAttributes(source: string): string[] {
+function phpLaravelFillableAttributes(
+  source: string,
+  declaringClassName = "",
+): string[] {
   return phpArrayAssignmentBodies(source, "fillable").flatMap((body) =>
     splitPhpParameterList(body)
-      .map((item) => phpStringLiteralValue(item))
+      .map((item) =>
+        phpLaravelAttributeNameFromExpression(source, declaringClassName, item),
+      )
       .filter(isPhpAttributeName),
   );
 }
 
-function phpLaravelAppendedAttributes(source: string): string[] {
+function phpLaravelAppendedAttributes(
+  source: string,
+  declaringClassName = "",
+): string[] {
   return phpArrayAssignmentBodies(source, "appends").flatMap((body) =>
     splitPhpParameterList(body)
-      .map((item) => phpStringLiteralValue(item))
+      .map((item) =>
+        phpLaravelAttributeNameFromExpression(source, declaringClassName, item),
+      )
       .filter(isPhpAttributeName),
   );
 }
 
 function phpLaravelDefaultAttributes(
   source: string,
+  declaringClassName = "",
 ): Array<[string, string | null]> {
   return phpArrayAssignmentBodies(source, "attributes").flatMap((body) =>
     splitPhpParameterList(body).flatMap((item) => {
@@ -1988,7 +2017,11 @@ function phpLaravelDefaultAttributes(
         return [];
       }
 
-      const attribute = phpStringLiteralValue(item.slice(0, arrowIndex));
+      const attribute = phpLaravelAttributeNameFromExpression(
+        source,
+        declaringClassName,
+        item.slice(0, arrowIndex),
+      );
 
       if (!isPhpAttributeName(attribute)) {
         return [];
@@ -2004,9 +2037,12 @@ function phpLaravelDefaultAttributes(
   );
 }
 
-function phpLaravelCastAttributes(source: string): Array<[string, string | null]> {
+function phpLaravelCastAttributes(
+  source: string,
+  declaringClassName = "",
+): Array<[string, string | null]> {
   return phpLaravelCastAttributeBodies(source).flatMap((body) =>
-    phpLaravelCastAttributesFromBody(source, body),
+    phpLaravelCastAttributesFromBody(source, body, declaringClassName),
   );
 }
 
@@ -2024,6 +2060,7 @@ function phpLaravelCastAttributeBodies(source: string): string[] {
 function phpLaravelCastAttributesFromBody(
   source: string,
   body: string,
+  declaringClassName = "",
 ): Array<[string, string | null]> {
   return splitPhpParameterList(body).flatMap((item) => {
     const arrowIndex = topLevelArrayArrowIndex(item);
@@ -2032,7 +2069,11 @@ function phpLaravelCastAttributesFromBody(
       return [];
     }
 
-    const attribute = phpStringLiteralValue(item.slice(0, arrowIndex));
+    const attribute = phpLaravelAttributeNameFromExpression(
+      source,
+      declaringClassName,
+      item.slice(0, arrowIndex),
+    );
 
     if (!isPhpAttributeName(attribute)) {
       return [];
@@ -2045,6 +2086,130 @@ function phpLaravelCastAttributesFromBody(
       ] satisfies [string, string | null],
     ];
   });
+}
+
+function phpLaravelAttributeNameFromExpression(
+  source: string,
+  declaringClassName: string,
+  expression: string,
+): string | null {
+  const literalAttribute = phpStringLiteralValue(expression);
+
+  if (literalAttribute !== null) {
+    return literalAttribute;
+  }
+
+  if (!declaringClassName) {
+    return null;
+  }
+
+  return phpStringConstantExpressionValueFromSource(
+    source,
+    declaringClassName,
+    expression,
+  );
+}
+
+function phpStringConstantExpressionValueFromSource(
+  source: string,
+  declaringClassName: string,
+  expression: string,
+  visitedConstantNames: Set<string> = new Set(),
+): string | null {
+  const value = stripOuterParentheses(expression.trim());
+  const constantMatch =
+    /^((?:self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*(?!class\b)([A-Za-z_][A-Za-z0-9_]*)$/i.exec(
+      value,
+    );
+  const ownerName = constantMatch?.[1]?.replace(/^\\+/, "") ?? null;
+  const constantName = constantMatch?.[2] ?? null;
+
+  return ownerName && constantName
+    ? phpStringConstantValueFromSource(
+        source,
+        declaringClassName,
+        ownerName,
+        constantName,
+        visitedConstantNames,
+      )
+    : null;
+}
+
+function phpStringConstantValueFromSource(
+  source: string,
+  declaringClassName: string,
+  ownerName: string,
+  constantName: string,
+  visitedConstantNames: Set<string>,
+): string | null {
+  const ownerClassName = phpClassNameForConstantExpression(
+    source,
+    declaringClassName,
+    ownerName,
+  );
+
+  if (!ownerClassName) {
+    return null;
+  }
+
+  const visitKey = `${ownerClassName.toLowerCase()}::${constantName.toLowerCase()}`;
+
+  if (visitedConstantNames.has(visitKey)) {
+    return null;
+  }
+
+  const body = phpClassBodyForClassName(source, ownerClassName);
+
+  if (!body) {
+    return null;
+  }
+
+  visitedConstantNames.add(visitKey);
+
+  for (const statement of phpClassConstStatements(body)) {
+    for (const item of splitPhpParameterList(statement)) {
+      const assignmentMatch =
+        /^(?:[\s\S]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]+)$/.exec(
+          item.trim(),
+        );
+      const name = assignmentMatch?.[1] ?? null;
+      const value = assignmentMatch?.[2]?.trim() ?? null;
+
+      if (!name || !value || name.toLowerCase() !== constantName.toLowerCase()) {
+        continue;
+      }
+
+      return phpStringConstantExpressionValue(
+        source,
+        ownerClassName,
+        value,
+        visitedConstantNames,
+      );
+    }
+  }
+
+  return null;
+}
+
+function phpStringConstantExpressionValue(
+  source: string,
+  ownerClassName: string,
+  expression: string,
+  visitedConstantNames: Set<string>,
+): string | null {
+  const value = stripOuterParentheses(expression);
+  const literalValue = phpStringLiteralValue(value);
+
+  if (literalValue !== null) {
+    return literalValue;
+  }
+
+  return phpStringConstantExpressionValueFromSource(
+    source,
+    ownerClassName,
+    value,
+    visitedConstantNames,
+  );
 }
 
 function phpLaravelAccessorAttributes(

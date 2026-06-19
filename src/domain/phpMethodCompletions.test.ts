@@ -1431,6 +1431,103 @@ class Comment extends Model
     ]);
   });
 
+  it("extracts Laravel model attributes from local string constants in metadata", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    public const ATTR_CONTENT = 'content';
+    private const ATTR_PARENT_ID = 'parent_id';
+    private const ATTR_IS_VISIBLE = 'is_visible';
+    private const ATTR_IS_PINNED = 'is_pinned';
+    private const ATTR_META = 'meta';
+    private const ATTR_DISPLAY_NAME = 'display_name';
+    private const ATTR_ALIAS = self::ATTR_CONTENT;
+
+    protected $fillable = [
+        self::ATTR_CONTENT,
+        Comment::ATTR_PARENT_ID,
+        self::ATTR_ALIAS,
+    ];
+
+    protected $attributes = [
+        self::ATTR_IS_VISIBLE => true,
+    ];
+
+    protected array $casts = [
+        self::ATTR_IS_PINNED => 'bool',
+        static::ATTR_META => 'array',
+    ];
+
+    protected $appends = [
+        self::ATTR_DISPLAY_NAME,
+    ];
+}
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(source, "Comment", laravelCompletionOptions),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "content",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "parent_id",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "is_visible",
+        parameters: "",
+        returnType: "bool",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "display_name",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "is_pinned",
+        parameters: "",
+        returnType: "bool",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "meta",
+        parameters: "",
+        returnType: "array",
+      },
+    ]);
+
+    expect(
+      phpLaravelDynamicWhereCompletionsFromSource(source, "Comment", {
+        isStatic: true,
+      }).map((completion) => completion.name),
+    ).toEqual([
+      "whereContent",
+      "whereParentId",
+      "whereIsVisible",
+      "whereIsPinned",
+      "whereMeta",
+    ]);
+  });
+
   it("keeps Laravel attribute properties distinct from same-named methods", () => {
     expect(
       phpMethodCompletionsFromSource(
