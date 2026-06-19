@@ -125,6 +125,7 @@ describe("registerLanguageServerMonacoProviders", () => {
 
   it("maps completion responses to Monaco suggestions", async () => {
     const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
     const gateway = featuresGateway({
       completion: {
         isIncomplete: false,
@@ -143,7 +144,10 @@ describe("registerLanguageServerMonacoProviders", () => {
     registerLanguageServerMonacoProviders(registered.monaco, context);
 
     await expect(
-      registered.completionProvider.provideCompletionItems(model(), position()),
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source }),
+        position(),
+      ),
     ).resolves.toEqual({
       suggestions: [
         {
@@ -187,6 +191,7 @@ describe("registerLanguageServerMonacoProviders", () => {
 
   it("does not request completion when the PHP runtime status belongs to another workspace root", async () => {
     const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
     const gateway = featuresGateway({
       completion: {
         isIncomplete: false,
@@ -219,7 +224,7 @@ describe("registerLanguageServerMonacoProviders", () => {
 
     await expect(
       registered.completionProvider.provideCompletionItems(
-        model({ path: "/workspace/src/User.php" }),
+        model({ content: source, path: "/workspace/src/User.php" }),
         position(),
       ),
     ).resolves.toEqual({
@@ -1925,6 +1930,22 @@ function document(): EditorDocument {
     path: "/project/src/User.php",
     savedContent: "<?php echo $user;",
   };
+}
+
+function phpCompletionFixtureSource(): string {
+  return `<?php
+function show() {
+    $user = null;
+
+
+
+
+
+
+
+    $use
+}
+`;
 }
 
 function model(

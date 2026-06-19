@@ -12,41 +12,32 @@ interface VariableSeen {
   priority: number;
 }
 
+interface VariableDeclaration {
+  name: string;
+  offset: number;
+  priority: number;
+}
+
+interface PhpFunctionScope {
+  bodyEnd: number;
+  bodyStart: number;
+  captures: string;
+  capturesOuterVariables: boolean;
+  isStatic: boolean;
+  keywordStart: number;
+  parameters: string;
+}
+
 export function phpVariableCompletionsAt(
   source: string,
   position: EditorPosition,
 ): PhpVariableCompletion[] {
   const offset = offsetAtPosition(source, position);
-  const scope = enclosingFunctionScope(source, offset) ?? {
-    parameters: "",
-    startOffset: 0,
-  };
-  const visibleSource = source.slice(scope.startOffset, offset);
+  const scopes = phpFunctionScopes(source);
+  const scope = innermostFunctionScopeAt(scopes, offset);
   const variables = new Map<string, VariableSeen>();
 
-  for (const parameter of variableNamesIn(scope.parameters)) {
-    rememberVariable(variables, parameter, {
-      detail: "parameter",
-      lastSeenOffset: scope.startOffset,
-      priority: 0,
-    });
-  }
-
-  for (const variable of variableMatches(visibleSource)) {
-    rememberVariable(variables, variable.name, {
-      detail: variables.get(variable.name)?.detail ?? "local variable",
-      lastSeenOffset: scope.startOffset + variable.offset,
-      priority: variables.get(variable.name)?.priority ?? 1,
-    });
-  }
-
-  if (scope.startOffset > 0 && classDeclarationBefore(source, scope.startOffset)) {
-    rememberVariable(variables, "$this", {
-      detail: "instance",
-      lastSeenOffset: scope.startOffset,
-      priority: -1,
-    });
-  }
+  collectVisibleVariables(source, offset, scopes, scope, variables);
 
   return Array.from(variables.values())
     .filter((variable) => variable.name !== "$GLOBALS")
@@ -58,6 +49,93 @@ export function phpVariableCompletionsAt(
       return right.lastSeenOffset - left.lastSeenOffset;
     })
     .map(({ detail, name }) => ({ detail, name }));
+}
+
+function collectVisibleVariables(
+  source: string,
+  offset: number,
+  scopes: PhpFunctionScope[],
+  scope: PhpFunctionScope | null,
+  variables: Map<string, VariableSeen>,
+): void {
+  if (!scope) {
+    rememberVariablesFromSource(source, 0, offset, scopes, null, variables);
+    return;
+  }
+
+  if (scope.capturesOuterVariables) {
+    collectVisibleVariables(
+      source,
+      scope.keywordStart,
+      scopes,
+      innermostFunctionScopeAt(scopes, Math.max(0, scope.keywordStart - 1)),
+      variables,
+    );
+  }
+
+  for (const parameter of variableNamesIn(scope.parameters)) {
+    rememberVariable(variables, parameter, {
+      detail: "parameter",
+      lastSeenOffset: scope.bodyStart,
+      priority: 0,
+    });
+  }
+
+  for (const capture of variableNamesIn(scope.captures)) {
+    rememberVariable(variables, capture, {
+      detail: "local variable",
+      lastSeenOffset: scope.bodyStart,
+      priority: 0,
+    });
+  }
+
+  rememberVariablesFromSource(
+    source,
+    scope.bodyStart,
+    offset,
+    scopes,
+    scope,
+    variables,
+  );
+
+  if (
+    !scope.isStatic &&
+    scope.bodyStart > 0 &&
+    classDeclarationBefore(source, scope.bodyStart)
+  ) {
+    rememberVariable(variables, "$this", {
+      detail: "instance",
+      lastSeenOffset: scope.bodyStart,
+      priority: -1,
+    });
+  }
+}
+
+function rememberVariablesFromSource(
+  source: string,
+  startOffset: number,
+  endOffset: number,
+  scopes: PhpFunctionScope[],
+  currentScope: PhpFunctionScope | null,
+  variables: Map<string, VariableSeen>,
+): void {
+  const visibleSource = maskNestedFunctionScopes(
+    source,
+    startOffset,
+    endOffset,
+    scopes,
+    currentScope,
+  );
+
+  for (const variable of variableDeclarations(visibleSource)) {
+    const existing = variables.get(variable.name);
+
+    rememberVariable(variables, variable.name, {
+      detail: existing?.detail ?? "local variable",
+      lastSeenOffset: startOffset + variable.offset,
+      priority: existing?.priority ?? variable.priority,
+    });
+  }
 }
 
 function rememberVariable(
@@ -99,33 +177,64 @@ function variableMatches(source: string): Array<{ name: string; offset: number }
   return variables;
 }
 
-function enclosingFunctionScope(
+function variableDeclarations(
   source: string,
-  offset: number,
-): { parameters: string; startOffset: number } | null {
-  let scope: { parameters: string; startOffset: number } | null = null;
+): VariableDeclaration[] {
+  const masked = maskPhpStringsAndComments(source);
+  const variables: VariableDeclaration[] = [];
 
-  for (const match of source.matchAll(/\bfunction\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/g)) {
-    const startOffset = match.index ?? 0;
+  for (const match of masked.matchAll(
+    /\$[A-Za-z_][A-Za-z0-9_]*\s*(?:=(?!=)|\+=|-=|\*=|\/=|\.=|%=|\?\?=)/g,
+  )) {
+    const name = match[0].match(/\$[A-Za-z_][A-Za-z0-9_]*/)?.[0] ?? "";
 
-    if (startOffset > offset) {
-      continue;
+    if (name) {
+      variables.push({
+        name,
+        offset: match.index ?? 0,
+        priority: 3,
+      });
     }
-
-    const parametersStart = startOffset + match[0].length;
-    const parametersEnd = matchingPairOffset(source, parametersStart - 1, "(", ")");
-
-    if (!parametersEnd || parametersEnd > offset) {
-      continue;
-    }
-
-    scope = {
-      parameters: source.slice(parametersStart, parametersEnd),
-      startOffset,
-    };
   }
 
-  return scope;
+  for (const match of masked.matchAll(
+    /\bforeach\s*\([^)]*\bas\s+(\$[A-Za-z_][A-Za-z0-9_]*)(?:\s*=>\s*(\$[A-Za-z_][A-Za-z0-9_]*))?/g,
+  )) {
+    const firstVariable = match[1] ?? "";
+    const secondVariable = match[2] ?? "";
+
+    if (firstVariable) {
+      variables.push({
+        name: firstVariable,
+        offset: (match.index ?? 0) + match[0].indexOf(firstVariable),
+        priority: secondVariable ? 4 : 2,
+      });
+    }
+
+    if (secondVariable) {
+      variables.push({
+        name: secondVariable,
+        offset: (match.index ?? 0) + match[0].indexOf(secondVariable),
+        priority: 2,
+      });
+    }
+  }
+
+  for (const match of masked.matchAll(
+    /\bcatch\s*\([^)]*\s+(\$[A-Za-z_][A-Za-z0-9_]*)\s*\)/g,
+  )) {
+    const name = match[1] ?? "";
+
+    if (name) {
+      variables.push({
+        name,
+        offset: (match.index ?? 0) + match[0].indexOf(name),
+        priority: 1,
+      });
+    }
+  }
+
+  return variables;
 }
 
 function classDeclarationBefore(source: string, offset: number): boolean {
@@ -138,6 +247,235 @@ function classDeclarationBefore(source: string, offset: number): boolean {
   }
 
   return found;
+}
+
+function phpFunctionScopes(source: string): PhpFunctionScope[] {
+  const masked = maskPhpStringsAndComments(source);
+
+  return [
+    ...phpTraditionalFunctionScopes(source, masked),
+    ...phpArrowFunctionScopes(source, masked),
+  ].sort((left, right) => left.keywordStart - right.keywordStart);
+}
+
+function phpTraditionalFunctionScopes(
+  source: string,
+  masked: string,
+): PhpFunctionScope[] {
+  const scopes: PhpFunctionScope[] = [];
+  const functionPattern =
+    /\b(static\s+)?function(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*\(/g;
+
+  for (const match of masked.matchAll(functionPattern)) {
+    const keywordStart = match.index ?? 0;
+    const openOffset = keywordStart + match[0].length - 1;
+    const parametersEnd = matchingPairOffset(masked, openOffset, "(", ")");
+
+    if (parametersEnd === null) {
+      continue;
+    }
+
+    let cursor = parametersEnd + 1;
+    let captures = "";
+    const useMatch = /^\s*use\s*\(/.exec(masked.slice(cursor));
+
+    if (useMatch) {
+      const useOpenOffset = cursor + useMatch[0].length - 1;
+      const useEnd = matchingPairOffset(masked, useOpenOffset, "(", ")");
+
+      if (useEnd === null) {
+        continue;
+      }
+
+      captures = source.slice(useOpenOffset + 1, useEnd);
+      cursor = useEnd + 1;
+    }
+
+    const bodyOpenOffset = functionBodyOpenOffset(masked, cursor);
+
+    if (bodyOpenOffset === null) {
+      continue;
+    }
+
+    const bodyCloseOffset = matchingPairOffset(masked, bodyOpenOffset, "{", "}");
+
+    if (bodyCloseOffset === null) {
+      continue;
+    }
+
+    scopes.push({
+      bodyEnd: bodyCloseOffset,
+      bodyStart: bodyOpenOffset + 1,
+      captures,
+      capturesOuterVariables: false,
+      isStatic: Boolean(match[1]),
+      keywordStart,
+      parameters: source.slice(openOffset + 1, parametersEnd),
+    });
+  }
+
+  return scopes;
+}
+
+function phpArrowFunctionScopes(
+  source: string,
+  masked: string,
+): PhpFunctionScope[] {
+  const scopes: PhpFunctionScope[] = [];
+  const arrowPattern = /\b(static\s+)?fn\s*\(/g;
+
+  for (const match of masked.matchAll(arrowPattern)) {
+    const keywordStart = match.index ?? 0;
+    const openOffset = keywordStart + match[0].length - 1;
+    const parametersEnd = matchingPairOffset(masked, openOffset, "(", ")");
+
+    if (parametersEnd === null) {
+      continue;
+    }
+
+    const arrowOffset = masked.indexOf("=>", parametersEnd + 1);
+
+    if (arrowOffset < 0) {
+      continue;
+    }
+
+    scopes.push({
+      bodyEnd: phpArrowExpressionEndOffset(masked, arrowOffset + 2),
+      bodyStart: arrowOffset + 2,
+      captures: "",
+      capturesOuterVariables: true,
+      isStatic: Boolean(match[1]),
+      keywordStart,
+      parameters: source.slice(openOffset + 1, parametersEnd),
+    });
+  }
+
+  return scopes;
+}
+
+function innermostFunctionScopeAt(
+  scopes: PhpFunctionScope[],
+  offset: number,
+): PhpFunctionScope | null {
+  let innermost: PhpFunctionScope | null = null;
+
+  for (const scope of scopes) {
+    if (scope.bodyStart > offset || scope.bodyEnd < offset) {
+      continue;
+    }
+
+    if (!innermost || scope.bodyStart >= innermost.bodyStart) {
+      innermost = scope;
+    }
+  }
+
+  return innermost;
+}
+
+function maskNestedFunctionScopes(
+  source: string,
+  startOffset: number,
+  endOffset: number,
+  scopes: PhpFunctionScope[],
+  currentScope: PhpFunctionScope | null,
+): string {
+  const characters = source.slice(startOffset, endOffset).split("");
+
+  for (const scope of scopes) {
+    if (scope === currentScope) {
+      continue;
+    }
+
+    if (scope.keywordStart < startOffset || scope.keywordStart >= endOffset) {
+      continue;
+    }
+
+    const maskStart = Math.max(scope.keywordStart, startOffset) - startOffset;
+    const maskEnd = Math.min(scope.bodyEnd + 1, endOffset) - startOffset;
+
+    for (let index = maskStart; index < maskEnd; index += 1) {
+      if (characters[index] !== "\n") {
+        characters[index] = " ";
+      }
+    }
+  }
+
+  return characters.join("");
+}
+
+function functionBodyOpenOffset(source: string, offset: number): number | null {
+  for (let index = offset; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (character === "{") {
+      return index;
+    }
+
+    if (character === ";") {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function phpArrowExpressionEndOffset(source: string, offset: number): number {
+  let squareDepth = 0;
+  let parenDepth = 0;
+  let braceDepth = 0;
+
+  for (let index = offset; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (character === "[") {
+      squareDepth += 1;
+      continue;
+    }
+
+    if (character === "]") {
+      squareDepth = Math.max(0, squareDepth - 1);
+      continue;
+    }
+
+    if (character === "(") {
+      parenDepth += 1;
+      continue;
+    }
+
+    if (character === ")") {
+      if (parenDepth === 0) {
+        return index;
+      }
+
+      parenDepth -= 1;
+      continue;
+    }
+
+    if (character === "{") {
+      braceDepth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      if (braceDepth === 0) {
+        return index;
+      }
+
+      braceDepth -= 1;
+      continue;
+    }
+
+    if (
+      character === ";" &&
+      squareDepth === 0 &&
+      parenDepth === 0 &&
+      braceDepth === 0
+    ) {
+      return index;
+    }
+  }
+
+  return source.length;
 }
 
 function matchingPairOffset(
