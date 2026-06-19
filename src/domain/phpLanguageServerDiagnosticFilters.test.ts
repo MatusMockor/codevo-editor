@@ -538,6 +538,64 @@ trait ResolvesHostState
     ).toEqual([]);
   });
 
+  it("suppresses trait parent host-method diagnostics when host context is confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait BootsHostState
+{
+    public static function bootBootsHostState(): void
+    {
+        parent::bootBootsHostState();
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 16,
+      line: 7,
+      message:
+        'Method "bootBootsHostState" does not exist on trait "App\\Support\\BootsHostState"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostMethods: new Set([
+          phpTraitHostMethodDiagnosticKey(
+            "App\\Support\\BootsHostState",
+            "bootBootsHostState",
+          ),
+        ]),
+        path: "/workspace/app/Support/BootsHostState.php",
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps trait parent host-method diagnostics when host context is not confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait BootsHostState
+{
+    public static function bootBootsHostState(): void
+    {
+        parent::bootBootsHostState();
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 16,
+      line: 7,
+      message:
+        'Method "bootBootsHostState" does not exist on trait "App\\Support\\BootsHostState"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        path: "/workspace/app/Support/BootsHostState.php",
+      }),
+    ).toEqual([unresolved]);
+  });
+
   it("keeps trait static host-method diagnostics when host context is not confirmed", () => {
     const source = `<?php
 namespace App\\Support;

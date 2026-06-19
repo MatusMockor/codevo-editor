@@ -243,7 +243,7 @@ export function phpTraitHostMethodDiagnosticContext(
   if (
     !line ||
     !new RegExp(
-      String.raw`(?:\$this\s*->|(?:self|static)\s*::)\s*${escapeRegExp(methodName)}\s*\(`,
+      String.raw`(?:\$this\s*->|(?:self|static|parent)\s*::)\s*${escapeRegExp(methodName)}\s*\(`,
       "i",
     ).test(line)
   ) {

@@ -91,6 +91,7 @@ import {
   type LanguageServerTextEdit,
   type LanguageServerWorkspaceFileChange,
   type LanguageServerWorkspaceEdit,
+  type LanguageServerWorkspaceFileOperation,
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import {
@@ -574,6 +575,8 @@ export function useWorkbenchController(
   const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
+  const openPathsRef = useRef<string[]>([]);
+  const previewPathRef = useRef<string | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
   const workspaceStateCacheRef = useRef<
@@ -621,6 +624,14 @@ export function useWorkbenchController(
   useEffect(() => {
     documentsRef.current = documents;
   }, [documents]);
+
+  useEffect(() => {
+    openPathsRef.current = openPaths;
+  }, [openPaths]);
+
+  useEffect(() => {
+    previewPathRef.current = previewPath;
+  }, [previewPath]);
 
   useEffect(() => {
     intelligenceModeRef.current = intelligenceMode;
@@ -4049,6 +4060,78 @@ export function useWorkbenchController(
     [],
   );
 
+  const reconcileJavaScriptTypeScriptWorkspaceEditFileOperations = useCallback(
+    async (edit: LanguageServerWorkspaceEdit, rootPath: string) => {
+      const fileOperations = edit.fileOperations ?? [];
+
+      if (fileOperations.length === 0) {
+        return;
+      }
+
+      const documentsToClose = Object.values(documentsRef.current).filter(
+        (document) =>
+          reconciledPathForWorkspaceFileOperations(
+            document.path,
+            fileOperations,
+          ) !== document.path,
+      );
+
+      await Promise.all(
+        documentsToClose.map((document) =>
+          isJavaScriptTypeScriptLanguageServerDocument(document)
+            ? syncClosedJavaScriptTypeScriptDocument(document)
+            : Promise.resolve(),
+        ),
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return;
+      }
+
+      setDocuments((current) =>
+        reconciledDocumentsForWorkspaceEditFileOperations(current, edit),
+      );
+      setOpenPaths((current) =>
+        reconciledEditorPathsForWorkspaceFileOperations(current, fileOperations),
+      );
+      setPreviewPath((current) =>
+        current
+          ? reconciledPathForWorkspaceFileOperations(current, fileOperations)
+          : current,
+      );
+      setActivePath((current) =>
+        current
+          ? reconciledActivePathForWorkspaceFileOperations(
+              current,
+              openPathsRef.current,
+              previewPathRef.current,
+              fileOperations,
+            )
+          : current,
+      );
+    },
+    [syncClosedJavaScriptTypeScriptDocument],
+  );
+
+  const refreshJavaScriptTypeScriptWorkspaceEditFileOperationDirectories =
+    useCallback(
+      async (edit: LanguageServerWorkspaceEdit, rootPath: string) => {
+        const directories =
+          directoryPathsForWorkspaceEditFileOperations(edit).filter((directory) =>
+            isSessionPathInWorkspace(rootPath, directory),
+          );
+
+        for (const directory of directories) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+            return;
+          }
+
+          await refreshDirectory(directory);
+        }
+      },
+      [refreshDirectory],
+    );
+
   const applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = useCallback(
     async (
       edit: LanguageServerWorkspaceEdit,
@@ -4075,8 +4158,31 @@ export function useWorkbenchController(
         rootEdit,
         openDocumentPaths,
       );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      await reconcileJavaScriptTypeScriptWorkspaceEditFileOperations(
+        rootEdit,
+        requestedRoot,
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      await refreshJavaScriptTypeScriptWorkspaceEditFileOperationDirectories(
+        rootEdit,
+        requestedRoot,
+      );
     },
-    [applyWorkspaceEditToOpenDocuments, workspaceFiles],
+    [
+      applyWorkspaceEditToOpenDocuments,
+      reconcileJavaScriptTypeScriptWorkspaceEditFileOperations,
+      refreshJavaScriptTypeScriptWorkspaceEditFileOperationDirectories,
+      workspaceFiles,
+    ],
   );
 
   const applyJavaScriptTypeScriptRenameEdits = useCallback(
@@ -12279,6 +12385,211 @@ function workspaceEditWithoutPaths(
       }),
     ),
   };
+}
+
+function directoryPathsForWorkspaceEditFileOperations(
+  edit: LanguageServerWorkspaceEdit,
+): string[] {
+  const directories = new Set<string>();
+
+  for (const operation of edit.fileOperations ?? []) {
+    for (const path of pathsForWorkspaceFileOperation(operation)) {
+      directories.add(getParentPath(path));
+    }
+  }
+
+  return Array.from(directories);
+}
+
+function reconciledDocumentsForWorkspaceEditFileOperations(
+  documents: Record<string, EditorDocument>,
+  edit: LanguageServerWorkspaceEdit,
+): Record<string, EditorDocument> {
+  const operations = edit.fileOperations ?? [];
+  let changed = false;
+  const next: Record<string, EditorDocument> = {};
+
+  for (const [path, document] of Object.entries(documents)) {
+    const nextPath = reconciledPathForWorkspaceFileOperations(path, operations);
+
+    if (!nextPath) {
+      changed = true;
+      continue;
+    }
+
+    if (nextPath === path) {
+      next[path] = document;
+      continue;
+    }
+
+    const renamedPathTextEdits =
+      nextPath !== path ? textEditsForWorkspacePath(edit, nextPath) : null;
+    const nextContent = renamedPathTextEdits
+      ? applyLanguageServerTextEdits(document.content, renamedPathTextEdits)
+      : document.content;
+
+    changed = true;
+    next[nextPath] = {
+      ...document,
+      content: nextContent,
+      language: detectLanguage(nextPath),
+      name: getFileName(nextPath),
+      path: nextPath,
+    };
+  }
+
+  return changed ? next : documents;
+}
+
+function textEditsForWorkspacePath(
+  edit: LanguageServerWorkspaceEdit,
+  path: string,
+): LanguageServerTextEdit[] | null {
+  const normalizedPath = normalizedSessionPath(path);
+
+  for (const [uri, textEdits] of Object.entries(edit.changes)) {
+    const editPath = pathFromLanguageServerUri(uri);
+
+    if (editPath && normalizedSessionPath(editPath) === normalizedPath) {
+      return textEdits;
+    }
+  }
+
+  return null;
+}
+
+function reconciledEditorPathsForWorkspaceFileOperations(
+  paths: string[],
+  operations: LanguageServerWorkspaceFileOperation[],
+): string[] {
+  let changed = false;
+  const next: string[] = [];
+
+  for (const path of paths) {
+    const nextPath = reconciledPathForWorkspaceFileOperations(path, operations);
+
+    if (!nextPath) {
+      changed = true;
+      continue;
+    }
+
+    if (nextPath !== path) {
+      changed = true;
+    }
+
+    if (next.includes(nextPath)) {
+      changed = true;
+      continue;
+    }
+
+    next.push(nextPath);
+  }
+
+  return changed ? next : paths;
+}
+
+function reconciledActivePathForWorkspaceFileOperations(
+  activePath: string,
+  openPaths: string[],
+  previewPath: string | null,
+  operations: LanguageServerWorkspaceFileOperation[],
+): string | null {
+  const nextActivePath = reconciledPathForWorkspaceFileOperations(
+    activePath,
+    operations,
+  );
+
+  if (nextActivePath) {
+    return nextActivePath;
+  }
+
+  const nextVisiblePaths = reconciledEditorPathsForWorkspaceFileOperations(
+    visibleEditorPaths(openPaths, previewPath),
+    operations,
+  );
+
+  return nextVisiblePaths[nextVisiblePaths.length - 1] ?? null;
+}
+
+function reconciledPathForWorkspaceFileOperations(
+  path: string,
+  operations: LanguageServerWorkspaceFileOperation[],
+): string | null {
+  let nextPath: string | null = path;
+
+  for (const operation of operations) {
+    if (!nextPath) {
+      return null;
+    }
+
+    if (operation.kind === "create") {
+      continue;
+    }
+
+    if (operation.kind === "delete") {
+      const deletedPath = pathFromLanguageServerUri(operation.uri);
+
+      if (deletedPath && isSameOrChildWorkspacePath(nextPath, deletedPath)) {
+        return null;
+      }
+
+      continue;
+    }
+
+    const oldPath = pathFromLanguageServerUri(operation.oldUri);
+    const newPath = pathFromLanguageServerUri(operation.newUri);
+
+    if (oldPath && newPath) {
+      nextPath = replacedWorkspacePathPrefix(nextPath, oldPath, newPath);
+    }
+  }
+
+  return nextPath;
+}
+
+function pathsForWorkspaceFileOperation(
+  operation: LanguageServerWorkspaceFileOperation,
+): string[] {
+  if (operation.kind === "rename") {
+    const oldPath = pathFromLanguageServerUri(operation.oldUri);
+    const newPath = pathFromLanguageServerUri(operation.newUri);
+
+    return oldPath && newPath ? [oldPath, newPath] : [];
+  }
+
+  const path = pathFromLanguageServerUri(operation.uri);
+
+  return path ? [path] : [];
+}
+
+function replacedWorkspacePathPrefix(
+  path: string,
+  oldPath: string,
+  newPath: string,
+): string {
+  if (!isSameOrChildWorkspacePath(path, oldPath)) {
+    return path;
+  }
+
+  const normalizedPath = normalizedSessionPath(path);
+  const normalizedOldPath = normalizedSessionPath(oldPath);
+  const normalizedNewPath = normalizedSessionPath(newPath);
+
+  if (normalizedPath === normalizedOldPath) {
+    return normalizedNewPath;
+  }
+
+  return `${normalizedNewPath}${normalizedPath.slice(normalizedOldPath.length)}`;
+}
+
+function isSameOrChildWorkspacePath(path: string, parentPath: string): boolean {
+  const normalizedPath = normalizedSessionPath(path);
+  const normalizedParentPath = normalizedSessionPath(parentPath);
+
+  return (
+    normalizedPath === normalizedParentPath ||
+    normalizedPath.startsWith(`${normalizedParentPath}/`)
+  );
 }
 
 function byteOffsetForLanguageServerPosition(

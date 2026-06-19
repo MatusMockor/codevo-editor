@@ -53,6 +53,7 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 - Inherited fluent methods that declare `@return static` or `@return $this` now keep the original receiver class during return inference. A child model calling a parent/mixin fluent method can continue to complete child-only members after the chain.
 - PHPDoc model properties with spaced generic collection types are now preserved, and relation collection chains like `@property-read Collection<int, User> $reviewers` followed by `$model->reviewers->first()->...` infer `User` completions.
 - Custom collection classes with PHPDoc `@extends` / `@implements` generic collection types now feed terminal collection inference, so `AlbumCollection extends Collection<int, Album>` followed by `$albums->first()->...` keeps `Album` completions.
+- Laravel relation factory calls now return typed relation objects and propagate related model types through relation chains and assignments. Explicit related-class factories such as `$this->hasMany(Post::class)->firstOrFail()`, `$this->belongsTo($related)->first()`, and `$this->morphMany(Post::class, 'commentable')->get()->first()` infer the related model, while self-referential factories keep the declaring model type.
 - Laravel relation query callbacks now infer the related model builder. In `Model::query()->whereHas('tracks', function ($query) { ... })` and `fn ($query) => ...` arrow callbacks, `$query` gets Eloquent builder methods, local scopes from the `Track` model, and terminal calls like `$query->first()` resolve back to `Track`.
 - Class-body trait use parsing now supports adaptation blocks like `use SoftDeletes { restore as restoreModel; }`, improving shared hierarchy lookup for completions, navigation, and contextual trait diagnostics.
 - PHPDoc generic trait usage now participates in return-type inference and completion display. `@use FindsModels<Comment>` maps trait templates like `@return TModel` back to `Comment`, while template declarations no longer misread `@template-use` as a new template name.
@@ -64,5 +65,5 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ## Next Tasks
 
 - Improve PHPDoc inheritance and trait host-context diagnostics to reduce false positives without hiding app bugs.
-- Add more model relation return inference for `hasOne`, `hasMany`, `belongsTo`, and remaining `morph*` edge cases.
+- Add relation return inference for remaining implicit targets, especially `morphTo()` inverse relations, through-relations with intermediate generics, and polymorphic edge cases not covered by explicit related-class factories.
 - Add UI smoke tests for IDE Mode on a real Laravel workspace.

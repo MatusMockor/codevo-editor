@@ -2865,6 +2865,182 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("refreshes directories affected by JavaScript TypeScript workspace edit file operations", async () => {
+    const filteredEdit = {
+      changes: {},
+      fileOperations: [
+        {
+          kind: "create" as const,
+          uri: fileUriFromPath("/workspace/src/Created.ts"),
+        },
+        {
+          kind: "rename" as const,
+          newUri: fileUriFromPath("/workspace/components/Account.ts"),
+          oldUri: fileUriFromPath("/workspace/src/User.ts"),
+        },
+        {
+          kind: "delete" as const,
+          uri: fileUriFromPath("/workspace/tests/User.test.ts"),
+        },
+      ],
+    };
+    const edit = {
+      changes: {},
+      fileOperations: [
+        ...filteredEdit.fileOperations,
+        {
+          kind: "delete" as const,
+          uri: fileUriFromPath("/other/tests/Outside.test.ts"),
+        },
+      ],
+    };
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace/src") {
+        return [fileEntry("/workspace/src/Created.ts", "Created.ts")];
+      }
+
+      if (path === "/workspace/components") {
+        return [fileEntry("/workspace/components/Account.ts", "Account.ts")];
+      }
+
+      if (path === "/workspace/tests") {
+        return [];
+      }
+
+      return [];
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.workspaceGateways.files.readDirectory).mockClear();
+
+    await act(async () => {
+      await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+        edit,
+        {
+          rootPath: "/workspace",
+        },
+      );
+    });
+
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", filteredEdit, []);
+    expect(
+      vi
+        .mocked(dependencies.workspaceGateways.files.readDirectory)
+        .mock.calls.map(([path]) => path),
+    ).toEqual(["/workspace/src", "/workspace/components", "/workspace/tests"]);
+    expect(getWorkbench().entriesByDirectory["/workspace/components"]).toEqual([
+      fileEntry("/workspace/components/Account.ts", "Account.ts"),
+    ]);
+  });
+
+  it("reconciles open JavaScript TypeScript tabs after workspace edit file operations", async () => {
+    const oldPath = "/workspace/src/User.ts";
+    const newPath = "/workspace/src/Account.ts";
+    const deletedPath = "/workspace/src/DeleteMe.ts";
+    const edit = {
+      changes: {
+        [fileUriFromPath(newPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 17, line: 0 },
+              start: { character: 13, line: 0 },
+            },
+          },
+        ],
+      },
+      fileOperations: [
+        {
+          kind: "rename" as const,
+          newUri: fileUriFromPath(newPath),
+          oldUri: fileUriFromPath(oldPath),
+        },
+        {
+          kind: "delete" as const,
+          uri: fileUriFromPath(deletedPath),
+        },
+      ],
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 27,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        if (path === deletedPath) {
+          return "export const deleted = true;\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(deletedPath, "DeleteMe.ts"));
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.documentSyncGateway.didClose).mockClear();
+    vi.mocked(dependencies.documentSyncGateway.didOpen).mockClear();
+
+    await act(async () => {
+      await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+        edit,
+        {
+          rootPath: "/workspace",
+        },
+      );
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      newPath,
+    ]);
+    expect(getWorkbench().activeDocument?.path).toBe(newPath);
+    expect(getWorkbench().activeDocument?.name).toBe("Account.ts");
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "export class Account {}\n",
+    );
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+    );
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      deletedPath,
+    );
+    expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path: newPath,
+        text: "export class Account {}\n",
+      }),
+    );
+  });
+
   it("filters JavaScript TypeScript rename edits to the active workspace root", async () => {
     const oldPath = "/workspace/src/User.ts";
     const newPath = "/workspace/src/Account.ts";
@@ -3011,9 +3187,11 @@ describe("useWorkbenchController preview tabs", () => {
       (candidate) => candidate.id === "file.rename",
     );
     let renameResolved = false;
-    const renamePromise = act(async () => {
-      await command?.run();
-      renameResolved = true;
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = (command?.run() ?? Promise.resolve()).then(() => {
+        renameResolved = true;
+      });
     });
     await flushAsyncTurns(4);
 
@@ -3035,7 +3213,9 @@ describe("useWorkbenchController preview tabs", () => {
         ],
       },
     });
-    await renamePromise;
+    await act(async () => {
+      await renamePromise;
+    });
 
     expect(renameResolved).toBe(true);
     expect(
@@ -3947,11 +4127,14 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     let commandResolved = false;
-    const commandPromise = act(async () => {
-      await getWorkbench().commands
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
         .find((candidate) => candidate.id === "editor.showCallHierarchy")
         ?.run();
-      commandResolved = true;
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
     });
     await flushAsyncTurns(4);
 
@@ -3969,7 +4152,9 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns(4);
 
     prepareCallHierarchy.reject(new Error("stale call hierarchy"));
-    await commandPromise;
+    await act(async () => {
+      await commandPromise;
+    });
 
     expect(commandResolved).toBe(true);
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
