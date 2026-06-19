@@ -5368,58 +5368,180 @@ export function useWorkbenchController(
       const normalizedTraitClassName = traitClassName
         .trim()
         .replace(/^\\+/, "");
+      const normalizedMethodName = methodName.trim();
 
-      if (!normalizedTraitClassName || !methodName.trim()) {
+      if (!normalizedTraitClassName || !normalizedMethodName) {
         return false;
       }
 
-      const results = await textSearch.searchText(
-        workspaceRoot,
-        shortPhpName(normalizedTraitClassName),
-        200,
-      );
-      const visitedPaths = new Set<string>();
+      const sourceUsesTrait = (
+        source: string,
+        targetTraitClassName: string,
+      ): boolean => {
+        const targetLookup = targetTraitClassName.toLowerCase();
 
-      for (const result of results) {
-        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
-          continue;
+        return phpTraitClassNames(source).some((traitName) => {
+          const resolvedTraitName = resolvePhpClassReference(source, traitName);
+
+          return resolvedTraitName?.toLowerCase() === targetLookup;
+        });
+      };
+      const descendantClassHierarchyHasMethod = async (
+        className: string,
+        visitedClassNames = new Set<string>(),
+      ): Promise<boolean> => {
+        const normalizedClassName = className.trim().replace(/^\\+/, "");
+        const classLookup = normalizedClassName.toLowerCase();
+
+        if (
+          !normalizedClassName ||
+          visitedClassNames.has(classLookup) ||
+          visitedClassNames.size >= 200
+        ) {
+          return false;
         }
 
-        visitedPaths.add(result.path);
+        visitedClassNames.add(classLookup);
 
-        try {
-          const content = await readNavigationFileContent(result.path);
-          const hostClassName = phpCurrentClassName(content);
+        const results = await textSearch.searchText(
+          workspaceRoot,
+          shortPhpName(normalizedClassName),
+          200,
+        );
+        const visitedPaths = new Set<string>();
 
-          if (!hostClassName) {
+        for (const result of results) {
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
             continue;
           }
 
-          const usesTrait = phpTraitClassNames(content).some((traitName) => {
-            const resolvedTraitName = resolvePhpClassReference(
-              content,
-              traitName,
-            );
+          visitedPaths.add(result.path);
 
-            return (
-              resolvedTraitName?.toLowerCase() ===
-              normalizedTraitClassName.toLowerCase()
-            );
-          });
+          try {
+            const content = await readNavigationFileContent(result.path);
 
-          if (!usesTrait) {
+            if (phpCurrentTypeKind(content) !== "class") {
+              continue;
+            }
+
+            const candidateClassName = phpCurrentClassName(content);
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassReference(content, parentClassName)
+              : null;
+
+            if (
+              !candidateClassName ||
+              resolvedParentClassName?.toLowerCase() !== classLookup
+            ) {
+              continue;
+            }
+
+            if (
+              (await phpClassHierarchyHasMethod(
+                candidateClassName,
+                normalizedMethodName,
+              )) ||
+              (await descendantClassHierarchyHasMethod(
+                candidateClassName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return false;
+      };
+      const traitConcreteUserHierarchyHasMethod = async (
+        targetTraitClassName: string,
+        visitedTraitClassNames = new Set<string>(),
+      ): Promise<boolean> => {
+        const normalizedTargetTraitClassName = targetTraitClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const traitLookup = normalizedTargetTraitClassName.toLowerCase();
+
+        if (
+          !normalizedTargetTraitClassName ||
+          visitedTraitClassNames.has(traitLookup) ||
+          visitedTraitClassNames.size >= 200
+        ) {
+          return false;
+        }
+
+        visitedTraitClassNames.add(traitLookup);
+
+        const results = await textSearch.searchText(
+          workspaceRoot,
+          shortPhpName(normalizedTargetTraitClassName),
+          200,
+        );
+        const visitedPaths = new Set<string>();
+
+        for (const result of results) {
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
             continue;
           }
 
-          if (await phpClassHierarchyHasMethod(hostClassName, methodName)) {
-            return true;
-          }
-        } catch {
-          continue;
-        }
-      }
+          visitedPaths.add(result.path);
 
-      return false;
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (!sourceUsesTrait(content, normalizedTargetTraitClassName)) {
+              continue;
+            }
+
+            const userTypeKind = phpCurrentTypeKind(content);
+            const userClassName = phpCurrentClassName(content);
+
+            if (!userTypeKind || !userClassName) {
+              continue;
+            }
+
+            if (userTypeKind === "trait") {
+              if (
+                await traitConcreteUserHierarchyHasMethod(
+                  userClassName,
+                  visitedTraitClassNames,
+                )
+              ) {
+                return true;
+              }
+
+              continue;
+            }
+
+            if (userTypeKind !== "class" && userTypeKind !== "enum") {
+              continue;
+            }
+
+            if (
+              (await phpClassHierarchyHasMethod(
+                userClassName,
+                normalizedMethodName,
+              )) ||
+              (userTypeKind === "class" &&
+                (await descendantClassHierarchyHasMethod(
+                  userClassName,
+                  new Set<string>(),
+                )))
+            ) {
+              return true;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return false;
+      };
+
+      return traitConcreteUserHierarchyHasMethod(normalizedTraitClassName);
     },
     [
       phpClassHierarchyHasMethod,
@@ -5556,6 +5678,12 @@ export function useWorkbenchController(
             traitContext.methodName,
           )
         ) {
+          contextualTraitHostMethods.add(
+            phpTraitHostMethodDiagnosticKey(
+              traitContext.traitName,
+              traitContext.methodName,
+            ),
+          );
           contextualTraitHostMethods.add(
             phpTraitHostMethodDiagnosticKey(
               traitClassName,
@@ -11249,6 +11377,26 @@ function editorPositionFromProjectSymbol(
 function shortPhpName(className: string): string {
   const parts = className.split("\\");
   return parts[parts.length - 1] || className;
+}
+
+function phpCurrentTypeKind(
+  source: string,
+): "class" | "trait" | "enum" | "interface" | null {
+  const match = /\b(class|trait|enum|interface)\s+[A-Za-z_][A-Za-z0-9_]*\b/.exec(
+    source,
+  );
+  const kind = match?.[1];
+
+  if (
+    kind === "class" ||
+    kind === "trait" ||
+    kind === "enum" ||
+    kind === "interface"
+  ) {
+    return kind;
+  }
+
+  return null;
 }
 
 function phpClassMemberCacheKey(
