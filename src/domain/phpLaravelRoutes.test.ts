@@ -194,10 +194,10 @@ Route::view('/dashboard', 'dashboard')->name('dashboard.index');
     ]);
   });
 
-  it("ignores dynamic names, group prefixes, resource routes, and unrelated name calls", () => {
+  it("combines group prefixes and ignores dynamic/resource/unrelated route names", () => {
     const source = `<?php
 Route::name('admin.')->group(function () {
-    Route::get('/dashboard', DashboardController::class)->name('admin.dashboard');
+    Route::get('/dashboard', DashboardController::class)->name('dashboard');
 });
 Route::resource('comments', CommentController::class);
 Route::get('/comments/{comment}', [CommentController::class, 'show'])->name('comments.' . $suffix);
@@ -208,7 +208,24 @@ $builder->name('not.a.route');
     expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
       {
         name: "admin.dashboard",
-        position: positionOf(source, "admin.dashboard"),
+        position: positionOf(source, "dashboard');"),
+      },
+    ]);
+  });
+
+  it("combines nested Laravel route name group prefixes", () => {
+    const source = `<?php
+Route::name('admin.')->group(function () {
+    Route::name('reports.')->group(function () {
+        Route::get('/reports/monthly', ReportsController::class)->name('monthly');
+    });
+});
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "admin.reports.monthly",
+        position: positionOf(source, "monthly');"),
       },
     ]);
   });

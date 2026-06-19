@@ -19,6 +19,12 @@ export interface PhpLaravelNamedRouteDefinition {
   position: EditorPosition;
 }
 
+interface PhpLaravelNamedRouteGroup {
+  bodyEnd: number;
+  bodyStart: number;
+  prefix: string;
+}
+
 interface PhpStringLiteral {
   closed: boolean;
   quote: "'" | "\"";
@@ -81,6 +87,7 @@ export function phpLaravelNamedRouteDefinitions(
   source: string,
 ): PhpLaravelNamedRouteDefinition[] {
   const definitions: PhpLaravelNamedRouteDefinition[] = [];
+  const routeGroups = phpLaravelNamedRouteGroups(source);
   const routePattern = /\bRoute\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
   for (const match of source.matchAll(routePattern)) {
@@ -121,13 +128,92 @@ export function phpLaravelNamedRouteDefinitions(
       }
 
       definitions.push({
-        name: literal.value,
+        name: `${routeNamePrefixAtOffset(routeGroups, routeStart)}${literal.value}`,
         position: editorPositionAtOffset(source, literal.quoteStart + 1),
       });
     }
   }
 
   return definitions;
+}
+
+function phpLaravelNamedRouteGroups(
+  source: string,
+): PhpLaravelNamedRouteGroup[] {
+  const groups: PhpLaravelNamedRouteGroup[] = [];
+  const namePattern = /\bRoute\s*::\s*name\s*\(/g;
+
+  for (const match of source.matchAll(namePattern)) {
+    const routeStart = match.index ?? 0;
+
+    if (!isPhpCodeOffset(source, routeStart)) {
+      continue;
+    }
+
+    const nameOpenParen = routeStart + match[0].lastIndexOf("(");
+    const prefixLiteral = firstClosedLiteralArgumentAtOpenParen(
+      source,
+      nameOpenParen,
+    );
+
+    if (!prefixLiteral) {
+      continue;
+    }
+
+    const statementEnd = phpStatementEndOffset(source, prefixLiteral.quoteEnd + 1);
+    const chainSource = source.slice(prefixLiteral.quoteEnd + 1, statementEnd);
+    const groupMatch = /->\s*group\s*\(/g.exec(chainSource);
+
+    if (!groupMatch) {
+      continue;
+    }
+
+    const groupOpenParen =
+      prefixLiteral.quoteEnd +
+      1 +
+      (groupMatch.index ?? 0) +
+      groupMatch[0].lastIndexOf("(");
+    const groupCloseParen = matchingBracketOffset(
+      source,
+      groupOpenParen,
+      "(",
+      ")",
+    );
+
+    if (groupCloseParen === null) {
+      continue;
+    }
+
+    const bodyStart = source.indexOf("{", groupOpenParen);
+
+    if (bodyStart < 0 || bodyStart > groupCloseParen) {
+      continue;
+    }
+
+    const bodyEnd = matchingBracketOffset(source, bodyStart, "{", "}");
+
+    if (bodyEnd === null || bodyEnd > groupCloseParen) {
+      continue;
+    }
+
+    groups.push({
+      bodyEnd,
+      bodyStart,
+      prefix: prefixLiteral.value,
+    });
+  }
+
+  return groups.sort((left, right) => left.bodyStart - right.bodyStart);
+}
+
+function routeNamePrefixAtOffset(
+  groups: PhpLaravelNamedRouteGroup[],
+  offset: number,
+): string {
+  return groups
+    .filter((group) => offset > group.bodyStart && offset < group.bodyEnd)
+    .map((group) => group.prefix)
+    .join("");
 }
 
 function laravelNamedRouteReferenceCallAt(
