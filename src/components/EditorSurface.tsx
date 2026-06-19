@@ -1566,6 +1566,7 @@ function toMonacoDiagnosticMarker(
   const range = diagnosticRange(diagnostic);
 
   return {
+    code: diagnosticCode(monaco, diagnostic),
     endColumn: range.endCharacter + 1,
     endLineNumber: range.endLine + 1,
     message: diagnostic.message,
@@ -1574,6 +1575,27 @@ function toMonacoDiagnosticMarker(
     startColumn: range.character + 1,
     startLineNumber: range.line + 1,
     tags: diagnosticTags(monaco, diagnostic.tags ?? []),
+    relatedInformation: diagnosticRelatedInformation(monaco, diagnostic),
+  };
+}
+
+function diagnosticCode(
+  monaco: typeof Monaco,
+  diagnostic: LanguageServerDiagnostic,
+): Monaco.editor.IMarkerData["code"] {
+  if (diagnostic.code === null || typeof diagnostic.code === "undefined") {
+    return undefined;
+  }
+
+  const value = String(diagnostic.code);
+
+  if (!diagnostic.codeDescriptionHref) {
+    return value;
+  }
+
+  return {
+    target: monaco.Uri.parse(diagnostic.codeDescriptionHref),
+    value,
   };
 }
 
@@ -1619,6 +1641,32 @@ function diagnosticRange(diagnostic: LanguageServerDiagnostic): {
     endLine: diagnostic.endLine ?? diagnostic.line,
     line: diagnostic.line,
   };
+}
+
+function diagnosticRelatedInformation(
+  monaco: typeof Monaco,
+  diagnostic: LanguageServerDiagnostic,
+): Monaco.editor.IMarkerData["relatedInformation"] {
+  return diagnostic.relatedInformation?.map((info) => {
+    const range = diagnosticRange({
+      character: info.character,
+      endCharacter: info.endCharacter,
+      endLine: info.endLine,
+      line: info.line,
+      message: info.message,
+      severity: diagnostic.severity,
+      source: diagnostic.source,
+    });
+
+    return {
+      message: info.message,
+      resource: monaco.Uri.parse(info.uri),
+      startColumn: range.character + 1,
+      startLineNumber: range.line + 1,
+      endColumn: range.endCharacter + 1,
+      endLineNumber: range.endLine + 1,
+    };
+  });
 }
 
 function toSyntaxOverviewDecoration(

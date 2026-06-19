@@ -235,10 +235,22 @@ interface ParserFactory
             [activeDocument.path]: [
               {
                 character: 6,
+                code: 6133,
+                codeDescriptionHref: "https://typescript.tv/errors/6133",
                 endCharacter: 17,
                 endLine: 1,
                 line: 0,
                 message: "'unused' is declared but its value is never read.",
+                relatedInformation: [
+                  {
+                    character: 9,
+                    endCharacter: 20,
+                    endLine: 4,
+                    line: 4,
+                    message: "The expected type comes from this property.",
+                    uri: "file:///workspace/src/types.ts",
+                  },
+                ],
                 severity: "hint",
                 source: "typescript",
                 tags: [1, 2],
@@ -276,11 +288,25 @@ interface ParserFactory
       "php-language-server",
       [
         expect.objectContaining({
+          code: {
+            target: { uri: "https://typescript.tv/errors/6133" },
+            value: "6133",
+          },
           endColumn: 18,
           endLineNumber: 2,
           message: "'unused' is declared but its value is never read.",
           startColumn: 7,
           startLineNumber: 1,
+          relatedInformation: [
+            {
+              endColumn: 21,
+              endLineNumber: 5,
+              message: "The expected type comes from this property.",
+              resource: { uri: "file:///workspace/src/types.ts" },
+              startColumn: 10,
+              startLineNumber: 5,
+            },
+          ],
           tags: [monaco.MarkerTag.Unnecessary, monaco.MarkerTag.Deprecated],
         }),
       ],
@@ -1223,6 +1249,9 @@ function createMonaco(model: FakeModel) {
       Hint: 1,
       Info: 2,
       Warning: 4,
+    },
+    Uri: {
+      parse: vi.fn((uri: string) => ({ uri })),
     },
     Range: class FakeRange {
       endColumn: number;
