@@ -2501,6 +2501,10 @@ function completionInsert(
     insertTextFormat?: number | null;
     kind: number | null;
     label: string;
+    labelDetails?: {
+      description?: string | null;
+      detail?: string | null;
+    } | null;
     textEdit?: LanguageServerCompletionTextEdit | null;
   },
   kind: Monaco.languages.CompletionItemKind,
@@ -2532,7 +2536,9 @@ function completionInsert(
     return { insertText };
   }
 
-  const hasKnownParameters = hasParameters(item.detail || "", name);
+  const hasKnownParameters = [item.detail, item.labelDetails?.detail].some((detail) =>
+    hasCompletionParameters(detail || "", name),
+  );
 
   return {
     command: hasKnownParameters
@@ -2547,10 +2553,20 @@ function completionInsert(
   };
 }
 
-function hasParameters(detail: string, name: string): boolean {
+function hasCompletionParameters(detail: string, name: string): boolean {
+  return hasNamedCompletionParameters(detail, name) || hasLabelDetailParameters(detail);
+}
+
+function hasNamedCompletionParameters(detail: string, name: string): boolean {
   const match = new RegExp(
     `${escapeRegExp(name)}\\s*(?:<[^()]*>\\s*)?\\(([^)]*)\\)`,
   ).exec(detail);
+
+  return Boolean(match?.[1].trim());
+}
+
+function hasLabelDetailParameters(detail: string): boolean {
+  const match = /^\s*(?:<[^()]*>\s*)?\(([^)]*)\)/.exec(detail);
 
   return Boolean(match?.[1].trim());
 }

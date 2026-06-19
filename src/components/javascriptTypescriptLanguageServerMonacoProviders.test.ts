@@ -1309,6 +1309,59 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.incomplete).toBeUndefined();
   });
 
+  it("keeps TypeScript method and property completion kinds distinct", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "method UserAccount.refresh(): Promise<void>",
+            documentation: null,
+            insertText: "refresh",
+            kind: 2,
+            label: "refresh",
+          },
+          {
+            detail: "property UserAccount.status: string",
+            documentation: null,
+            insertText: "status",
+            kind: 10,
+            label: "status",
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "refresh()$0",
+        kind: monaco.languages.CompletionItemKind.Method,
+        label: "refresh",
+      }),
+    );
+    expect(result.suggestions[1]).toEqual(
+      expect.objectContaining({
+        insertText: "status",
+        kind: monaco.languages.CompletionItemKind.Property,
+        label: "status",
+      }),
+    );
+    expect(result.suggestions[1]).not.toHaveProperty("insertTextRules");
+  });
+
   it("keeps the cursor inside generic TypeScript function completions with parameters", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
@@ -1364,6 +1417,56 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       }),
     );
     expect(result.suggestions[1]).not.toHaveProperty("command");
+  });
+
+  it("detects required method parameters from TypeScript label details", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: null,
+            documentation: null,
+            insertText: "setUser",
+            kind: 2,
+            label: "setUser",
+            labelDetails: {
+              description: "void",
+              detail: "(user: User)",
+            },
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        command: {
+          id: "editor.action.triggerParameterHints",
+          title: "Trigger parameter hints",
+        },
+        insertText: "setUser($0)",
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        label: {
+          description: "void",
+          detail: "(user: User)",
+          label: "setUser",
+        },
+      }),
+    );
   });
 
   it("maps TypeScript completion commands through the guarded language server executor", async () => {

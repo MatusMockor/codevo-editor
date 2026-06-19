@@ -588,6 +588,9 @@ use Illuminate\\Database\\Eloquent\\Model;
 
 class Comment extends Model
 {
+    private const POST_MODEL = Post::class;
+    private const TRACK_MODEL = Track::class;
+
     public function preview(): void
     {
         $direct = $this->hasMany(Post::class)
@@ -598,15 +601,29 @@ class Comment extends Model
         $morphed = $this->morphMany(Post::class, 'commentable')->get()->first();
         $relation = $this->hasOne(self::class);
         $selfComment = $relation->first();
+        $constantPost = $this->hasMany(self::POST_MODEL)->firstOrFail();
+        $throughTrack = $this->hasManyThrough(self::TRACK_MODEL, Playlist::class)
+            ->whereNull('archived_at')
+            ->first();
 
         $direct->tit
         $parent->tit
         $morphed->tit
         $selfComment->bod
+        $constantPost->tit
+        $throughTrack->dur
     }
 }
 
 class Post extends Model
+{
+}
+
+class Playlist extends Model
+{
+}
+
+class Track extends Model
 {
 }
 `;
@@ -653,6 +670,22 @@ class Post extends Model
         laravelOptions,
       ),
     ).toBe("App\\Models\\Comment");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$constantPost->tit"),
+        "constantPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$throughTrack->dur"),
+        "throughTrack",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Track");
     expect(
       phpVariableTypeInSource(
         source,

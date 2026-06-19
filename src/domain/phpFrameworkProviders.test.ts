@@ -17,6 +17,8 @@ use Illuminate\\Database\\Eloquent\\Model;
 
 class Comment extends Model
 {
+    private const POST_MODEL = Post::class;
+
     protected $fillable = [
         'content',
     ];
@@ -29,6 +31,15 @@ class Comment extends Model
     {
         return $this->belongsTo(Comment::class);
     }
+
+    public function featuredPosts(): HasMany
+    {
+        return $this->hasMany(self::POST_MODEL);
+    }
+}
+
+class Post extends Model
+{
 }
 `;
 
@@ -57,6 +68,13 @@ class Comment extends Model
         name: "parent",
         parameters: "",
         returnType: "Comment",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "featuredPosts",
+        parameters: "",
+        returnType: "Post",
       },
     ]);
   });

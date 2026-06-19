@@ -877,6 +877,178 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
   });
 
+  it("clears only the closed project's JavaScript and TypeScript runtime state", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) =>
+          rootPath === "/workspace-b"
+            ? runningStatus(rootPath, 202)
+            : runningStatus(rootPath, 101),
+        ),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async (rootPath) => runningStatus(rootPath, 303)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      };
+    const workspaceAPath = "/workspace-a/src/App.ts";
+    const workspaceBPath = "/workspace-b/src/App.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+      ),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(workspaceAPath, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Workspace A type mismatch",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 101,
+        uri: fileUriFromPath(workspaceAPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceAPath],
+    ).toHaveLength(1);
+
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+        .didChange,
+    ).mockClear();
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).not.toHaveBeenCalledWith("/workspace-b");
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
+    ).toHaveBeenCalledWith("/workspace-a", workspaceAPath);
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange,
+    ).not.toHaveBeenCalledWith(
+      "/workspace-a",
+      expect.objectContaining({ path: workspaceAPath }),
+    );
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceAPath],
+    ).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(workspaceBPath, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).toHaveBeenCalledWith(
+      "/workspace-b",
+      expect.objectContaining({ path: workspaceBPath }),
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
+    ).not.toHaveBeenCalledWith("/workspace-b", workspaceBPath);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Stale workspace A diagnostic",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 101,
+        uri: fileUriFromPath(workspaceAPath),
+        version: null,
+      });
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Workspace B type mismatch",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace-b",
+        sessionId: 202,
+        uri: fileUriFromPath(workspaceBPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceAPath],
+    ).toBeUndefined();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceBPath],
+    ).toHaveLength(1);
+  });
+
   it("does not reveal an active file inside a manually collapsed directory subtree", async () => {
     const readDirectory = vi.fn(async (path: string): Promise<FileEntry[]> => {
       if (path === "/workspace") {

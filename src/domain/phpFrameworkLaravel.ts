@@ -807,6 +807,12 @@ export function phpLaravelRelationPropertyCompletionsFromSource(
                 name,
                 expression,
               ),
+              phpClassStringExpressionResolverForMethodReturnExpression(
+                source,
+                name,
+                expression,
+                declaringClassName,
+              ),
             ),
             declaringClassName,
             source,
@@ -1127,6 +1133,11 @@ function phpLaravelRelationFactoryCallReturnTypeFromSource(
     expression,
     true,
     phpLocalClassStringResolverBeforeExpression(source, expression),
+    phpClassStringExpressionResolverBeforeExpression(
+      source,
+      expression,
+      declaringModelType,
+    ),
   );
   const relatedModelType = phpLaravelResolvedModelTypeCandidate(
     source,
@@ -2267,6 +2278,7 @@ export function phpLaravelRelationTargetClassNameFromExpression(
   expression: string,
   includeCollectionRelations: boolean,
   localClassStringResolver?: (variableName: string) => string | null,
+  classStringExpressionResolver?: (expression: string) => string | null,
 ): string | null {
   const normalizedExpression = expression.trim();
   const pattern =
@@ -2301,6 +2313,7 @@ export function phpLaravelRelationTargetClassNameFromExpression(
     const targetClassName = phpLaravelRelationTargetClassNameFromArguments(
       normalizedExpression.slice(openOffset + 1, closeOffset),
       localClassStringResolver,
+      classStringExpressionResolver,
     );
 
     if (targetClassName) {
@@ -2314,6 +2327,7 @@ export function phpLaravelRelationTargetClassNameFromExpression(
 function phpLaravelRelationTargetClassNameFromArguments(
   argumentsSource: string,
   localClassStringResolver?: (variableName: string) => string | null,
+  classStringExpressionResolver?: (expression: string) => string | null,
 ): string | null {
   const classNamePattern =
     String.raw`(?:__CLASS__|self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
@@ -2357,6 +2371,12 @@ function phpLaravelRelationTargetClassNameFromArguments(
       return localClassString;
     }
 
+    const expressionClassString = classStringExpressionResolver?.(value);
+
+    if (expressionClassString) {
+      return expressionClassString;
+    }
+
     const stringClassName = phpStringLiteralValue(value)?.replace(/^\\+/, "");
 
     if (
@@ -2391,6 +2411,28 @@ function phpLocalClassStringResolverForMethodReturnExpression(
     phpLocalClassStringAssignmentBefore(bodyBeforeReturn, variableName);
 }
 
+function phpClassStringExpressionResolverForMethodReturnExpression(
+  source: string,
+  methodName: string,
+  returnExpression: string,
+  declaringClassName: string,
+): ((expression: string) => string | null) {
+  const localClassStringResolver =
+    phpLocalClassStringResolverForMethodReturnExpression(
+      source,
+      methodName,
+      returnExpression,
+    );
+
+  return (expression: string) =>
+    phpClassStringExpressionValue(
+      source,
+      expression,
+      declaringClassName,
+      localClassStringResolver,
+    );
+}
+
 function phpLocalClassStringResolverBeforeExpression(
   source: string,
   expression: string,
@@ -2405,6 +2447,266 @@ function phpLocalClassStringResolverBeforeExpression(
 
   return (variableName: string) =>
     phpLocalClassStringAssignmentBefore(sourceBeforeExpression, variableName);
+}
+
+function phpClassStringExpressionResolverBeforeExpression(
+  source: string,
+  expression: string,
+  declaringClassName: string,
+): ((expression: string) => string | null) {
+  const localClassStringResolver = phpLocalClassStringResolverBeforeExpression(
+    source,
+    expression,
+  );
+
+  return (value: string) =>
+    phpClassStringExpressionValue(
+      source,
+      value,
+      declaringClassName,
+      localClassStringResolver,
+    );
+}
+
+function phpClassStringExpressionValue(
+  source: string,
+  expression: string,
+  declaringClassName: string,
+  localClassStringResolver?: (variableName: string) => string | null,
+): string | null {
+  const value = expression.trim();
+  const variableName = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(value)?.[1];
+  const localClassString = variableName
+    ? localClassStringResolver?.(variableName)
+    : null;
+
+  if (localClassString) {
+    return localClassString;
+  }
+
+  const constantMatch =
+    /^((?:__CLASS__|self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*(?!class\b)([A-Za-z_][A-Za-z0-9_]*)$/i.exec(
+      value,
+    );
+  const ownerName = constantMatch?.[1]?.replace(/^\\+/, "") ?? null;
+  const constantName = constantMatch?.[2] ?? null;
+
+  return ownerName && constantName
+    ? phpClassStringConstantValueFromSource(
+        source,
+        declaringClassName,
+        ownerName,
+        constantName,
+      )
+    : null;
+}
+
+function phpClassStringConstantValueFromSource(
+  source: string,
+  declaringClassName: string,
+  ownerName: string,
+  constantName: string,
+  visitedConstantNames: Set<string> = new Set(),
+): string | null {
+  const ownerClassName = phpClassNameForConstantExpression(
+    source,
+    declaringClassName,
+    ownerName,
+  );
+
+  if (!ownerClassName) {
+    return null;
+  }
+
+  const visitKey = `${ownerClassName.toLowerCase()}::${constantName.toLowerCase()}`;
+
+  if (visitedConstantNames.has(visitKey)) {
+    return null;
+  }
+
+  const body = phpClassBodyForClassName(source, ownerClassName);
+
+  if (!body) {
+    return null;
+  }
+
+  visitedConstantNames.add(visitKey);
+
+  for (const statement of phpClassConstStatements(body)) {
+    for (const item of splitPhpParameterList(statement)) {
+      const assignmentMatch =
+        /^(?:[\s\S]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]+)$/.exec(
+          item.trim(),
+        );
+      const name = assignmentMatch?.[1] ?? null;
+      const value = assignmentMatch?.[2]?.trim() ?? null;
+
+      if (!name || !value || name.toLowerCase() !== constantName.toLowerCase()) {
+        continue;
+      }
+
+      return phpClassStringConstantExpressionValue(
+        source,
+        ownerClassName,
+        value,
+        visitedConstantNames,
+      );
+    }
+  }
+
+  return null;
+}
+
+function phpClassStringConstantExpressionValue(
+  source: string,
+  ownerClassName: string,
+  expression: string,
+  visitedConstantNames: Set<string>,
+): string | null {
+  const value = stripOuterParentheses(expression);
+
+  if (/^__CLASS__$/i.test(value)) {
+    return ownerClassName;
+  }
+
+  const classNamePattern =
+    String.raw`(__CLASS__|self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*` +
+    String.raw`(?:\\[A-Za-z_][A-Za-z0-9_]*)*)`;
+  const classStringMatch = new RegExp(
+    String.raw`^` + classNamePattern + String.raw`\s*::\s*class\b`,
+    "i",
+  ).exec(value);
+  const classStringName = classStringMatch?.[1]?.replace(/^\\+/, "") ?? null;
+
+  if (classStringName) {
+    return phpClassNameForConstantExpression(source, ownerClassName, classStringName);
+  }
+
+  const nestedConstantMatch = new RegExp(
+    String.raw`^` +
+      classNamePattern +
+      String.raw`\s*::\s*(?!class\b)([A-Za-z_][A-Za-z0-9_]*)$`,
+    "i",
+  ).exec(value);
+  const nestedOwnerName = nestedConstantMatch?.[1]?.replace(/^\\+/, "") ?? null;
+  const nestedConstantName = nestedConstantMatch?.[2] ?? null;
+
+  if (nestedOwnerName && nestedConstantName) {
+    return phpClassStringConstantValueFromSource(
+      source,
+      ownerClassName,
+      nestedOwnerName,
+      nestedConstantName,
+      visitedConstantNames,
+    );
+  }
+
+  const stringClassName = phpStringLiteralValue(value)?.replace(/^\\+/, "");
+
+  if (
+    stringClassName &&
+    /^[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)+$/.test(
+      stringClassName,
+    )
+  ) {
+    return stringClassName;
+  }
+
+  return null;
+}
+
+function phpClassNameForConstantExpression(
+  source: string,
+  declaringClassName: string,
+  className: string,
+): string | null {
+  const normalized = className.trim().replace(/^\\+/, "").toLowerCase();
+
+  if (
+    normalized === "__class__" ||
+    normalized === "self" ||
+    normalized === "static"
+  ) {
+    return declaringClassName;
+  }
+
+  if (normalized === "parent") {
+    const parentClassName = phpExtendsClassName(
+      phpClassSourceForClassName(source, declaringClassName) ?? source,
+    );
+
+    return parentClassName ? resolvePhpClassName(source, parentClassName) : null;
+  }
+
+  return resolvePhpClassName(source, className) ?? className;
+}
+
+function phpClassSourceForClassName(
+  source: string,
+  className: string,
+): string | null {
+  const range = phpClassRangeForClassName(source, className);
+
+  return range ? source.slice(range.start, range.end) : null;
+}
+
+function phpClassBodyForClassName(source: string, className: string): string | null {
+  const range = phpClassRangeForClassName(source, className);
+
+  return range ? source.slice(range.bodyStart, range.bodyEnd) : null;
+}
+
+function phpClassRangeForClassName(
+  source: string,
+  className: string,
+): { start: number; bodyStart: number; bodyEnd: number; end: number } | null {
+  const shortName = className.split("\\").pop();
+
+  if (!shortName) {
+    return null;
+  }
+
+  const masked = maskPhpStringsAndComments(source);
+  const pattern = new RegExp(
+    String.raw`\b(?:abstract\s+|final\s+)?(?:class|trait|enum)\s+` +
+      escapeRegExp(shortName) +
+      String.raw`\b[^{]*\{`,
+    "g",
+  );
+
+  for (const match of masked.matchAll(pattern)) {
+    const bodyStart = (match.index ?? 0) + match[0].lastIndexOf("{");
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    return {
+      start: match.index ?? 0,
+      bodyStart: bodyStart + 1,
+      bodyEnd,
+      end: bodyEnd + 1,
+    };
+  }
+
+  return null;
+}
+
+function phpClassConstStatements(classBody: string): string[] {
+  const statements: string[] = [];
+  const masked = maskPhpStringsAndComments(classBody);
+  const pattern =
+    /\b(?:(?:public|protected|private|final)\s+)*const\s+([\s\S]*?);/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const start = (match.index ?? 0) + match[0].indexOf("const") + "const".length;
+    const end = (match.index ?? 0) + match[0].length - 1;
+
+    statements.push(classBody.slice(start, end).trim());
+  }
+
+  return statements;
 }
 
 function phpMethodBodyBeforeReturnExpression(
