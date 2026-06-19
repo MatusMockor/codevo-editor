@@ -200,6 +200,10 @@ import {
   phpMethodReturnExpressions,
 } from "../domain/phpTypeAnalysis";
 import {
+  phpFrameworkProviderSignature,
+  phpFrameworkProvidersForProject,
+} from "../domain/phpFrameworkProviders";
+import {
   phpClassPathCandidates,
   phpExtendsClassName,
   phpIdentifierContextAt,
@@ -333,6 +337,14 @@ export function useWorkbenchController(
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [workspaceDescriptor, setWorkspaceDescriptor] =
     useState<WorkspaceDescriptor | null>(null);
+  const activePhpFrameworkProviders = useMemo(
+    () => phpFrameworkProvidersForProject(workspaceDescriptor?.php ?? null),
+    [workspaceDescriptor?.php],
+  );
+  const activePhpFrameworkProviderSignature = useMemo(
+    () => phpFrameworkProviderSignature(activePhpFrameworkProviders),
+    [activePhpFrameworkProviders],
+  );
   const [workspaceTrust, setWorkspaceTrust] =
     useState<WorkspaceTrustState | null>(null);
   const [phpTools, setPhpTools] = useState<PhpToolAvailability | null>(null);
@@ -4793,7 +4805,11 @@ export function useWorkbenchController(
     ): Promise<PhpClassMemberReadResult> => {
       const content = await readNavigationFileContent(path);
       const sourceSignature = phpSourceSignature(content);
-      const cacheKey = phpClassMemberCacheKey(path, className);
+      const cacheKey = phpClassMemberCacheKey(
+        path,
+        className,
+        activePhpFrameworkProviderSignature,
+      );
       const cached = phpClassMemberCacheRef.current[cacheKey];
 
       if (cached?.sourceSignature === sourceSignature) {
@@ -4803,7 +4819,9 @@ export function useWorkbenchController(
         };
       }
 
-      const members = phpMethodCompletionsFromSource(content, className);
+      const members = phpMethodCompletionsFromSource(content, className, {
+        frameworkProviders: activePhpFrameworkProviders,
+      });
       phpClassMemberCacheRef.current[cacheKey] = {
         members,
         sourceSignature,
@@ -4814,7 +4832,11 @@ export function useWorkbenchController(
         members,
       };
     },
-    [readNavigationFileContent],
+    [
+      activePhpFrameworkProviderSignature,
+      activePhpFrameworkProviders,
+      readNavigationFileContent,
+    ],
   );
 
   const collectPhpMethodsForClass = useCallback(
@@ -5397,12 +5419,14 @@ export function useWorkbenchController(
         contextualExistingMethods,
         contextualMemberMethods,
         contextualTraitHostMethods,
+        frameworkProviders: activePhpFrameworkProviders,
         path,
       });
     },
     [
       phpClassHierarchyHasMethod,
       phpClassHasLaravelDynamicWhere,
+      activePhpFrameworkProviders,
       phpTraitHostMethodExists,
       readNavigationFileContent,
       resolvePhpClassReference,
@@ -10750,8 +10774,12 @@ function shortPhpName(className: string): string {
   return parts[parts.length - 1] || className;
 }
 
-function phpClassMemberCacheKey(path: string, className: string): string {
-  return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}`;
+function phpClassMemberCacheKey(
+  path: string,
+  className: string,
+  frameworkProviderSignature: string,
+): string {
+  return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}#${frameworkProviderSignature}`;
 }
 
 function escapeRegExp(value: string): string {

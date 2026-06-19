@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   isKnownPhpFrameworkStaticMethod,
+  phpFrameworkProviderSignature,
   phpFrameworkMemberCompletionsFromSource,
+  phpFrameworkProvidersForProject,
+  phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
+import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
   it("exposes Laravel model attributes and relations through the framework seam", () => {
@@ -95,4 +99,65 @@ class Comment extends Model
       ]),
     ).toBe(false);
   });
+
+  it("activates Laravel provider only for Laravel Composer projects", () => {
+    expect(
+      phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "laravel/laravel",
+          packages: [],
+        }),
+      ),
+    ).toEqual([phpLaravelFrameworkProvider]);
+    expect(
+      phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "custom/api",
+          packages: [{ name: "laravel/framework" }],
+        }),
+      ),
+    ).toEqual([phpLaravelFrameworkProvider]);
+    expect(
+      phpFrameworkProvidersForProject(
+        phpProjectDescriptor({
+          packageName: "symfony/app",
+          packages: [{ name: "symfony/framework-bundle" }],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("builds stable provider signatures for member caches", () => {
+    expect(phpFrameworkProviderSignature([])).toBe("");
+    expect(phpFrameworkProviderSignature([phpLaravelFrameworkProvider])).toBe(
+      "laravel",
+    );
+  });
 });
+
+function phpProjectDescriptor(
+  overrides: Omit<Partial<PhpProjectDescriptor>, "packages"> & {
+    packages?: Array<{ name: string }>;
+  } = {},
+): PhpProjectDescriptor {
+  const { packages = [], ...descriptorOverrides } = overrides;
+
+  return {
+    classmapRoots: [],
+    hasComposer: true,
+    packageName: null,
+    packages: packages.map((composerPackage) => ({
+      classmapRoots: [],
+      dev: false,
+      installPath: null,
+      name: composerPackage.name,
+      packageType: null,
+      psr4Roots: [],
+      version: null,
+    })),
+    phpPlatformVersion: null,
+    phpVersionConstraint: null,
+    psr4Roots: [],
+    ...descriptorOverrides,
+  };
+}

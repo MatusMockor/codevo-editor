@@ -4,6 +4,7 @@ import {
   phpLaravelRelationPropertyCompletionsFromSource,
 } from "./phpFrameworkLaravel";
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
+import type { PhpProjectDescriptor } from "./workspace";
 
 export interface PhpFrameworkMemberCompletionContext {
   declaringClassName: string;
@@ -49,6 +50,22 @@ export const defaultPhpFrameworkProviders: readonly PhpFrameworkProvider[] = [
   phpLaravelFrameworkProvider,
 ];
 
+export function phpFrameworkProvidersForProject(
+  php: PhpProjectDescriptor | null,
+): readonly PhpFrameworkProvider[] {
+  if (!php) {
+    return [];
+  }
+
+  return isLaravelPhpProject(php) ? [phpLaravelFrameworkProvider] : [];
+}
+
+export function phpFrameworkProviderSignature(
+  providers: readonly PhpFrameworkProvider[],
+): string {
+  return providers.map((provider) => provider.id).join(",");
+}
+
 export function phpFrameworkMemberCompletionsFromSource(
   source: string,
   declaringClassName: string,
@@ -77,5 +94,15 @@ export function isKnownPhpFrameworkStaticMethod(
         methodName,
         source,
       }) ?? false,
+  );
+}
+
+function isLaravelPhpProject(php: PhpProjectDescriptor): boolean {
+  if (php.packageName === "laravel/laravel") {
+    return true;
+  }
+
+  return php.packages.some(
+    (composerPackage) => composerPackage.name === "laravel/framework",
   );
 }
