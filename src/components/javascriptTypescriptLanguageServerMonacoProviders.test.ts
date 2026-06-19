@@ -337,6 +337,49 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight TypeScript document links after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const documentLinks =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["documentLinks"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.documentLinks).mockImplementationOnce(
+      async () => documentLinks.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const linkProvider = (monaco.languages.registerLinkProvider as any).mock
+      .calls[0][1];
+    const linksPromise = linkProvider.provideLinks(textModel());
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    documentLinks.resolve([
+      {
+        data: { file: "/project/src/user.ts" },
+        range: range(0, 15, 0, 23),
+        target: "file:///project/src/user.ts",
+        tooltip: "Open user module",
+      },
+    ]);
+
+    await expect(linksPromise).resolves.toEqual({
+      dispose: expect.any(Function),
+      links: [],
+    });
+    expect(gateway.documentLinks).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+    );
+  });
+
   it("maps TypeScript type definitions through the language server", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
