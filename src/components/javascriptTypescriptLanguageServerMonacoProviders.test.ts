@@ -309,6 +309,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           range: range(4, 2, 4, 10),
           uri: "file:///project/src/types.ts",
         },
+        {
+          range: range(1, 0, 1, 5),
+          uri: "file:///other/src/types.ts",
+        },
       ],
     });
     const context = providerContext({ featuresGateway: gateway });
@@ -399,6 +403,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
               {
                 range: range(4, 3, 4, 8),
                 uri: "file:///project/src/user.ts",
+              },
+              {
+                range: range(9, 1, 9, 4),
+                uri: "file:///other/src/user.ts",
               },
             ],
           ],
@@ -730,6 +738,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         {
           range: range(0, 1, 0, 5),
           uri: "file:///project/src/user.ts",
+        },
+        {
+          range: range(0, 1, 0, 5),
+          uri: "file:///other/src/user.ts",
         },
       ],
       rename: workspaceEdit("file:///project/src/user.ts", "Account"),

@@ -604,7 +604,7 @@ async function provideDefinition(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations);
+    return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
     context.reportError(error);
     return null;
@@ -642,7 +642,7 @@ async function provideImplementation(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations);
+    return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
     context.reportError(error);
     return null;
@@ -675,7 +675,7 @@ async function provideTypeDefinition(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations);
+    return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
     context.reportError(error);
     return null;
@@ -741,7 +741,7 @@ async function provideReferences(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations);
+    return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
     context.reportError(error);
     return null;
@@ -1612,7 +1612,11 @@ function toMonacoCodeLensCommand(
 ): Monaco.languages.Command {
   if (command.command === "editor.action.showReferences") {
     return {
-      arguments: toShowReferencesArguments(monaco, command.arguments ?? []),
+      arguments: toShowReferencesArguments(
+        monaco,
+        command.arguments ?? [],
+        rootPath,
+      ),
       id: command.command,
       title: command.title,
     };
@@ -1633,6 +1637,7 @@ function toMonacoCodeLensCommand(
 function toShowReferencesArguments(
   monaco: MonacoApi,
   args: unknown[],
+  rootPath?: string,
 ): unknown[] {
   if (args.length < 3) {
     return args;
@@ -1646,7 +1651,11 @@ function toShowReferencesArguments(
       : uri,
     toMonacoPositionLike(position),
     Array.isArray(locations)
-      ? toMonacoLocations(monaco, locations as LanguageServerLocation[])
+      ? toMonacoLocations(
+          monaco,
+          locations as LanguageServerLocation[],
+          rootPath,
+        )
       : locations,
     ...rest,
   ];
@@ -1736,11 +1745,16 @@ function safeRegExp(pattern: string): RegExp | undefined {
 function toMonacoLocations(
   monaco: MonacoApi,
   locations: LanguageServerLocation[],
+  rootPath?: string,
 ): Monaco.languages.Location[] {
   return locations.flatMap((location) => {
     const path = pathFromLanguageServerUri(location.uri);
 
     if (!path) {
+      return [];
+    }
+
+    if (rootPath && !isPathInWorkspaceRoot(rootPath, path)) {
       return [];
     }
 
