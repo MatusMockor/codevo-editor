@@ -58,6 +58,7 @@ interface EditorSurfaceProps {
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus?: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
+  javaScriptTypeScriptValidationEnabled?: boolean;
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
@@ -101,6 +102,7 @@ export function EditorSurface({
   javaScriptTypeScriptLanguageServerFeaturesGateway = languageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerRuntimeStatus = null,
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
+  javaScriptTypeScriptValidationEnabled = true,
   keymap,
   monacoTheme,
   workspaceRoot = null,
@@ -185,6 +187,22 @@ export function EditorSurface({
     javaScriptTypeScriptRuntimeStatusRef.current =
       javaScriptTypeScriptLanguageServerRuntimeStatus;
   }, [javaScriptTypeScriptLanguageServerRuntimeStatus]);
+
+  useEffect(() => {
+    if (!monacoApi) {
+      return;
+    }
+
+    configureTypescriptJavascriptDefaults(monacoApi, {
+      managedLanguageServerActive:
+        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running",
+      validationEnabled: javaScriptTypeScriptValidationEnabled,
+    });
+  }, [
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptValidationEnabled,
+    monacoApi,
+  ]);
 
   useEffect(() => {
     flushPendingRef.current = flushPendingLanguageServerDocument;

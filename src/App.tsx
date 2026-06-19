@@ -660,6 +660,9 @@ function App() {
             javaScriptTypeScriptLanguageServerWorkspaceEditGateway={
               javaScriptTypeScriptLanguageServerWorkspaceEditGateway
             }
+            javaScriptTypeScriptValidationEnabled={
+              workbench.workspaceSettings.javaScriptTypeScriptValidation
+            }
             languageServerFeaturesGateway={languageServerFeaturesGateway}
             languageServerDiagnosticsByPath={
               workbench.languageServerDiagnosticsByPath
