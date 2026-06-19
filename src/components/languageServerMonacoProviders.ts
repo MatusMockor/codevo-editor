@@ -214,24 +214,25 @@ async function provideCompletionItems(
 
   const word = model.getWordUntilPosition(position);
   const range = completionRange(model, position, word);
+  const source = modelSource(model, documentContext.activeDocument.content);
   const methodSuggestions = await phpMethodSuggestions(
     monaco,
     context,
-    documentContext.activeDocument.content,
+    source,
     position,
     range,
   );
   const isMemberOrStaticCompletion = Boolean(
     phpMemberAccessCompletionContextAt(
-      documentContext.activeDocument.content,
+      source,
       position,
     ) ||
       phpStaticAccessCompletionContextAt(
-        documentContext.activeDocument.content,
+        source,
         position,
       ) ||
       phpLaravelRelationStringCompletionContextAt(
-        documentContext.activeDocument.content,
+        source,
         position,
       ),
   );
@@ -239,7 +240,7 @@ async function provideCompletionItems(
     methodSuggestions.length > 0 || isMemberOrStaticCompletion
       ? []
       : phpVariableCompletionsAt(
-          documentContext.activeDocument.content,
+          source,
           position,
         ).map((item, index) => ({
           detail: item.detail,
@@ -355,7 +356,7 @@ async function provideSignatureHelp(
 
   try {
     const signature = await context.providePhpMethodSignature(
-      documentContext.activeDocument.content,
+      modelSource(model, documentContext.activeDocument.content),
       position,
     );
 
@@ -679,6 +680,14 @@ function activePhpDocumentContext(
     activeDocument,
     path,
   };
+}
+
+function modelSource(model: MonacoModel, fallbackSource: string): string {
+  try {
+    return model.getValue();
+  } catch {
+    return fallbackSource;
+  }
 }
 
 function completionRange(

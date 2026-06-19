@@ -814,6 +814,56 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(providePhpMethodCompletions).toHaveBeenCalled();
   });
 
+  it("uses the live Monaco model source for fresh PHP member access completions", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "forceDelete",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+    const staleSource =
+      "<?php\nfunction show(Comment $comment, StoreCommentRequest $request): void\n{\n    $comment\n}\n";
+    const liveSource =
+      "<?php\nfunction show(Comment $comment, StoreCommentRequest $request): void\n{\n    $comment->\n}\n";
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: staleSource,
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        content: liveSource,
+        lineContent: "    $comment->",
+        word: {
+          endColumn: 15,
+          startColumn: 15,
+        },
+      }),
+      {
+        column: 15,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        insertText: "forceDelete()$0",
+        label: expect.objectContaining({ label: "forceDelete" }),
+      }),
+    ]);
+    expect(providePhpMethodCompletions).toHaveBeenCalledWith(liveSource, {
+      column: 15,
+      lineNumber: 4,
+    });
+  });
+
   it("maps typed PHP receiver properties without method parentheses", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
@@ -1302,12 +1352,20 @@ function document(): EditorDocument {
 
 function model(
   overrides: Partial<{
+    content: string;
     lineContent: string;
     path: string;
     word: { endColumn: number; startColumn: number };
   }> = {},
 ) {
   return {
+    getValue: vi.fn(() => {
+      if (overrides.content !== undefined) {
+        return overrides.content;
+      }
+
+      throw new Error("model source unavailable");
+    }),
     getLineContent: vi.fn(() => overrides.lineContent ?? "$user"),
     getVersionId: vi.fn(() => 42),
     getWordUntilPosition: vi.fn(() => overrides.word ?? {

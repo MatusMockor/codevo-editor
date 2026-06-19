@@ -4659,7 +4659,10 @@ export function useWorkbenchController(
         }
       }
 
-      phpLaravelBindingCacheRef.current[cacheKey] = concreteClassName;
+      if (concreteClassName) {
+        phpLaravelBindingCacheRef.current[cacheKey] = concreteClassName;
+      }
+
       return concreteClassName;
     },
     [

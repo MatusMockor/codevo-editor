@@ -5302,6 +5302,159 @@ class Comment
     });
   });
 
+  it("does not cache missing Laravel container bindings during warm-up", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const providerPath = "/workspace/app/Providers/AppServiceProvider.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Contracts/CommentRepositoryInterface.php";
+    const repositoryPath =
+      "/workspace/app/Repositories/EloquentCommentRepository.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Http\\Requests\\GetOneCommentRequest;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->force
+    }
+}
+`;
+    let bindingSearchAttempts = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return `<?php
+namespace App\\Providers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Repositories\\EloquentCommentRepository;
+
+class AppServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
+    }
+}
+`;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+interface CommentRepositoryInterface
+{
+}
+`;
+        }
+
+        if (path === repositoryPath) {
+          return `<?php
+namespace App\\Repositories;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Models\\Comment;
+
+class EloquentCommentRepository implements CommentRepositoryInterface
+{
+    public function findOrFail(int $id): Comment
+    {
+    }
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function forceDelete(): bool
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) => {
+        if (query !== "CommentRepositoryInterface::class") {
+          return [];
+        }
+
+        bindingSearchAttempts += 1;
+
+        if (bindingSearchAttempts === 1) {
+          return [];
+        }
+
+        return [
+          {
+            column: 26,
+            lineNumber: 11,
+            lineText:
+              "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
+            path: providerPath,
+            relativePath: "app/Providers/AppServiceProvider.php",
+          },
+        ];
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->force"),
+      ),
+    ).resolves.toEqual([]);
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->force"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "forceDelete",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+  });
+
   it("offers model methods and properties after typed repository findOrFail assignments", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =
