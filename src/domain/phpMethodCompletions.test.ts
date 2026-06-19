@@ -852,6 +852,67 @@ class User
     ]);
   });
 
+  it("extracts Laravel relation targets from local class-string variables", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use App\\Models\\Attachment;
+use App\\Models\\Post;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Comment
+{
+    public function post(): BelongsTo
+    {
+        $related = Post::class;
+
+        return $this->belongsTo($related);
+    }
+
+    public function attachments(): HasMany
+    {
+        $related = Attachment::class;
+
+        return $this->hasMany(
+            related: $related,
+            foreignKey: 'comment_id',
+        );
+    }
+}
+`,
+        "Comment",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "post",
+        parameters: "",
+        returnType: "BelongsTo",
+      },
+      {
+        declaringClassName: "Comment",
+        name: "attachments",
+        parameters: "",
+        returnType: "HasMany",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "post",
+        parameters: "",
+        returnType: "Post",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "attachments",
+        parameters: "",
+        returnType: "Attachment",
+      },
+    ]);
+  });
+
   it("does not infer non-class string relation arguments as model targets", () => {
     expect(
       phpMethodCompletionsFromSource(

@@ -205,6 +205,75 @@ class CommentController
     });
   });
 
+  it("detects Laravel relation strings in first argument arrays", () => {
+    const source = `<?php
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->load(['arrayChildren']);
+        Comment::with(['arrayParent'])->first();
+        Comment::with(['arrayChildren.arrayParent'])->first();
+        Comment::with(['constrainedChildren' => fn ($query) => $query->where('title', 'callbackString')]);
+        Comment::query()->whereRelation('visibleChildren', 'is_visible', true);
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'arrayChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "load",
+      receiverExpression: "$comment",
+      relationName: "arrayChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'arrayParent'")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "with",
+      receiverExpression: null,
+      relationName: "arrayParent",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "arrayChildren.arrayParent"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "with",
+      previousRelationNames: ["arrayChildren"],
+      receiverExpression: null,
+      relationName: "arrayParent",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'constrainedChildren'")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "with",
+      receiverExpression: null,
+      relationName: "constrainedChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'callbackString'")),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "callbackString",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'is_visible'")),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "is_visible",
+    });
+  });
+
   it("detects Laravel relation string completion contexts", () => {
     const source = `<?php
 class CommentController
@@ -278,6 +347,68 @@ class CommentController
       phpLaravelRelationStringCompletionContextAt(
         source,
         cursorAfter(source, "whereRelation('children', 'is_vis"),
+      ),
+    ).toBeNull();
+  });
+
+  it("detects Laravel relation string completion contexts in first argument arrays", () => {
+    const source = `<?php
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->load(['arrayChi']);
+        Comment::with(['arrayChildren.arrayPa']);
+        Comment::with(['constrainedChi' => fn ($query) => $query->where('title', 'callbackStr')]);
+        Comment::query()->whereRelation('visibleChildren', 'is_vis');
+    }
+}
+`;
+
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "$comment->load(['arrayChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "load",
+      prefix: "arrayChi",
+      receiverExpression: "$comment",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "with(['arrayChildren.arrayPa"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      methodName: "with",
+      prefix: "arrayPa",
+      previousRelationNames: ["arrayChildren"],
+      receiverExpression: null,
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "with(['constrainedChi"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      methodName: "with",
+      prefix: "constrainedChi",
+      receiverExpression: null,
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "'callbackStr"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "whereRelation('visibleChildren', 'is_vis"),
       ),
     ).toBeNull();
   });

@@ -60,6 +60,11 @@ interface IdentifierAtOffset {
   start: number;
 }
 
+interface StringLiteralRange {
+  quoteEnd: number;
+  quoteStart: number;
+}
+
 export function phpIdentifierContextAt(
   source: string,
   position: EditorPosition,
@@ -118,23 +123,10 @@ export function phpLaravelRelationStringCompletionContextAt(
     return null;
   }
 
-  const openParen = source.lastIndexOf("(", literal.quoteStart);
+  const openParen = laravelRelationArgumentCallOpenParenAt(source, literal);
 
-  if (openParen < 0) {
-    return null;
-  }
-
-  const closeParen = matchingBracketOffset(source, openParen, "(", ")");
-
-  if (closeParen !== null && literal.quoteStart > closeParen) {
-    return null;
-  }
-
-  if (topLevelArgumentIndexAtOffset(source, openParen, literal.quoteStart) !== 0) {
-    return null;
-  }
-
-  const callContext = laravelRelationCallContextAt(source, openParen);
+  const callContext =
+    openParen === null ? null : laravelRelationCallContextAt(source, openParen);
 
   if (!callContext) {
     return null;
@@ -421,23 +413,10 @@ function laravelRelationStringContextAt(
     return null;
   }
 
-  const openParen = source.lastIndexOf("(", literal.quoteStart);
+  const openParen = laravelRelationArgumentCallOpenParenAt(source, literal);
 
-  if (openParen < 0) {
-    return null;
-  }
-
-  const closeParen = matchingBracketOffset(source, openParen, "(", ")");
-
-  if (!closeParen || literal.quoteEnd > closeParen) {
-    return null;
-  }
-
-  if (topLevelArgumentIndexAtOffset(source, openParen, literal.quoteStart) !== 0) {
-    return null;
-  }
-
-  const callContext = laravelRelationCallContextAt(source, openParen);
+  const callContext =
+    openParen === null ? null : laravelRelationCallContextAt(source, openParen);
 
   if (!callContext) {
     return null;
@@ -451,6 +430,147 @@ function laravelRelationStringContextAt(
       : {}),
     relationName: relationSegment.relationName,
   };
+}
+
+function laravelRelationArgumentCallOpenParenAt(
+  source: string,
+  literal: StringLiteralRange,
+): number | null {
+  for (
+    let openParen = source.lastIndexOf("(", literal.quoteStart);
+    openParen >= 0;
+    openParen = source.lastIndexOf("(", openParen - 1)
+  ) {
+    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+    if (closeParen !== null && literal.quoteEnd > closeParen) {
+      continue;
+    }
+
+    if (isDirectFirstArgumentString(source, openParen, literal.quoteStart)) {
+      return openParen;
+    }
+
+    if (isFirstArgumentArrayRelationString(source, openParen, literal)) {
+      return openParen;
+    }
+  }
+
+  return null;
+}
+
+function isDirectFirstArgumentString(
+  source: string,
+  openParen: number,
+  quoteStart: number,
+): boolean {
+  return (
+    topLevelArgumentIndexAtOffset(source, openParen, quoteStart) === 0 &&
+    isTopLevelBetween(source, openParen + 1, quoteStart)
+  );
+}
+
+function isFirstArgumentArrayRelationString(
+  source: string,
+  openParen: number,
+  literal: StringLiteralRange,
+): boolean {
+  const arrayStart = enclosingBracketStart(source, literal.quoteStart, "[", "]");
+
+  if (arrayStart === null || arrayStart < openParen) {
+    return false;
+  }
+
+  const arrayEnd = matchingBracketOffset(source, arrayStart, "[", "]");
+
+  if (arrayEnd === null || literal.quoteEnd > arrayEnd) {
+    return false;
+  }
+
+  if (
+    topLevelArgumentIndexAtOffset(source, openParen, arrayStart) !== 0 ||
+    !isTopLevelBetween(source, openParen + 1, arrayStart)
+  ) {
+    return false;
+  }
+
+  if (!isTopLevelBetween(source, arrayStart + 1, literal.quoteStart)) {
+    return false;
+  }
+
+  return topLevelArrayRelationLiteralRole(source, arrayStart, arrayEnd, literal) !== null;
+}
+
+function topLevelArrayRelationLiteralRole(
+  source: string,
+  arrayStart: number,
+  arrayEnd: number,
+  literal: StringLiteralRange,
+): "element" | "key" | null {
+  const itemStart = previousTopLevelArrayDelimiter(source, arrayStart, literal.quoteStart);
+  const literalAfterOffset =
+    literal.quoteEnd > literal.quoteStart ? literal.quoteEnd + 1 : literal.quoteEnd;
+  const itemEnd = nextTopLevelArrayDelimiter(source, literalAfterOffset, arrayEnd);
+  const beforeLiteral = source.slice(itemStart, literal.quoteStart);
+  const afterLiteral = source.slice(literalAfterOffset, itemEnd);
+
+  if (hasTopLevelDoubleArrow(beforeLiteral)) {
+    return null;
+  }
+
+  if (hasTopLevelDoubleArrow(afterLiteral)) {
+    return "key";
+  }
+
+  if (/^\s*$/.test(beforeLiteral) && /^\s*$/.test(afterLiteral)) {
+    return "element";
+  }
+
+  return null;
+}
+
+function previousTopLevelArrayDelimiter(
+  source: string,
+  arrayStart: number,
+  targetOffset: number,
+): number {
+  let delimiter = arrayStart + 1;
+
+  scanTopLevel(source, arrayStart + 1, targetOffset, (index, character) => {
+    if (character === ",") {
+      delimiter = index + 1;
+    }
+  });
+
+  return delimiter;
+}
+
+function nextTopLevelArrayDelimiter(
+  source: string,
+  startOffset: number,
+  arrayEnd: number,
+): number {
+  let delimiter = arrayEnd;
+
+  scanTopLevel(source, startOffset, arrayEnd, (index, character) => {
+    if (character === "," && delimiter === arrayEnd) {
+      delimiter = index;
+    }
+  });
+
+  return delimiter;
+}
+
+function hasTopLevelDoubleArrow(source: string): boolean {
+  let found = false;
+
+  scanTopLevel(source, 0, source.length, (index) => {
+    if (source.slice(index, index + 2) === "=>") {
+      found = true;
+    }
+  });
+
+  return found;
 }
 
 function laravelRelationCallContextAt(
@@ -596,7 +716,7 @@ function stringLiteralAtOffset(
 function stringLiteralCompletionAtOffset(
   source: string,
   offset: number,
-): { prefix: string; quoteStart: number } | null {
+): { prefix: string; quoteEnd: number; quoteStart: number } | null {
   let quote: string | null = null;
   let quoteStart = -1;
 
@@ -631,8 +751,30 @@ function stringLiteralCompletionAtOffset(
 
   return {
     prefix: source.slice(quoteStart + 1, offset),
+    quoteEnd: closingQuoteOffset(source, offset, quote) ?? offset,
     quoteStart,
   };
+}
+
+function closingQuoteOffset(
+  source: string,
+  startOffset: number,
+  quote: string,
+): number | null {
+  for (let index = startOffset; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (character === "\\" && quote !== "`") {
+      index += 1;
+      continue;
+    }
+
+    if (character === quote) {
+      return index;
+    }
+  }
+
+  return null;
 }
 
 function laravelRelationPrefixContext(
@@ -795,6 +937,118 @@ function topLevelArgumentIndexAtOffset(
   }
 
   return argumentIndex;
+}
+
+function enclosingBracketStart(
+  source: string,
+  targetOffset: number,
+  open: string,
+  close: string,
+): number | null {
+  const stack: number[] = [];
+  let quote: string | null = null;
+
+  for (let index = 0; index < source.length && index < targetOffset; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+      continue;
+    }
+
+    if (character === open) {
+      stack.push(index);
+      continue;
+    }
+
+    if (character === close) {
+      stack.pop();
+    }
+  }
+
+  return stack.length > 0 ? stack[stack.length - 1] ?? null : null;
+}
+
+function isTopLevelBetween(
+  source: string,
+  startOffset: number,
+  targetOffset: number,
+): boolean {
+  let topLevel = true;
+
+  scanTopLevel(source, startOffset, targetOffset, () => undefined, (depth) => {
+    if (depth > 0) {
+      topLevel = false;
+    }
+  });
+
+  return topLevel;
+}
+
+function scanTopLevel(
+  source: string,
+  startOffset: number,
+  endOffset: number,
+  onTopLevelCharacter: (index: number, character: string) => void,
+  onDepth?: (depth: number) => void,
+): void {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (
+    let index = startOffset;
+    index < source.length && index < endOffset;
+    index += 1
+  ) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      onDepth?.(depth);
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      onDepth?.(depth);
+      continue;
+    }
+
+    if (depth === 0) {
+      onTopLevelCharacter(index, character);
+    }
+  }
 }
 
 function identifierAtOffset(

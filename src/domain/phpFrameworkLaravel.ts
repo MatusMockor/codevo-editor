@@ -628,7 +628,15 @@ export function phpLaravelRelationPropertyCompletionsFromSource(
       phpMethodReturnExpressions(source, name)
         .map((expression) =>
           phpLaravelRelationTypeForDeclaringClass(
-            phpLaravelRelationTargetClassNameFromExpression(expression, true),
+            phpLaravelRelationTargetClassNameFromExpression(
+              expression,
+              true,
+              phpLocalClassStringResolverForMethodReturnExpression(
+                source,
+                name,
+                expression,
+              ),
+            ),
             declaringClassName,
             source,
           ),
@@ -1305,6 +1313,7 @@ function phpLaravelAttributeAccessorValueType(
 export function phpLaravelRelationTargetClassNameFromExpression(
   expression: string,
   includeCollectionRelations: boolean,
+  localClassStringResolver?: (variableName: string) => string | null,
 ): string | null {
   const normalizedExpression = expression.trim();
   const pattern =
@@ -1338,6 +1347,7 @@ export function phpLaravelRelationTargetClassNameFromExpression(
 
     const targetClassName = phpLaravelRelationTargetClassNameFromArguments(
       normalizedExpression.slice(openOffset + 1, closeOffset),
+      localClassStringResolver,
     );
 
     if (targetClassName) {
@@ -1350,6 +1360,7 @@ export function phpLaravelRelationTargetClassNameFromExpression(
 
 function phpLaravelRelationTargetClassNameFromArguments(
   argumentsSource: string,
+  localClassStringResolver?: (variableName: string) => string | null,
 ): string | null {
   const classNamePattern =
     String.raw`(?:__CLASS__|self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*`;
@@ -1384,6 +1395,15 @@ function phpLaravelRelationTargetClassNameFromArguments(
       return className;
     }
 
+    const variableName = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(value)?.[1];
+    const localClassString = variableName
+      ? localClassStringResolver?.(variableName)
+      : null;
+
+    if (localClassString) {
+      return localClassString;
+    }
+
     const stringClassName = phpStringLiteralValue(value)?.replace(/^\\+/, "");
 
     if (
@@ -1397,6 +1417,90 @@ function phpLaravelRelationTargetClassNameFromArguments(
   }
 
   return null;
+}
+
+function phpLocalClassStringResolverForMethodReturnExpression(
+  source: string,
+  methodName: string,
+  returnExpression: string,
+): ((variableName: string) => string | null) | undefined {
+  const bodyBeforeReturn = phpMethodBodyBeforeReturnExpression(
+    source,
+    methodName,
+    returnExpression,
+  );
+
+  if (bodyBeforeReturn === null) {
+    return undefined;
+  }
+
+  return (variableName: string) =>
+    phpLocalClassStringAssignmentBefore(bodyBeforeReturn, variableName);
+}
+
+function phpMethodBodyBeforeReturnExpression(
+  source: string,
+  methodName: string,
+  returnExpression: string,
+): string | null {
+  const pattern = new RegExp(
+    String.raw`\bfunction\s+&?\s*` + escapeRegExp(methodName) + String.raw`\s*\(`,
+    "g",
+  );
+
+  for (const match of source.matchAll(pattern)) {
+    const parametersStart = (match.index ?? 0) + match[0].length - 1;
+    const parametersEnd = matchingPairOffset(source, parametersStart, "(", ")");
+
+    if (parametersEnd === null) {
+      continue;
+    }
+
+    const bodyStart = source.indexOf("{", parametersEnd);
+
+    if (bodyStart < 0) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    const body = source.slice(bodyStart + 1, bodyEnd);
+    const returnOffset = body.indexOf(returnExpression);
+
+    if (returnOffset >= 0) {
+      return body.slice(0, returnOffset);
+    }
+  }
+
+  return null;
+}
+
+function phpLocalClassStringAssignmentBefore(
+  source: string,
+  variableName: string,
+): string | null {
+  const classNamePattern =
+    String.raw`(__CLASS__|self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*` +
+    String.raw`(?:\\[A-Za-z_][A-Za-z0-9_]*)*)`;
+  const assignmentPattern = new RegExp(
+    String.raw`\$` +
+      escapeRegExp(variableName) +
+      String.raw`\s*=\s*` +
+      classNamePattern +
+      String.raw`\s*::\s*class\b`,
+    "g",
+  );
+  let className: string | null = null;
+
+  for (const match of source.matchAll(assignmentPattern)) {
+    className = match[1]?.replace(/^\\+/, "") ?? null;
+  }
+
+  return className;
 }
 
 function phpLaravelRelationModelTypeFromReturnType(
