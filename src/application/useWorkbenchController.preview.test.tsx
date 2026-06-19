@@ -5732,6 +5732,12 @@ class Comment
         return $this->hasMany(Comment::class, 'parent_id');
     }
 
+    public function localChildren(): HasMany
+    {
+        $related = Comment::class;
+        return $this->hasMany($related, 'parent_id');
+    }
+
     public function siblings(): HasMany
     {
         return $this->hasMany(self::class, 'parent_id');
@@ -5793,6 +5799,8 @@ class CommentController
 
         $child = $comment->children()->get()->first();
         $child->get
+
+        $comment->localChildren()->first()->get
 
         $childFromProperty = $comment->children->first();
         $childFromProperty->get
@@ -6083,6 +6091,19 @@ class User
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$child->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->localChildren()->first()->get"),
       ),
     ).resolves.toEqual([
       {
@@ -8257,7 +8278,8 @@ class Album
 {
     public function tracks(): HasMany
     {
-        return $this->hasMany(Track::class);
+        $related = Track::class;
+        return $this->hasMany($related);
     }
 }
 `;

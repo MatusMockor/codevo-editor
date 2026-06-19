@@ -5917,33 +5917,25 @@ export function useWorkbenchController(
             path,
             normalizedClassName,
           );
-          const member = members.find(
+          const matchingMembers = members.filter(
             (candidate) =>
               candidate.name.toLowerCase() === propertyName.toLowerCase(),
           );
+          const relationMethod =
+            matchingMembers.find((candidate) => candidate.kind !== "property") ??
+            null;
+          const propertyMember =
+            matchingMembers.find(
+              (candidate) => candidate.kind === "property" && candidate.returnType,
+            ) ?? null;
           const collectionPropertyModelType =
-            member?.kind === "property" && includeCollectionRelations
-              ? phpCollectionGenericModelTypeCandidate(member.returnType)
+            propertyMember && includeCollectionRelations
+              ? phpCollectionGenericModelTypeCandidate(propertyMember.returnType)
               : null;
           const resolvedCollectionPropertyModelType = collectionPropertyModelType
             ? resolvePhpClassReference(content, collectionPropertyModelType)
             : null;
 
-          if (resolvedCollectionPropertyModelType) {
-            return resolvedCollectionPropertyModelType;
-          }
-
-          const propertyType =
-            member?.kind === "property"
-              ? resolvePhpDeclaredType(content, member.returnType)
-              : null;
-
-          if (propertyType) {
-            return propertyType;
-          }
-
-          const relationMethod =
-            member && member.kind !== "property" ? member : null;
           const relationType = relationMethod?.returnType
             ? resolvePhpLaravelRelationModelType(
                 content,
@@ -5954,6 +5946,24 @@ export function useWorkbenchController(
 
           if (relationType) {
             return relationType;
+          }
+
+          if (resolvedCollectionPropertyModelType) {
+            return resolvedCollectionPropertyModelType;
+          }
+
+          const propertyReturnType = propertyMember?.returnType ?? null;
+          const propertyTypeCandidate = propertyReturnType
+            ? phpDeclaredTypeCandidate(propertyReturnType)
+            : null;
+          const propertyType = propertyTypeCandidate?.includes("\\")
+            ? propertyTypeCandidate
+            : propertyReturnType
+              ? resolvePhpDeclaredType(content, propertyReturnType)
+              : null;
+
+          if (propertyType) {
+            return propertyType;
           }
 
           if (relationMethod) {
