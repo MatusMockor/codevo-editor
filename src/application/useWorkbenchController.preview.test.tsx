@@ -1026,6 +1026,89 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("waits for PHP didOpen before first-use document flushes", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 54,
+    };
+    const path = "/workspace/src/CommentController.php";
+    const didOpen = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus,
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    vi.mocked(syncGateway.didOpen).mockImplementation(
+      async () => didOpen.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "CommentController.php"));
+    });
+    await flushAsyncTurns(24);
+
+    let initialFlushResolved = false;
+    const initialFlushPromise = getWorkbench()
+      .flushPendingLanguageServerDocument(path)
+      .then(() => {
+        initialFlushResolved = true;
+      });
+    await flushAsyncTurns(4);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path,
+        text: "<?php\n$comment->load();\n",
+      }),
+    );
+    expect(initialFlushResolved).toBe(false);
+
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n$comment->forceDelete();\n");
+    });
+    await flushAsyncTurns(4);
+
+    let changeFlushResolved = false;
+    const changeFlushPromise = getWorkbench()
+      .flushPendingLanguageServerDocument(path)
+      .then(() => {
+        changeFlushResolved = true;
+      });
+    await flushAsyncTurns(4);
+
+    expect(changeFlushResolved).toBe(false);
+    expect(syncGateway.didChange).not.toHaveBeenCalled();
+
+    await act(async () => {
+      didOpen.resolve(undefined);
+      await Promise.all([initialFlushPromise, changeFlushPromise]);
+    });
+
+    expect(initialFlushResolved).toBe(true);
+    expect(changeFlushResolved).toBe(true);
+    expect(syncGateway.didChange).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path,
+        text: "<?php\n$comment->forceDelete();\n",
+      }),
+    );
+    expect(
+      vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(syncGateway.didChange).mock.invocationCallOrder[0],
+    );
+  });
+
   it("does not flush pending JavaScript and TypeScript edits after switching project tabs", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),
@@ -2658,6 +2741,109 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.workspaceGateways.files.applyWorkspaceEdit,
     ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
+  });
+
+  it("filters JavaScript TypeScript workspace edits before applying closed files", async () => {
+    const openPath = "/workspace/src/User.ts";
+    const closedPath = "/workspace/src/Helper.ts";
+    const outsidePath = "/other/src/Outside.ts";
+    const malformedUri = "not a uri";
+    const filteredEdit = {
+      changes: {
+        [fileUriFromPath(openPath)]: [
+          {
+            newText: "let",
+            range: {
+              end: { character: 5, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+        [fileUriFromPath(closedPath)]: [
+          {
+            newText: "export const helper = true;\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const edit = {
+      changes: {
+        ...filteredEdit.changes,
+        [fileUriFromPath(outsidePath)]: [
+          {
+            newText: "leak",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+        [malformedUri]: [
+          {
+            newText: "leak",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === openPath) {
+          return "const value = 1;\n";
+        }
+
+        if (path === outsidePath) {
+          return "const outside = true;\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(outsidePath, "Outside.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "User.ts"));
+    });
+
+    await act(async () => {
+      await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+        edit,
+        {
+          editedOpenPaths: [openPath],
+          rootPath: "/workspace",
+        },
+      );
+    });
+
+    expect(
+      getWorkbench().openDocuments.find((document) => document.path === openPath)
+        ?.content,
+    ).toBe("const value = 1;\n");
+    expect(
+      getWorkbench().openDocuments.find((document) => document.path === outsidePath)
+        ?.content,
+    ).toBe("const outside = true;\n");
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      filteredEdit,
+      expect.arrayContaining([openPath, outsidePath]),
+    );
   });
 
   it("filters JavaScript TypeScript rename edits to the active workspace root", async () => {

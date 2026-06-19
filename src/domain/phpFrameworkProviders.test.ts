@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isKnownPhpFrameworkStaticMethod,
+  phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkProviderSignature,
   phpFrameworkMemberCompletionsFromSource,
   phpFrameworkProvidersForProject,
@@ -105,6 +106,37 @@ use App\\Services\\FooService;
         phpLaravelFrameworkProvider,
       ]),
     ).toBe(false);
+  });
+
+  it("routes Laravel Eloquent collection return types through provider semantics", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Album extends Model
+{
+}
+`;
+
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "all",
+        "Album",
+        "Album::all()",
+        [phpLaravelFrameworkProvider],
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    expect(
+      phpFrameworkMethodCallReturnTypeFromSource(
+        source,
+        "all",
+        "Album",
+        "Album::all()",
+        [],
+      ),
+    ).toBeNull();
   });
 
   it("supports framework-specific providers without changing the core parser", () => {

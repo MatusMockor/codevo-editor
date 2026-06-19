@@ -95,6 +95,46 @@ class Album extends Model
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
+        "get",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        null,
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "all",
+        "Album",
+        "Album::all()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "cursor",
+        "Album",
+        "Album::cursor()",
+      ),
+    ).toBe("Illuminate\\Support\\LazyCollection<int, App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "filter",
+        "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+        null,
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "first",
+        "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+        null,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
         "withRelations",
         "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
         "Album::query()",

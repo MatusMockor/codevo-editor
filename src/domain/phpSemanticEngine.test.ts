@@ -507,6 +507,79 @@ class AlbumController
     ).toBe("App\\Models\\Album");
   });
 
+  it("resolves Laravel model assignments from Eloquent collection chains", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Album extends Model
+{
+    public function preview(): void
+    {
+        $albums = Album::query()->get();
+        $fromAssignedCollection = $albums->filter()->first();
+        $fromDirectCollection = Album::query()->get()->first();
+        $fromStaticCollection = Album::all()->first();
+        $fromCursor = Album::cursor()->first();
+
+        $fromAssignedCollection->tit
+        $fromDirectCollection->tit
+        $fromStaticCollection->tit
+        $fromCursor->tit
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$fromAssignedCollection->tit"),
+        "Album::query()->get()",
+        laravelOptions,
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromAssignedCollection->tit"),
+        "fromAssignedCollection",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromDirectCollection->tit"),
+        "fromDirectCollection",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromStaticCollection->tit"),
+        "fromStaticCollection",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromCursor->tit"),
+        "fromCursor",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromStaticCollection->tit"),
+        "fromStaticCollection",
+      ),
+    ).toBeNull();
+  });
+
   it("resolves Laravel repository builder chains from model return expressions", () => {
     const source = `<?php
 namespace App\\Models;

@@ -459,6 +459,7 @@ export function phpLaravelCollectionModelTypeCandidate(
     "collection",
     "illuminate\\database\\eloquent\\collection",
     "illuminate\\support\\collection",
+    "illuminate\\support\\lazycollection",
   ])) {
     return null;
   }
@@ -510,6 +511,11 @@ export function phpLaravelMethodCallReturnTypeFromSource(
       receiverType,
     ) ??
     phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+    ) ??
+    phpLaravelCollectionMethodCallReturnTypeFromSource(
       source,
       methodName,
       receiverType,
@@ -984,6 +990,31 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
     : null;
 }
 
+function phpLaravelCollectionMethodCallReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+): string | null {
+  const modelType = phpLaravelResolvedModelTypeCandidate(
+    source,
+    phpLaravelCollectionModelTypeCandidate(source, receiverType),
+  );
+
+  if (!modelType) {
+    return null;
+  }
+
+  if (isLaravelCollectionTerminalModelMethod(methodName)) {
+    return modelType;
+  }
+
+  if (isLaravelCollectionFluentMethod(methodName)) {
+    return receiverType;
+  }
+
+  return null;
+}
+
 function phpLaravelEloquentBuilderModelTypeFromReceiverType(
   source: string,
   receiverType: string | null,
@@ -1029,6 +1060,10 @@ function phpLaravelEloquentBuilderCallReturnType(
     return modelType;
   }
 
+  if (isLaravelEloquentBuilderCollectionMethod(methodName)) {
+    return phpLaravelEloquentBuilderCollectionType(modelType, methodName);
+  }
+
   if (
     phpLaravelEloquentBuilderCallPreservesBuilder(source, modelType, methodName)
   ) {
@@ -1052,6 +1087,15 @@ function phpLaravelEloquentBuilderCallPreservesBuilder(
 
 function phpLaravelEloquentBuilderType(modelType: string): string {
   return `Illuminate\\Database\\Eloquent\\Builder<${modelType}>`;
+}
+
+function phpLaravelEloquentBuilderCollectionType(
+  modelType: string,
+  methodName: string,
+): string {
+  return methodName.toLowerCase() === "cursor"
+    ? `Illuminate\\Support\\LazyCollection<int, ${modelType}>`
+    : `Illuminate\\Database\\Eloquent\\Collection<int, ${modelType}>`;
 }
 
 interface PhpLaravelStaticCallChain {

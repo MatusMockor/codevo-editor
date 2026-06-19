@@ -1850,12 +1850,36 @@ export function useWorkbenchController(
       const syncKey = rootPath
         ? languageServerDocumentSyncKey(rootPath, path)
         : null;
-      const pendingDocument = syncKey
-        ? pendingDocumentChangesRef.current[syncKey]
-        : null;
 
-      if (!rootPath || !syncKey || !pendingDocument) {
+      if (!rootPath || !syncKey) {
         return;
+      }
+
+      if (!syncedDocumentPathsRef.current.has(syncKey)) {
+        const document =
+          activeDocumentRef.current?.path === path
+            ? activeDocumentRef.current
+            : documentsRef.current[path];
+
+        if (document && isLanguageServerDocument(document)) {
+          await syncOpenDocument(document);
+        }
+      }
+
+      if (!syncedDocumentPathsRef.current.has(syncKey)) {
+        await documentSyncQueuesRef.current[syncKey];
+        return;
+      }
+
+      let pendingDocument = pendingDocumentChangesRef.current[syncKey];
+
+      if (!pendingDocument) {
+        await documentSyncQueuesRef.current[syncKey];
+        pendingDocument = pendingDocumentChangesRef.current[syncKey];
+
+        if (!pendingDocument) {
+          return;
+        }
       }
 
       clearDocumentChangeTimer(syncKey);
@@ -1869,6 +1893,7 @@ export function useWorkbenchController(
       clearDocumentChangeTimer,
       enqueueDocumentSync,
       languageServerDocumentSyncGateway,
+      syncOpenDocument,
     ],
   );
 
@@ -12211,7 +12236,7 @@ function workspaceEditForRoot(
       Object.entries(edit.changes).filter(([uri]) => {
         const path = pathFromLanguageServerUri(uri);
 
-        return !path || isSessionPathInWorkspace(rootPath, path);
+        return path ? isSessionPathInWorkspace(rootPath, path) : false;
       }),
     ),
   };
