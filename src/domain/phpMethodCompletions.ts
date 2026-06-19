@@ -9,9 +9,10 @@ import {
   phpSimpleVariableName,
 } from "./phpReceiverExpressions";
 import {
-  phpLaravelModelAttributeCompletionsFromSource,
-  phpLaravelRelationPropertyCompletionsFromSource,
-} from "./phpFrameworkLaravel";
+  defaultPhpFrameworkProviders,
+  phpFrameworkMemberCompletionsFromSource,
+  type PhpFrameworkProvider,
+} from "./phpFrameworkProviders";
 
 export interface PhpMemberAccessCompletionContext {
   prefix: string;
@@ -54,6 +55,10 @@ export interface PhpMethodSignature {
   argumentIndex: number;
   method: PhpMethodCompletion;
   parameters: PhpMethodParameter[];
+}
+
+export interface PhpMethodCompletionOptions {
+  frameworkProviders?: readonly PhpFrameworkProvider[];
 }
 
 export function phpMemberAccessCompletionContextAt(
@@ -146,6 +151,7 @@ export function phpMethodSignatureContextAt(
 export function phpMethodCompletionsFromSource(
   source: string,
   declaringClassName: string,
+  options: PhpMethodCompletionOptions = {},
 ): PhpMethodCompletion[] {
   const members: PhpMethodCompletion[] = [];
   const masked = maskPhpStringsAndComments(source);
@@ -186,7 +192,9 @@ export function phpMethodCompletionsFromSource(
   }
 
   members.push(...phpDocMethodCompletionsFromSource(source, declaringClassName));
-  members.push(...phpPropertyCompletionsFromSource(source, declaringClassName));
+  members.push(
+    ...phpPropertyCompletionsFromSource(source, declaringClassName, options),
+  );
 
   return dedupePhpMembers(members);
 }
@@ -221,6 +229,7 @@ function phpDocMethodCompletionsFromSource(
 function phpPropertyCompletionsFromSource(
   source: string,
   declaringClassName: string,
+  options: PhpMethodCompletionOptions,
 ): PhpMethodCompletion[] {
   const members: PhpMethodCompletion[] = [];
 
@@ -275,12 +284,10 @@ function phpPropertyCompletionsFromSource(
   }
 
   members.push(
-    ...phpLaravelModelAttributeCompletionsFromSource(source, declaringClassName),
-  );
-  members.push(
-    ...phpLaravelRelationPropertyCompletionsFromSource(
+    ...phpFrameworkMemberCompletionsFromSource(
       source,
       declaringClassName,
+      options.frameworkProviders ?? defaultPhpFrameworkProviders,
     ),
   );
 

@@ -1,5 +1,9 @@
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
-import { isLaravelEloquentBuilderMethodName } from "./phpFrameworkLaravel";
+import {
+  defaultPhpFrameworkProviders,
+  isKnownPhpFrameworkStaticMethod,
+  type PhpFrameworkProvider,
+} from "./phpFrameworkProviders";
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
   phpNormalizeReceiverExpression,
@@ -44,6 +48,7 @@ export function filterPhpLanguageServerDiagnostics(
     contextualExistingMethods?: ReadonlySet<string>;
     contextualMemberMethods?: ReadonlySet<string>;
     contextualTraitHostMethods?: ReadonlySet<string>;
+    frameworkProviders?: readonly PhpFrameworkProvider[];
     path?: string | null;
   } = {},
 ): LanguageServerDiagnostic[] {
@@ -69,7 +74,11 @@ export function filterPhpLanguageServerDiagnostics(
         options.contextualTraitHostMethods,
         options.path,
       ) &&
-      !isLaravelEloquentStaticBuilderDiagnostic(source, diagnostic),
+      !isKnownPhpFrameworkStaticMethodDiagnostic(
+        source,
+        diagnostic,
+        options.frameworkProviders ?? defaultPhpFrameworkProviders,
+      ),
   );
 }
 
@@ -89,14 +98,21 @@ function isIgnoredPhpactorDocblockDiagnostic(
   );
 }
 
-function isLaravelEloquentStaticBuilderDiagnostic(
+function isKnownPhpFrameworkStaticMethodDiagnostic(
   source: string,
   diagnostic: LanguageServerDiagnostic,
+  frameworkProviders: readonly PhpFrameworkProvider[],
 ): boolean {
   const context = phpUnresolvedStaticMethodDiagnosticContext(source, diagnostic);
 
   return Boolean(
-    context && isLaravelEloquentBuilderMethodName(context.methodName),
+    context &&
+      isKnownPhpFrameworkStaticMethod(
+        source,
+        context.className,
+        context.methodName,
+        frameworkProviders,
+      ),
   );
 }
 

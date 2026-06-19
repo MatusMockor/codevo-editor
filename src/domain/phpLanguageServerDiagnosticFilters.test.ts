@@ -50,6 +50,24 @@ $queryBuilder = Album::whereNulll('parent_id');
     ]);
   });
 
+  it("can keep framework magic diagnostics when no framework provider is active", () => {
+    const source = `<?php
+
+$queryBuilder = Album::whereNull('parent_id');
+`;
+    const unresolved = diagnostic({
+      character: 23,
+      line: 2,
+      message: "Method App\\Models\\Album::whereNull() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
+      }),
+    ).toEqual([unresolved]);
+  });
+
   it("suppresses unresolved static method diagnostics only when semantic context confirms the method", () => {
     const source = `<?php
 

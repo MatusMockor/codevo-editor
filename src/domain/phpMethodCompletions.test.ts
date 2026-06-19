@@ -1163,6 +1163,37 @@ class Comment extends Model
     ]);
   });
 
+  it("can parse plain PHP members without framework providers", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'content',
+    ];
+
+    public function content(): string
+    {
+        return '';
+    }
+}
+`,
+        "Comment",
+        { frameworkProviders: [] },
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        name: "content",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("extracts Laravel accessor and appended attributes as properties", () => {
     expect(
       phpMethodCompletionsFromSource(
