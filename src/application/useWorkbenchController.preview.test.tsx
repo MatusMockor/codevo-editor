@@ -5051,6 +5051,83 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("opens JavaScript and TypeScript source definitions through workbench commands", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/packages/user/src/user.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const target = "export class User {\n  name = '';\n}\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        sourceDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 32,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.sourceDefinition,
+    ).mockResolvedValue([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === targetPath) {
+          return target;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToSourceDefinition")
+        ?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.sourceDefinition,
+    ).toHaveBeenCalledWith("/workspace", {
+      character: cursorPosition.column - 1,
+      line: cursorPosition.lineNumber - 1,
+      path: sourcePath,
+    });
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: targetPath,
+      position: {
+        column: 14,
+        lineNumber: 1,
+      },
+    });
+  });
+
   it("shows a JavaScript and TypeScript implementation chooser through workbench commands", async () => {
     const interfacePath = "/workspace/src/PlatformAdapter.ts";
     const baseAdapterPath = "/workspace/src/BaseAdapter.ts";
@@ -14109,6 +14186,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     selectionRanges: vi.fn(async () => []),
     semanticTokens: vi.fn(async () => null),
     signatureHelp: vi.fn(async () => null),
+    sourceDefinition: vi.fn(async () => []),
     typeDefinition: vi.fn(async () => []),
     typeHierarchySubtypes: vi.fn(async () => []),
     typeHierarchySupertypes: vi.fn(async () => []),

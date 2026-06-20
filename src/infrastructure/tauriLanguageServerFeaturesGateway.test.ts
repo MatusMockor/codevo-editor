@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { TauriLanguageServerFeaturesGateway } from "./tauriLanguageServerFeaturesGateway";
+import {
+  JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+  TauriLanguageServerFeaturesGateway,
+} from "./tauriLanguageServerFeaturesGateway";
 import type {
   LanguageServerSignatureHelpContext,
   LanguageServerTextDocumentPosition,
@@ -27,6 +30,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.resolveCompletionItem("/project", completionItem()),
     ).resolves.toEqual(completionItem());
     await expect(gateway.definition("/project", position())).resolves.toEqual([]);
+    await expect(gateway.sourceDefinition("/project", position())).resolves.toEqual(
+      [],
+    );
     await expect(gateway.declaration("/project", position())).resolves.toEqual([]);
     await expect(
       gateway.typeDefinition("/project", position()),
@@ -536,6 +542,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       documentation: "Resolved docs",
     });
     await expect(gateway.definition("/project", requestPosition)).resolves.toEqual(definition);
+    await expect(
+      gateway.sourceDefinition("/project", requestPosition),
+    ).resolves.toEqual(definition);
     await expect(gateway.declaration("/project", requestPosition)).resolves.toEqual(definition);
     await expect(
       gateway.documentSymbols("/project", "/project/src/User.php"),
@@ -925,6 +934,36 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       position: requestPosition,
       rootPath: "/project",
     });
+  });
+
+  it("delegates JavaScript and TypeScript source definition through the JS/TS command map", async () => {
+    const definition = [
+      {
+        range: {
+          end: { character: 8, line: 1 },
+          start: { character: 2, line: 1 },
+        },
+        uri: "file:///project/src/User.ts",
+      },
+    ];
+    const invokeCommand = vi.fn<InvokeCommand>(async () => definition);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+    const requestPosition = position();
+
+    await expect(
+      gateway.sourceDefinition("/project", requestPosition),
+    ).resolves.toEqual(definition);
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_source_definition",
+      {
+        position: requestPosition,
+        rootPath: "/project",
+      },
+    );
   });
 });
 

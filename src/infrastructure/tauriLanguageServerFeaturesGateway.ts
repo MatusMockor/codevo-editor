@@ -53,6 +53,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   completionResolve: "text_document_completion_resolve",
   declaration: "text_document_declaration",
   definition: "text_document_definition",
+  sourceDefinition: "text_document_definition",
   didChangeConfiguration: "workspace_did_change_configuration",
   didChangeWatchedFiles: "workspace_did_change_watched_files",
   didRenameFiles: "workspace_did_rename_files",
@@ -96,6 +97,8 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   declaration: "javascript_typescript_text_document_declaration",
   definition: "javascript_typescript_text_document_definition",
+  sourceDefinition:
+    "javascript_typescript_text_document_source_definition",
   didChangeConfiguration:
     "javascript_typescript_workspace_did_change_configuration",
   didChangeWatchedFiles:
@@ -146,6 +149,7 @@ export interface TauriLanguageServerFeatureCommands {
   completionResolve: string;
   declaration: string;
   definition: string;
+  sourceDefinition: string;
   didChangeConfiguration: string;
   didChangeWatchedFiles: string;
   didRenameFiles: string;
@@ -225,6 +229,17 @@ export class TauriLanguageServerFeaturesGateway
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]> {
     return this.invokeWhenAvailable(this.commands.definition, { position, rootPath }, []);
+  }
+
+  sourceDefinition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLocation[]> {
+    return this.invokeWhenAvailable(
+      this.commands.sourceDefinition,
+      { position, rootPath },
+      [],
+    );
   }
 
   declaration(

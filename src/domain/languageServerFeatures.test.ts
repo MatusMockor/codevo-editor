@@ -35,6 +35,7 @@ describe("canUseLanguageServerFeature", () => {
       selectionRange: false,
       semanticTokens: false,
       signatureHelp: false,
+      sourceDefinition: false,
       typeDefinition: false,
       typeHierarchy: false,
       willRenameFiles: false,

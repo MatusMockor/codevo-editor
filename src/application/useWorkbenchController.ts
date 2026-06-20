@@ -9757,7 +9757,10 @@ export function useWorkbenchController(
   ]);
 
   const goToJavaScriptTypeScriptLanguageServerLocation = useCallback(async (
-    feature: Extract<LanguageServerFeature, "definition" | "implementation">,
+    feature: Extract<
+      LanguageServerFeature,
+      "definition" | "implementation" | "sourceDefinition"
+    >,
     label: string,
     requestedPosition?: EditorPosition,
   ): Promise<boolean> => {
@@ -10086,6 +10089,13 @@ export function useWorkbenchController(
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
   ]);
+
+  const goToSourceDefinition = useCallback(async () => {
+    await goToJavaScriptTypeScriptLanguageServerLocation(
+      "sourceDefinition",
+      "source definition",
+    );
+  }, [goToJavaScriptTypeScriptLanguageServerLocation]);
 
   const goToImplementation = useCallback(async () => {
     const openedJavaScriptTypeScriptTarget =
@@ -11259,6 +11269,28 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.goToSourceDefinition",
+      title: "Go to Source Definition",
+      category: "Editor",
+      isEnabled: () =>
+        Boolean(activeDocument) &&
+        Boolean(
+          activeDocument &&
+            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
+        ) &&
+        isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) &&
+        canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "sourceDefinition",
+        ),
+      run: goToSourceDefinition,
+    });
+
+    registry.register({
       id: "editor.goToImplementation",
       title: "Go to Implementation",
       category: "Editor",
@@ -11526,6 +11558,7 @@ export function useWorkbenchController(
     deleteActiveDocument,
     goToDefinition,
     goToImplementation,
+    goToSourceDefinition,
     gitDiffLoading,
     navigateBackward,
     navigateForwardInHistory,

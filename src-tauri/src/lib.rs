@@ -1865,6 +1865,23 @@ fn javascript_typescript_text_document_declaration(
 }
 
 #[tauri::command]
+fn javascript_typescript_text_document_source_definition(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.typescript_source_definition(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_javascript_typescript_navigation_locations_result(&result)
+}
+
+#[tauri::command]
 fn text_document_implementation(
     root_path: String,
     position: TextDocumentPosition,
@@ -4599,6 +4616,7 @@ pub fn run() {
             javascript_typescript_text_document_selection_ranges,
             javascript_typescript_text_document_semantic_tokens,
             javascript_typescript_text_document_signature_help,
+            javascript_typescript_text_document_source_definition,
             javascript_typescript_text_document_type_hierarchy_subtypes,
             javascript_typescript_text_document_type_hierarchy_supertypes,
             javascript_typescript_text_document_type_definition,

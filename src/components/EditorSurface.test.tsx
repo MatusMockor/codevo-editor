@@ -1767,6 +1767,7 @@ function languageServerFeaturesGateway() {
     resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
     signatureHelp: vi.fn(),
+    sourceDefinition: vi.fn(async () => []),
     typeDefinition: vi.fn(async () => []),
     typeHierarchySubtypes: vi.fn(async () => []),
     typeHierarchySupertypes: vi.fn(async () => []),

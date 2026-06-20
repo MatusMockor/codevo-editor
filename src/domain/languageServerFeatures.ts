@@ -361,6 +361,10 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]>;
+  sourceDefinition(
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ): Promise<LanguageServerLocation[]>;
   declaration(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

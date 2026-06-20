@@ -1134,9 +1134,93 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Move To File Refactor Support
 
-- Pending commit.
-- Intended included files:
+- Committed and pushed as `1969a66 Enable JS TS move-to-file refactors`.
+- Included files:
   - `src-tauri/src/lsp.rs`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Go To Source Definition
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1969a66 Enable JS TS move-to-file refactors`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Choice
+
+- Frontend explorer Volta identified "Go to Source Definition" as a high-value VS Code parity gap.
+- The main agent will implement the slice directly because the needed changes are narrow and the current `src/application/useWorkbenchController.ts` WIP is only an unrelated PHP import line.
+
+### Why This Slice
+
+- `typescript-language-server` already exposes `_typescript.goToSourceDefinition` through `executeCommandProvider.commands` on TypeScript 4.7+.
+- The command returns navigation locations, not a workspace edit, so it should not reuse the existing generic JS/TS `executeCommand` path.
+- Source definition is especially useful when a TypeScript definition points at generated or declaration files and the user wants the original source.
+
+### Implementation Choice
+
+- Add a JS/TS-specific `sourceDefinition` method to the feature gateway and domain interface.
+- Add a Rust Tauri command that executes `_typescript.goToSourceDefinition` with `[uri, position]` and parses the response as navigation locations.
+- Preserve external file URI results, matching definition/declaration/typeDefinition/implementation navigation.
+- Add a command palette action using the existing active-workspace guards in `goToJavaScriptTypeScriptLanguageServerLocation`.
+
+### Acceptance Criteria
+
+- JS/TS source definition command sends `workspace/executeCommand` with `_typescript.goToSourceDefinition`.
+- Source definition results can include external file URI targets.
+- Workbench exposes "Go to Source Definition" only for an active JS/TS document with a running JS/TS server that advertises the command.
+- Focused Rust, gateway, and workbench tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: JS/TS Go To Source Definition
+
+- Added a JS/TS-specific Tauri command for `_typescript.goToSourceDefinition` that returns navigation locations instead of trying to parse a workspace edit.
+- Added runtime capability parsing for `executeCommandProvider.commands` so `sourceDefinition` is enabled only when the server advertises the TypeScript source-definition command.
+- Added `sourceDefinition` to the frontend language-server gateway contract and wired the JS/TS command map to `javascript_typescript_text_document_source_definition`.
+- Added a "Go to Source Definition" command palette action for active JS/TS documents with a running matching TS server.
+- Kept the pre-existing PHP/Laravel import WIP in `src/application/useWorkbenchController.ts` out of scope and excluded from the intended commit.
+
+### Verification: JS/TS Go To Source Definition
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml typescript_source_definition --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml capability_values_are_normalized --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml runtime_status_serializes_session_id --lib`
+- PASS: `npm test -- src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts src/domain/languageServerRuntime.test.ts src/domain/languageServerFeatures.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "source definitions"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/components/languageServerMonacoProviders.test.ts src/components/EditorSurface.test.tsx`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts src/domain/languageServerRuntime.test.ts src/domain/languageServerRuntimeStatusCache.test.ts src/domain/languageServerFeatures.test.ts src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/components/languageServerMonacoProviders.test.ts src/components/EditorSurface.test.tsx`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --quiet -- --test-threads=1`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: JS/TS Go To Source Definition
+
+- Pending commit.
+- Intended included files:
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/lsp_features.rs`
+  - `src-tauri/src/lsp_session.rs`
+  - `src/application/useWorkbenchController.ts` (source-definition hunks only; pre-existing PHP import excluded)
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `src/components/EditorSurface.test.tsx`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `src/components/languageServerMonacoProviders.test.ts`
+  - `src/domain/languageServerFeatures.test.ts`
+  - `src/domain/languageServerFeatures.ts`
+  - `src/domain/languageServerRuntime.test.ts`
+  - `src/domain/languageServerRuntime.ts`
+  - `src/domain/languageServerRuntimeStatusCache.test.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.ts`
+  - `src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

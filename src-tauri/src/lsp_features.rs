@@ -593,6 +593,10 @@ pub trait TextDocumentFeatureRequestFactory {
         &self,
         item: &LanguageServerTypeHierarchyItem,
     ) -> LanguageServerFeatureRequest;
+    fn typescript_source_definition(
+        &self,
+        position: &TextDocumentPosition,
+    ) -> LanguageServerFeatureRequest;
     fn execute_command(
         &self,
         command: &LanguageServerCodeActionCommand,
@@ -931,6 +935,25 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         LanguageServerFeatureRequest {
             method: "typeHierarchy/subtypes".to_string(),
             params: json!({ "item": item }),
+        }
+    }
+
+    fn typescript_source_definition(
+        &self,
+        position: &TextDocumentPosition,
+    ) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "workspace/executeCommand".to_string(),
+            params: json!({
+                "command": "_typescript.goToSourceDefinition",
+                "arguments": [
+                    file_uri(Path::new(&position.path)),
+                    {
+                        "line": position.line,
+                        "character": position.character,
+                    }
+                ],
+            }),
         }
     }
 
@@ -2620,6 +2643,28 @@ mod tests {
         });
 
         assert_eq!(execute_without_arguments.params["arguments"], json!([]));
+    }
+
+    #[test]
+    fn typescript_source_definition_request_uses_execute_command() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.typescript_source_definition(&position());
+
+        assert_eq!(request.method, "workspace/executeCommand");
+        assert_eq!(
+            request.params["command"],
+            "_typescript.goToSourceDefinition"
+        );
+        assert_eq!(
+            request.params["arguments"],
+            json!([
+                "file:///tmp/User.php",
+                {
+                    "line": 10,
+                    "character": 4,
+                }
+            ])
+        );
     }
 
     #[test]

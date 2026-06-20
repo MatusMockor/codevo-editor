@@ -26,6 +26,7 @@ export interface LanguageServerCapabilities {
   selectionRange: boolean;
   semanticTokens: boolean;
   signatureHelp: boolean;
+  sourceDefinition: boolean;
   typeDefinition: boolean;
   typeHierarchy: boolean;
   willRenameFiles: boolean;
@@ -251,6 +252,10 @@ export function languageServerCapabilityLabels(
     labels.push("signature help");
   }
 
+  if (capabilities.sourceDefinition) {
+    labels.push("source definition");
+  }
+
   if (capabilities.typeDefinition) {
     labels.push("type definition");
   }
@@ -312,6 +317,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     selectionRange: false,
     semanticTokens: false,
     signatureHelp: false,
+    sourceDefinition: false,
     typeDefinition: false,
     typeHierarchy: false,
     willRenameFiles: false,

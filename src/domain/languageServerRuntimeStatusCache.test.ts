@@ -128,6 +128,7 @@ function running(sessionId: number): LanguageServerRuntimeStatus {
       selectionRange: true,
       semanticTokens: true,
       signatureHelp: true,
+      sourceDefinition: true,
       typeDefinition: true,
       typeHierarchy: true,
       willRenameFiles: true,

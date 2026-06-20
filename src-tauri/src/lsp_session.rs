@@ -92,6 +92,7 @@ pub struct LanguageServerCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic_tokens_legend: Option<SemanticTokensLegend>,
     pub signature_help: bool,
+    pub source_definition: bool,
     pub type_definition: bool,
     pub type_hierarchy: bool,
     pub will_rename_files: bool,
@@ -2099,6 +2100,10 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
             capabilities.get("semanticTokensProvider"),
         ),
         signature_help: is_capability_enabled(capabilities.get("signatureHelpProvider")),
+        source_definition: execute_command_provider_contains(
+            capabilities,
+            "_typescript.goToSourceDefinition",
+        ),
         type_definition: is_capability_enabled(capabilities.get("typeDefinitionProvider")),
         type_hierarchy: is_capability_enabled(capabilities.get("typeHierarchyProvider")),
         will_rename_files: capabilities
@@ -2123,6 +2128,18 @@ fn parse_semantic_tokens_legend(provider: Option<&Value>) -> Option<SemanticToke
         token_types,
         token_modifiers,
     })
+}
+
+fn execute_command_provider_contains(capabilities: &Value, command: &str) -> bool {
+    capabilities
+        .get("executeCommandProvider")
+        .and_then(|provider| provider.get("commands"))
+        .and_then(Value::as_array)
+        .is_some_and(|commands| {
+            commands
+                .iter()
+                .any(|candidate| candidate.as_str() == Some(command))
+        })
 }
 
 fn parse_string_array(value: &Value) -> Option<Vec<String>> {
@@ -2912,6 +2929,7 @@ mod tests {
                     semantic_tokens: false,
                     semantic_tokens_legend: None,
                     signature_help: false,
+                    source_definition: false,
                     type_definition: false,
                     type_hierarchy: false,
                     will_rename_files: false,
@@ -2956,6 +2974,7 @@ mod tests {
                     token_modifiers: vec!["static".to_string(), "async".to_string()],
                 }),
                 signature_help: true,
+                source_definition: true,
                 type_definition: true,
                 type_hierarchy: true,
                 will_rename_files: true,
@@ -2995,6 +3014,7 @@ mod tests {
                         "tokenModifiers": ["static", "async"],
                     },
                     "signatureHelp": true,
+                    "sourceDefinition": true,
                     "typeDefinition": true,
                     "typeHierarchy": true,
                     "willRenameFiles": true,
@@ -3060,6 +3080,12 @@ mod tests {
                         }
                     },
                     "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
+                    "executeCommandProvider": {
+                        "commands": [
+                            "_typescript.organizeImports",
+                            "_typescript.goToSourceDefinition"
+                        ]
+                    },
                     "typeDefinitionProvider": true,
                     "typeHierarchyProvider": true,
                     "codeLensProvider": {},
@@ -3109,6 +3135,7 @@ mod tests {
                     token_modifiers: vec!["readonly".to_string()],
                 }),
                 signature_help: true,
+                source_definition: true,
                 type_definition: true,
                 type_hierarchy: true,
                 will_rename_files: true,
