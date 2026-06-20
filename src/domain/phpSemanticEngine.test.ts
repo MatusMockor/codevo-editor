@@ -1087,6 +1087,11 @@ class Comment extends Model
             ->through(relationship: 'playlists')
             ->has(relation: 'tracks')
             ->first();
+        $dynamicThroughTrack = $this->throughPlaylists()->hasTracks()->first();
+        $namedThroughTracks = $this
+            ->through(relationship: 'playlists')
+            ->has(relation: 'tracks')
+            ->get();
         $tag = $this->belongsToMany(Tag::class)
             ->as('subscription')
             ->withPivot('active')
@@ -1105,6 +1110,8 @@ class Comment extends Model
         $constantPost->tit
         $throughTrack->dur
         $namedThroughTrack->dur
+        $dynamicThroughTrack->dur
+        $namedThroughTracks->first()->dur
         $tag->nam
         $latestPost->tit
     }
@@ -1218,6 +1225,24 @@ class Tag extends Model
         laravelOptions,
       ),
     ).toBe("App\\Models\\Track");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$dynamicThroughTrack->dur"),
+        "dynamicThroughTrack",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Track");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$namedThroughTracks->first()->dur"),
+        "namedThroughTracks",
+        laravelOptions,
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Track>",
+    );
     expect(
       phpVariableTypeInSource(
         source,

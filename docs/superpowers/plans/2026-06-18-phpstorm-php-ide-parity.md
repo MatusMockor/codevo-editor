@@ -2592,3 +2592,41 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `569430d7 Infer Laravel fluent through semantic chains`.
+
+## Slice: Laravel Semantic Fluent Through Variants - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e24c68cc Record Laravel fluent through semantic commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock the semantic fluent-through resolver against adjacent Laravel variants already supported by the shared parser.
+
+### Implementation Choice
+
+- Add coverage for dynamic fluent-through names such as `throughPlaylists()->hasTracks()->first()`.
+- Add coverage for named fluent-through chains that terminate with `get()` and therefore infer an Eloquent collection of the distant model.
+- Keep this as a narrow regression slice unless the new tests reveal a resolver gap.
+
+### Acceptance Criteria
+
+- Dynamic fluent-through terminal chains infer the distant related model.
+- Named fluent-through `get()` chains infer `Collection<int, RelatedModel>`.
+- Focused semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- PENDING.
