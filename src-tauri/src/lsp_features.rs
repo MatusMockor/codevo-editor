@@ -404,6 +404,8 @@ pub enum LanguageServerInlayHintLabel {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerInlayHintLabelPart {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<LanguageServerCodeActionCommand>,
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tooltip: Option<String>,
@@ -1788,6 +1790,7 @@ fn parse_inlay_hint_label(value: &Value) -> Option<LanguageServerInlayHintLabel>
 
 fn parse_inlay_hint_label_part(value: &Value) -> Option<LanguageServerInlayHintLabelPart> {
     Some(LanguageServerInlayHintLabelPart {
+        command: parse_code_action_command(value),
         label: value.get("value").and_then(Value::as_str)?.to_string(),
         tooltip: value.get("tooltip").and_then(markup_to_string),
         location: value
@@ -2592,6 +2595,11 @@ mod tests {
             data: Some(json!({ "hintId": 7 })),
             kind: Some(1),
             label: LanguageServerInlayHintLabel::Parts(vec![LanguageServerInlayHintLabelPart {
+                command: Some(LanguageServerCodeActionCommand {
+                    arguments: Some(vec![json!({ "file": "/tmp/User.ts" })]),
+                    command: "_typescript.applyCompletionCodeAction".to_string(),
+                    title: "Apply import".to_string(),
+                }),
                 label: "user".to_string(),
                 tooltip: Some("User symbol".to_string()),
                 location: None,
@@ -2610,6 +2618,10 @@ mod tests {
         assert_eq!(request.params["data"], json!({ "hintId": 7 }));
         assert_eq!(request.params["label"][0]["value"], "user");
         assert_eq!(request.params["label"][0]["tooltip"], "User symbol");
+        assert_eq!(
+            request.params["label"][0]["command"]["command"],
+            "_typescript.applyCompletionCodeAction"
+        );
         assert!(request.params["label"][0].get("label").is_none());
         assert_eq!(request.params["position"]["line"], 2);
     }
@@ -3505,6 +3517,11 @@ mod tests {
                     {
                         "value": "name",
                         "tooltip": "Property name",
+                        "command": {
+                            "title": "Apply import",
+                            "command": "_typescript.applyCompletionCodeAction",
+                            "arguments": [{ "file": "/project/src/User.ts" }]
+                        },
                         "location": {
                             "uri": "file:///project/src/User.ts",
                             "range": {
@@ -3534,6 +3551,11 @@ mod tests {
             hints[1].label,
             LanguageServerInlayHintLabel::Parts(vec![
                 LanguageServerInlayHintLabelPart {
+                    command: Some(LanguageServerCodeActionCommand {
+                        arguments: Some(vec![json!({ "file": "/project/src/User.ts" })]),
+                        command: "_typescript.applyCompletionCodeAction".to_string(),
+                        title: "Apply import".to_string(),
+                    }),
                     label: "name".to_string(),
                     tooltip: Some("Property name".to_string()),
                     location: Some(LanguageServerLocation {
@@ -3551,6 +3573,7 @@ mod tests {
                     }),
                 },
                 LanguageServerInlayHintLabelPart {
+                    command: None,
                     label: ":".to_string(),
                     tooltip: None,
                     location: None,

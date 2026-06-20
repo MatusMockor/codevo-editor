@@ -2722,7 +2722,7 @@ function toMonacoInlayHint(
 ): Monaco.languages.InlayHint {
   const monacoHint: Monaco.languages.InlayHint = {
     kind: monacoInlayHintKindFromLspKind(monaco, hint.kind),
-    label: toMonacoInlayHintLabel(monaco, hint.label),
+    label: toMonacoInlayHintLabel(monaco, hint.label, rootPath),
     paddingLeft: hint.paddingLeft,
     paddingRight: hint.paddingRight,
     position: {
@@ -2747,6 +2747,7 @@ function toMonacoInlayHint(
 function toMonacoInlayHintLabel(
   monaco: MonacoApi,
   label: LanguageServerInlayHint["label"],
+  rootPath: string,
 ): Monaco.languages.InlayHint["label"] {
   if (typeof label === "string") {
     return label;
@@ -2759,6 +2760,9 @@ function toMonacoInlayHintLabel(
 
     return {
       label: part.label,
+      ...(part.command
+        ? { command: toMonacoLanguageServerCommand(rootPath, part.command) }
+        : {}),
       ...(location ? { location } : {}),
       ...(part.tooltip ? { tooltip: part.tooltip } : {}),
     };

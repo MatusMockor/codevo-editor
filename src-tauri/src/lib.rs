@@ -720,6 +720,12 @@ fn filter_lsp_inlay_hint_label_to_workspace(
     };
 
     for part in parts {
+        if part.command.as_ref().is_some_and(|command| {
+            ensure_lsp_command_payload_paths_in_workspace(root_path, command).is_err()
+        }) {
+            part.command = None;
+        }
+
         if part
             .location
             .as_ref()
@@ -867,10 +873,10 @@ fn ensure_lsp_inlay_hint_payload_in_workspace(
     hint: &LanguageServerInlayHint,
 ) -> Result<(), String> {
     ensure_lsp_json_payload_paths_in_workspace(root_path, hint.data.as_ref())?;
-    ensure_lsp_inlay_hint_label_locations_in_workspace(root_path, &hint.label)
+    ensure_lsp_inlay_hint_label_payloads_in_workspace(root_path, &hint.label)
 }
 
-fn ensure_lsp_inlay_hint_label_locations_in_workspace(
+fn ensure_lsp_inlay_hint_label_payloads_in_workspace(
     root_path: &str,
     label: &LanguageServerInlayHintLabel,
 ) -> Result<(), String> {
@@ -879,6 +885,10 @@ fn ensure_lsp_inlay_hint_label_locations_in_workspace(
     };
 
     for part in parts {
+        if let Some(command) = &part.command {
+            ensure_lsp_command_payload_paths_in_workspace(root_path, command)?;
+        }
+
         if let Some(location) = &part.location {
             ensure_lsp_uri_in_workspace(root_path, &location.uri)?;
         }
@@ -4059,6 +4069,11 @@ mod tests {
             "label": [
                 {
                     "label": "App",
+                    "command": {
+                        "title": "Apply import",
+                        "command": "_typescript.applyCompletionCodeAction",
+                        "arguments": [{ "file": path_string(&root.join("src/App.ts")) }],
+                    },
                     "location": location(&file_uri(&root.join("src/App.ts"))),
                 },
             ],
@@ -4074,6 +4089,18 @@ mod tests {
                 },
             ],
         }));
+        let outside_command_hint = inlay_hint(json!({
+            "label": [
+                {
+                    "label": "Secret",
+                    "command": {
+                        "title": "Apply import",
+                        "command": "_typescript.applyCompletionCodeAction",
+                        "arguments": [{ "file": path_string(&outside.join("Secret.ts")) }],
+                    },
+                },
+            ],
+        }));
 
         assert!(
             ensure_lsp_inlay_hint_payload_in_workspace(&path_string(&root), &inside_hint).is_ok()
@@ -4086,6 +4113,11 @@ mod tests {
         assert!(ensure_lsp_inlay_hint_payload_in_workspace(
             &path_string(&root),
             &outside_location_hint,
+        )
+        .is_err());
+        assert!(ensure_lsp_inlay_hint_payload_in_workspace(
+            &path_string(&root),
+            &outside_command_hint,
         )
         .is_err());
     }
@@ -4246,6 +4278,11 @@ mod tests {
             "label": [
                 {
                     "label": "App",
+                    "command": {
+                        "title": "Apply import",
+                        "command": "_typescript.applyCompletionCodeAction",
+                        "arguments": [{ "file": path_string(&root.join("src/App.ts")) }],
+                    },
                     "location": location(&file_uri(&root.join("src/App.ts"))),
                     "tooltip": "Inside workspace",
                 },
@@ -4256,6 +4293,11 @@ mod tests {
             "label": [
                 {
                     "label": "Secret",
+                    "command": {
+                        "title": "Apply import",
+                        "command": "_typescript.applyCompletionCodeAction",
+                        "arguments": [{ "file": path_string(&outside.join("Secret.ts")) }],
+                    },
                     "location": location(&file_uri(&outside.join("Secret.ts"))),
                     "tooltip": "Outside workspace",
                 },
@@ -4273,6 +4315,7 @@ mod tests {
         };
         assert_eq!(parts[0].label, "Secret");
         assert_eq!(parts[0].tooltip.as_deref(), Some("Outside workspace"));
+        assert!(parts[0].command.is_none());
         assert!(parts[0].location.is_none());
     }
 

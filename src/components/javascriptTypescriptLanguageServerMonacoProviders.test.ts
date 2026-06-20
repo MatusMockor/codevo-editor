@@ -1327,6 +1327,11 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           kind: 2,
           label: [
             {
+              command: {
+                arguments: [{ file: "/project/src/user.ts" }],
+                command: "_typescript.applyCompletionCodeAction",
+                title: "Apply import",
+              },
               label: "user",
               location: {
                 range: range(2, 4, 2, 8),
@@ -1724,6 +1729,20 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           kind: monaco.languages.InlayHintKind.Parameter,
           label: [
             {
+              command: {
+                arguments: [
+                  expect.objectContaining({
+                    command: {
+                      arguments: [{ file: "/project/src/user.ts" }],
+                      command: "_typescript.applyCompletionCodeAction",
+                      title: "Apply import",
+                    },
+                    rootPath: "/project",
+                  }),
+                ],
+                id: "mockor.javascriptTypeScript.executeLanguageServerCommand",
+                title: "Apply import",
+              },
               label: "user",
               location: {
                 range: expect.objectContaining({
@@ -1749,6 +1768,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             column: 6,
             lineNumber: 2,
           },
+          tooltip: undefined,
         },
       ],
     });
@@ -2920,7 +2940,16 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         {
           data: { hintId: 1 },
           kind: 1,
-          label: ": Account",
+          label: [
+            {
+              command: {
+                arguments: [{ file: "/project/src/user.ts" }],
+                command: "_typescript.applyCompletionCodeAction",
+                title: "Apply import",
+              },
+              label: "Account",
+            },
+          ],
           paddingLeft: true,
           paddingRight: false,
           position: {
@@ -2979,6 +3008,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     await inlayHintsProvider.resolveInlayHint(hints.hints[0]);
     const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
     await commandDescriptor.run(null, actions.actions[0].command.arguments[0]);
+    const inlayLabel = hints.hints[0].label as any[];
+    await commandDescriptor.run(null, inlayLabel[0].command.arguments[0]);
 
     expect(gateway.resolveCompletionItem).not.toHaveBeenCalled();
     expect(gateway.resolveDocumentLink).not.toHaveBeenCalled();

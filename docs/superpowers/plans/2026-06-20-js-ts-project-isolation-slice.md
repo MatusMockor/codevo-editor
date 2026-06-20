@@ -1276,3 +1276,54 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lib.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Inlay Hint Label-Part Commands
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b6a7311 Update PHP parity plan status`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Monaco supports command metadata on inlay hint label parts.
+- The editor already maps completion, code action, CodeLens, and completion-insert commands through a root-guarded JS/TS command executor.
+- Earlier inlay slices intentionally left label-part commands unwired until a guarded design existed; the backend now has inlay payload filtering, so this is the adjacent missing metadata surface.
+
+### Implementation Choice
+
+- Extend the shared language-server inlay label-part model with an optional command.
+- Parse, serialize, guard, and filter inlay label-part commands in Rust using the same command payload path guard as completion/code-action/CodeLens commands.
+- Map frontend label-part commands through `mockor.javascriptTypeScript.executeLanguageServerCommand`, preserving the existing active-workspace guard.
+
+### Acceptance Criteria
+
+- Safe label-part commands are preserved and mapped to Monaco command payloads.
+- Label-part command payloads outside the active workspace are stripped from responses and rejected for resolve.
+- Stale label-part commands after a project-tab switch do not execute against the old workspace.
+- Focused Rust and provider tests, serial Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Inlay Hint Label-Part Commands
+
+- Added optional inlay hint label-part commands to the shared frontend domain model.
+- Rust now parses and serializes label-part commands while keeping existing `value` label-part conversion.
+- JS/TS backend inlay hint filtering now strips unsafe label-part commands and rejects unsafe resolve payloads.
+- Monaco inlay label parts now map safe commands through the existing root-guarded JS/TS command executor.
+- Added provider coverage for command mapping and stale project-tab command suppression.
+
+### Verification: JS/TS Inlay Hint Label-Part Commands
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml inlay_hint --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "maps references, rename edits|stale TypeScript lazy resolves"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Inlay Hint Label-Part Commands
+
+- Pending commit.

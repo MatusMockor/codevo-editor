@@ -115,6 +115,7 @@ export type LanguageServerWorkspaceFileOperation =
     };
 
 export interface LanguageServerInlayHintLabelPart {
+  command?: LanguageServerCodeActionCommand | null;
   label: string;
   location?: LanguageServerLocation | null;
   tooltip?: string | null;
