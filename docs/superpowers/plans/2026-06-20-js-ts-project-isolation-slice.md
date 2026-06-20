@@ -2516,7 +2516,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Document Sync Error Same-Root Session Guard
 
-- Pending commit and push.
+- Committed and pushed as `7d494f60 Guard JS TS document sync errors by session`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
