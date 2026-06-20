@@ -84,7 +84,7 @@ use lsp_features::{
     TextDocumentSignatureHelp, WorkspaceFileChange, WorkspaceFileRename,
 };
 use lsp_session::{
-    AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
+    language_server_status_payload, AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
     JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRuntimeStatus,
     PhpLanguageServerRegistry, RefreshSink, StatusSink, WorkspaceEditSink,
 };
@@ -1409,16 +1409,22 @@ fn set_workspace_trust(
 fn get_php_language_server_status(
     root_path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
-) -> Result<LanguageServerRuntimeStatus, String> {
-    Ok(registry.status(&root_path))
+) -> Result<Value, String> {
+    Ok(language_server_status_payload(
+        &root_path,
+        registry.status(&root_path),
+    ))
 }
 
 #[tauri::command]
 fn get_javascript_typescript_language_server_status(
     root_path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<LanguageServerRuntimeStatus, String> {
-    Ok(registry.status(&root_path))
+) -> Result<Value, String> {
+    Ok(language_server_status_payload(
+        &root_path,
+        registry.status(&root_path),
+    ))
 }
 
 #[tauri::command]
@@ -1480,7 +1486,7 @@ fn start_php_language_server(
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
     registry: State<'_, PhpLanguageServerRegistry>,
-) -> Result<LanguageServerRuntimeStatus, String> {
+) -> Result<Value, String> {
     let plan = build_php_language_server_plan(&root_path, &trust)?;
 
     if !matches!(plan.status, LanguageServerPlanStatus::Ready) {
@@ -1507,7 +1513,7 @@ fn start_php_language_server(
     let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
     let refresh_sink: Arc<dyn RefreshSink> = event_sink;
 
-    registry.start_with_event_sinks(
+    let status = registry.start_with_event_sinks(
         &root_path,
         &command,
         &initialize_request,
@@ -1516,7 +1522,9 @@ fn start_php_language_server(
         diagnostics_sink,
         workspace_edit_sink,
         refresh_sink,
-    )
+    )?;
+
+    Ok(language_server_status_payload(&root_path, status))
 }
 
 #[tauri::command]
@@ -1530,7 +1538,7 @@ fn start_javascript_typescript_language_server(
     app: AppHandle,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
-) -> Result<LanguageServerRuntimeStatus, String> {
+) -> Result<Value, String> {
     let plan = build_javascript_typescript_language_server_plan(
         &root_path,
         type_script_version_preference.as_deref(),
@@ -1575,15 +1583,18 @@ fn start_javascript_typescript_language_server(
         let _ = watch_registry.start(&root_path, watch_app);
     }
 
-    Ok(status)
+    Ok(language_server_status_payload(&root_path, status))
 }
 
 #[tauri::command]
 fn stop_php_language_server(
     root_path: String,
     registry: State<'_, PhpLanguageServerRegistry>,
-) -> Result<LanguageServerRuntimeStatus, String> {
-    Ok(registry.stop(&root_path))
+) -> Result<Value, String> {
+    Ok(language_server_status_payload(
+        &root_path,
+        registry.stop(&root_path),
+    ))
 }
 
 #[tauri::command]
@@ -1591,9 +1602,12 @@ fn stop_javascript_typescript_language_server(
     root_path: String,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
-) -> Result<LanguageServerRuntimeStatus, String> {
+) -> Result<Value, String> {
     watch_registry.stop(&root_path);
-    Ok(registry.stop(&root_path))
+    Ok(language_server_status_payload(
+        &root_path,
+        registry.stop(&root_path),
+    ))
 }
 
 #[tauri::command]

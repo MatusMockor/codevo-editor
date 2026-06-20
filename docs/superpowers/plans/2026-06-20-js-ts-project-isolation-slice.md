@@ -3528,3 +3528,56 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: LSP Event Sink Explicit Root Contract
 
 - Committed and pushed as `374dd226 Require roots for LSP event sink payloads`.
+
+## Next Slice: LSP Direct Status Response Root Contract
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `51e800f6 Record LSP event sink root contract commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens root-scoped backend command responses after the event-sink root contract.
+- Main agent implemented directly because the change is limited to Tauri command adapters and the existing LSP status payload helper.
+
+### Why This Slice
+
+- Direct frontend gateway calls already root missing backend statuses defensively.
+- The Rust `get/start/stop` Tauri commands are root-scoped and know the requested workspace root, but still returned rootless `LanguageServerRuntimeStatus` enum values.
+- Returning rooted status JSON from the backend makes the direct command contract match status events and reduces reliance on frontend fallback behavior.
+
+### Implementation Choice
+
+- Export the rooted status payload helper from `lsp_session.rs` for crate-local command adapters.
+- Return rooted JSON payloads from PHP and JS/TS `getStatus`, `start`, and `stop` commands.
+- Keep `stop_all_*` responses rootless because they are intentionally not scoped to one workspace root.
+
+### Acceptance Criteria
+
+- PHP direct `getStatus`, `start`, and `stop` command responses include `rootPath`.
+- JS/TS direct `getStatus`, `start`, and `stop` command responses include `rootPath`.
+- Existing status event payloads stay rooted.
+- Focused Rust payload tests, Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: LSP Direct Status Response Root Contract
+
+- Reused the rooted status payload helper for root-scoped Tauri command responses.
+- Changed direct PHP and JS/TS LSP `get/start/stop` command adapters to return rooted JSON.
+- Preserved unrooted `stop_all_*` responses for non-root-scoped shutdown commands.
+
+### Verification: LSP Direct Status Response Root Contract
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml event_payloads_include_workspace_root --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `rustfmt --check src-tauri/src/lsp_session.rs`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: LSP Direct Status Response Root Contract
+
+- Pending commit.

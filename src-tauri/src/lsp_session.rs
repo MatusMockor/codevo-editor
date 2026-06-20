@@ -217,7 +217,10 @@ impl WorkspaceEditSink for AppHandleEventSink {
     }
 }
 
-fn status_event_payload(root_path: &str, status: LanguageServerRuntimeStatus) -> Value {
+pub(crate) fn language_server_status_payload(
+    root_path: &str,
+    status: LanguageServerRuntimeStatus,
+) -> Value {
     let mut value = serde_json::to_value(status).unwrap_or(Value::Null);
 
     if let Value::Object(object) = &mut value {
@@ -225,6 +228,10 @@ fn status_event_payload(root_path: &str, status: LanguageServerRuntimeStatus) ->
     }
 
     value
+}
+
+fn status_event_payload(root_path: &str, status: LanguageServerRuntimeStatus) -> Value {
+    language_server_status_payload(root_path, status)
 }
 
 fn diagnostics_event_payload(root_path: &str, event: LanguageServerDiagnosticEvent) -> Value {
@@ -3169,6 +3176,17 @@ mod tests {
 
     #[test]
     fn event_payloads_include_workspace_root() {
+        assert_eq!(
+            super::language_server_status_payload(
+                "/tmp/workspace-a",
+                LanguageServerRuntimeStatus::Starting { session_id: 8 },
+            ),
+            json!({
+                "kind": "starting",
+                "rootPath": "/tmp/workspace-a",
+                "sessionId": 8,
+            }),
+        );
         assert_eq!(
             super::status_event_payload("/tmp/workspace-a", LanguageServerRuntimeStatus::Stopped),
             json!({
