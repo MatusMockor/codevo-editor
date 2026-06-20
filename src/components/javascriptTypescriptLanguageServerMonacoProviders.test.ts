@@ -41,6 +41,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerDocumentSymbolProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(4);
@@ -66,7 +67,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(81);
+    expect(monaco.dispose).toHaveBeenCalledTimes(85);
   });
 
   it("requests TypeScript language-server completions for TSX documents", async () => {
@@ -376,6 +377,90 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
     expect(gateway.documentLinks).toHaveBeenCalledWith(
       "/project",
+      "/project/src/user.ts",
+    );
+  });
+
+  it("maps nested TypeScript document symbols through the language server", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      documentSymbols: [
+        {
+          children: [
+            {
+              children: [],
+              containerName: "UserController",
+              detail: "loadUser(): User",
+              kind: 6,
+              name: "loadUser",
+              range: range(2, 2, 4, 3),
+              selectionRange: range(2, 8, 2, 16),
+            },
+          ],
+          containerName: null,
+          detail: "class UserController",
+          kind: 5,
+          name: "UserController",
+          range: range(0, 0, 8, 1),
+          selectionRange: range(0, 6, 0, 20),
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+
+    const symbolProvider = (
+      monaco.languages.registerDocumentSymbolProvider as any
+    ).mock.calls[0][1];
+    const symbols = await symbolProvider.provideDocumentSymbols(textModel());
+
+    expect(gateway.documentSymbols).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+    );
+    expect(symbols).toEqual([
+      expect.objectContaining({
+        children: [
+          expect.objectContaining({
+            children: [],
+            containerName: "UserController",
+            detail: "loadUser(): User",
+            kind: monaco.languages.SymbolKind.Method,
+            name: "loadUser",
+            range: expect.objectContaining({
+              endColumn: 4,
+              endLineNumber: 5,
+              startColumn: 3,
+              startLineNumber: 3,
+            }),
+            selectionRange: expect.objectContaining({
+              endColumn: 17,
+              endLineNumber: 3,
+              startColumn: 9,
+              startLineNumber: 3,
+            }),
+            tags: [],
+          }),
+        ],
+        detail: "class UserController",
+        kind: monaco.languages.SymbolKind.Class,
+        name: "UserController",
+        range: expect.objectContaining({
+          endColumn: 2,
+          endLineNumber: 9,
+          startColumn: 1,
+          startLineNumber: 1,
+        }),
+        selectionRange: expect.objectContaining({
+          endColumn: 21,
+          endLineNumber: 1,
+          startColumn: 7,
+          startLineNumber: 1,
+        }),
+        tags: [],
+      }),
+    ]);
+    expect(context.flushPendingDocumentChange).toHaveBeenCalledWith(
       "/project/src/user.ts",
     );
   });
@@ -2925,6 +3010,34 @@ function createMonaco() {
         Parameter: 2,
         Type: 1,
       },
+      SymbolKind: {
+        Array: 17,
+        Boolean: 16,
+        Class: 4,
+        Constant: 13,
+        Constructor: 8,
+        Enum: 9,
+        EnumMember: 21,
+        Event: 23,
+        Field: 7,
+        File: 0,
+        Function: 11,
+        Interface: 10,
+        Key: 19,
+        Method: 5,
+        Module: 1,
+        Namespace: 2,
+        Null: 20,
+        Number: 15,
+        Object: 18,
+        Operator: 24,
+        Package: 3,
+        Property: 6,
+        String: 14,
+        Struct: 22,
+        TypeParameter: 25,
+        Variable: 12,
+      },
       registerCodeActionProvider: vi.fn(() => disposable()),
       registerCodeLensProvider: vi.fn(() => disposable()),
       registerCompletionItemProvider: vi.fn(() => disposable()),
@@ -2932,6 +3045,7 @@ function createMonaco() {
       registerDocumentHighlightProvider: vi.fn(() => disposable()),
       registerDocumentFormattingEditProvider: vi.fn(() => disposable()),
       registerDocumentRangeFormattingEditProvider: vi.fn(() => disposable()),
+      registerDocumentSymbolProvider: vi.fn(() => disposable()),
       registerFoldingRangeProvider: vi.fn(() => disposable()),
       registerHoverProvider: vi.fn(() => disposable()),
       registerImplementationProvider: vi.fn(() => disposable()),

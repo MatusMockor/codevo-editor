@@ -123,7 +123,7 @@ impl crate::file_watcher::WorkspaceWatchEventSink for JavaScriptTypeScriptWorksp
     fn error(&self, _error: WorkspaceWatchError) {}
 
     fn publish(&self, batch: WorkspaceWatchEventBatch) {
-        let changes = watched_file_changes_for_events(&batch.events);
+        let changes = watched_file_changes_for_events(&self.root_path, &batch.events);
 
         if changes.is_empty() {
             return;
@@ -149,31 +149,37 @@ impl crate::file_watcher::WorkspaceWatchEventSink for JavaScriptTypeScriptWorksp
     }
 }
 
-fn watched_file_changes_for_events(events: &[WorkspaceWatchEvent]) -> Vec<WorkspaceFileChange> {
+fn watched_file_changes_for_events(
+    root_path: &str,
+    events: &[WorkspaceWatchEvent],
+) -> Vec<WorkspaceFileChange> {
     events
         .iter()
-        .flat_map(watched_file_changes_for_event)
+        .flat_map(|event| watched_file_changes_for_event(root_path, event))
         .collect()
 }
 
-fn watched_file_changes_for_event(event: &WorkspaceWatchEvent) -> Vec<WorkspaceFileChange> {
+fn watched_file_changes_for_event(
+    root_path: &str,
+    event: &WorkspaceWatchEvent,
+) -> Vec<WorkspaceFileChange> {
     if event.file_kind == Some(WorkspaceWatchFileKind::Directory) {
         return Vec::new();
     }
 
     match event.kind {
         WorkspaceWatchEventKind::Created => {
-            watched_change(&event.path, WorkspaceFileChangeType::Created)
+            watched_change(root_path, &event.path, WorkspaceFileChangeType::Created)
                 .into_iter()
                 .collect()
         }
         WorkspaceWatchEventKind::Modified => {
-            watched_change(&event.path, WorkspaceFileChangeType::Changed)
+            watched_change(root_path, &event.path, WorkspaceFileChangeType::Changed)
                 .into_iter()
                 .collect()
         }
         WorkspaceWatchEventKind::Deleted => {
-            watched_change(&event.path, WorkspaceFileChangeType::Deleted)
+            watched_change(root_path, &event.path, WorkspaceFileChangeType::Deleted)
                 .into_iter()
                 .collect()
         }
@@ -182,12 +188,14 @@ fn watched_file_changes_for_event(event: &WorkspaceWatchEvent) -> Vec<WorkspaceF
 
             if let Some(previous_path) = event.previous_path.as_deref() {
                 changes.extend(watched_change(
+                    root_path,
                     previous_path,
                     WorkspaceFileChangeType::Deleted,
                 ));
             }
 
             changes.extend(watched_change(
+                root_path,
                 &event.path,
                 WorkspaceFileChangeType::Created,
             ));
@@ -197,11 +205,28 @@ fn watched_file_changes_for_event(event: &WorkspaceWatchEvent) -> Vec<WorkspaceF
     }
 }
 
-fn watched_change(path: &str, change_type: WorkspaceFileChangeType) -> Option<WorkspaceFileChange> {
-    is_javascript_typescript_watched_path(path).then(|| WorkspaceFileChange {
-        path: path.to_string(),
-        change_type,
-    })
+fn watched_change(
+    root_path: &str,
+    path: &str,
+    change_type: WorkspaceFileChangeType,
+) -> Option<WorkspaceFileChange> {
+    (is_path_inside_root(root_path, path) && is_javascript_typescript_watched_path(path)).then(
+        || WorkspaceFileChange {
+            path: path.to_string(),
+            change_type,
+        },
+    )
+}
+
+fn is_path_inside_root(root_path: &str, path: &str) -> bool {
+    let root = normalize_path(Path::new(root_path));
+    let path = normalize_path(Path::new(path));
+
+    if root.as_os_str().is_empty() {
+        return false;
+    }
+
+    path.starts_with(root)
 }
 
 fn is_javascript_typescript_watched_path(path: &str) -> bool {
@@ -328,14 +353,19 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    const WORKSPACE_ROOT: &str = "/workspace";
+
     #[test]
     fn maps_javascript_typescript_file_events_to_lsp_changes() {
-        let changes = watched_file_changes_for_events(&[
-            event(WorkspaceWatchEventKind::Created, "/workspace/src/User.ts"),
-            event(WorkspaceWatchEventKind::Modified, "/workspace/src/App.tsx"),
-            event(WorkspaceWatchEventKind::Deleted, "/workspace/src/old.js"),
-            event(WorkspaceWatchEventKind::Modified, "/workspace/package.json"),
-        ]);
+        let changes = watched_file_changes_for_events(
+            WORKSPACE_ROOT,
+            &[
+                event(WorkspaceWatchEventKind::Created, "/workspace/src/User.ts"),
+                event(WorkspaceWatchEventKind::Modified, "/workspace/src/App.tsx"),
+                event(WorkspaceWatchEventKind::Deleted, "/workspace/src/old.js"),
+                event(WorkspaceWatchEventKind::Modified, "/workspace/package.json"),
+            ],
+        );
 
         assert_eq!(changes.len(), 4);
         assert_eq!(changes[0].path, "/workspace/src/User.ts");
@@ -356,7 +386,7 @@ mod tests {
         );
         rename.previous_path = Some("/workspace/src/User.ts".to_string());
 
-        let changes = watched_file_changes_for_events(&[rename]);
+        let changes = watched_file_changes_for_events(WORKSPACE_ROOT, &[rename]);
 
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[0].path, "/workspace/src/User.ts");
@@ -370,16 +400,74 @@ mod tests {
         let mut directory = event(WorkspaceWatchEventKind::Created, "/workspace/src");
         directory.file_kind = Some(WorkspaceWatchFileKind::Directory);
 
-        let changes = watched_file_changes_for_events(&[
-            directory,
-            event(WorkspaceWatchEventKind::Modified, "/workspace/src/User.php"),
-            event(
-                WorkspaceWatchEventKind::RescanRequired,
-                "/workspace/src/User.ts",
-            ),
-        ]);
+        let changes = watched_file_changes_for_events(
+            WORKSPACE_ROOT,
+            &[
+                directory,
+                event(WorkspaceWatchEventKind::Modified, "/workspace/src/User.php"),
+                event(
+                    WorkspaceWatchEventKind::RescanRequired,
+                    "/workspace/src/User.ts",
+                ),
+            ],
+        );
 
         assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn ignores_javascript_typescript_events_outside_workspace_root() {
+        let changes = watched_file_changes_for_events(
+            "/workspace/root",
+            &[
+                event(
+                    WorkspaceWatchEventKind::Created,
+                    "/workspace/root2/src/User.ts",
+                ),
+                event(
+                    WorkspaceWatchEventKind::Modified,
+                    "/workspace/other/src/App.tsx",
+                ),
+                event(
+                    WorkspaceWatchEventKind::Deleted,
+                    "/workspace/root/../root2/src/old.js",
+                ),
+            ],
+        );
+
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn maps_cross_root_renames_to_only_the_in_root_side() {
+        let mut outside_to_inside = event(
+            WorkspaceWatchEventKind::Renamed,
+            "/workspace/root/src/NewUser.ts",
+        );
+        outside_to_inside.previous_path = Some("/workspace/root2/src/OldUser.ts".to_string());
+
+        let mut inside_to_outside = event(
+            WorkspaceWatchEventKind::Renamed,
+            "/workspace/root2/src/MovedUser.ts",
+        );
+        inside_to_outside.previous_path = Some("/workspace/root/src/User.ts".to_string());
+
+        let mut outside_to_outside = event(
+            WorkspaceWatchEventKind::Renamed,
+            "/workspace/root2/src/NewOutside.ts",
+        );
+        outside_to_outside.previous_path = Some("/workspace/other/src/OldOutside.ts".to_string());
+
+        let changes = watched_file_changes_for_events(
+            "/workspace/root",
+            &[outside_to_inside, inside_to_outside, outside_to_outside],
+        );
+
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].path, "/workspace/root/src/NewUser.ts");
+        assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Created);
+        assert_eq!(changes[1].path, "/workspace/root/src/User.ts");
+        assert_eq!(changes[1].change_type, WorkspaceFileChangeType::Deleted);
     }
 
     #[test]
@@ -537,7 +625,7 @@ mod tests {
             previous_path: None,
             previous_relative_path: None,
             relative_path: path.trim_start_matches("/workspace/").to_string(),
-            root_path: "/workspace".to_string(),
+            root_path: WORKSPACE_ROOT.to_string(),
         }
     }
 
