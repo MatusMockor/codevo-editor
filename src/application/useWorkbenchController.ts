@@ -1338,14 +1338,19 @@ export function useWorkbenchController(
   );
 
   const handleLanguageServerRuntimeStatus = useCallback(
-    (status: LanguageServerRuntimeStatus) => {
-      const statusRootPath = status.rootPath ?? currentWorkspaceRootRef.current;
-      const rootedStatus = statusRootPath
-        ? cachePhpLanguageServerRuntimeStatus(statusRootPath, status)
-        : status;
+    (status: LanguageServerRuntimeStatus, fallbackRootPath?: string) => {
+      const statusRootPath = status.rootPath ?? fallbackRootPath;
+
+      if (!statusRootPath) {
+        return;
+      }
+
+      const rootedStatus = cachePhpLanguageServerRuntimeStatus(
+        statusRootPath,
+        status,
+      );
 
       if (
-        statusRootPath &&
         currentWorkspaceRootRef.current &&
         !workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)
       ) {
@@ -1353,7 +1358,7 @@ export function useWorkbenchController(
       }
 
       setLanguageServerRuntimeStatus(rootedStatus);
-      setLanguageServerRuntimeStatusRoot(statusRootPath ?? null);
+      setLanguageServerRuntimeStatusRoot(statusRootPath);
       const crash = languageServerCrashMessage(status);
 
       if (status.kind !== "running") {
@@ -11337,7 +11342,7 @@ export function useWorkbenchController(
 
     try {
       const status = await languageServerRuntimeGateway.start(workspaceRoot);
-      handleLanguageServerRuntimeStatus(status);
+      handleLanguageServerRuntimeStatus(status, workspaceRoot);
     } catch (error) {
       reportLanguageServerError(error);
     }
@@ -12204,7 +12209,7 @@ export function useWorkbenchController(
     languageServerRuntimeGateway
       .start(workspaceRoot)
       .then((status) => {
-        handleLanguageServerRuntimeStatus(status);
+        handleLanguageServerRuntimeStatus(status, workspaceRoot);
 
         if (status.kind === "running") {
           delete phpLanguageServerAutostartAttemptsByRootRef.current[

@@ -3134,3 +3134,61 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: PHP Runtime Status Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `af84b1e7 Record PHP diagnostics root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens application-side PHP runtime status routing.
+- Main agent implemented directly because the status handler, PHP autostart fallback, and preview regression all live in the workbench controller surface.
+
+### Why This Slice
+
+- PHP runtime subscription status still fell back to the active workspace root when `status.rootPath` was missing.
+- A malformed rootless PHP `running` event could therefore activate document sync and LSP-backed UI for whichever project tab was active.
+- Direct `start(workspaceRoot)` results still need a safe fallback because the caller already knows the root it requested.
+
+### Implementation Choice
+
+- Require PHP runtime status updates to have `status.rootPath` unless a direct caller supplies a known fallback root.
+- Pass `workspaceRoot` as the fallback for manual PHP start and PHP IDE autostart.
+- Leave subscription events without a fallback so rootless status payloads are ignored.
+- Add a preview regression proving rootless PHP runtime status does not open PHP documents into LSP, while rooted status still does.
+
+### Acceptance Criteria
+
+- Rootless PHP runtime status events do not replace the rooted stopped status for the active workspace.
+- Rootless PHP runtime status events do not trigger PHP document sync.
+- Rooted PHP runtime status events still activate runtime state and document sync.
+- PHP IDE autostart still records a running status when `start(workspaceRoot)` resolves.
+- Focused preview tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: PHP Runtime Status Root Guard
+
+- Tightened PHP runtime status handling to reject rootless subscription events.
+- Preserved manual start and autostart behavior with explicit request-root fallback.
+- Added regression coverage for rootless PHP runtime status suppression and rooted status activation.
+
+### Verification: PHP Runtime Status Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP runtime status events without an explicit workspace root|auto-starts PHP IDE services while initial runtime status is still unknown"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Runtime Status Root Guard
+
+- Pending commit.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
