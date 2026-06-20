@@ -18,6 +18,7 @@ impl ComposerMetadataDetector for LocalComposerMetadataDetector {
 
         let manifest = read_json_file(&manifest_path, "composer.json")?;
         let mut packages = Vec::new();
+        append_manifest_packages(&manifest, &mut packages);
         append_lock_packages(root, &mut packages)?;
         append_installed_packages(root, &mut packages)?;
 
@@ -108,6 +109,45 @@ fn append_installed_packages(
 
     append_package_array(installed.get("packages"), false, packages);
     Ok(())
+}
+
+fn append_manifest_packages(manifest: &Value, packages: &mut Vec<ComposerPackageMetadata>) {
+    append_manifest_package_map(manifest.get("require"), false, packages);
+    append_manifest_package_map(manifest.get("require-dev"), true, packages);
+}
+
+fn append_manifest_package_map(
+    value: Option<&Value>,
+    dev: bool,
+    packages: &mut Vec<ComposerPackageMetadata>,
+) {
+    let package_map = match value.and_then(Value::as_object) {
+        Some(package_map) => package_map,
+        None => return,
+    };
+
+    for (name, constraint) in package_map {
+        if !is_composer_dependency_package_name(name) {
+            continue;
+        }
+
+        merge_package(
+            packages,
+            ComposerPackageMetadata {
+                classmap_roots: Vec::new(),
+                dev,
+                install_path: None,
+                name: name.to_string(),
+                package_type: None,
+                psr4_roots: Vec::new(),
+                version: constraint.as_str().map(ToString::to_string),
+            },
+        );
+    }
+}
+
+fn is_composer_dependency_package_name(name: &str) -> bool {
+    name.contains('/') && !name.starts_with("ext-") && !name.starts_with("lib-")
 }
 
 fn append_package_array(
@@ -362,6 +402,39 @@ mod tests {
             vec!["fixtures/", "stubs/"]
         );
         assert!(metadata.classmap_roots[1].dev);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn includes_root_manifest_require_packages_without_lock_or_vendor_metadata() {
+        let root = temp_workspace("composer-root-packages");
+        fs::write(
+            root.join("composer.json"),
+            r#"{
+              "name": "custom/api",
+              "require": {
+                "php": "^8.3",
+                "ext-json": "*",
+                "laravel/framework": "^11.0"
+              },
+              "require-dev": {
+                "phpunit/phpunit": "^11.0"
+              }
+            }"#,
+        )
+        .expect("write composer");
+
+        let metadata = LocalComposerMetadataDetector
+            .detect(&root)
+            .expect("detect composer")
+            .expect("metadata");
+
+        assert_eq!(metadata.packages.len(), 2);
+        assert_eq!(metadata.packages[0].name, "laravel/framework");
+        assert_eq!(metadata.packages[0].version.as_deref(), Some("^11.0"));
+        assert!(!metadata.packages[0].dev);
+        assert_eq!(metadata.packages[1].name, "phpunit/phpunit");
+        assert!(metadata.packages[1].dev);
         fs::remove_dir_all(root).expect("cleanup");
     }
 

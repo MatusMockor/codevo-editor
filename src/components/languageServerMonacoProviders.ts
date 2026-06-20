@@ -106,7 +106,7 @@ export function registerLanguageServerMonacoProviders(
     provideHover: (model, position) => provideHover(monaco, context, model, position),
   });
   const completion = monaco.languages.registerCompletionItemProvider("php", {
-    triggerCharacters: ["$", ">", "'", "\""],
+    triggerCharacters: ["$", ">", ":", "'", "\""],
     provideCompletionItems: (model, position) =>
       provideCompletionItems(monaco, context, model, position),
   });

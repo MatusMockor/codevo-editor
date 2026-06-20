@@ -24,6 +24,13 @@ describe("registerLanguageServerMonacoProviders", () => {
 
     expect(registered.hoverLanguage).toBe("php");
     expect(registered.completionLanguage).toBe("php");
+    expect(registered.completionProvider.triggerCharacters).toEqual([
+      "$",
+      ">",
+      ":",
+      "'",
+      "\"",
+    ]);
     expect(registered.signatureLanguage).toBe("php");
     expect(registered.codeActionLanguage).toBe("php");
     expect(registered.selectionRangeLanguage).toBe("php");
