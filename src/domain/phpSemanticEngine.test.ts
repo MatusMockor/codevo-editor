@@ -550,6 +550,9 @@ class AlbumController
         $summedAlbum = Album::query()
             ->withSum('tracks', 'duration')
             ->first();
+        $lazySummedAlbum = Album::query()
+            ->first()
+            ->loadSum('tracks', 'duration');
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
 
@@ -557,6 +560,7 @@ class AlbumController
         $morphAlbum->tit
         $withWhereHasAlbum->tit
         $summedAlbum->tit
+        $lazySummedAlbum->tit
         $query->whe
         $latest->tit
     }
@@ -592,6 +596,14 @@ class AlbumController
         source,
         positionAfter(source, "$summedAlbum->tit"),
         "summedAlbum",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$lazySummedAlbum->tit"),
+        "lazySummedAlbum",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");

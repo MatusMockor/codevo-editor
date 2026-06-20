@@ -1681,3 +1681,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `91bfb93a Preserve Laravel aggregate builder chains`.
+
+## Slice: Laravel Lazy Aggregate Model Fluents - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d66744fb Record Laravel aggregate builder commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Laravel lazy aggregate loaders such as `loadSum` and `loadMorphAvg` as model-preserving fluents.
+
+### Implementation Choice
+
+- Add model-side aggregate eager loading methods from Laravel 13 API docs to the existing Eloquent model fluent set.
+- Keep builder aggregate helpers separate from model lazy loaders.
+- Add semantic-chain coverage for `first()->loadSum(...)`.
+
+### Acceptance Criteria
+
+- `loadAggregate`, `loadAvg`, `loadExists`, `loadMax`, `loadMin`, and `loadSum` preserve the model type.
+- `loadMorphAggregate`, `loadMorphAvg`, `loadMorphCount`, `loadMorphMax`, `loadMorphMin`, and `loadMorphSum` preserve the model type.
+- `Album::query()->first()->loadSum(...)` infers `Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added Laravel model-side aggregate eager loading methods to model fluent recognition.
+- Let model receiver calls return the model type before falling back to static builder-style inference.
+- Added return-type coverage for lazy aggregate loaders and semantic-chain coverage for `first()->loadSum(...)`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -240,9 +240,21 @@ const laravelEloquentModelBuilderFactoryMethods = new Set([
 
 const laravelEloquentModelFluentMethods = new Set([
   "load",
+  "loadaggregate",
+  "loadavg",
   "loadcount",
+  "loadexists",
+  "loadmax",
+  "loadmin",
   "loadmissing",
   "loadmorph",
+  "loadmorphaggregate",
+  "loadmorphavg",
+  "loadmorphcount",
+  "loadmorphmax",
+  "loadmorphmin",
+  "loadmorphsum",
+  "loadsum",
 ]);
 
 const laravelDatabaseQueryBuilderFactoryMethods = new Set(["table"]);
@@ -2161,6 +2173,10 @@ function phpLaravelStaticModelCallReturnType(
   modelType: string,
   methodName: string,
 ): string | null {
+  if (isLaravelEloquentModelFluentMethod(methodName)) {
+    return modelType;
+  }
+
   return phpLaravelEloquentBuilderCallReturnType(source, modelType, methodName);
 }
 

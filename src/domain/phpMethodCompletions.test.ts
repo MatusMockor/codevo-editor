@@ -160,6 +160,29 @@ class Album extends Model
         null,
       ),
     ).toBe("App\\Models\\Album");
+    for (const methodName of [
+      "loadAggregate",
+      "loadAvg",
+      "loadExists",
+      "loadMax",
+      "loadMin",
+      "loadMorphAggregate",
+      "loadMorphAvg",
+      "loadMorphCount",
+      "loadMorphMax",
+      "loadMorphMin",
+      "loadMorphSum",
+      "loadSum",
+    ]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "App\\Models\\Album",
+          null,
+        ),
+      ).toBe("App\\Models\\Album");
+    }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
