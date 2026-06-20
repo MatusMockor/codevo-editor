@@ -1266,7 +1266,7 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `11d39a56 Expand Laravel singleton route names`.
 - Included files:
   - `src/domain/phpLaravelRoutes.ts`
   - `src/domain/phpLaravelRoutes.test.ts`
