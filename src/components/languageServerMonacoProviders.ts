@@ -1451,7 +1451,8 @@ function canUseRuntimeFeatureForRoot(
 
   return (
     status?.kind === "running" &&
-    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath)) &&
+    Boolean(status.rootPath) &&
+    workspaceRootKeysEqual(status.rootPath, rootPath) &&
     canUseLanguageServerFeature(status.capabilities, feature)
   );
 }
@@ -1464,7 +1465,8 @@ function isRuntimeActiveForRoot(
 
   return (
     status?.kind === "running" &&
-    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath))
+    Boolean(status.rootPath) &&
+    workspaceRootKeysEqual(status.rootPath, rootPath)
   );
 }
 

@@ -100,6 +100,26 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.hover).not.toHaveBeenCalled();
   });
 
+  it("does not request hover when the PHP runtime status has no explicit workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      hover: { contents: "**Rootless**" },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      runtimeStatus: rootlessRunningStatus(),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.hoverProvider.provideHover(model(), position()),
+    ).resolves.toBeNull();
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.hover).not.toHaveBeenCalled();
+  });
+
   it("flushes pending changes and maps hover responses", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -2088,8 +2108,15 @@ function runningStatus(
       ...capabilities,
     },
     kind: "running",
+    rootPath: "/project",
     sessionId: 1,
   };
+}
+
+function rootlessRunningStatus(): LanguageServerRuntimeStatus {
+  const { rootPath: _rootPath, ...status } = runningStatus();
+
+  return status;
 }
 
 function createDeferred<T>(): {

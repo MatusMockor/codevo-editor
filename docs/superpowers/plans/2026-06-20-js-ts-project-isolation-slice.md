@@ -2966,3 +2966,60 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: PHP Provider Runtime Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `4e394b1e Record JS TS application workspace edit root contract commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice moves the same explicit-root isolation rule into the generic PHP Monaco provider.
+- Main agent implemented directly because the affected provider guard and tests are in one file pair.
+
+### Why This Slice
+
+- JS/TS provider runtime checks now require explicit root ownership.
+- The PHP Monaco provider still treated a rootless running runtime status as valid for the active workspace root.
+- A delayed or malformed rootless PHP runtime status should not enable hover, completion, code actions, selection ranges, or command-backed edits for whatever project tab is active.
+
+### Implementation Choice
+
+- Require `status.rootPath` to match the requested root before enabling PHP Monaco provider requests.
+- Require `status.rootPath` to match before executing PHP LSP command-backed edits.
+- Update provider test fixtures to model rooted PHP runtime status by default.
+- Add a regression proving rootless PHP runtime status does not request hover or flush pending changes.
+
+### Acceptance Criteria
+
+- Rooted matching PHP runtime statuses still enable provider requests.
+- Rootless PHP runtime statuses do not enable PHP LSP hover.
+- Existing stale-root PHP provider guards keep passing.
+- Focused PHP provider tests, full PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: PHP Provider Runtime Root Guard
+
+- Tightened PHP Monaco provider runtime checks to require explicit root ownership.
+- Updated provider fixtures to return rooted PHP runtime status by default.
+- Added regression coverage for rootless PHP runtime hover suppression.
+
+### Verification: PHP Provider Runtime Root Guard
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "explicit workspace root|another workspace root|flushes pending changes and maps hover responses|maps completion responses|requests LSP code actions|resolves LSP-backed code actions"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Provider Runtime Root Guard
+
+- Commit pending.
+- Included files:
+  - `src/components/languageServerMonacoProviders.ts`
+  - `src/components/languageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
