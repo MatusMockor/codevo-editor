@@ -326,6 +326,7 @@ const laravelEloquentBuilderFluentMethods = new Set([
 const laravelEloquentBuilderTerminalModelMethods = new Set([
   "create",
   "createorfirst",
+  "createorrestore",
   "createquietly",
   "find",
   "findor",
@@ -344,6 +345,7 @@ const laravelEloquentBuilderTerminalModelMethods = new Set([
   "incrementorcreate",
   "make",
   "newmodelinstance",
+  "restoreorcreate",
   "sole",
   "updateorcreate",
 ]);

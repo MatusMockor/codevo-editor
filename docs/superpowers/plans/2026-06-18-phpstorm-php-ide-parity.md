@@ -2415,3 +2415,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `dd674e43 Recognize Laravel relation query helpers`.
+
+## Slice: Laravel Soft Delete Create Restore Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `7ff9564b Record Laravel relation helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Infer Laravel SoftDeletingScope builder extensions `createOrRestore(...)` and `restoreOrCreate(...)` as current-model terminal methods.
+
+### Implementation Choice
+
+- Add the two soft-delete create/restore extensions to the Eloquent terminal-model method set.
+- Reuse existing `TModel` return formatting for builder receivers.
+- Add semantic assignment coverage for both helpers.
+
+### Acceptance Criteria
+
+- `createOrRestore` and `restoreOrCreate` are recognized as terminal model methods.
+- Direct return inference for these helpers resolves to the current model type.
+- Assignment chains infer `App\Models\Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added `createOrRestore` and `restoreOrCreate` to Eloquent terminal-model method recognition.
+- Added direct return-type coverage proving both helpers resolve to the current model type.
+- Added semantic assignment coverage proving both helpers infer `App\Models\Album`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "common Eloquent finder|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending.

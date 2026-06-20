@@ -584,6 +584,10 @@ class AlbumController
             ->findSole(1);
         $fromCreateOrFirst = Album::query()
             ->createOrFirst(['title' => 'Blue']);
+        $fromCreateOrRestore = Album::query()
+            ->createOrRestore(['title' => 'Blue']);
+        $fromRestoreOrCreate = Album::query()
+            ->restoreOrCreate(['title' => 'Blue']);
         $fromIncrementOrCreate = Album::query()
             ->incrementOrCreate(['title' => 'Blue']);
         $fromGetModel = Album::query()
@@ -647,6 +651,8 @@ class AlbumController
         $foundOrNew->tit
         $foundSole->tit
         $fromCreateOrFirst->tit
+        $fromCreateOrRestore->tit
+        $fromRestoreOrCreate->tit
         $fromIncrementOrCreate->tit
         $fromGetModel->tit
         $fromNewModelInstance->tit
@@ -786,6 +792,22 @@ class AlbumController
         source,
         positionAfter(source, "$fromCreateOrFirst->tit"),
         "fromCreateOrFirst",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromCreateOrRestore->tit"),
+        "fromCreateOrRestore",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromRestoreOrCreate->tit"),
+        "fromRestoreOrCreate",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");

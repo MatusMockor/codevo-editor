@@ -51,6 +51,9 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentBuilderTerminalModelMethod("createOrFirst")).toBe(
       true,
     );
+    expect(isLaravelEloquentBuilderTerminalModelMethod("createOrRestore")).toBe(
+      true,
+    );
     expect(isLaravelEloquentBuilderTerminalModelMethod("createQuietly")).toBe(
       true,
     );
@@ -73,7 +76,11 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentBuilderTerminalModelMethod("newModelInstance")).toBe(
       true,
     );
+    expect(isLaravelEloquentBuilderTerminalModelMethod("restoreOrCreate")).toBe(
+      true,
+    );
     expect(isLaravelEloquentBuilderMethodName("createOrFirst")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("createOrRestore")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("createQuietly")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("findOr")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("findOrNew")).toBe(true);
@@ -86,6 +93,7 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentBuilderMethodName("incrementOrCreate")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("make")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("newModelInstance")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("restoreOrCreate")).toBe(true);
   });
 
   it("treats local scopes as model-specific Laravel magic, not global builder methods", () => {
@@ -339,6 +347,7 @@ class Album extends Model
     ).toBe("App\\Models\\Album");
     for (const methodName of [
       "createOrFirst",
+      "createOrRestore",
       "createQuietly",
       "findSole",
       "forceCreate",
@@ -347,6 +356,7 @@ class Album extends Model
       "incrementOrCreate",
       "make",
       "newModelInstance",
+      "restoreOrCreate",
     ]) {
       expect(
         phpLaravelMethodCallReturnTypeFromSource(
