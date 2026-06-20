@@ -2521,3 +2521,57 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Diagnostics Explicit Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `4f95f2ef Record JS TS document sync error guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is a narrow frontend diagnostic routing guard.
+- Main agent implemented directly because the affected code and regression live in one workbench controller test surface.
+
+### Why This Slice
+
+- Backend JS/TS diagnostics normally include `rootPath`, but the frontend type still allowed missing-root diagnostic events.
+- A missing-root JS/TS diagnostic was previously assigned to the active workspace root, which is too permissive for multi-project isolation.
+- JS/TS diagnostics should only route when the event explicitly names the workspace root that produced them.
+
+### Implementation Choice
+
+- Require `event.rootPath` before applying JS/TS diagnostics.
+- Keep PHP diagnostic fallback behavior unchanged.
+- Add regression coverage for a same-session JS/TS diagnostic event without `rootPath`.
+
+### Acceptance Criteria
+
+- JS/TS diagnostics with explicit matching root still show in Problems.
+- JS/TS diagnostics without explicit root are ignored.
+- Focused diagnostics tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Diagnostics Explicit Root Guard
+
+- Tightened JS/TS diagnostic routing to reject missing-root events.
+- Added regression coverage proving rootless JS/TS diagnostics do not create Problems notices or diagnostics state.
+
+### Verification: JS/TS Diagnostics Explicit Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "diagnostics without an explicit workspace root|shows JavaScript and TypeScript diagnostics"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Diagnostics Explicit Root Guard
+
+- Pending commit and push.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

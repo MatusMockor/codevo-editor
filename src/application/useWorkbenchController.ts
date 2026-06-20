@@ -1075,12 +1075,11 @@ export function useWorkbenchController(
 
   const applyJavaScriptTypeScriptLanguageServerDiagnostics = useCallback(
     (event: LanguageServerDiagnosticEvent) => {
-      const diagnosticsRootPath =
-        event.rootPath ?? currentWorkspaceRootRef.current;
-
-      if (!diagnosticsRootPath) {
+      if (!event.rootPath) {
         return;
       }
+
+      const diagnosticsRootPath = event.rootPath;
 
       if (
         !workspaceRootKeysEqual(diagnosticsRootPath, currentWorkspaceRootRef.current) &&

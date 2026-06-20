@@ -1446,6 +1446,68 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("ignores JavaScript and TypeScript diagnostics without an explicit workspace root", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 52,
+    };
+    const path = "/workspace/src/App.ts";
+    const uri = fileUriFromPath(path);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "const count: string = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 6,
+            endCharacter: 11,
+            endLine: 0,
+            line: 0,
+            message: "Rootless diagnostic should be ignored.",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        sessionId: 52,
+        uri,
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "tsserver" &&
+          notice.message.includes("Rootless diagnostic"),
+      ),
+    ).toBe(false);
+  });
+
   it("clears only the closed project's JavaScript and TypeScript runtime state", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)
