@@ -84,3 +84,26 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 - Backend explorer found a follow-up gap in `src-tauri/src/lsp_session.rs`: post-handshake reader messages buffered during shutdown can still be processed after `stop_requested` is set.
 - Next slice should add a stop guard before pending-response routing, `workspace/applyEdit`, and diagnostics emission, with tests for buffered diagnostics and workspace edits after stop.
+
+## Completed Slice: Stopped-Session Reader Guard
+
+- Added a post-handshake `stop_requested` guard in `src-tauri/src/lsp_session.rs` before processing pending responses, server requests, or diagnostics.
+- Extended the fake LSP process killer to write a final framed message during termination, which simulates a buffered server message arriving after the session stop flag has been set.
+- Added regression tests proving stopped sessions ignore:
+  - buffered `textDocument/publishDiagnostics`
+  - buffered `workspace/applyEdit`
+
+## Verification: Stopped-Session Reader Guard
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml stop_ignores_buffered --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_session --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+## Commit Status: Stopped-Session Reader Guard
+
+- Pending commit/push for:
+  - `src-tauri/src/lsp_session.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

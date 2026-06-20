@@ -1396,6 +1396,10 @@ fn spawn_reader(
                     };
 
                     if handshake_done {
+                        if stop_requested.load(Ordering::SeqCst) {
+                            return;
+                        }
+
                         if route_pending_response(&pending_requests, &value) {
                             continue;
                         }
@@ -2941,6 +2945,50 @@ mod tests {
     }
 
     #[test]
+    fn stop_ignores_buffered_diagnostics_from_stale_session() {
+        let root = test_workspace_root("stop-buffered-diagnostics-root");
+        let source_path = root.join("src/User.ts");
+        fs::create_dir_all(source_path.parent().expect("source parent")).expect("source parent");
+        let spawner = FakeSpawner::new(ready_script(), true).with_terminate_script(framed(json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/publishDiagnostics",
+            "params": {
+                "uri": file_uri(&source_path),
+                "diagnostics": [
+                    {
+                        "range": {
+                            "start": { "line": 1, "character": 2 },
+                            "end": { "line": 1, "character": 3 }
+                        },
+                        "severity": 2,
+                        "source": "tsserver",
+                        "message": "Stale issue"
+                    }
+                ]
+            }
+        })));
+        let (sink, status_rx, diagnostics_sink, diagnostics_rx) = ChannelSink::with_diagnostics();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start(
+                &command_for_root(path_string(&root).as_str()),
+                &initialize_request(),
+                &spawner,
+                sink,
+                diagnostics_sink,
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        assert_eq!(supervisor.stop(), LanguageServerRuntimeStatus::Stopped);
+        assert!(diagnostics_rx
+            .recv_timeout(Duration::from_millis(150))
+            .is_err());
+        fs::remove_dir_all(root).expect("cleanup root");
+    }
+
+    #[test]
     fn workspace_apply_edit_requests_emit_workspace_edit_and_acknowledge_success() {
         let root = test_workspace_root("apply-edit-success");
         let changed_uri = file_uri(&root.join("User.ts"));
@@ -3061,6 +3109,58 @@ mod tests {
         assert!(workspace_edit_rx
             .recv_timeout(Duration::from_millis(200))
             .is_err());
+    }
+
+    #[test]
+    fn stop_ignores_buffered_workspace_apply_edit_from_stale_session() {
+        let root = test_workspace_root("stop-buffered-apply-edit-root");
+        let changed_uri = file_uri(&root.join("User.ts"));
+        let spawner = FakeSpawner::new(ready_script(), true).with_terminate_script(framed(json!({
+            "jsonrpc": "2.0",
+            "id": 91,
+            "method": "workspace/applyEdit",
+            "params": {
+                "label": "Stale organize imports",
+                "edit": {
+                    "changes": {
+                        changed_uri.clone(): [
+                            {
+                                "range": {
+                                    "start": { "line": 0, "character": 0 },
+                                    "end": { "line": 0, "character": 4 }
+                                },
+                                "newText": "type"
+                            }
+                        ]
+                    }
+                }
+            }
+        })));
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, status_rx) = ChannelSink::new();
+        let (workspace_edit_sink, workspace_edit_rx) = ChannelWorkspaceEditSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start_with_workspace_edit_sink(
+                &command_for_root(path_string(&root).as_str()),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+                workspace_edit_sink,
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        assert_eq!(supervisor.stop(), LanguageServerRuntimeStatus::Stopped);
+        assert!(workspace_edit_rx
+            .recv_timeout(Duration::from_millis(150))
+            .is_err());
+        assert!(!captured_messages(&capture)
+            .iter()
+            .any(|message| message.get("id").and_then(Value::as_u64) == Some(91)));
+        fs::remove_dir_all(root).expect("cleanup root");
     }
 
     #[test]
@@ -3808,6 +3908,7 @@ mod tests {
         stdin_capture: Arc<Mutex<Vec<u8>>>,
         stdin: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
         script: Vec<u8>,
+        terminate_script: Vec<u8>,
         held_writer: Arc<Mutex<Option<PipeWriter>>>,
         keep_open: bool,
     }
@@ -3819,6 +3920,7 @@ mod tests {
                 stdin_capture: Arc::new(Mutex::new(Vec::new())),
                 stdin: Arc::new(Mutex::new(None)),
                 script,
+                terminate_script: Vec::new(),
                 held_writer: Arc::new(Mutex::new(None)),
                 keep_open,
             }
@@ -3830,6 +3932,7 @@ mod tests {
                 stdin_capture: Arc::new(Mutex::new(Vec::new())),
                 stdin: Arc::new(Mutex::new(Some(stdin))),
                 script,
+                terminate_script: Vec::new(),
                 held_writer: Arc::new(Mutex::new(None)),
                 keep_open,
             }
@@ -3837,6 +3940,11 @@ mod tests {
 
         fn with_stderr(mut self, stderr_script: Vec<u8>) -> Self {
             self.stderr_script = stderr_script;
+            self
+        }
+
+        fn with_terminate_script(mut self, terminate_script: Vec<u8>) -> Self {
+            self.terminate_script = terminate_script;
             self
         }
     }
@@ -3869,6 +3977,7 @@ mod tests {
                 stdout: Box::new(reader),
                 killer: Box::new(FakeKiller {
                     held: Arc::clone(&self.held_writer),
+                    terminate_script: self.terminate_script.clone(),
                 }),
             })
         }
@@ -3876,11 +3985,17 @@ mod tests {
 
     struct FakeKiller {
         held: Arc<Mutex<Option<PipeWriter>>>,
+        terminate_script: Vec<u8>,
     }
 
     impl ProcessKiller for FakeKiller {
         fn terminate(&mut self) -> io::Result<()> {
-            *self.held.lock().expect("held writer lock") = None;
+            let mut writer = self.held.lock().expect("held writer lock").take();
+
+            if let Some(writer) = writer.as_mut() {
+                writer.write_all(&self.terminate_script)?;
+            }
+
             Ok(())
         }
     }
