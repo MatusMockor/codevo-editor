@@ -1362,4 +1362,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `c3f51dae Expand Laravel resource array route names`.
