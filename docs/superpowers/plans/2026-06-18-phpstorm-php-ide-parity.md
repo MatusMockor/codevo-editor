@@ -2744,4 +2744,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- PENDING.
+- Committed as `2b2745ea Cover Laravel relation method collection chains`.
