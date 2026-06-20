@@ -929,3 +929,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: PHPDoc Interface Method Completions - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3385a41 Update PHP parity plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Offer instance method completions from PHPDoc `@method` declarations inherited through implemented interfaces.
+
+### Implementation Choice
+
+- Reuse `phpSuperTypeReferences` in `collectPhpMethodsForClass`, matching direct method navigation, property navigation, and diagnostics.
+- Keep trait/mixin traversal and template substitution behavior unchanged.
+
+### Acceptance Criteria
+
+- `$comment->pub` suggests `publish()` when `Comment implements PublishesComments` and the interface declares `@method void publish()`.
+- Parent-class method completions still work through the same traversal.
+- Existing PHPDoc mixin completions still pass.
+- Relevant preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Method completion collection now walks parsed supertypes, so implemented interfaces can contribute PHPDoc `@method` members.
+- Trait and mixin collection remains unchanged, and inherited template substitution continues through the same helper.
+- Added preview coverage for interface-level PHPDoc method completions on inferred receivers.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "interface PHPDoc method completions|PHPDoc mixin members"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
