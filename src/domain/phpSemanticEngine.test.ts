@@ -590,6 +590,12 @@ class AlbumController
         $afterCursorPaginateTerminal = Album::query()
             ->cursorPaginate(15)
             ->first();
+        $afterGetModelsTerminal = Album::query()
+            ->getModels()
+            ->first();
+        $afterToBaseTerminal = Album::query()
+            ->toBase()
+            ->first();
 
         $album->tit
         $morphAlbum->tit
@@ -610,6 +616,8 @@ class AlbumController
         $afterIncrementTerminal->tit
         $afterChunkByIdTerminal->tit
         $afterCursorPaginateTerminal->tit
+        $afterGetModelsTerminal->tit
+        $afterToBaseTerminal->tit
     }
 }
 `;
@@ -763,6 +771,22 @@ class AlbumController
         source,
         positionAfter(source, "$afterCursorPaginateTerminal->tit"),
         "afterCursorPaginateTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterGetModelsTerminal->tit"),
+        "afterGetModelsTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterToBaseTerminal->tit"),
+        "afterToBaseTerminal",
         laravelOptions,
       ),
     ).toBeNull();
