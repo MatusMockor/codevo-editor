@@ -2212,7 +2212,8 @@ function runningRuntimeStatusForRoot(
 
   if (
     status?.kind !== "running" ||
-    (status.rootPath && !workspaceRootKeysEqual(status.rootPath, rootPath))
+    !status.rootPath ||
+    !workspaceRootKeysEqual(status.rootPath, rootPath)
   ) {
     return null;
   }
@@ -2232,8 +2233,9 @@ function semanticTokensLegendForActiveRuntime(
   const rootPath = context.getWorkspaceRoot?.() ?? null;
 
   if (
-    status.rootPath &&
-    (!rootPath || !workspaceRootKeysEqual(status.rootPath, rootPath))
+    !status.rootPath ||
+    !rootPath ||
+    !workspaceRootKeysEqual(status.rootPath, rootPath)
   ) {
     return JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND;
   }
@@ -3247,7 +3249,8 @@ function isWorkspaceEditEventActive(
   return (
     status?.kind === "running" &&
     status.sessionId === event.sessionId &&
-    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, workspaceRoot))
+    Boolean(status.rootPath) &&
+    workspaceRootKeysEqual(status.rootPath, workspaceRoot)
   );
 }
 
@@ -3296,7 +3299,8 @@ function isRefreshEventActive(
   return (
     status?.kind === "running" &&
     status.sessionId === event.sessionId &&
-    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, workspaceRoot))
+    Boolean(status.rootPath) &&
+    workspaceRootKeysEqual(status.rootPath, workspaceRoot)
   );
 }
 

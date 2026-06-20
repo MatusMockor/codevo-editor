@@ -159,6 +159,47 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("does not request TypeScript completions from a rootless runtime status", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: null,
+            documentation: null,
+            insertText: "useUser",
+            kind: 3,
+            label: "useUser",
+          },
+        ],
+      },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        rootPath: undefined,
+      }),
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[3][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+      {
+        triggerCharacter: ".",
+        triggerKind: 1,
+      },
+    );
+
+    expect(result.suggestions).toEqual([]);
+    expect(gateway.completion).not.toHaveBeenCalled();
+  });
+
   it("drops in-flight TypeScript completions after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";
@@ -3976,6 +4017,7 @@ function runningStatus(
       ...capabilities,
     },
     kind: "running",
+    rootPath: "/project",
     sessionId: 1,
   };
 }

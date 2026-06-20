@@ -2685,3 +2685,61 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/domain/languageServerFeatures.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Provider Runtime Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d12bd230 Record JS TS provider event contract commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is provider-local and follows the explicit-root event work.
+- Main agent implemented directly because the change is limited to provider helper logic and its test helper.
+
+### Why This Slice
+
+- JS/TS provider event routing now requires rooted events, but provider request helpers still treated a rootless running runtime status as usable for the active root.
+- That fallback could let Monaco providers send requests through a runtime status that was not explicitly tied to the active workspace.
+- Provider request, semantic-token legend, workspace-edit, and refresh event helpers should only trust a running status whose `rootPath` matches the active workspace root.
+
+### Implementation Choice
+
+- Require `status.rootPath` in provider runtime lookup.
+- Require `status.rootPath` for semantic-token legend selection.
+- Require `status.rootPath` in workspace-edit and refresh event session checks.
+- Update provider test helper to return rooted runtime statuses by default.
+- Add a regression proving completions are not requested from a rootless runtime status.
+
+### Acceptance Criteria
+
+- Rooted matching runtime statuses still enable provider requests.
+- Rootless runtime statuses do not enable TypeScript completions.
+- Provider event routing still requires matching root and session.
+- Full provider tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Provider Runtime Root Guard
+
+- Tightened provider runtime status checks to require explicit root ownership.
+- Updated provider fixtures to model rooted TypeScript runtime status by default.
+- Added regression coverage for rootless runtime completion suppression.
+
+### Verification: JS/TS Provider Runtime Root Guard
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "rootless runtime status|requests TypeScript language-server completions"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Provider Runtime Root Guard
+
+- Pending commit and push.
+- Included files:
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
