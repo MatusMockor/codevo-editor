@@ -546,6 +546,46 @@ fn filter_lsp_workspace_symbols_to_workspace(
         .collect())
 }
 
+fn filter_lsp_call_hierarchy_items_to_workspace(
+    root_path: &str,
+    items: Vec<LanguageServerCallHierarchyItem>,
+) -> Result<Vec<LanguageServerCallHierarchyItem>, String> {
+    Ok(items
+        .into_iter()
+        .filter(|item| is_lsp_file_uri_in_workspace(root_path, &item.uri))
+        .collect())
+}
+
+fn filter_lsp_incoming_calls_to_workspace(
+    root_path: &str,
+    calls: Vec<LanguageServerIncomingCall>,
+) -> Result<Vec<LanguageServerIncomingCall>, String> {
+    Ok(calls
+        .into_iter()
+        .filter(|call| is_lsp_file_uri_in_workspace(root_path, &call.from.uri))
+        .collect())
+}
+
+fn filter_lsp_outgoing_calls_to_workspace(
+    root_path: &str,
+    calls: Vec<LanguageServerOutgoingCall>,
+) -> Result<Vec<LanguageServerOutgoingCall>, String> {
+    Ok(calls
+        .into_iter()
+        .filter(|call| is_lsp_file_uri_in_workspace(root_path, &call.to.uri))
+        .collect())
+}
+
+fn filter_lsp_type_hierarchy_items_to_workspace(
+    root_path: &str,
+    items: Vec<LanguageServerTypeHierarchyItem>,
+) -> Result<Vec<LanguageServerTypeHierarchyItem>, String> {
+    Ok(items
+        .into_iter()
+        .filter(|item| is_lsp_file_uri_in_workspace(root_path, &item.uri))
+        .collect())
+}
+
 fn filter_optional_lsp_workspace_edit_to_workspace(
     root_path: &str,
     edit: Option<LanguageServerWorkspaceEdit>,
@@ -2010,7 +2050,10 @@ fn javascript_typescript_text_document_prepare_call_hierarchy(
         return Ok(Vec::new());
     };
 
-    parse_call_hierarchy_items_result(&result)
+    filter_lsp_call_hierarchy_items_to_workspace(
+        &root_path,
+        parse_call_hierarchy_items_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2044,7 +2087,7 @@ fn javascript_typescript_text_document_incoming_calls(
         return Ok(Vec::new());
     };
 
-    parse_incoming_calls_result(&result)
+    filter_lsp_incoming_calls_to_workspace(&root_path, parse_incoming_calls_result(&result)?)
 }
 
 #[tauri::command]
@@ -2078,7 +2121,7 @@ fn javascript_typescript_text_document_outgoing_calls(
         return Ok(Vec::new());
     };
 
-    parse_outgoing_calls_result(&result)
+    filter_lsp_outgoing_calls_to_workspace(&root_path, parse_outgoing_calls_result(&result)?)
 }
 
 #[tauri::command]
@@ -2112,7 +2155,10 @@ fn javascript_typescript_text_document_prepare_type_hierarchy(
         return Ok(Vec::new());
     };
 
-    parse_type_hierarchy_items_result(&result)
+    filter_lsp_type_hierarchy_items_to_workspace(
+        &root_path,
+        parse_type_hierarchy_items_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2146,7 +2192,10 @@ fn javascript_typescript_text_document_type_hierarchy_supertypes(
         return Ok(Vec::new());
     };
 
-    parse_type_hierarchy_items_result(&result)
+    filter_lsp_type_hierarchy_items_to_workspace(
+        &root_path,
+        parse_type_hierarchy_items_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2180,7 +2229,10 @@ fn javascript_typescript_text_document_type_hierarchy_subtypes(
         return Ok(Vec::new());
     };
 
-    parse_type_hierarchy_items_result(&result)
+    filter_lsp_type_hierarchy_items_to_workspace(
+        &root_path,
+        parse_type_hierarchy_items_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -3080,7 +3132,9 @@ mod tests {
         ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
         ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
         ensure_lsp_workspace_edit_paths_in_workspace, ensure_path_in_workspace,
-        filter_lsp_locations_to_workspace, filter_lsp_workspace_edit_to_workspace,
+        filter_lsp_call_hierarchy_items_to_workspace, filter_lsp_incoming_calls_to_workspace,
+        filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
+        filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
         filter_lsp_workspace_symbols_to_workspace, normalize_path, path_from_file_uri,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
@@ -3088,11 +3142,12 @@ mod tests {
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeLens,
-        LanguageServerCompletionItem, LanguageServerDocumentLink, LanguageServerLocation,
-        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
-        LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
-        LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
-        LanguageServerWorkspaceSymbol, TextDocumentPosition,
+        LanguageServerCompletionItem, LanguageServerDocumentLink, LanguageServerIncomingCall,
+        LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerPosition,
+        LanguageServerRange, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
+        LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
+        LanguageServerWorkspaceFileOperationOptions, LanguageServerWorkspaceSymbol,
+        TextDocumentPosition,
     };
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
@@ -3308,6 +3363,68 @@ mod tests {
         .expect("filtered workspace symbols");
 
         assert_eq!(filtered, vec![workspace_symbol("App", &inside_uri)]);
+    }
+
+    #[test]
+    fn lsp_response_call_hierarchy_filter_drops_outside_file_uris() {
+        let root = temp_workspace("response-call-hierarchy-root");
+        let sibling = sibling_prefix_workspace(&root, "sibling");
+        let outside = temp_workspace("response-call-hierarchy-outside");
+        let inside_uri = file_uri(&root.join("src/App.ts"));
+        let sibling_uri = file_uri(&sibling.join("src/App.ts"));
+        let outside_uri = file_uri(&outside.join("src/App.ts"));
+
+        let items = filter_lsp_call_hierarchy_items_to_workspace(
+            &path_string(&root),
+            vec![
+                call_hierarchy_item(&inside_uri),
+                call_hierarchy_item(&sibling_uri),
+                call_hierarchy_item(&outside_uri),
+            ],
+        )
+        .expect("filtered call hierarchy items");
+        let incoming = filter_lsp_incoming_calls_to_workspace(
+            &path_string(&root),
+            vec![
+                incoming_call(&inside_uri),
+                incoming_call(&sibling_uri),
+                incoming_call(&outside_uri),
+            ],
+        )
+        .expect("filtered incoming calls");
+        let outgoing = filter_lsp_outgoing_calls_to_workspace(
+            &path_string(&root),
+            vec![
+                outgoing_call(&inside_uri),
+                outgoing_call(&sibling_uri),
+                outgoing_call(&outside_uri),
+            ],
+        )
+        .expect("filtered outgoing calls");
+
+        assert_eq!(items, vec![call_hierarchy_item(&inside_uri)]);
+        assert_eq!(incoming, vec![incoming_call(&inside_uri)]);
+        assert_eq!(outgoing, vec![outgoing_call(&inside_uri)]);
+    }
+
+    #[test]
+    fn lsp_response_type_hierarchy_filter_drops_outside_file_uris() {
+        let root = temp_workspace("response-type-hierarchy-root");
+        let sibling = sibling_prefix_workspace(&root, "sibling");
+        let outside = temp_workspace("response-type-hierarchy-outside");
+        let inside_uri = file_uri(&root.join("src/App.ts"));
+
+        let filtered = filter_lsp_type_hierarchy_items_to_workspace(
+            &path_string(&root),
+            vec![
+                type_hierarchy_item(&inside_uri),
+                type_hierarchy_item(&file_uri(&sibling.join("src/App.ts"))),
+                type_hierarchy_item(&file_uri(&outside.join("src/App.ts"))),
+            ],
+        )
+        .expect("filtered type hierarchy items");
+
+        assert_eq!(filtered, vec![type_hierarchy_item(&inside_uri)]);
     }
 
     #[test]
@@ -3743,6 +3860,20 @@ mod tests {
             kind: 12,
             location: Some(location(uri)),
             name: name.to_string(),
+        }
+    }
+
+    fn incoming_call(uri: &str) -> LanguageServerIncomingCall {
+        LanguageServerIncomingCall {
+            from: call_hierarchy_item(uri),
+            from_ranges: vec![lsp_range()],
+        }
+    }
+
+    fn outgoing_call(uri: &str) -> LanguageServerOutgoingCall {
+        LanguageServerOutgoingCall {
+            to: call_hierarchy_item(uri),
+            from_ranges: vec![lsp_range()],
         }
     }
 

@@ -968,6 +968,76 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveLength(1);
   });
 
+  it("does not sync JavaScript and TypeScript documents with a runtime from another project tab", async () => {
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const runningWorkspaceAStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 201,
+    };
+    const runningWorkspaceBStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 202,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => ({ kind: "stopped" as const })),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningWorkspaceBStatus),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const workspaceBPath = "/workspace-b/src/App.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+      ),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishStatus?.(runningWorkspaceAStatus);
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(workspaceBPath, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).not.toHaveBeenCalledWith(
+      "/workspace-b",
+      expect.objectContaining({ path: workspaceBPath }),
+    );
+
+    act(() => {
+      publishStatus?.(runningWorkspaceBStatus);
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).toHaveBeenCalledWith(
+      "/workspace-b",
+      expect.objectContaining({ path: workspaceBPath }),
+    );
+  });
+
   it("shows JavaScript and TypeScript diagnostics in Problems and opens the diagnostic range", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)

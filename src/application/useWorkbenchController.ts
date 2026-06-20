@@ -1832,7 +1832,14 @@ export function useWorkbenchController(
     async (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
 
-      if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+      if (
+        !rootPath ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
         return;
       }
 
@@ -1876,6 +1883,7 @@ export function useWorkbenchController(
       enqueueJavaScriptTypeScriptDocumentSync,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       nextJavaScriptTypeScriptDocumentVersion,
       reportErrorForActiveWorkspaceRoot,
     ],
@@ -1990,7 +1998,14 @@ export function useWorkbenchController(
     (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
 
-      if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+      if (
+        !rootPath ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
         return;
       }
 
@@ -2035,6 +2050,17 @@ export function useWorkbenchController(
             return;
           }
 
+          if (
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+            !isRunningLanguageServerForWorkspace(
+              javaScriptTypeScriptLanguageServerRuntimeStatusRef.current,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+              rootPath,
+            )
+          ) {
+            return;
+          }
+
           void enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
             javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
               rootPath,
@@ -2054,6 +2080,7 @@ export function useWorkbenchController(
       enqueueJavaScriptTypeScriptDocumentSync,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       nextJavaScriptTypeScriptDocumentVersion,
       reportErrorForActiveWorkspaceRoot,
     ],
@@ -2123,6 +2150,17 @@ export function useWorkbenchController(
         return;
       }
 
+      if (
+        !rootPath ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
+        return;
+      }
+
       if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)) {
         const document =
           activeDocumentRef.current?.path === path
@@ -2169,6 +2207,8 @@ export function useWorkbenchController(
       clearJavaScriptTypeScriptDocumentChangeTimer,
       enqueueJavaScriptTypeScriptDocumentSync,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       syncOpenJavaScriptTypeScriptDocument,
     ],
   );
@@ -2229,6 +2269,17 @@ export function useWorkbenchController(
         return;
       }
 
+      if (
+        !rootPath ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
+        return;
+      }
+
       try {
         await flushPendingJavaScriptTypeScriptDocumentChange(document.path);
         await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
@@ -2252,6 +2303,8 @@ export function useWorkbenchController(
       enqueueJavaScriptTypeScriptDocumentSync,
       flushPendingJavaScriptTypeScriptDocumentChange,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       reportErrorForActiveWorkspaceRoot,
     ],
   );
@@ -3905,6 +3958,16 @@ export function useWorkbenchController(
         return;
       }
 
+      if (
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        )
+      ) {
+        return;
+      }
+
       const requestedRoot = workspaceRoot;
       setLoadingJavaScriptTypeScriptFileOutlinePaths((current) =>
         new Set(current).add(path),
@@ -3952,7 +4015,13 @@ export function useWorkbenchController(
         });
       }
     },
-    [javaScriptTypeScriptLanguageServerFeaturesGateway, reportError, workspaceRoot],
+    [
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      reportError,
+      workspaceRoot,
+    ],
   );
 
   const loadInheritedPhpFileOutline = useCallback(
@@ -4128,7 +4197,14 @@ export function useWorkbenchController(
     setTypeHierarchyView(null);
 
     if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
-      if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+      if (
+        !workspaceRoot ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        )
+      ) {
         setMessage("JavaScript/TypeScript service is starting. Try structure again in a moment.");
         return;
       }
@@ -4181,6 +4257,7 @@ export function useWorkbenchController(
     fileStructureScope,
     javaScriptTypeScriptFileOutlinesByPath,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     loadJavaScriptTypeScriptFileOutline,
     loadPhpFileOutline,
     loadingJavaScriptTypeScriptFileOutlinePaths,
@@ -4398,7 +4475,11 @@ export function useWorkbenchController(
     async (oldPath: string, newPath: string) => {
       if (
         !workspaceRoot ||
-        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running" ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) ||
         !canUseLanguageServerFeature(
           javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
           "willRenameFiles",
@@ -4458,6 +4539,7 @@ export function useWorkbenchController(
       applyWorkspaceEditToOpenDocuments,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       reportError,
       workspaceFiles,
       workspaceRoot,
@@ -4468,7 +4550,11 @@ export function useWorkbenchController(
     async (oldPath: string, newPath: string) => {
       if (
         !workspaceRoot ||
-        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running" ||
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) ||
         !canUseLanguageServerFeature(
           javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
           "didRenameFiles",
@@ -4500,6 +4586,7 @@ export function useWorkbenchController(
     [
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       reportError,
       workspaceRoot,
     ],
@@ -4509,7 +4596,11 @@ export function useWorkbenchController(
     async (changes: LanguageServerWorkspaceFileChange[]) => {
       if (
         !workspaceRoot ||
-        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running"
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        )
       ) {
         return;
       }
@@ -4540,6 +4631,7 @@ export function useWorkbenchController(
     [
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       reportError,
       workspaceRoot,
     ],
@@ -9682,20 +9774,12 @@ export function useWorkbenchController(
       return false;
     }
 
-    if (runtimeStatus?.kind !== "running") {
-      return false;
-    }
-
     if (
-      runtimeStatus.rootPath &&
-      !workspaceRootKeysEqual(runtimeStatus.rootPath, requestedRoot)
-    ) {
-      return false;
-    }
-
-    if (
-      runtimeStatusRoot &&
-      !workspaceRootKeysEqual(runtimeStatusRoot, requestedRoot)
+      !isRunningLanguageServerForWorkspace(
+        runtimeStatus,
+        runtimeStatusRoot,
+        requestedRoot,
+      )
     ) {
       return false;
     }
@@ -10111,7 +10195,13 @@ export function useWorkbenchController(
       return;
     }
 
-    if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+    if (
+      !isRunningLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       setMessage(
         "JavaScript/TypeScript service is starting. Try call hierarchy again in a moment.",
       );
@@ -10198,6 +10288,7 @@ export function useWorkbenchController(
     flushPendingJavaScriptTypeScriptDocumentChange,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     reportError,
     workspaceRoot,
   ]);
@@ -10216,7 +10307,13 @@ export function useWorkbenchController(
       return;
     }
 
-    if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+    if (
+      !isRunningLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       setMessage(
         "JavaScript/TypeScript service is starting. Try type hierarchy again in a moment.",
       );
@@ -10305,6 +10402,7 @@ export function useWorkbenchController(
     flushPendingJavaScriptTypeScriptDocumentChange,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     reportError,
     workspaceRoot,
   ]);
@@ -10600,7 +10698,11 @@ export function useWorkbenchController(
           shouldNotifyJavaScriptTypeScriptConfiguration &&
           !shouldRestartJavaScriptTypeScriptRuntime &&
           resolvedWorkspaceSettings.javaScriptTypeScriptService === "auto" &&
-          isLanguageServerActive(javaScriptTypeScriptLanguageServerRuntimeStatus)
+          isRunningLanguageServerForWorkspace(
+            javaScriptTypeScriptLanguageServerRuntimeStatus,
+            javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+            workspaceRoot,
+          )
         ) {
           await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration(
             workspaceRoot,
@@ -10618,10 +10720,16 @@ export function useWorkbenchController(
           );
 
           if (
-            isLanguageServerActive(
+            isLanguageServerActiveForWorkspace(
               javaScriptTypeScriptLanguageServerRuntimeStatus,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+              workspaceRoot,
             ) ||
-            javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "crashed"
+            isCrashedLanguageServerForWorkspace(
+              javaScriptTypeScriptLanguageServerRuntimeStatus,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+              workspaceRoot,
+            )
           ) {
             await stopJavaScriptTypeScriptLanguageServerRuntime(workspaceRoot);
           }
@@ -10662,6 +10770,7 @@ export function useWorkbenchController(
       persistWorkspaceSettings,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       refreshLanguageServerPlan,
       refreshJavaScriptTypeScriptLanguageServerPlan,
       reportError,
@@ -11161,7 +11270,11 @@ export function useWorkbenchController(
 
         if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
           return (
-            javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+            isRunningLanguageServerForWorkspace(
+              javaScriptTypeScriptLanguageServerRuntimeStatus,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+              workspaceRoot,
+            ) &&
             canUseLanguageServerFeature(
               javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
               "implementation",
@@ -11201,7 +11314,11 @@ export function useWorkbenchController(
           activeDocument &&
             isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
         ) &&
-        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+        isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) &&
         canUseLanguageServerFeature(
           javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
           "callHierarchy",
@@ -11219,7 +11336,11 @@ export function useWorkbenchController(
           activeDocument &&
             isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
         ) &&
-        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+        isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) &&
         canUseLanguageServerFeature(
           javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
           "typeHierarchy",
@@ -11433,6 +11554,7 @@ export function useWorkbenchController(
     indexProgress,
     intelligenceMode,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     languageServerPlan,
     languageServerRuntimeStatus,
     selectedGitChange,
@@ -11567,8 +11689,8 @@ export function useWorkbenchController(
     }
 
     if (
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot &&
-      !workspaceRootKeysEqual(
+      isLanguageServerActiveForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
         javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
         workspaceRoot,
       )
@@ -11576,11 +11698,13 @@ export function useWorkbenchController(
       return;
     }
 
-    if (isLanguageServerActive(javaScriptTypeScriptLanguageServerRuntimeStatus)) {
-      return;
-    }
-
-    if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "crashed") {
+    if (
+      isCrashedLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       return;
     }
 
@@ -11728,8 +11852,16 @@ export function useWorkbenchController(
     autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
 
     if (
-      isLanguageServerActive(javaScriptTypeScriptLanguageServerRuntimeStatus) ||
-      javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "crashed"
+      isLanguageServerActiveForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      ) ||
+      isCrashedLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
     ) {
       void stopJavaScriptTypeScriptLanguageServerRuntime(workspaceRoot);
       return;
@@ -11740,6 +11872,7 @@ export function useWorkbenchController(
   }, [
     clearJavaScriptTypeScriptDiagnosticsForRoot,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     resetJavaScriptTypeScriptLanguageServerDocuments,
     stopJavaScriptTypeScriptLanguageServerRuntime,
     workspaceSettings.javaScriptTypeScriptService,
@@ -12113,7 +12246,11 @@ export function useWorkbenchController(
 
   const canSearchClassOpenSymbols = Boolean(
     shouldIndexWorkspace(intelligenceMode) ||
-      (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+      (isRunningLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      ) &&
         canUseLanguageServerFeature(
           javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
           "workspaceSymbol",
@@ -12135,7 +12272,11 @@ export function useWorkbenchController(
       }
 
       if (
-        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+        isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          requestedRoot,
+        ) &&
         canUseLanguageServerFeature(
           javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
           "workspaceSymbol",
@@ -12184,6 +12325,7 @@ export function useWorkbenchController(
       intelligenceMode,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       projectSymbolSearch,
       reportError,
       workspaceRoot,
@@ -12580,7 +12722,13 @@ export function useWorkbenchController(
   ]);
 
   useEffect(() => {
-    if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+    if (
+      !isRunningLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       resetJavaScriptTypeScriptLanguageServerDocuments();
       return;
     }
@@ -12603,9 +12751,11 @@ export function useWorkbenchController(
     activeDocument,
     documents,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     openDocumentPaths,
     resetJavaScriptTypeScriptLanguageServerDocuments,
     syncOpenJavaScriptTypeScriptDocument,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -12636,7 +12786,13 @@ export function useWorkbenchController(
   ]);
 
   useEffect(() => {
-    if (javaScriptTypeScriptLanguageServerRuntimeStatus?.kind !== "running") {
+    if (
+      !isRunningLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       return;
     }
 
@@ -12658,8 +12814,10 @@ export function useWorkbenchController(
     activeDocument,
     documents,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     openDocumentPaths,
     scheduleJavaScriptTypeScriptDocumentChange,
+    workspaceRoot,
   ]);
 
   useEffect(
@@ -14157,4 +14315,52 @@ function workspaceTabIndexForPath(
   path: string | null | undefined,
 ): number {
   return tabs.findIndex((tabPath) => workspaceRootKeysEqual(tabPath, path));
+}
+
+function isRunningLanguageServerForWorkspace(
+  status: LanguageServerRuntimeStatus | null,
+  statusRoot: string | null,
+  workspaceRoot: string | null | undefined,
+): status is Extract<LanguageServerRuntimeStatus, { kind: "running" }> {
+  if (!isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot)) {
+    return false;
+  }
+
+  return status.kind === "running";
+}
+
+function isLanguageServerActiveForWorkspace(
+  status: LanguageServerRuntimeStatus | null,
+  statusRoot: string | null,
+  workspaceRoot: string | null | undefined,
+): boolean {
+  return (
+    isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot) &&
+    isLanguageServerActive(status)
+  );
+}
+
+function isCrashedLanguageServerForWorkspace(
+  status: LanguageServerRuntimeStatus | null,
+  statusRoot: string | null,
+  workspaceRoot: string | null | undefined,
+): boolean {
+  return (
+    isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot) &&
+    status.kind === "crashed"
+  );
+}
+
+function isLanguageServerStatusForWorkspace(
+  status: LanguageServerRuntimeStatus | null,
+  statusRoot: string | null,
+  workspaceRoot: string | null | undefined,
+): status is LanguageServerRuntimeStatus {
+  if (!workspaceRoot || !status) {
+    return false;
+  }
+
+  const rootedStatus = status.rootPath ?? statusRoot;
+
+  return !rootedStatus || workspaceRootKeysEqual(rootedStatus, workspaceRoot);
 }
