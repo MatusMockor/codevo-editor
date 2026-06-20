@@ -1294,40 +1294,13 @@ export function phpLaravelRelationPropertyCompletionsFromSource(
     const declaredReturnType = normalizeReturnType(match[4] ?? null);
     const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
     const returnType = bestPhpReturnType(declaredReturnType, documentedReturnType);
-    const relationTargetType =
-      phpLaravelRelationTypeForDeclaringClass(
-        phpLaravelRelationModelTypeFromReturnType(returnType),
-        declaringClassName,
-        source,
-      ) ??
-      phpMethodReturnExpressions(source, name)
-        .map((expression) =>
-          phpLaravelRelationTypeForDeclaringClass(
-            phpLaravelRelationTargetClassNameFromExpression(
-              expression,
-              true,
-              phpLocalClassStringResolverForMethodReturnExpression(
-                source,
-                name,
-                expression,
-              ),
-              phpClassStringExpressionResolverForMethodReturnExpression(
-                source,
-                name,
-                expression,
-                declaringClassName,
-              ),
-            ) ??
-              phpLaravelMorphToTargetClassNameFromContext(
-                contextSource,
-                declaringClassName,
-                expression,
-              ),
-            declaringClassName,
-            source,
-          ),
-        )
-        .find((target): target is string => Boolean(target));
+    const relationTargetType = phpLaravelRelationTargetTypeFromMethod(
+      source,
+      contextSource,
+      declaringClassName,
+      name,
+      returnType,
+    );
 
     if (!relationTargetType && !isLaravelEloquentRelationReturnType(returnType, true)) {
       continue;
@@ -1351,6 +1324,216 @@ export function phpLaravelRelationPropertyCompletionsFromSource(
   );
 
   return dedupePhpMembers(members);
+}
+
+function phpLaravelRelationPropertyTargetTypeByName(
+  source: string,
+  contextSource: string,
+  declaringClassName: string,
+  propertyName: string,
+  visited = new Set<string>(),
+): string | null {
+  const lookupName = propertyName.trim().toLowerCase();
+
+  if (!lookupName) {
+    return null;
+  }
+
+  const visitedKey = `${declaringClassName.trim().toLowerCase()}:${lookupName}`;
+
+  if (visited.has(visitedKey)) {
+    return null;
+  }
+
+  visited.add(visitedKey);
+
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?::\s*([^{;\n]+))?/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const modifiers = (match[1] ?? "").toLowerCase();
+    const name = match[2];
+
+    if (
+      !name ||
+      name.toLowerCase() !== lookupName ||
+      /\b(?:private|protected|static)\b/.test(modifiers)
+    ) {
+      continue;
+    }
+
+    const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
+    const docBlock = phpDocBlockBefore(source, functionOffset);
+    const declaredReturnType = normalizeReturnType(match[4] ?? null);
+    const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
+    const returnType = bestPhpReturnType(declaredReturnType, documentedReturnType);
+
+    return phpLaravelRelationTargetTypeFromMethod(
+      source,
+      contextSource,
+      declaringClassName,
+      name,
+      returnType,
+      visited,
+    );
+  }
+
+  return null;
+}
+
+function phpLaravelRelationTargetTypeFromMethod(
+  source: string,
+  contextSource: string,
+  declaringClassName: string,
+  methodName: string,
+  returnType: string | null,
+  visited = new Set<string>(),
+): string | null {
+  return (
+    phpLaravelRelationTypeForDeclaringClass(
+      phpLaravelRelationModelTypeFromReturnType(returnType),
+      declaringClassName,
+      source,
+    ) ??
+    phpMethodReturnExpressions(source, methodName)
+      .map((expression) =>
+        phpLaravelRelationTypeForDeclaringClass(
+          phpLaravelRelationTargetClassNameFromExpression(
+            expression,
+            true,
+            phpLocalClassStringResolverForMethodReturnExpression(
+              source,
+              methodName,
+              expression,
+            ),
+            phpClassStringExpressionResolverForMethodReturnExpression(
+              source,
+              methodName,
+              expression,
+              declaringClassName,
+            ),
+          ) ??
+            phpLaravelFluentThroughRelationTargetClassNameFromExpression(
+              source,
+              contextSource,
+              declaringClassName,
+              expression,
+              visited,
+            ) ??
+            phpLaravelMorphToTargetClassNameFromContext(
+              contextSource,
+              declaringClassName,
+              expression,
+            ),
+          declaringClassName,
+          source,
+        ),
+      )
+      .find((target): target is string => Boolean(target)) ??
+    null
+  );
+}
+
+function phpLaravelFluentThroughRelationTargetClassNameFromExpression(
+  source: string,
+  contextSource: string,
+  declaringClassName: string,
+  expression: string,
+  visited: Set<string>,
+): string | null {
+  const path = phpLaravelFluentThroughRelationPathFromExpression(expression);
+
+  if (!path) {
+    return null;
+  }
+
+  const intermediateType = phpLaravelRelationPropertyTargetTypeByName(
+    source,
+    contextSource,
+    declaringClassName,
+    path.throughRelationName,
+    visited,
+  );
+
+  if (!intermediateType) {
+    return null;
+  }
+
+  const intermediateSource =
+    phpClassSourceForClassName(contextSource, intermediateType) ?? contextSource;
+
+  return phpLaravelRelationPropertyTargetTypeByName(
+    intermediateSource,
+    contextSource,
+    intermediateType,
+    path.distantRelationName,
+    visited,
+  );
+}
+
+function phpLaravelFluentThroughRelationPathFromExpression(
+  expression: string,
+): { throughRelationName: string; distantRelationName: string } | null {
+  const normalizedExpression = expression.trim();
+  const throughPattern = /\bthrough\s*\(/g;
+
+  for (const match of normalizedExpression.matchAll(throughPattern)) {
+    const throughOpenOffset =
+      (match.index ?? 0) + (match[0]?.lastIndexOf("(") ?? 0);
+    const throughCloseOffset = matchingPairOffset(
+      normalizedExpression,
+      throughOpenOffset,
+      "(",
+      ")",
+    );
+
+    if (throughCloseOffset === null) {
+      continue;
+    }
+
+    const throughRelationName = phpStringLiteralValue(
+      splitPhpParameterList(
+        normalizedExpression.slice(throughOpenOffset + 1, throughCloseOffset),
+      )[0] ?? "",
+    );
+
+    if (!isPhpAttributeName(throughRelationName)) {
+      continue;
+    }
+
+    const afterThrough = normalizedExpression.slice(throughCloseOffset + 1);
+    const hasMatch = /^\s*(?:->|\?->)\s*has\s*\(/.exec(afterThrough);
+
+    if (!hasMatch) {
+      continue;
+    }
+
+    const hasOpenOffset =
+      throughCloseOffset + 1 + (hasMatch[0]?.lastIndexOf("(") ?? 0);
+    const hasCloseOffset = matchingPairOffset(
+      normalizedExpression,
+      hasOpenOffset,
+      "(",
+      ")",
+    );
+
+    if (hasCloseOffset === null) {
+      continue;
+    }
+
+    const distantRelationName = phpStringLiteralValue(
+      splitPhpParameterList(
+        normalizedExpression.slice(hasOpenOffset + 1, hasCloseOffset),
+      )[0] ?? "",
+    );
+
+    if (isPhpAttributeName(distantRelationName)) {
+      return { distantRelationName, throughRelationName };
+    }
+  }
+
+  return null;
 }
 
 function phpLaravelDynamicRelationPropertyCompletionsFromSource(

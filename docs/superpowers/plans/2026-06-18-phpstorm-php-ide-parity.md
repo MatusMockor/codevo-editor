@@ -228,6 +228,57 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
+- Committed and pushed as `b60a690 Infer through relation generic targets`.
+- Included files:
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Fluent Through Relation String Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b60a690 Infer through relation generic targets`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Infer Laravel `HasOneThrough` / `HasManyThrough` relation property targets from fluent relation string syntax such as `$this->through('cars')->has('owner')`.
+
+### Implementation Choice
+
+- Add a targeted relation-property lookup by name to avoid recursively computing every relation property while resolving `through(...)`.
+- Support only literal string relation names for this slice; dynamic `throughCars()->hasOwner()` and non-literal arguments remain follow-ups.
+- Resolve the intermediate relation first, then resolve the distant relation on that intermediate model using the existing relation target machinery.
+
+### Acceptance Criteria
+
+- `through('cars')->has('owner')` resolves through `cars` and exposes the distant `owner` model.
+- Multiline `through("cars")->has("mechanics")` works.
+- Non-literal `through($cars)->has('owner')` stays conservative and returns `mixed`.
+- Focused PHP domain tests pass.
+- `npm run check` and `git diff --check` pass.
+
+### Completed
+
+- Extracted Laravel relation method target resolution into a reusable helper.
+- Added a guarded relation-property lookup by name for intermediate and distant relation path resolution.
+- Added string-literal fluent-through parsing for `through(...)->has(...)`.
+- Added regression coverage for one-to-through, many-through, multiline syntax, and a non-literal conservative fallback.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "extracts Laravel fluent through relation targets from relation strings"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
 - Pending commit.
 - Intended included files:
   - `src/domain/phpFrameworkLaravel.ts`
