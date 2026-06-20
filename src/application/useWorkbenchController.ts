@@ -1372,23 +1372,25 @@ export function useWorkbenchController(
   );
 
   const handleJavaScriptTypeScriptLanguageServerRuntimeStatus = useCallback(
-    (status: LanguageServerRuntimeStatus) => {
-      const statusRootPath = status.rootPath ?? currentWorkspaceRootRef.current;
+    (status: LanguageServerRuntimeStatus, fallbackRootPath?: string) => {
+      const statusRootPath = status.rootPath ?? fallbackRootPath;
 
-      if (statusRootPath && !isOpenWorkspaceRuntimeRoot(statusRootPath)) {
+      if (!statusRootPath) {
         return;
       }
 
-      const rootedStatus = statusRootPath
-        ? cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
-            statusRootPath,
-            status,
-          )
-        : status;
+      if (!isOpenWorkspaceRuntimeRoot(statusRootPath)) {
+        return;
+      }
+
+      const rootedStatus = cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
+        statusRootPath,
+        status,
+      );
       const crash = languageServerCrashMessage(status);
 
       cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime(
-        statusRootPath ?? null,
+        statusRootPath,
         status,
       );
 
@@ -1406,11 +1408,9 @@ export function useWorkbenchController(
 
       javaScriptTypeScriptLanguageServerRuntimeStatusRef.current = rootedStatus;
       javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current =
-        statusRootPath ?? null;
+        statusRootPath;
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
-      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
-        statusRootPath ?? null,
-      );
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(statusRootPath);
 
       if (status.kind !== "running") {
         clearJavaScriptTypeScriptDiagnosticsForRoot(statusRootPath);
@@ -11396,7 +11396,10 @@ export function useWorkbenchController(
         return;
       }
 
-      handleJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+      handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
+        status,
+        requestedRoot,
+      );
       setMessage("JavaScript/TypeScript service restarted.");
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(
@@ -12387,7 +12390,10 @@ export function useWorkbenchController(
             return;
           }
 
-          handleJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+          handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
+            status,
+            requestedRoot,
+          );
         })
         .catch((error) =>
           reportErrorForActiveWorkspaceRoot(

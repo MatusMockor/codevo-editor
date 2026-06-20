@@ -1038,6 +1038,90 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("ignores JavaScript and TypeScript runtime status events without an explicit workspace root", async () => {
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const path = "/workspace/src/App.ts";
+    const rootedRunningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 211,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => rootedRunningStatus),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).not.toHaveBeenCalled();
+
+    act(() => {
+      publishStatus?.({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 210,
+      } as any);
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({ kind: "stopped", rootPath: "/workspace" }),
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).not.toHaveBeenCalled();
+
+    act(() => {
+      publishStatus?.(rootedRunningStatus);
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 211,
+      }),
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+  });
+
   it("keeps JavaScript TypeScript document sync state after stale same-root did-open failure", async () => {
     const path = "/workspace/src/App.ts";
     const didOpenAttempts: Deferred<void>[] = [];

@@ -2801,3 +2801,60 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/infrastructure/tauriLanguageServerDiagnosticsGateway.test.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Runtime Status Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `580cd457 Record JS TS diagnostic event contract commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is limited to JS/TS runtime status event routing in the workbench controller.
+- Main agent implemented directly because the guard and regression both live in the preview controller surface.
+
+### Why This Slice
+
+- JS/TS provider and diagnostic paths now require explicit workspace roots.
+- Runtime status subscription events still fell back to the currently active workspace when `rootPath` was missing.
+- A delayed rootless status event after a tab switch could mark the active project as running and trigger document sync for the wrong runtime session.
+
+### Implementation Choice
+
+- Require JS/TS subscription status events to include `rootPath`.
+- Preserve direct `start(requestedRoot)` responses by passing the known request root as an explicit fallback.
+- Keep PHP runtime status fallback behavior unchanged.
+- Add a regression proving rootless JS/TS status events do not unlock document sync, while rooted status events still do.
+
+### Acceptance Criteria
+
+- Rootless JS/TS status events are ignored.
+- Rooted JS/TS status events still update the active project and sync open JS/TS documents.
+- Restart and autostart paths still handle direct `start(root)` results.
+- Focused runtime status tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Runtime Status Root Guard
+
+- Tightened JS/TS runtime status event handling to require explicit root ownership unless a direct caller supplies the request root.
+- Added regression coverage for rootless JS/TS runtime status events.
+- Preserved rooted status activation and document sync behavior.
+
+### Verification: JS/TS Runtime Status Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "runtime status events without an explicit workspace root|does not sync JavaScript and TypeScript documents with a runtime from another project tab"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Runtime Status Root Guard
+
+- Commit pending.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
