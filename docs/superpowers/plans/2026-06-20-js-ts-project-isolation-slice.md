@@ -2853,7 +2853,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Runtime Status Root Guard
 
-- Commit pending.
+- Committed and pushed as `b64f491e Require roots for JS TS runtime status events`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
