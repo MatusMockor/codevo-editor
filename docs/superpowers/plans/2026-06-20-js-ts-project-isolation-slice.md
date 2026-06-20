@@ -1887,6 +1887,10 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm run check`
 - PASS: `git diff --check`
 
+### Commit Status: Controller Direct Runtime Status Root Guard
+
+- Committed as `11bffa0e Guard controller runtime status roots`.
+
 ### Commit Status: JS/TS Navigation Target Open Isolation
 
 - Committed and pushed as `175a8274 Guard JS TS navigation during tab switches`.
