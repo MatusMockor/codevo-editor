@@ -3361,7 +3361,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Runtime Status Label Root Guard
 
-- Pending commit.
+- Committed and pushed as `04b9b467 Require roots for runtime status labels`.
 - Included files:
   - `src/App.tsx`
   - `src/domain/languageServerRuntime.ts`
