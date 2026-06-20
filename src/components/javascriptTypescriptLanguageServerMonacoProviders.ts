@@ -84,7 +84,7 @@ type MonacoWorkspaceSymbolRegistry = {
 
 export interface JavaScriptTypeScriptWorkspaceEditApplicationContext {
   editedOpenPaths: string[];
-  rootPath?: string;
+  rootPath: string;
 }
 
 export type JavaScriptTypeScriptWorkspaceEditApplier = (
@@ -2690,7 +2690,7 @@ function toMonacoWorkspaceEdit(
   monaco: MonacoApi,
   context: WorkspaceEditContext,
   edit: LanguageServerWorkspaceEdit,
-  rootPath?: string,
+  rootPath: string,
 ): Monaco.languages.WorkspaceEdit {
   const fileEdits = (edit.fileOperations ?? []).flatMap((operation) =>
     toMonacoWorkspaceFileEdit(monaco, operation, rootPath),
@@ -2702,7 +2702,7 @@ function toMonacoWorkspaceEdit(
       return [];
     }
 
-    if (rootPath && !isPathInWorkspaceRoot(rootPath, path)) {
+    if (!isPathInWorkspaceRoot(rootPath, path)) {
       return [];
     }
 
@@ -2724,7 +2724,7 @@ function toMonacoWorkspaceEdit(
 function toMonacoWorkspaceFileEdit(
   monaco: MonacoApi,
   operation: LanguageServerWorkspaceFileOperation,
-  rootPath?: string,
+  rootPath: string,
 ): Monaco.languages.IWorkspaceFileEdit[] {
   if (!isFileOperationInWorkspaceRoot(operation, rootPath)) {
     return [];
@@ -3188,7 +3188,7 @@ async function applyWorkspaceEditWithOpenModels(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   edit: LanguageServerWorkspaceEdit,
-  rootPath?: string,
+  rootPath: string,
 ): Promise<void> {
   const scopedEdit = workspaceEditForRoot(edit, rootPath);
   const editedOpenPaths = applyWorkspaceEditToOpenModels(monaco, scopedEdit);
@@ -3203,7 +3203,7 @@ async function applyWorkspaceEditAfterMonacoEdit(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   edit: LanguageServerWorkspaceEdit,
-  rootPath?: string,
+  rootPath: string,
 ): Promise<void> {
   const scopedEdit = workspaceEditForRoot(edit, rootPath);
 
@@ -3226,7 +3226,7 @@ async function applyWorkspaceEditEvent(
     monaco,
     context,
     event.edit,
-    event.rootPath ?? undefined,
+    event.rootPath,
   );
 }
 
@@ -3327,12 +3327,8 @@ function openModelPathsForWorkspaceEdit(
 
 function workspaceEditForRoot(
   edit: LanguageServerWorkspaceEdit,
-  rootPath?: string,
+  rootPath: string,
 ): LanguageServerWorkspaceEdit {
-  if (!rootPath) {
-    return edit;
-  }
-
   const changes = Object.fromEntries(
     Object.entries(edit.changes).filter(([uri]) => {
       const path = pathFromLanguageServerUri(uri);
@@ -3352,12 +3348,8 @@ function workspaceEditForRoot(
 
 function isFileOperationInWorkspaceRoot(
   operation: LanguageServerWorkspaceFileOperation,
-  rootPath?: string,
+  rootPath: string,
 ): boolean {
-  if (!rootPath) {
-    return true;
-  }
-
   return fileOperationUris(operation).every((uri) => {
     const path = pathFromLanguageServerUri(uri);
 

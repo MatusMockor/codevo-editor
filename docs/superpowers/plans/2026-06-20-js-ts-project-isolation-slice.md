@@ -2858,3 +2858,57 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Workspace Edit Root Contract
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `cf13e83a Record JS TS runtime status root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is provider-local and only tightens JS/TS Monaco workspace-edit helper contracts.
+- Main agent implemented directly because all call sites are in `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`.
+
+### Why This Slice
+
+- JS/TS server-initiated edits, command edits, code-action edits, and rename edits all already carry a known workspace root.
+- The internal workspace-edit helpers still accepted optional roots, which preserved a fallback where an undefined root could leave edits unfiltered.
+- Requiring the root in helper contracts makes cross-workspace edit filtering non-optional.
+
+### Implementation Choice
+
+- Make `JavaScriptTypeScriptWorkspaceEditApplicationContext.rootPath` required.
+- Require `rootPath` for JS/TS workspace-edit conversion, file-operation filtering, open-model application, and post-Monaco workspace edit application.
+- Remove the no-root fallback that returned unfiltered edits/file operations.
+
+### Acceptance Criteria
+
+- All JS/TS workspace edit call sites still provide an explicit root.
+- Cross-root workspace edit filtering remains covered by existing provider tests.
+- Focused workspace-edit provider tests, full provider tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Workspace Edit Root Contract
+
+- Tightened JS/TS workspace-edit helper signatures to require explicit root ownership.
+- Removed optional-root fallbacks from workspace edit and file-operation filtering helpers.
+- Preserved existing code-action, command, rename, and server-initiated edit behavior.
+
+### Verification: JS/TS Workspace Edit Root Contract
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "workspace edit|code actions|server-initiated workspace edits|file operations"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Workspace Edit Root Contract
+
+- Commit pending.
+- Included files:
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
