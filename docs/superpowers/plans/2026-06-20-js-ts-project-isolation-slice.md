@@ -2180,4 +2180,8 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Workspace Edit Non-File URI Rejection
 
-- Pending commit and push.
+- Committed and pushed as `ca58e108 Reject non-file workspace edit URIs`.
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/lsp_session.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
