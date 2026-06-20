@@ -55,6 +55,7 @@ export function phpDeclaredTypeCandidate(typeName: string): string | null {
 export function phpDeclaredGenericTypeCandidates(typeName: string): string[] {
   return splitPhpTypeUnion(typeName)
     .flatMap((part) => phpGenericArguments(part))
+    .flatMap((part) => splitPhpTypeUnion(part))
     .map((part) => phpDeclaredTypeCandidate(part))
     .filter((part): part is string => Boolean(part));
 }

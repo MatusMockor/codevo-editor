@@ -1131,6 +1131,7 @@ class Comment
         `<?php
 use App\\Models\\Attachment;
 use App\\Models\\Post;
+use App\\Models\\Video;
 use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
 use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
@@ -1159,6 +1160,12 @@ class Comment
 
     /** @return MorphTo<Post, self> */
     public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+
+    /** @return MorphTo<Post|Video, self> */
+    public function attachable(): MorphTo
     {
         return $this->morphTo();
     }
@@ -1200,6 +1207,12 @@ class Comment
       },
       {
         declaringClassName: "Comment",
+        name: "attachable",
+        parameters: "",
+        returnType: "MorphTo<Post|Video, self>",
+      },
+      {
+        declaringClassName: "Comment",
         kind: "property",
         name: "post",
         parameters: "",
@@ -1232,6 +1245,13 @@ class Comment
         name: "commentable",
         parameters: "",
         returnType: "Post",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "attachable",
+        parameters: "",
+        returnType: "mixed",
       },
     ]);
   });

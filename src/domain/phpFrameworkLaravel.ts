@@ -1949,6 +1949,7 @@ function phpLaravelMorphToTargetClassNameFromContext(
   }
 
   const targets = new Set<string>();
+  let hasAmbiguousDocumentedTarget = false;
 
   for (const method of phpLaravelClassMethodReturnContexts(
     source,
@@ -1963,11 +1964,24 @@ function phpLaravelMorphToTargetClassNameFromContext(
       continue;
     }
 
-    const target = phpLaravelRelationModelTypeFromReturnType(method.returnType);
+    const documentedTargets = phpLaravelRelationModelTypesFromReturnType(
+      method.returnType,
+    );
+
+    if (documentedTargets.length > 1) {
+      hasAmbiguousDocumentedTarget = true;
+      continue;
+    }
+
+    const [target] = documentedTargets;
 
     if (target) {
       targets.add(target);
     }
+  }
+
+  if (hasAmbiguousDocumentedTarget) {
+    return null;
   }
 
   if (targets.size === 1) {
@@ -4058,13 +4072,21 @@ function phpLocalClassStringAssignmentBefore(
 function phpLaravelRelationModelTypeFromReturnType(
   returnType: string | null,
 ): string | null {
+  const modelTypes = phpLaravelRelationModelTypesFromReturnType(returnType);
+
+  return modelTypes.length === 1 ? modelTypes[0] ?? null : null;
+}
+
+function phpLaravelRelationModelTypesFromReturnType(
+  returnType: string | null,
+): string[] {
   if (!isLaravelEloquentRelationReturnType(returnType, true)) {
-    return null;
+    return [];
   }
 
-  return phpDeclaredGenericTypeCandidates(returnType ?? "").find(
+  return phpDeclaredGenericTypeCandidates(returnType ?? "").filter(
     (candidate) => !isGenericLaravelRelationPlaceholder(candidate),
-  ) ?? null;
+  );
 }
 
 function phpLaravelGenericCarrierMatches(

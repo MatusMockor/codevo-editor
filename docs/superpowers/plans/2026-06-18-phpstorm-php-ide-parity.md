@@ -124,11 +124,63 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
-- Intended included files:
+- Committed and pushed as `bfd4bc1 Navigate Laravel accessor attributes`.
+- Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `src/domain/phpFrameworkLaravel.ts`
   - `src/domain/phpMethodCompletions.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Slice: Conservative Multi-Target MorphTo Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `bfd4bc1 Navigate Laravel accessor attributes`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Avoid misleading PhpStorm-style Laravel completions when a documented `morphTo()` relation has multiple possible target models, such as `MorphTo<Post|Video, self>`.
+
+### Implementation Choice
+
+- Split generic argument union members before selecting declared generic candidates.
+- Keep single-target placeholder patterns such as `MorphTo<Model, User>` working.
+- Treat multi-target `morphTo()` context as ambiguous and return `mixed` for the relation property instead of choosing the first target.
+
+### Acceptance Criteria
+
+- Existing single-target `MorphTo<Model, User>` inference remains green.
+- Multi-target `MorphTo<Post|Video, self>` does not expose only `Post` completions.
+- Focused PHP domain tests pass.
+- `npm run check` and `git diff --check` pass.
+
+### Completed
+
+- Generic argument parsing now splits union members inside generic arguments before extracting declared type candidates.
+- Relation return type inference now returns a concrete model only when exactly one non-placeholder model candidate exists.
+- `morphTo()` context inference now treats documented multi-target relations as ambiguous instead of falling back to a single model.
+- Added regression coverage for `MorphTo<Post|Video, self>` so the generated relation property returns `mixed` rather than misleadingly exposing only `Post`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "extracts Laravel relation methods as magic properties"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "infers Laravel relation model completions from property and relation chains"`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Intended included files:
+  - `src/domain/phpTypeAnalysis.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
