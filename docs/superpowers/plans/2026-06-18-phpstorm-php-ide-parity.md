@@ -279,8 +279,61 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
-- Intended included files:
+- Committed and pushed as `bbfb8c3 Infer fluent through relation targets`.
+- Included files:
   - `src/domain/phpFrameworkLaravel.ts`
   - `src/domain/phpMethodCompletions.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: PHPDoc Mixin Member-Method Diagnostic Reconciliation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `bbfb8c3 Infer fluent through relation targets`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Suppress PHPactor unresolved member-method false positives when Codevo already resolves the receiver type and can prove the method through the PHP class hierarchy, including PHPDoc `@mixin` helpers.
+
+### Implementation Choice
+
+- Keep Laravel-specific local-scope and dynamic-where reconciliation in place.
+- Add a general member-method reconciliation path mirroring the existing member-property path:
+  - resolve the diagnostic receiver expression type at the diagnostic position;
+  - call `phpClassHierarchyHasMethod` for the inferred class and method name;
+  - add the existing `phpMemberMethodDiagnosticKey` only when the method is proven.
+- Cover the `@mixin` case because completions already expose those members through the same hierarchy pipeline.
+
+### Acceptance Criteria
+
+- PHPactor diagnostics for a proven mixin method such as `$comment->helpful()` are suppressed.
+- Unknown methods on the same receiver remain visible.
+- Existing Laravel local-scope diagnostic suppression still passes.
+- Full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Member-method diagnostic filtering now resolves the receiver type and checks `phpClassHierarchyHasMethod`.
+- Added preview regression coverage using an inferred repository model receiver with `@mixin CommentIdeHelper`.
+- Preserved unknown-method diagnostics on the same receiver.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "suppresses PHPDoc mixin member-method diagnostics on inferred receivers"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc mixin|suppresses static local-scope diagnostics only when the model defines the scope|suppresses builder local-scope diagnostics"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Intended included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`

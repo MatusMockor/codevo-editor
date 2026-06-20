@@ -7839,6 +7839,192 @@ class CommentIdeHelper
     ]);
   });
 
+  it("suppresses PHPDoc mixin member-method diagnostics on inferred receivers", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php";
+    const commentPath =
+      "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const helperPath =
+      "/workspace/app/Kontentino/src/Communication/Models/CommentIdeHelper.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\communication;
+
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $comment = $this->commentRepository->findOrFail(1);
+        $comment->helpful();
+        $comment->missingHelpful();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 23,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const methodDiagnosticPosition = (methodName: string) => {
+      const position = positionAfter(controllerSource, `$comment->${methodName}`);
+
+      return {
+        character: position.column - methodName.length - 1,
+        line: position.lineNumber - 1,
+      };
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      projectSymbols: [
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName:
+            "Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface",
+          kind: "interface",
+          lineNumber: 7,
+          name: "CommentRepositoryInterface",
+          path: repositoryInterfacePath,
+          relativePath:
+            "app/Kontentino/src/Communication/Interfaces/CommentRepositoryInterface.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "Kontentino\\Communication\\Models\\Comment",
+          kind: "class",
+          lineNumber: 7,
+          name: "Comment",
+          path: commentPath,
+          relativePath:
+            "app/Kontentino/src/Communication/Models/Comment.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName:
+            "Kontentino\\Communication\\Models\\CommentIdeHelper",
+          kind: "class",
+          lineNumber: 3,
+          name: "CommentIdeHelper",
+          path: helperPath,
+          relativePath:
+            "app/Kontentino/src/Communication/Models/CommentIdeHelper.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace Kontentino\\Communication\\Interfaces;
+
+use Kontentino\\Communication\\Models\\Comment;
+
+interface CommentRepositoryInterface
+{
+    public function findOrFail(int $id): Comment;
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+/**
+ * @mixin CommentIdeHelper
+ */
+class Comment
+{
+}
+`;
+        }
+
+        if (path === helperPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+class CommentIdeHelper
+{
+    public function helpful(string $mode = 'fast'): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    const helpfulPosition = methodDiagnosticPosition("helpful");
+    const missingPosition = methodDiagnosticPosition("missingHelpful");
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            ...helpfulPosition,
+            message:
+              "Method Kontentino\\Communication\\Models\\Comment::helpful() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...missingPosition,
+            message:
+              "Method Kontentino\\Communication\\Models\\Comment::missingHelpful() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        ...missingPosition,
+        message:
+          "Method Kontentino\\Communication\\Models\\Comment::missingHelpful() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("infers Laravel relation model completions from property and relation chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

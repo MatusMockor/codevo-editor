@@ -6621,8 +6621,23 @@ export function useWorkbenchController(
                   memberMethodContext.methodName,
                 )
               : false;
+          const receiverType = await resolvePhpExpressionTypeRef.current(
+            source,
+            diagnosticPosition,
+            memberMethodContext.receiverExpression,
+          );
+          const hasContextualExistingMemberMethod = receiverType
+            ? await phpClassHierarchyHasMethod(
+                receiverType,
+                memberMethodContext.methodName,
+              )
+            : false;
 
-          if (hasContextualScopeMethod || hasContextualDynamicWhereMethod) {
+          if (
+            hasContextualScopeMethod ||
+            hasContextualDynamicWhereMethod ||
+            hasContextualExistingMemberMethod
+          ) {
             contextualMemberMethods.add(
               phpMemberMethodDiagnosticKey(
                 memberMethodContext.receiverExpression,
@@ -6752,6 +6767,7 @@ export function useWorkbenchController(
       phpClassHasLaravelDynamicWhere,
       activePhpFrameworkProviders,
       isLaravelFrameworkActive,
+      phpClassHierarchyHasMethod,
       phpClassHierarchyHasProperty,
       phpTraitHostMethodExists,
       phpTraitHostPropertyExists,
