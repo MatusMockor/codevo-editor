@@ -3527,4 +3527,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: LSP Event Sink Explicit Root Contract
 
-- Pending commit.
+- Committed and pushed as `374dd226 Require roots for LSP event sink payloads`.
