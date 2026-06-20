@@ -695,6 +695,38 @@ Route::post('/reactions', [ReactionController::class, 'store']);
     ).toBe("StoreCommentRequest");
   });
 
+  it("resolves grouped imports and grouped aliases", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\{Album, Comment as UserComment};
+use App\\Services\\{
+    ReportService,
+    Analytics\\Tracker as AnalyticsTracker
+};
+use function App\\Support\\debug_value;
+use const App\\Support\\DEFAULT_LIMIT;
+
+class AlbumController
+{
+}
+`;
+
+    expect(resolvePhpClassName(source, "Album")).toBe("App\\Models\\Album");
+    expect(resolvePhpClassName(source, "UserComment")).toBe(
+      "App\\Models\\Comment",
+    );
+    expect(resolvePhpClassName(source, "UserComment\\Meta")).toBe(
+      "App\\Models\\Comment\\Meta",
+    );
+    expect(resolvePhpClassName(source, "ReportService")).toBe(
+      "App\\Services\\ReportService",
+    );
+    expect(resolvePhpClassName(source, "AnalyticsTracker")).toBe(
+      "App\\Services\\Analytics\\Tracker",
+    );
+  });
+
   it("does not let class body trait uses shadow namespace imports", () => {
     const source = `<?php
 namespace App\\Models;

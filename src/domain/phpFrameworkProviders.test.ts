@@ -190,10 +190,11 @@ class Album extends Model
     const source = `<?php
 namespace App\\Models;
 
+use App\\Models\\{Post, Comment as CommentAlias};
 use Illuminate\\Database\\Eloquent\\Model;
 use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
 
-class Comment extends Model
+class CommentAlias extends Model
 {
     /** @return MorphTo<Post, self> */
     public function commentable(): MorphTo

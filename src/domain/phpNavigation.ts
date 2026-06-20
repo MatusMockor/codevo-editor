@@ -1233,21 +1233,52 @@ function phpUseImports(source: string): Map<string, string> {
     }
 
     if (importName.includes("{")) {
+      for (const groupedImport of phpGroupedUseImports(importName)) {
+        imports.set(groupedImport.alias.toLowerCase(), groupedImport.name);
+      }
+
       continue;
     }
 
-    const aliasMatch = /^(.*?)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(
-      importName,
-    );
-    const fullyQualifiedName = (aliasMatch?.[1] || importName)
-      .trim()
-      .replace(/^\\+/, "");
-    const alias = aliasMatch?.[2] || shortPhpName(fullyQualifiedName);
+    const parsedImport = phpUseImport(importName);
 
-    imports.set(alias.toLowerCase(), fullyQualifiedName);
+    if (parsedImport) {
+      imports.set(parsedImport.alias.toLowerCase(), parsedImport.name);
+    }
   }
 
   return imports;
+}
+
+function phpGroupedUseImports(
+  importName: string,
+): Array<{ alias: string; name: string }> {
+  const match = /^(.*?)\{([\s\S]+)\}$/.exec(importName.trim());
+  const prefix = match?.[1]?.trim().replace(/\\+$/, "") ?? "";
+  const body = match?.[2] ?? "";
+
+  if (!prefix || !body) {
+    return [];
+  }
+
+  return body
+    .split(",")
+    .map((entry) => phpUseImport(`${prefix}\\${entry.trim()}`))
+    .filter((entry): entry is { alias: string; name: string } => Boolean(entry));
+}
+
+function phpUseImport(importName: string): { alias: string; name: string } | null {
+  const aliasMatch = /^(.*?)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(importName);
+  const fullyQualifiedName = (aliasMatch?.[1] || importName)
+    .trim()
+    .replace(/^\\+/, "");
+  const alias = aliasMatch?.[2] || shortPhpName(fullyQualifiedName);
+
+  if (!fullyQualifiedName || !alias) {
+    return null;
+  }
+
+  return { alias, name: fullyQualifiedName };
 }
 
 function firstPhpTypeDeclarationOffset(source: string): number {
