@@ -2458,7 +2458,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Document Sync Runtime Session Resync
 
-- Pending commit and push.
+- Committed and pushed as `d3b5c910 Resync JS TS documents on session change`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
