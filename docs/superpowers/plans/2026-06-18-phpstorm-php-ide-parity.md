@@ -2552,4 +2552,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `de8f5872 Support Laravel fluent through named arguments`.
