@@ -93,11 +93,22 @@ export function javaScriptTypeScriptWorkspaceLabel(
     packageName,
     frameworkLabel,
     languageLabel,
+    javaScriptTypeScriptProjectScopeLabel(descriptor),
     typeScriptLabel,
     descriptor.packageManager,
   ].filter((part): part is string => Boolean(part));
 
   return parts.join(" · ");
+}
+
+export function javaScriptTypeScriptProjectScopeLabel(
+  descriptor: JavaScriptTypeScriptProjectDescriptor,
+): string {
+  if (descriptor.hasTsconfig || descriptor.hasJsconfig) {
+    return "Project-wide";
+  }
+
+  return "Inferred (partial)";
 }
 
 export function javaScriptTypeScriptVersionLabel(

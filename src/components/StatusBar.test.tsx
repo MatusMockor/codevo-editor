@@ -49,4 +49,37 @@ describe("StatusBar", () => {
     expect(host.textContent).not.toContain("PHPactor: running");
     expect(host.textContent).not.toContain("Index: 608 files");
   });
+
+  it("shows JS/TS project scope alongside per-project server activity", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="typescript"
+          activePath="/workspace/src/App.ts"
+          dirtyCount={0}
+          ideActivityLabel="IDE: TS Server running for this project"
+          ideActivityState="active"
+          intelligenceMode="basic"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel="example-web · JS/TS · Inferred (partial) · npm"
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const activity = host.querySelector(".status-ide-activity");
+
+    expect(activity?.textContent).toBe(
+      "IDE: TS Server running for this project",
+    );
+    expect(activity?.getAttribute("title")).toBe(
+      "IDE: TS Server running for this project",
+    );
+    expect(host.textContent).toContain(
+      "example-web · JS/TS · Inferred (partial) · npm",
+    );
+  });
 });

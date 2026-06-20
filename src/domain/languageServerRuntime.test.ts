@@ -5,6 +5,7 @@ import {
   languageServerCapabilityLabels,
   languageServerCapabilities,
   languageServerCrashMessage,
+  languageServerStatusBelongsToWorkspace,
   languageServerStatusLabel,
   type LanguageServerRuntimeStatus,
 } from "./languageServerRuntime";
@@ -23,6 +24,33 @@ describe("languageServerStatusLabel", () => {
     );
     expect(languageServerStatusLabel(status("stopped"))).toBeNull();
   });
+
+  it("labels rooted TypeScript server states as project-local", () => {
+    expect(languageServerStatusLabel(status("starting", "/workspace"), "TS Server")).toBe(
+      "TS Server: starting for this project",
+    );
+    expect(languageServerStatusLabel(status("running", "/workspace"), "TS Server")).toBe(
+      "TS Server: running for this project",
+    );
+    expect(languageServerStatusLabel(crashed("boom", "/workspace"), "TS Server")).toBe(
+      "TS Server: crashed for this project",
+    );
+  });
+
+  it("suppresses labels from another workspace root when a root is provided", () => {
+    const runningStatus = status("running", "/workspace-a");
+
+    expect(
+      languageServerStatusLabel(runningStatus, "TS Server", {
+        workspaceRoot: "/workspace-a/",
+      }),
+    ).toBe("TS Server: running for this project");
+    expect(
+      languageServerStatusLabel(runningStatus, "TS Server", {
+        workspaceRoot: "/workspace-b",
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("languageServerCrashMessage", () => {
@@ -39,6 +67,26 @@ describe("isLanguageServerActive", () => {
     expect(isLanguageServerActive(status("stopped"))).toBe(false);
     expect(isLanguageServerActive(crashed("boom"))).toBe(false);
     expect(isLanguageServerActive(null)).toBe(false);
+  });
+});
+
+describe("languageServerStatusBelongsToWorkspace", () => {
+  it("matches rooted statuses against normalized workspace roots", () => {
+    expect(
+      languageServerStatusBelongsToWorkspace(
+        status("running", "/workspace-a/"),
+        "/workspace-a",
+      ),
+    ).toBe(true);
+    expect(
+      languageServerStatusBelongsToWorkspace(
+        status("running", "/workspace-a"),
+        "/workspace-b",
+      ),
+    ).toBe(false);
+    expect(
+      languageServerStatusBelongsToWorkspace(status("running"), "/workspace-b"),
+    ).toBe(true);
   });
 });
 
@@ -117,11 +165,13 @@ describe("languageServerCapabilities", () => {
 
 function status(
   kind: Exclude<LanguageServerRuntimeStatus["kind"], "crashed">,
+  rootPath?: string,
 ): LanguageServerRuntimeStatus {
   if (kind === "starting" || kind === "running") {
     if (kind === "running") {
       return {
         kind,
+        rootPath,
         sessionId: 1,
         capabilities: {
           callHierarchy: true,
@@ -155,12 +205,12 @@ function status(
       };
     }
 
-    return { kind, sessionId: 1 };
+    return { kind, rootPath, sessionId: 1 };
   }
 
-  return { kind };
+  return { kind, rootPath };
 }
 
-function crashed(message: string): LanguageServerRuntimeStatus {
-  return { kind: "crashed", message };
+function crashed(message: string, rootPath?: string): LanguageServerRuntimeStatus {
+  return { kind: "crashed", message, rootPath };
 }

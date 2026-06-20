@@ -4,6 +4,7 @@ import {
   getFileName,
   getParentPath,
   isDirty,
+  javaScriptTypeScriptProjectScopeLabel,
   javaScriptTypeScriptVersionLabel,
   javaScriptTypeScriptWorkspaceLabel,
   joinWorkspacePath,
@@ -104,8 +105,11 @@ describe("workspace path helpers", () => {
     expect(javaScriptTypeScriptVersionLabel(descriptor, "bundled")).toBe(
       "TS bundled · workspace 5.9.2",
     );
+    expect(javaScriptTypeScriptProjectScopeLabel(descriptor)).toBe(
+      "Project-wide",
+    );
     expect(javaScriptTypeScriptWorkspaceLabel(descriptor, "workspace")).toBe(
-      "example-web · React + Vite + Express · TypeScript · TS 5.9.2 workspace · pnpm",
+      "example-web · React + Vite + Express · TypeScript · Project-wide · TS 5.9.2 workspace · pnpm",
     );
   });
 
@@ -124,6 +128,27 @@ describe("workspace path helpers", () => {
 
     expect(javaScriptTypeScriptVersionLabel(descriptor, "workspace")).toBe(
       "TS ^5.9.0 dependency",
+    );
+  });
+
+  it("labels inferred JavaScript and TypeScript projects as partial", () => {
+    const descriptor: JavaScriptTypeScriptProjectDescriptor = {
+      frameworks: [],
+      hasJsconfig: false,
+      hasPackageJson: true,
+      hasTsconfig: false,
+      packageManager: "npm",
+      packageName: "example-web",
+      typeScriptDependencyVersion: null,
+      usesTypeScript: false,
+      workspaceTypeScriptVersion: null,
+    };
+
+    expect(javaScriptTypeScriptProjectScopeLabel(descriptor)).toBe(
+      "Inferred (partial)",
+    );
+    expect(javaScriptTypeScriptWorkspaceLabel(descriptor, "bundled")).toBe(
+      "example-web · JS/TS · Inferred (partial) · npm",
     );
   });
 });

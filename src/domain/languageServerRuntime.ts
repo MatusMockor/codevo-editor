@@ -1,4 +1,5 @@
 import type { JavaScriptTypeScriptVersionPreference } from "./settings";
+import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 
 export interface LanguageServerCapabilities {
   callHierarchy: boolean;
@@ -64,27 +65,63 @@ export interface LanguageServerRuntimeGateway {
   ): Promise<UnsubscribeFn>;
 }
 
+export interface LanguageServerStatusLabelOptions {
+  workspaceRoot?: string | null;
+}
+
 export function languageServerStatusLabel(
   status: LanguageServerRuntimeStatus | null,
   serverName = "PHPactor",
+  options: LanguageServerStatusLabelOptions = {},
 ): string | null {
   if (!status) {
     return null;
   }
 
+  if (!languageServerStatusBelongsToWorkspace(status, options.workspaceRoot)) {
+    return null;
+  }
+
+  const projectSuffix = languageServerProjectStatusSuffix(status, serverName);
+
   if (status.kind === "starting") {
-    return `${serverName}: starting`;
+    return `${serverName}: starting${projectSuffix}`;
   }
 
   if (status.kind === "running") {
-    return `${serverName}: running`;
+    return `${serverName}: running${projectSuffix}`;
   }
 
   if (status.kind === "crashed") {
-    return `${serverName}: crashed`;
+    return `${serverName}: crashed${projectSuffix}`;
   }
 
   return null;
+}
+
+export function languageServerStatusBelongsToWorkspace(
+  status: LanguageServerRuntimeStatus,
+  workspaceRoot: string | null | undefined,
+): boolean {
+  if (!workspaceRoot || !status.rootPath) {
+    return true;
+  }
+
+  return (
+    normalizedWorkspaceRootKey(status.rootPath) ===
+    normalizedWorkspaceRootKey(workspaceRoot)
+  );
+}
+
+function languageServerProjectStatusSuffix(
+  status: LanguageServerRuntimeStatus,
+  serverName: string,
+): string {
+  if (serverName !== "TS Server" || !status.rootPath) {
+    return "";
+  }
+
+  return " for this project";
 }
 
 export function languageServerCrashMessage(
