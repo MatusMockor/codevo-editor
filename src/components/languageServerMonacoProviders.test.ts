@@ -1399,10 +1399,18 @@ describe("registerLanguageServerMonacoProviders", () => {
         {
           command: null,
           data: null,
-          edit: workspaceEdit(
-            "file:///project/src/User.php",
-            "use App\\Models\\User;\n",
-          ),
+          edit: {
+            changes: {
+              ...workspaceEdit(
+                "file:///project/src/User.php",
+                "use App\\Models\\User;\n",
+              ).changes,
+              ...workspaceEdit(
+                "file:///project-neighbor/src/User.php",
+                "leak",
+              ).changes,
+            },
+          },
           isPreferred: true,
           kind: "quickfix",
           title: "Import User",

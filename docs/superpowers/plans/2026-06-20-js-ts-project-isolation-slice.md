@@ -3023,3 +3023,59 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/languageServerMonacoProviders.ts`
   - `src/components/languageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: PHP Provider Workspace Edit Root Contract
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `7a53ce28 Record PHP provider runtime root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens PHP Monaco provider workspace-edit helpers after the rooted runtime provider guard.
+- Main agent implemented directly because the helper signatures and tests are in the PHP provider file pair.
+
+### Why This Slice
+
+- PHP provider command-backed edits and code-action edits already know the workspace root that requested them.
+- Internal PHP workspace-edit helpers still accepted an optional root, preserving an unfiltered fallback when root was missing.
+- Requiring root for edit conversion and open-model application makes PHP edit filtering non-optional.
+
+### Implementation Choice
+
+- Require `rootPath` for PHP Monaco workspace edit conversion.
+- Require `rootPath` for PHP open-model workspace edit application.
+- Extend the code-action mapping regression with a neighboring workspace edit that must be filtered out.
+
+### Acceptance Criteria
+
+- PHP code-action workspace edits still map inside-root edits.
+- Neighboring workspace edits are filtered from Monaco edits.
+- PHP LSP command-backed edits still require an active rooted runtime.
+- Focused PHP provider tests, full PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: PHP Provider Workspace Edit Root Contract
+
+- Tightened PHP provider workspace-edit helpers to require explicit root ownership.
+- Removed optional-root fallbacks from PHP edit conversion and open-model application.
+- Added provider regression coverage for filtering a neighboring workspace edit out of Monaco code-action edits.
+
+### Verification: PHP Provider Workspace Edit Root Contract
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "requests LSP code actions and maps edits|resolves LSP-backed code actions|rootless|workspace root"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Provider Workspace Edit Root Contract
+
+- Commit pending.
+- Included files:
+  - `src/components/languageServerMonacoProviders.ts`
+  - `src/components/languageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

@@ -497,7 +497,7 @@ function toMonacoWorkspaceEdit(
   monaco: MonacoApi,
   context: WorkspaceEditContext,
   edit: LanguageServerWorkspaceEdit,
-  rootPath?: string,
+  rootPath: string,
 ): Monaco.languages.WorkspaceEdit {
   return {
     edits: Object.entries(edit.changes).flatMap(([uri, edits]) => {
@@ -507,7 +507,7 @@ function toMonacoWorkspaceEdit(
         return [];
       }
 
-      if (rootPath && !isPathInWorkspaceRoot(rootPath, path)) {
+      if (!isPathInWorkspaceRoot(rootPath, path)) {
         return [];
       }
 
@@ -571,7 +571,7 @@ function workspaceEditContext(model: MonacoModel): WorkspaceEditContext {
 function applyWorkspaceEditToOpenModels(
   monaco: MonacoApi,
   edit: LanguageServerWorkspaceEdit,
-  rootPath?: string,
+  rootPath: string,
 ): void {
   const modelsByPath = new Map(
     monaco.editor.getModels().map((model) => [modelPath(model), model]),
@@ -581,7 +581,7 @@ function applyWorkspaceEditToOpenModels(
     const path = pathFromLanguageServerUri(uri);
     const model = path ? modelsByPath.get(path) : null;
 
-    if (!path || !model || (rootPath && !isPathInWorkspaceRoot(rootPath, path))) {
+    if (!path || !model || !isPathInWorkspaceRoot(rootPath, path)) {
       return;
     }
 
