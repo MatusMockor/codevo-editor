@@ -41,6 +41,12 @@ export type PhpIdentifierContext =
       variableName: string;
     }
   | {
+      kind: "memberPropertyAccess";
+      propertyName: string;
+      receiverExpression: string;
+      variableName: string;
+    }
+  | {
       className: string;
       kind: "staticMethodCall";
       methodName: string;
@@ -111,6 +117,12 @@ export function phpIdentifierContextAt(
 
   if (methodCall) {
     return methodCall;
+  }
+
+  const memberProperty = memberPropertyAccessContextAt(source, identifier);
+
+  if (memberProperty) {
+    return memberProperty;
   }
 
   const staticMethodCall = staticMethodCallContextAt(source, identifier);
@@ -401,7 +413,7 @@ function methodCallContextAt(
     contextEnd < 0 ? source.length : contextEnd,
   );
   const methodPattern = new RegExp(
-    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b`,
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b\\s*\\(`,
     "g",
   );
 
@@ -414,6 +426,39 @@ function methodCallContextAt(
       return {
         kind: "methodCall",
         methodName: identifier.name,
+        receiverExpression: phpNormalizeReceiverExpression(match[1] || ""),
+        variableName: phpSimpleVariableName(match[1] || "") || "",
+      };
+    }
+  }
+
+  return null;
+}
+
+function memberPropertyAccessContextAt(
+  source: string,
+  identifier: IdentifierAtOffset,
+): PhpIdentifierContext | null {
+  const contextStart = Math.max(0, identifier.start - 800);
+  const contextEnd = source.indexOf("\n", identifier.end);
+  const context = source.slice(
+    contextStart,
+    contextEnd < 0 ? source.length : contextEnd,
+  );
+  const propertyPattern = new RegExp(
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b(?!\\s*\\()`,
+    "g",
+  );
+
+  for (const match of context.matchAll(propertyPattern)) {
+    const matchStart = contextStart + (match.index ?? 0);
+    const propertyStart = matchStart + match[0].lastIndexOf(identifier.name);
+    const propertyEnd = propertyStart + identifier.name.length;
+
+    if (identifier.start >= propertyStart && identifier.end <= propertyEnd) {
+      return {
+        kind: "memberPropertyAccess",
+        propertyName: identifier.name,
         receiverExpression: phpNormalizeReceiverExpression(match[1] || ""),
         variableName: phpSimpleVariableName(match[1] || "") || "",
       };

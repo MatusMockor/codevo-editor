@@ -9157,6 +9157,54 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpMemberPropertyDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "memberPropertyAccess" }>,
+    ): Promise<boolean> => {
+      if (!activeDocument) {
+        return false;
+      }
+
+      const position =
+        activeEditorPositionRef.current ?? { column: 1, lineNumber: 1 };
+      const receiverType = await resolvePhpExpressionType(
+        activeDocument.content,
+        position,
+        context.receiverExpression || `$${context.variableName}`,
+      );
+
+      if (!receiverType) {
+        setMessage(
+          `No typed target found for ${context.receiverExpression}->${context.propertyName}.`,
+        );
+        return false;
+      }
+
+      const propertyExists = await phpClassHierarchyHasProperty(
+        receiverType,
+        context.propertyName,
+      );
+
+      if (
+        propertyExists &&
+        (await openDirectPhpMethodTarget(receiverType, context.propertyName))
+      ) {
+        return true;
+      }
+
+      setMessage(
+        `No relation method found for ${receiverType}::${context.propertyName}().`,
+      );
+      return false;
+    },
+    [
+      activeDocument,
+      openDirectPhpMethodTarget,
+      phpClassHierarchyHasProperty,
+      resolvePhpExpressionType,
+    ],
+  );
+
   const goToPhpStaticMethodCallDefinition = useCallback(
     async (
       context: Extract<PhpIdentifierContext, { kind: "staticMethodCall" }>,
@@ -9352,6 +9400,10 @@ export function useWorkbenchController(
       return goToPhpMethodCallDefinition(context);
     }
 
+    if (context.kind === "memberPropertyAccess") {
+      return goToPhpMemberPropertyDefinition(context);
+    }
+
     if (context.kind === "staticMethodCall") {
       return goToPhpStaticMethodCallDefinition(context);
     }
@@ -9391,6 +9443,7 @@ export function useWorkbenchController(
     activeDocument,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
+    goToPhpMemberPropertyDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
     openDirectPhpMethodTarget,

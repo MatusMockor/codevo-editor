@@ -141,6 +141,53 @@ class AlbumController
     });
   });
 
+  it("detects member property accesses without treating them as method calls", () => {
+    const source = `<?php
+class CommentController
+{
+    public function show(): void
+    {
+        $comment->parent;
+        $comment->parentCall();
+        $comment->children->first();
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "$comment->parent;")),
+    ).toEqual({
+      kind: "memberPropertyAccess",
+      propertyName: "parent",
+      receiverExpression: "$comment",
+      variableName: "comment",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "$comment->parentCall")),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "parentCall",
+      receiverExpression: "$comment",
+      variableName: "comment",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "$comment->children")),
+    ).toEqual({
+      kind: "memberPropertyAccess",
+      propertyName: "children",
+      receiverExpression: "$comment",
+      variableName: "comment",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "->first")),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "first",
+      receiverExpression: "$comment->children",
+      variableName: "",
+    });
+  });
+
   it("detects static method calls under the cursor", () => {
     const source = `<?php
 class AlbumController

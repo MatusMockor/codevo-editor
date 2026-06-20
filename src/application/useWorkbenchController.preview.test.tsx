@@ -8313,6 +8313,89 @@ class CommentController
     });
   });
 
+  it("opens Laravel relation methods from model property access", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const commentModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    public function parent()
+    {
+        return $this->belongsTo(self::class, 'parent_id');
+    }
+
+    public function children()
+    {
+        return $this->hasMany(self::class, 'parent_id');
+    }
+}
+`;
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        echo $comment->parent;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentModelSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->parent"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(commentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentPath,
+      position: {
+        column: 21,
+        lineNumber: lineNumberOf(commentModelSource, "parent"),
+      },
+    });
+  });
+
   it("completes Laravel relation strings from the owning model", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const attachmentPath = "/workspace/app/Models/Attachment.php";
