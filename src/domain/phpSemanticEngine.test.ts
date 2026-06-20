@@ -575,6 +575,15 @@ class AlbumController
         $afterValueOrFailTerminal = Album::query()
             ->valueOrFail('title')
             ->first();
+        $afterUpdateTerminal = Album::query()
+            ->update(['title' => 'Blue'])
+            ->first();
+        $afterDeleteTerminal = Album::query()
+            ->delete()
+            ->first();
+        $afterIncrementTerminal = Album::query()
+            ->increment('plays')
+            ->first();
 
         $album->tit
         $morphAlbum->tit
@@ -590,6 +599,9 @@ class AlbumController
         $afterValueTerminal->tit
         $afterSoleValueTerminal->tit
         $afterValueOrFailTerminal->tit
+        $afterUpdateTerminal->tit
+        $afterDeleteTerminal->tit
+        $afterIncrementTerminal->tit
     }
 }
 `;
@@ -703,6 +715,30 @@ class AlbumController
         source,
         positionAfter(source, "$afterValueOrFailTerminal->tit"),
         "afterValueOrFailTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterUpdateTerminal->tit"),
+        "afterUpdateTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterDeleteTerminal->tit"),
+        "afterDeleteTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterIncrementTerminal->tit"),
+        "afterIncrementTerminal",
         laravelOptions,
       ),
     ).toBeNull();

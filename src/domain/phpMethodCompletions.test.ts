@@ -78,6 +78,20 @@ describe("phpMethodCompletions", () => {
       expect(isLaravelEloquentBuilderFluentMethod(methodName)).toBe(true);
       expect(isLaravelEloquentBuilderMethodName(methodName)).toBe(true);
     }
+    for (const methodName of [
+      "delete",
+      "decrement",
+      "decrementEach",
+      "increment",
+      "incrementEach",
+      "touch",
+      "update",
+      "upsert",
+    ]) {
+      expect(isLaravelEloquentStaticBuilderMethod(methodName)).toBe(true);
+      expect(isLaravelEloquentBuilderFluentMethod(methodName)).toBe(true);
+      expect(isLaravelEloquentBuilderMethodName(methodName)).toBe(true);
+    }
     for (const aggregateMethod of [
       "withAggregate",
       "withAvg",
@@ -326,7 +340,20 @@ class Album extends Model
         null,
       ),
     ).toBeNull();
-    for (const methodName of ["count", "value", "soleValue", "valueOrFail"]) {
+    for (const methodName of [
+      "count",
+      "delete",
+      "decrement",
+      "decrementEach",
+      "increment",
+      "incrementEach",
+      "touch",
+      "update",
+      "upsert",
+      "value",
+      "soleValue",
+      "valueOrFail",
+    ]) {
       expect(
         phpLaravelMethodCallReturnTypeFromSource(
           source,
