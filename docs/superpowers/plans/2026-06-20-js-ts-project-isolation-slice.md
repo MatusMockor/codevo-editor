@@ -2627,7 +2627,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Provider Event Explicit Root Guard
 
-- Pending commit and push.
+- Committed and pushed as `1d34bc60 Require roots for JS TS provider events`.
 - Included files:
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
