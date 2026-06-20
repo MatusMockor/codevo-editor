@@ -1517,6 +1517,10 @@ fn spawn_reader(
         loop {
             match read_message(&mut reader) {
                 Ok(Some(bytes)) => {
+                    if handshake_done && stop_requested.load(Ordering::SeqCst) {
+                        return;
+                    }
+
                     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
                         continue;
                     };
@@ -3627,6 +3631,34 @@ mod tests {
             .recv_timeout(Duration::from_millis(150))
             .is_err());
         fs::remove_dir_all(root).expect("cleanup root");
+    }
+
+    #[test]
+    fn stop_ignores_buffered_window_messages_from_stale_session() {
+        let spawner = FakeSpawner::new(ready_script(), true).with_terminate_script(framed(json!({
+            "jsonrpc": "2.0",
+            "method": "window/logMessage",
+            "params": {
+                "type": 3,
+                "message": "stale message after stop"
+            }
+        })));
+        let (sink, status_rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        assert_eq!(supervisor.stop(), LanguageServerRuntimeStatus::Stopped);
+        assert!(!supervisor.log().contains("stale message after stop"));
     }
 
     #[test]

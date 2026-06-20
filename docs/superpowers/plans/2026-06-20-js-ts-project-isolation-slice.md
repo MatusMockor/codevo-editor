@@ -3192,3 +3192,61 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: LSP Reader Stop Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5d50c82e Record PHP runtime status root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice closes the backend shutdown reader gap noted near the top of this plan.
+- Main agent implemented directly because the guard and fake-process regression both live in `src-tauri/src/lsp_session.rs`.
+
+### Why This Slice
+
+- The LSP reader checked `stop_requested` after parsing and handling `window/*` messages.
+- During shutdown, the fake or real process can still have post-handshake messages buffered in stdout after the stop flag is set.
+- Those stale post-stop messages should not update runtime logs, route responses, emit diagnostics, emit workspace edits, or acknowledge server requests.
+
+### Implementation Choice
+
+- Check `stop_requested` immediately after reading a post-handshake message and before parsing or handling it.
+- Preserve handshake behavior so initialize success/failure still reaches the starter thread.
+- Add a regression where the fake killer writes a `window/logMessage` during stop; the stopped session must not append that stale message to the runtime log.
+
+### Acceptance Criteria
+
+- Buffered post-stop `window/logMessage` payloads are ignored.
+- Existing buffered post-stop diagnostics and workspace-edit guards keep passing.
+- The full `lsp_session` test module and full Rust test suite pass.
+- The touched Rust file is rustfmt-clean.
+
+### Completed Slice: LSP Reader Stop Guard
+
+- Added an early post-handshake stop guard to the LSP reader loop.
+- Added regression coverage for stale buffered window messages during stop.
+- Preserved existing handshake, diagnostics, workspace-edit, request/response, and runtime-log behavior while the session is active.
+
+### Verification: LSP Reader Stop Guard
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml stop_ignores_buffered_window_messages_from_stale_session`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_session::tests::`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `rustfmt --edition 2021 --check src-tauri/src/lsp_session.rs`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+- NOTE: `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` still reports pre-existing formatting differences in `src-tauri/src/js_ts_file_watcher.rs`, `src-tauri/src/lib.rs`, and `src-tauri/src/lsp.rs`; those files were not changed for this slice.
+
+### Commit Status: LSP Reader Stop Guard
+
+- Pending commit.
+- Included files:
+  - `src-tauri/src/lsp_session.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
