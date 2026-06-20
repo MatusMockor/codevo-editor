@@ -2093,3 +2093,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `a1fe0eeb Stop Laravel mutation builder leaks`.
+
+## Slice: Laravel Chunk Pagination Terminal Boundary - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `42f6cb66 Record Laravel mutation terminal commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Eloquent chunking and cursor pagination helpers as known builder methods without preserving builder/model inference after their non-builder results.
+
+### Implementation Choice
+
+- Add chunking helpers and cursor pagination helpers to Laravel Eloquent static/fluent builder method recognition.
+- Add the same helpers to the non-model terminal set so scope/macro fallback stops after these calls.
+- Add semantic negative coverage proving representative chunk and cursor pagination chains do not infer the model type.
+
+### Acceptance Criteria
+
+- `chunkById`, `chunkByIdDesc`, `chunkMap`, `each`, `eachById`, `orderedChunkById`, `cursorPaginate`, and `paginateUsingCursor` are recognized as Laravel Eloquent builder method names.
+- Direct return inference for these helpers stays `null` rather than `Builder<Model>`.
+- `Album::query()->chunkById(...)->first()` and `Album::query()->cursorPaginate(...)->first()` do not infer `Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added chunking and cursor pagination helpers to known Eloquent static/fluent builder method recognition.
+- Added the same helpers to the non-model terminal set so builder scope/macro fallback stops at chunking and pagination calls.
+- Added direct return-type coverage and semantic negative coverage proving representative chunk and cursor pagination chains do not infer the model type.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending.

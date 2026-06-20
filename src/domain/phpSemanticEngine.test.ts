@@ -584,6 +584,12 @@ class AlbumController
         $afterIncrementTerminal = Album::query()
             ->increment('plays')
             ->first();
+        $afterChunkByIdTerminal = Album::query()
+            ->chunkById(100, fn () => true)
+            ->first();
+        $afterCursorPaginateTerminal = Album::query()
+            ->cursorPaginate(15)
+            ->first();
 
         $album->tit
         $morphAlbum->tit
@@ -602,6 +608,8 @@ class AlbumController
         $afterUpdateTerminal->tit
         $afterDeleteTerminal->tit
         $afterIncrementTerminal->tit
+        $afterChunkByIdTerminal->tit
+        $afterCursorPaginateTerminal->tit
     }
 }
 `;
@@ -739,6 +747,22 @@ class AlbumController
         source,
         positionAfter(source, "$afterIncrementTerminal->tit"),
         "afterIncrementTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterChunkByIdTerminal->tit"),
+        "afterChunkByIdTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterCursorPaginateTerminal->tit"),
+        "afterCursorPaginateTerminal",
         laravelOptions,
       ),
     ).toBeNull();
