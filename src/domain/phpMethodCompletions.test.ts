@@ -73,6 +73,11 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentStaticBuilderMethod("withWhereHas")).toBe(true);
     expect(isLaravelEloquentBuilderFluentMethod("withWhereHas")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("withWhereHas")).toBe(true);
+    for (const methodName of ["value", "soleValue", "valueOrFail"]) {
+      expect(isLaravelEloquentStaticBuilderMethod(methodName)).toBe(true);
+      expect(isLaravelEloquentBuilderFluentMethod(methodName)).toBe(true);
+      expect(isLaravelEloquentBuilderMethodName(methodName)).toBe(true);
+    }
     for (const aggregateMethod of [
       "withAggregate",
       "withAvg",
@@ -321,14 +326,16 @@ class Album extends Model
         null,
       ),
     ).toBeNull();
-    expect(
-      phpLaravelMethodCallReturnTypeFromSource(
-        source,
-        "count",
-        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
-        null,
-      ),
-    ).toBeNull();
+    for (const methodName of ["count", "value", "soleValue", "valueOrFail"]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+          null,
+        ),
+      ).toBeNull();
+    }
   });
 
   it("infers Laravel repository builder generics from repository naming conventions", () => {

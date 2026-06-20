@@ -566,6 +566,15 @@ class AlbumController
             ->findOrNew(1);
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
+        $afterValueTerminal = Album::query()
+            ->value('title')
+            ->first();
+        $afterSoleValueTerminal = Album::query()
+            ->soleValue('title')
+            ->first();
+        $afterValueOrFailTerminal = Album::query()
+            ->valueOrFail('title')
+            ->first();
 
         $album->tit
         $morphAlbum->tit
@@ -578,6 +587,9 @@ class AlbumController
         $foundOrNew->tit
         $query->whe
         $latest->tit
+        $afterValueTerminal->tit
+        $afterSoleValueTerminal->tit
+        $afterValueOrFailTerminal->tit
     }
 }
 `;
@@ -670,6 +682,30 @@ class AlbumController
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterValueTerminal->tit"),
+        "afterValueTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterSoleValueTerminal->tit"),
+        "afterSoleValueTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterValueOrFailTerminal->tit"),
+        "afterValueOrFailTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
   });
 
   it("resolves Laravel model assignments from Eloquent collection chains", () => {

@@ -2001,3 +2001,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `b7fa1a89 Infer Laravel hydrate collection results`.
+
+## Slice: Laravel Scalar Value Terminal Boundary - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2333639c Record Laravel hydrate collection commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Eloquent scalar retrieval helpers `value(...)`, `soleValue(...)`, and `valueOrFail(...)` as known builder methods without allowing them to preserve builder/model inference.
+
+### Implementation Choice
+
+- Add the scalar retrieval helpers to Laravel Eloquent static and fluent builder method sets so completions and known-method checks recognize them.
+- Also add them to the non-model terminal set so scope/macro fallback stops after these calls.
+- Add semantic coverage proving a chain after a scalar retrieval helper does not infer the model type.
+
+### Acceptance Criteria
+
+- `value`, `soleValue`, and `valueOrFail` are recognized as Laravel Eloquent builder method names.
+- Direct return inference for these helpers stays `null` rather than `Builder<Model>`.
+- `Album::query()->value(...)->first()` and related scalar chains do not infer `Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added `value`, `soleValue`, and `valueOrFail` to known Eloquent static/fluent builder method recognition.
+- Added the same helpers to the non-model terminal set so builder scope/macro fallback stops at scalar retrieval calls.
+- Added direct return-type coverage and semantic negative coverage proving scalar retrieval chains do not infer the model type.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending.
