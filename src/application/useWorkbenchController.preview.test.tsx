@@ -1038,6 +1038,98 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("keeps JavaScript TypeScript document sync state after stale same-root did-open failure", async () => {
+    const path = "/workspace/src/App.ts";
+    const didOpenAttempts: Deferred<void>[] = [];
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(301)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(301)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(301),
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(301),
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didOpen,
+    ).mockImplementation(() => {
+      const didOpen = createDeferred<void>();
+      didOpenAttempts.push(didOpen);
+      return didOpen.promise;
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await vi.waitFor(() => {
+      expect(didOpenAttempts).toHaveLength(1);
+    });
+
+    act(() => {
+      publishStatus?.(runningStatus(302));
+    });
+    await vi.waitFor(() => {
+      expect(didOpenAttempts).toHaveLength(2);
+    });
+
+    didOpenAttempts[1]?.resolve(undefined);
+    await flushAsyncTurns();
+    didOpenAttempts[0]?.reject(new Error("stale did open"));
+    await flushAsyncTurns(24);
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+        .didChange,
+    ).mockClear();
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+        .didChange,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path,
+        text: "export const value = 2;\n",
+      }),
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale did open"),
+      ),
+    ).toBe(false);
+  });
+
   it("shows JavaScript and TypeScript diagnostics in Problems and opens the diagnostic range", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)

@@ -2403,3 +2403,63 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Document Sync Runtime Session Resync
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `fb094738 Record JS TS file notification session guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is inside the workbench controller document-sync lifecycle and its existing preview tests.
+- Main agent implemented directly because the discovered gap was a tight integration between runtime status, document-sync refs, and open-document resync.
+
+### Why This Slice
+
+- The JS/TS document-sync effect reset documents when the runtime stopped, but a same-root TypeScript session change from running session A to running session B did not clear sync state.
+- That meant open documents could remain marked as synced to the old session and miss `didOpen` for the new session.
+- A stale `didOpen` failure from the old session could also delete sync state that already belonged to the new same-root session.
+
+### Implementation Choice
+
+- Track a JS/TS document-sync runtime signature from `root + sessionId`.
+- Reset JS/TS document-sync state and re-open visible documents whenever the active runtime signature changes.
+- Split the existing session guard into:
+  - current session for a root,
+  - active current session for UI command flows.
+- Guard `didOpen` catch cleanup/reporting so stale old-session failures do not delete current-session sync state.
+
+### Acceptance Criteria
+
+- Same-root TypeScript session restart re-sends `didOpen` for already open JS/TS documents.
+- Stale `didOpen` failures from the replaced session do not show JavaScript/TypeScript errors.
+- Stale `didOpen` failures from the replaced session do not prevent later `didChange` notifications in the new session.
+- Focused document-sync tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Document Sync Runtime Session Resync
+
+- Added JS/TS document-sync runtime signature tracking.
+- Reset JS/TS document-sync refs on same-root runtime session changes so open documents sync into the new TypeScript session.
+- Added stale-session protection around `didOpen` catch cleanup.
+- Added regression coverage proving a stale same-root `didOpen` failure does not break subsequent `didChange` sync in the new session.
+
+### Verification: JS/TS Document Sync Runtime Session Resync
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "did-open failure|does not sync JavaScript and TypeScript documents with a runtime from another project tab"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Document Sync Runtime Session Resync
+
+- Pending commit and push.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

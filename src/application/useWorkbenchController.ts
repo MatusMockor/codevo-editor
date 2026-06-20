@@ -602,6 +602,9 @@ export function useWorkbenchController(
     useRef<LanguageServerRuntimeStatus | null>(null);
   const javaScriptTypeScriptLanguageServerRuntimeStatusRootRef =
     useRef<string | null>(null);
+  const javaScriptTypeScriptDocumentSyncRuntimeSignatureRef = useRef<
+    string | null
+  >(null);
   const phpClassSourcePathCacheRef = useRef<Record<string, string[]>>({});
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
@@ -1272,12 +1275,8 @@ export function useWorkbenchController(
     [],
   );
 
-  const isJavaScriptTypeScriptLanguageServerSessionActiveForRoot = useCallback(
+  const isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot = useCallback(
     (rootPath: string, sessionId: number) => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        return false;
-      }
-
       const currentRuntimeStatus =
         cachedLanguageServerRuntimeStatusForRoot(
           javaScriptTypeScriptRuntimeStatusByRootRef.current,
@@ -1299,6 +1298,19 @@ export function useWorkbenchController(
       );
     },
     [],
+  );
+
+  const isJavaScriptTypeScriptLanguageServerSessionActiveForRoot = useCallback(
+    (rootPath: string, sessionId: number) => {
+      return (
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
+        isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
+          rootPath,
+          sessionId,
+        )
+      );
+    },
+    [isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot],
   );
 
   const cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime = useCallback(
@@ -1651,6 +1663,7 @@ export function useWorkbenchController(
     Object.keys(javaScriptTypeScriptDocumentChangeTimersRef.current).forEach(
       clearJavaScriptTypeScriptDocumentChangeTimer,
     );
+    javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current = null;
     javaScriptTypeScriptSyncedDocumentPathsRef.current.clear();
     javaScriptTypeScriptSyncedDocumentContentRef.current = {};
     javaScriptTypeScriptPendingDocumentChangesRef.current = {};
@@ -1893,6 +1906,8 @@ export function useWorkbenchController(
       javaScriptTypeScriptSyncedDocumentPathsRef.current.add(syncKey);
       javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey] =
         document.content;
+      const requestedSessionId =
+        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
 
       try {
         await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
@@ -1902,6 +1917,15 @@ export function useWorkbenchController(
           ),
         );
       } catch (error) {
+        if (
+          !isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
+            rootPath,
+            requestedSessionId,
+          )
+        ) {
+          return;
+        }
+
         javaScriptTypeScriptSyncedDocumentPathsRef.current.delete(syncKey);
         delete javaScriptTypeScriptSyncedDocumentContentRef.current[syncKey];
         reportErrorForActiveWorkspaceRoot(
@@ -1913,6 +1937,7 @@ export function useWorkbenchController(
     },
     [
       enqueueJavaScriptTypeScriptDocumentSync,
+      isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
@@ -13202,6 +13227,24 @@ export function useWorkbenchController(
     ) {
       resetJavaScriptTypeScriptLanguageServerDocuments();
       return;
+    }
+
+    const runtimeRoot =
+      javaScriptTypeScriptLanguageServerRuntimeStatus.rootPath ??
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot ??
+      workspaceRoot;
+    const runtimeSignature = [
+      normalizedWorkspaceRootKey(runtimeRoot),
+      javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
+    ].join(":");
+
+    if (
+      javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current !==
+      runtimeSignature
+    ) {
+      resetJavaScriptTypeScriptLanguageServerDocuments();
+      javaScriptTypeScriptDocumentSyncRuntimeSignatureRef.current =
+        runtimeSignature;
     }
 
     const documentsToSync = openDocumentPaths
