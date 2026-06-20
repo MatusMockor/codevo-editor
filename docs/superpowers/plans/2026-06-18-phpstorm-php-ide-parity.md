@@ -726,4 +726,8 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `d887830 Reconcile nullsafe member diagnostics`.
+- Included files:
+  - `src/domain/phpLanguageServerDiagnosticFilters.ts`
+  - `src/domain/phpLanguageServerDiagnosticFilters.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
