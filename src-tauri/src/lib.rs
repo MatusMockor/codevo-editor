@@ -99,6 +99,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
@@ -518,6 +519,75 @@ fn workspace_file_operation_uris(operation: &LanguageServerWorkspaceFileOperatio
             old_uri, new_uri, ..
         } => vec![old_uri.as_str(), new_uri.as_str()],
     }
+}
+
+fn filter_lsp_locations_to_workspace(
+    root_path: &str,
+    locations: Vec<LanguageServerLocation>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    Ok(locations
+        .into_iter()
+        .filter(|location| is_lsp_file_uri_in_workspace(root_path, &location.uri))
+        .collect())
+}
+
+fn filter_lsp_workspace_symbols_to_workspace(
+    root_path: &str,
+    symbols: Vec<LanguageServerWorkspaceSymbol>,
+) -> Result<Vec<LanguageServerWorkspaceSymbol>, String> {
+    Ok(symbols
+        .into_iter()
+        .filter(|symbol| {
+            symbol
+                .location
+                .as_ref()
+                .is_some_and(|location| is_lsp_file_uri_in_workspace(root_path, &location.uri))
+        })
+        .collect())
+}
+
+fn filter_optional_lsp_workspace_edit_to_workspace(
+    root_path: &str,
+    edit: Option<LanguageServerWorkspaceEdit>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    let Some(edit) = edit else {
+        return Ok(None);
+    };
+
+    filter_lsp_workspace_edit_to_workspace(root_path, edit)
+}
+
+fn filter_lsp_workspace_edit_to_workspace(
+    root_path: &str,
+    edit: LanguageServerWorkspaceEdit,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    let changes = edit
+        .changes
+        .into_iter()
+        .filter(|(uri, _)| is_lsp_file_uri_in_workspace(root_path, uri))
+        .collect::<BTreeMap<_, _>>();
+    let file_operations = edit
+        .file_operations
+        .into_iter()
+        .filter(|operation| {
+            workspace_file_operation_uris(operation)
+                .into_iter()
+                .all(|uri| is_lsp_file_uri_in_workspace(root_path, uri))
+        })
+        .collect::<Vec<_>>();
+
+    if changes.is_empty() && file_operations.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(LanguageServerWorkspaceEdit {
+        changes,
+        file_operations,
+    }))
+}
+
+fn is_lsp_file_uri_in_workspace(root_path: &str, uri: &str) -> bool {
+    uri.starts_with("file://") && ensure_lsp_uri_in_workspace(root_path, uri).is_ok()
 }
 
 fn ensure_lsp_completion_item_payload_in_workspace(
@@ -1573,7 +1643,7 @@ fn javascript_typescript_text_document_definition(
         return Ok(Vec::new());
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -1609,7 +1679,7 @@ fn javascript_typescript_text_document_implementation(
         None => return Ok(Vec::new()),
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -1643,7 +1713,7 @@ fn javascript_typescript_text_document_type_definition(
         return Ok(Vec::new());
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -1677,7 +1747,7 @@ fn javascript_typescript_text_document_references(
         return Ok(Vec::new());
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -1757,7 +1827,10 @@ fn javascript_typescript_text_document_rename(
         return Ok(None);
     };
 
-    parse_workspace_edit_result(&result)
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_workspace_edit_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2141,7 +2214,10 @@ fn javascript_typescript_language_server_execute_command(
         return Ok(None);
     };
 
-    parse_optional_workspace_edit_result(&result)
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_optional_workspace_edit_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2160,7 +2236,10 @@ fn javascript_typescript_workspace_will_rename_files(
         return Ok(None);
     };
 
-    parse_optional_workspace_edit_result(&result)
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_optional_workspace_edit_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2600,7 +2679,7 @@ fn javascript_typescript_workspace_symbols(
         return Ok(Vec::new());
     };
 
-    parse_workspace_symbols_result(&result)
+    filter_lsp_workspace_symbols_to_workspace(&root_path, parse_workspace_symbols_result(&result)?)
 }
 
 #[tauri::command]
@@ -3000,17 +3079,20 @@ mod tests {
         ensure_lsp_document_link_payload_in_workspace, ensure_lsp_path_in_workspace,
         ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
         ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
-        ensure_lsp_workspace_edit_paths_in_workspace, ensure_path_in_workspace, normalize_path,
-        path_from_file_uri, workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        ensure_lsp_workspace_edit_paths_in_workspace, ensure_path_in_workspace,
+        filter_lsp_locations_to_workspace, filter_lsp_workspace_edit_to_workspace,
+        filter_lsp_workspace_symbols_to_workspace, normalize_path, path_from_file_uri,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeLens,
-        LanguageServerCompletionItem, LanguageServerDocumentLink, LanguageServerPosition,
-        LanguageServerRange, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
-        LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
-        LanguageServerWorkspaceFileOperationOptions, TextDocumentPosition,
+        LanguageServerCompletionItem, LanguageServerDocumentLink, LanguageServerLocation,
+        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
+        LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
+        LanguageServerWorkspaceSymbol, TextDocumentPosition,
     };
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
@@ -3121,6 +3203,111 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    #[test]
+    fn lsp_response_workspace_edit_filter_drops_outside_file_uris() {
+        let root = temp_workspace("response-workspace-edit-root");
+        let sibling = sibling_prefix_workspace(&root, "sibling");
+        let outside = temp_workspace("response-workspace-edit-outside");
+        let inside_uri = file_uri(&root.join("src/App.ts"));
+        let sibling_uri = file_uri(&sibling.join("src/App.ts"));
+        let outside_uri = file_uri(&outside.join("src/App.ts"));
+        let inside_created_uri = file_uri(&root.join("src/Created.ts"));
+        let sibling_created_uri = file_uri(&sibling.join("src/Created.ts"));
+        let inside_old_uri = file_uri(&root.join("src/Old.ts"));
+        let inside_new_uri = file_uri(&root.join("src/New.ts"));
+
+        let mut changes = BTreeMap::new();
+        changes.insert(inside_uri.clone(), vec![text_edit("inside")]);
+        changes.insert(sibling_uri.clone(), vec![text_edit("sibling")]);
+        changes.insert(outside_uri.clone(), vec![text_edit("outside")]);
+
+        let filtered = filter_lsp_workspace_edit_to_workspace(
+            &path_string(&root),
+            LanguageServerWorkspaceEdit {
+                changes,
+                file_operations: vec![
+                    LanguageServerWorkspaceFileOperation::Create {
+                        uri: inside_created_uri.clone(),
+                        options: None,
+                    },
+                    LanguageServerWorkspaceFileOperation::Create {
+                        uri: sibling_created_uri,
+                        options: None,
+                    },
+                    LanguageServerWorkspaceFileOperation::Rename {
+                        old_uri: inside_old_uri.clone(),
+                        new_uri: inside_new_uri.clone(),
+                        options: None,
+                    },
+                    LanguageServerWorkspaceFileOperation::Rename {
+                        old_uri: inside_old_uri.clone(),
+                        new_uri: sibling_uri,
+                        options: None,
+                    },
+                ],
+            },
+        )
+        .expect("filtered workspace edit")
+        .expect("workspace edit with inside changes");
+
+        assert_eq!(filtered.changes.len(), 1);
+        assert_eq!(filtered.changes[&inside_uri][0].new_text, "inside");
+        assert_eq!(
+            filtered.file_operations,
+            vec![
+                LanguageServerWorkspaceFileOperation::Create {
+                    uri: inside_created_uri,
+                    options: None,
+                },
+                LanguageServerWorkspaceFileOperation::Rename {
+                    old_uri: inside_old_uri,
+                    new_uri: inside_new_uri,
+                    options: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn lsp_response_location_filter_drops_outside_file_uris() {
+        let root = temp_workspace("response-location-root");
+        let sibling = sibling_prefix_workspace(&root, "sibling");
+        let outside = temp_workspace("response-location-outside");
+        let inside_uri = file_uri(&root.join("src/App.ts"));
+
+        let filtered = filter_lsp_locations_to_workspace(
+            &path_string(&root),
+            vec![
+                location(&inside_uri),
+                location(&file_uri(&sibling.join("src/App.ts"))),
+                location(&file_uri(&outside.join("src/App.ts"))),
+            ],
+        )
+        .expect("filtered locations");
+
+        assert_eq!(filtered, vec![location(&inside_uri)]);
+    }
+
+    #[test]
+    fn lsp_response_workspace_symbol_filter_drops_outside_file_uris() {
+        let root = temp_workspace("response-workspace-symbol-root");
+        let sibling = sibling_prefix_workspace(&root, "sibling");
+        let outside = temp_workspace("response-workspace-symbol-outside");
+        let inside_uri = file_uri(&root.join("src/App.ts"));
+
+        let filtered = filter_lsp_workspace_symbols_to_workspace(
+            &path_string(&root),
+            vec![
+                workspace_symbol("App", &inside_uri),
+                workspace_symbol("SiblingApp", &file_uri(&sibling.join("src/App.ts"))),
+                workspace_symbol("OutsideApp", &file_uri(&outside.join("src/App.ts"))),
+            ],
+        )
+        .expect("filtered workspace symbols");
+
+        assert_eq!(filtered, vec![workspace_symbol("App", &inside_uri)]);
     }
 
     #[test]
@@ -3481,6 +3668,13 @@ mod tests {
         root.canonicalize().expect("canonical workspace")
     }
 
+    fn sibling_prefix_workspace(root: &Path, suffix: &str) -> PathBuf {
+        let name = root.file_name().expect("workspace name").to_string_lossy();
+        let sibling = root.with_file_name(format!("{name}-{suffix}"));
+        fs::create_dir_all(&sibling).expect("sibling prefix workspace");
+        sibling.canonicalize().expect("canonical sibling workspace")
+    }
+
     fn unique_suffix() -> u128 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3536,6 +3730,22 @@ mod tests {
         serde_json::from_value(value).expect("document link")
     }
 
+    fn location(uri: &str) -> LanguageServerLocation {
+        LanguageServerLocation {
+            uri: uri.to_string(),
+            range: lsp_range(),
+        }
+    }
+
+    fn workspace_symbol(name: &str, uri: &str) -> LanguageServerWorkspaceSymbol {
+        LanguageServerWorkspaceSymbol {
+            container_name: None,
+            kind: 12,
+            location: Some(location(uri)),
+            name: name.to_string(),
+        }
+    }
+
     fn call_hierarchy_item(uri: &str) -> LanguageServerCallHierarchyItem {
         serde_json::from_value(json!({
             "name": "render",
@@ -3568,6 +3778,13 @@ mod tests {
                 line: 0,
                 character: 3,
             },
+        }
+    }
+
+    fn text_edit(new_text: &str) -> LanguageServerTextEdit {
+        LanguageServerTextEdit {
+            range: lsp_range(),
+            new_text: new_text.to_string(),
         }
     }
 

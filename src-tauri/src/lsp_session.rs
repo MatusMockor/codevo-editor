@@ -1414,6 +1414,10 @@ fn spawn_reader(
                         }
 
                         if let Some(event) = parse_publish_diagnostics(&value, session_id) {
+                            if !is_diagnostic_event_in_workspace(&workspace_root, &event) {
+                                continue;
+                            }
+
                             diagnostics_sink.emit_diagnostics(event);
                         }
 
@@ -1753,6 +1757,13 @@ fn ensure_workspace_edit_paths_in_workspace(
     Ok(())
 }
 
+fn is_diagnostic_event_in_workspace(
+    workspace_root: &str,
+    event: &LanguageServerDiagnosticEvent,
+) -> bool {
+    is_file_uri_in_workspace(workspace_root, &event.uri)
+}
+
 fn workspace_file_operation_uris(operation: &LanguageServerWorkspaceFileOperation) -> Vec<&str> {
     match operation {
         LanguageServerWorkspaceFileOperation::Create { uri, .. }
@@ -1768,19 +1779,29 @@ fn ensure_workspace_edit_uri_in_workspace(workspace_root: &str, uri: &str) -> Re
         return Ok(());
     }
 
-    let Some(path) = path_from_file_uri(uri) else {
-        return Err("Workspace edit contains an invalid file URI.".to_string());
-    };
-    let root = workspace_guard_path(workspace_root)?;
-    let Some(path) = resolve_existing_or_parent_path(Path::new(&path)) else {
-        return Err("Workspace edit path could not be resolved.".to_string());
-    };
-
-    if path.starts_with(&root) {
+    if is_file_uri_in_workspace(workspace_root, uri) {
         return Ok(());
     }
 
     Err("Workspace edit path is outside the workspace root.".to_string())
+}
+
+fn is_file_uri_in_workspace(workspace_root: &str, uri: &str) -> bool {
+    if !uri.starts_with("file://") {
+        return false;
+    }
+
+    let Some(path) = path_from_file_uri(uri) else {
+        return false;
+    };
+    let Ok(root) = workspace_guard_path(workspace_root) else {
+        return false;
+    };
+    let Some(path) = resolve_existing_or_parent_path(Path::new(&path)) else {
+        return false;
+    };
+
+    path.starts_with(&root)
 }
 
 fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
@@ -2804,6 +2825,9 @@ mod tests {
 
     #[test]
     fn publish_diagnostics_messages_emit_diagnostic_events() {
+        let root = test_workspace_root("diagnostics-inside-root");
+        let source_path = root.join("src/User.ts");
+        fs::create_dir_all(source_path.parent().expect("source parent")).expect("source parent");
         let spawner = FakeSpawner::new(ready_script(), true);
         let held = Arc::clone(&spawner.held_writer);
         let (sink, status_rx, diagnostics_sink, diagnostics_rx) = ChannelSink::with_diagnostics();
@@ -2811,7 +2835,7 @@ mod tests {
 
         supervisor
             .start(
-                &command(),
+                &command_for_root(path_string(&root).as_str()),
                 &initialize_request(),
                 &spawner,
                 sink,
@@ -2827,7 +2851,7 @@ mod tests {
                 "jsonrpc": "2.0",
                 "method": "textDocument/publishDiagnostics",
                 "params": {
-                    "uri": "file:///tmp/User.php",
+                    "uri": file_uri(&source_path),
                     "diagnostics": [
                         {
                             "range": {
@@ -2849,8 +2873,71 @@ mod tests {
             .expect("diagnostic event");
 
         assert_eq!(event.session_id, 1);
-        assert_eq!(event.uri, "file:///tmp/User.php");
+        assert_eq!(event.uri, file_uri(&source_path));
         assert_eq!(event.diagnostics[0].message, "Possible issue");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn publish_diagnostics_ignores_file_uris_outside_session_root() {
+        let root = test_workspace_root("diagnostics-root");
+        let outside = test_workspace_root("diagnostics-outside");
+        let sibling = root
+            .parent()
+            .expect("workspace parent")
+            .join(format!("{}-sibling", unique_suffix()));
+        fs::create_dir_all(&sibling).expect("sibling root");
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, status_rx, diagnostics_sink, diagnostics_rx) = ChannelSink::with_diagnostics();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start(
+                &command_for_root(path_string(&root).as_str()),
+                &initialize_request(),
+                &spawner,
+                sink,
+                diagnostics_sink,
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        let mut held = held.lock().expect("held writer lock");
+        let writer = held.as_mut().expect("held writer");
+        for uri in [
+            file_uri(&outside.join("src/Secret.ts")),
+            file_uri(&sibling.join("src/Neighbor.ts")),
+        ] {
+            writer
+                .write_all(&framed(json!({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/publishDiagnostics",
+                    "params": {
+                        "uri": uri,
+                        "diagnostics": [
+                            {
+                                "range": {
+                                    "start": { "line": 1, "character": 2 },
+                                    "end": { "line": 1, "character": 3 }
+                                },
+                                "severity": 2,
+                                "source": "tsserver",
+                                "message": "Outside issue"
+                            }
+                        ]
+                    }
+                })))
+                .expect("write diagnostics");
+        }
+        drop(held);
+
+        assert!(diagnostics_rx
+            .recv_timeout(Duration::from_millis(150))
+            .is_err());
+        fs::remove_dir_all(root).expect("cleanup root");
+        fs::remove_dir_all(outside).expect("cleanup outside");
+        fs::remove_dir_all(sibling).expect("cleanup sibling");
     }
 
     #[test]
