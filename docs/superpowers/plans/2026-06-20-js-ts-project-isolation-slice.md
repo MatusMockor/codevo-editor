@@ -1958,4 +1958,17 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Range Semantic Tokens
 
-- Pending commit and push.
+- Committed and pushed as `66c4b483 Add JS TS range semantic tokens`.
+- Included files:
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `src/domain/languageServerFeatures.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/lsp.rs`
+  - `src-tauri/src/lsp_features.rs`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `src/components/EditorSurface.test.tsx`
+  - `src/components/languageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
