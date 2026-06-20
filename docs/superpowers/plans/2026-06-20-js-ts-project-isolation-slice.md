@@ -1591,8 +1591,56 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Lazy Payload Session Guard
 
-- Pending commit.
+- Committed and pushed as `bd0a4b7d Guard JS TS lazy payloads by session`.
 - Included files:
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Workspace Edit Repeated URI Merge
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `bd0a4b7d Guard JS TS lazy payloads by session`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- LSP workspace edits can include text edits in both `changes` and `documentChanges`.
+- A server may also send multiple `documentChanges` entries for the same URI.
+- The parser used `BTreeMap::insert`, so later entries replaced earlier edits for the same file, making rename/code-action application partial.
+
+### Implementation Choice
+
+- Add a small append helper for workspace text edits.
+- Merge repeated URI entries while preserving parse order.
+- Keep file operation parsing unchanged.
+
+### Acceptance Criteria
+
+- Text edits from `changes` and repeated `documentChanges` for the same URI are all preserved.
+- Existing workspace edit parsing and file-operation tests remain green.
+- Focused Rust parser test, serial Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: Workspace Edit Repeated URI Merge
+
+- Workspace edit parsing now appends text edits for repeated URIs instead of overwriting previous entries.
+- Added regression coverage for a URI repeated across `changes` and multiple `documentChanges` entries.
+
+### Verification: Workspace Edit Repeated URI Merge
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml parses_workspace_edit_merges_repeated_text_edits_for_same_uri --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: Workspace Edit Repeated URI Merge
+
+- Pending commit.
+- Included files:
+  - `src-tauri/src/lsp_features.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

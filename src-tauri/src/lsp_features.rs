@@ -2017,7 +2017,7 @@ fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, St
                 return Err("Language server returned malformed workspace changes.".to_string());
             };
 
-            changes.insert(uri.clone(), parse_text_edits(items)?);
+            append_workspace_text_edits(&mut changes, uri.clone(), parse_text_edits(items)?);
         }
     }
 
@@ -2031,7 +2031,11 @@ fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, St
                     continue;
                 };
 
-                changes.insert(uri.to_string(), parse_text_edits(items)?);
+                append_workspace_text_edits(
+                    &mut changes,
+                    uri.to_string(),
+                    parse_text_edits(items)?,
+                );
                 continue;
             }
 
@@ -2064,6 +2068,14 @@ fn parse_text_edits(items: &[Value]) -> Result<Vec<LanguageServerTextEdit>, Stri
                 .map_err(|error| format!("Language server returned a malformed text edit: {error}"))
         })
         .collect()
+}
+
+fn append_workspace_text_edits(
+    changes: &mut BTreeMap<String, Vec<LanguageServerTextEdit>>,
+    uri: String,
+    edits: Vec<LanguageServerTextEdit>,
+) {
+    changes.entry(uri).or_default().extend(edits);
 }
 
 fn parse_code_action_item(value: &Value) -> Option<LanguageServerCodeAction> {
@@ -3412,6 +3424,57 @@ mod tests {
                 .new_text,
             "Account"
         );
+    }
+
+    #[test]
+    fn parses_workspace_edit_merges_repeated_text_edits_for_same_uri() {
+        let edit = parse_workspace_edit_result(&json!({
+            "changes": {
+                "file:///tmp/User.ts": [
+                    {
+                        "range": {
+                            "start": { "line": 1, "character": 0 },
+                            "end": { "line": 1, "character": 4 }
+                        },
+                        "newText": "User"
+                    }
+                ]
+            },
+            "documentChanges": [
+                {
+                    "textDocument": { "uri": "file:///tmp/User.ts" },
+                    "edits": [
+                        {
+                            "range": {
+                                "start": { "line": 2, "character": 0 },
+                                "end": { "line": 2, "character": 6 }
+                            },
+                            "newText": "Account"
+                        }
+                    ]
+                },
+                {
+                    "textDocument": { "uri": "file:///tmp/User.ts" },
+                    "edits": [
+                        {
+                            "range": {
+                                "start": { "line": 3, "character": 0 },
+                                "end": { "line": 3, "character": 7 }
+                            },
+                            "newText": "Profile"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect("workspace edit")
+        .expect("workspace edit result");
+
+        let edits = &edit.changes["file:///tmp/User.ts"];
+        assert_eq!(edits.len(), 3);
+        assert_eq!(edits[0].new_text, "User");
+        assert_eq!(edits[1].new_text, "Account");
+        assert_eq!(edits[2].new_text, "Profile");
     }
 
     #[test]
