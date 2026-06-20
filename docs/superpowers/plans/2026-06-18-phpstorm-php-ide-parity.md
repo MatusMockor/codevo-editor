@@ -676,4 +676,10 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `fbe327b Navigate PHPDoc magic methods`.
+- Included files:
+  - `src/domain/phpNavigation.ts`
+  - `src/domain/phpNavigation.test.ts`
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
