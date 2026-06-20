@@ -47,6 +47,18 @@ function positionOf(source: string, needle: string) {
   };
 }
 
+function expectedRouteDefinitions(
+  source: string,
+  routeName: string,
+  actions: string[],
+  positionNeedle = routeName,
+) {
+  return actions.map((action) => ({
+    name: `${routeName}.${action}`,
+    position: positionOf(source, positionNeedle),
+  }));
+}
+
 describe("phpLaravelRoutes", () => {
   it("detects Laravel named-route references in supported first string arguments", () => {
     const source = `<?php
@@ -343,6 +355,44 @@ Route::name('admin.')->group(function () {
         name: "admin.reports.thumbnail.update",
         position: positionOf(source, "reports.thumbnail"),
       },
+    ]);
+  });
+
+  it("expands literal Laravel resource array route names", () => {
+    const source = `<?php
+Route::resources([
+    'photos' => PhotoController::class,
+    'posts.comments' => [PostCommentController::class, 'index'],
+]);
+Route::apiResources([
+    'api.photos' => ApiPhotoController::class,
+]);
+Route::softDeletableResources([
+    'trash.photos' => TrashPhotoController::class,
+]);
+Route::name('admin.')->group(function () {
+    Route::resources([
+        'reports' => ReportController::class,
+    ]);
+});
+`;
+    const webActions = [
+      "index",
+      "create",
+      "store",
+      "show",
+      "edit",
+      "update",
+      "destroy",
+    ];
+    const apiActions = ["index", "store", "show", "update", "destroy"];
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      ...expectedRouteDefinitions(source, "photos", webActions),
+      ...expectedRouteDefinitions(source, "posts.comments", webActions),
+      ...expectedRouteDefinitions(source, "api.photos", apiActions),
+      ...expectedRouteDefinitions(source, "trash.photos", webActions),
+      ...expectedRouteDefinitions(source, "admin.reports", webActions, "reports"),
     ]);
   });
 

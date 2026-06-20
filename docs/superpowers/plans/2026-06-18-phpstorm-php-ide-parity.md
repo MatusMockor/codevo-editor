@@ -1317,3 +1317,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `b1f7b415 Expand Laravel singleton route modifiers`.
+
+## Slice: Laravel Resource Array Route Names - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ddfec9ee Record Laravel singleton modifier commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Include Laravel route names declared through bulk resource registration methods such as `Route::resources([...])` and `Route::apiResources([...])`.
+
+### Implementation Choice
+
+- Add a conservative first-argument array parser that extracts top-level string keys before `=>`.
+- Reuse the existing resource action lists for `resources`, `apiResources`, and `softDeletableResources`.
+- Preserve group name prefixes and dotted resource names while ignoring nested controller-array strings.
+
+### Acceptance Criteria
+
+- `Route::resources(['photos' => ...])` contributes full resource route names.
+- `Route::apiResources(['api.photos' => ...])` contributes API resource route names without `create` / `edit`.
+- `Route::softDeletableResources([...])` contributes full resource route names.
+- Name-group-prefixed resource arrays keep the full prefixed route names.
+- Focused route tests, full route tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added bulk Laravel resource route action expansion for `resources`, `apiResources`, and `softDeletableResources`.
+- Added a top-level string-key parser for first-argument resource arrays.
+- Preserved group prefixes and nested dotted names while ignoring nested controller-array string values.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "expands literal Laravel resource array route names"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

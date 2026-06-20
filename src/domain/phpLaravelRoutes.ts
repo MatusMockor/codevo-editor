@@ -52,6 +52,14 @@ const laravelResourceRouteActions = new Map<string, readonly string[]>([
   ["resource", ["index", "create", "store", "show", "edit", "update", "destroy"]],
   ["singleton", ["show", "edit", "update"]],
 ]);
+const laravelResourceArrayRouteActions = new Map<string, readonly string[]>([
+  ["apiresources", ["index", "store", "show", "update", "destroy"]],
+  ["resources", ["index", "create", "store", "show", "edit", "update", "destroy"]],
+  [
+    "softdeletableresources",
+    ["index", "create", "store", "show", "edit", "update", "destroy"],
+  ],
+]);
 const laravelSingletonResourceRouteMethods = new Set([
   "apisingleton",
   "singleton",
@@ -106,7 +114,8 @@ export function phpLaravelNamedRouteDefinitions(
 
     if (
       !laravelRouteDefinitionMethods.has(routeMethod) &&
-      !laravelResourceRouteActions.has(routeMethod)
+      !laravelResourceRouteActions.has(routeMethod) &&
+      !laravelResourceArrayRouteActions.has(routeMethod)
     ) {
       continue;
     }
@@ -121,6 +130,7 @@ export function phpLaravelNamedRouteDefinitions(
       closeParen === null
         ? null
         : laravelResourceRouteActionsForMethod(source, routeMethod, closeParen);
+    const resourceArrayActions = laravelResourceArrayRouteActions.get(routeMethod);
 
     if (resourceActions) {
       const literal = firstLiteralArgumentAtOpenParen(source, openParen);
@@ -136,6 +146,26 @@ export function phpLaravelNamedRouteDefinitions(
           name: `${routeNamePrefix}${literal.value}.${action}`,
           position: editorPositionAtOffset(source, literal.quoteStart + 1),
         });
+      }
+
+      continue;
+    }
+
+    if (resourceArrayActions) {
+      const literals = firstArrayLiteralKeysAtOpenParen(
+        source,
+        openParen,
+        closeParen,
+      );
+      const routeNamePrefix = routeNamePrefixAtOffset(routeGroups, routeStart);
+
+      for (const literal of literals) {
+        for (const action of resourceArrayActions) {
+          definitions.push({
+            name: `${routeNamePrefix}${literal.value}.${action}`,
+            position: editorPositionAtOffset(source, literal.quoteStart + 1),
+          });
+        }
       }
 
       continue;
@@ -232,6 +262,117 @@ function hasLaravelRouteChainMethod(
   }
 
   return false;
+}
+
+function firstArrayLiteralKeysAtOpenParen(
+  source: string,
+  openParen: number,
+  closeParen: number | null,
+): PhpStringLiteral[] {
+  if (closeParen === null) {
+    return [];
+  }
+
+  const argumentStart = skipWhitespace(source, openParen + 1);
+
+  if (source[argumentStart] !== "[") {
+    return [];
+  }
+
+  const arrayClose = matchingBracketOffset(source, argumentStart, "[", "]");
+
+  if (arrayClose === null || arrayClose > closeParen) {
+    return [];
+  }
+
+  const afterArray = source.slice(arrayClose + 1, closeParen);
+
+  if (!/^\s*(?:,|$)/.test(afterArray)) {
+    return [];
+  }
+
+  return topLevelArrayStringKeys(source, argumentStart, arrayClose);
+}
+
+function topLevelArrayStringKeys(
+  source: string,
+  arrayOpen: number,
+  arrayClose: number,
+): PhpStringLiteral[] {
+  const keys: PhpStringLiteral[] = [];
+  let blockComment = false;
+  let depth = 0;
+  let lineComment = false;
+
+  for (let index = arrayOpen + 1; index < arrayClose; index += 1) {
+    const character = source[index] ?? "";
+    const nextCharacter = source[index + 1] ?? "";
+
+    if (lineComment) {
+      if (character === "\n") {
+        lineComment = false;
+      }
+      continue;
+    }
+
+    if (blockComment) {
+      if (character === "*" && nextCharacter === "/") {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (character === "/" && nextCharacter === "/") {
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (character === "#") {
+      lineComment = true;
+      continue;
+    }
+
+    if (character === "/" && nextCharacter === "*") {
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (depth !== 0 || (character !== "'" && character !== "\"")) {
+      continue;
+    }
+
+    const literal = stringLiteralStartingAt(source, index);
+
+    if (!literal?.closed) {
+      continue;
+    }
+
+    const afterLiteral = skipWhitespace(source, literal.quoteEnd + 1);
+
+    if (
+      source.slice(afterLiteral, afterLiteral + 2) === "=>" &&
+      !(literal.quote === "\"" && hasPhpVariableInterpolation(literal.value))
+    ) {
+      keys.push(literal);
+    }
+
+    index = literal.quoteEnd;
+  }
+
+  return keys;
 }
 
 function phpLaravelNamedRouteGroups(
