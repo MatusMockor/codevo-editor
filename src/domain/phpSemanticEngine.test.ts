@@ -667,6 +667,9 @@ class Comment extends Model
             ->firstOrFail();
         $related = Post::class;
         $parent = $this->belongsTo($related)->first();
+        $defaultParent = $this->belongsTo(Post::class)
+            ->withDefault()
+            ->first();
         $morphed = $this->morphMany(Post::class, 'commentable')->get()->first();
         $relation = $this->hasOne(self::class);
         $selfComment = $relation->first();
@@ -685,6 +688,7 @@ class Comment extends Model
 
         $direct->tit
         $parent->tit
+        $defaultParent->tit
         $morphed->tit
         $selfComment->bod
         $constantPost->tit
@@ -734,6 +738,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$parent->tit"),
         "parent",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$defaultParent->tit"),
+        "defaultParent",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");

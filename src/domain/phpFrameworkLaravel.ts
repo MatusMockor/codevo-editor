@@ -372,6 +372,7 @@ const laravelEloquentRelationFluentMethods = new Set([
   "oldestofmany",
   "orderbypivot",
   "using",
+  "withdefault",
   "wherepivot",
   "wherepivotbetween",
   "wherepivotin",

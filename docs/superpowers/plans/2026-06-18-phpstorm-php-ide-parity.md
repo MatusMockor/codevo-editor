@@ -1071,3 +1071,54 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Laravel Relation withDefault Chain Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `175a8274 Guard JS TS navigation during tab switches`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Preserve related model inference through common Laravel relation defaults such as `belongsTo(Post::class)->withDefault()->first()`.
+
+### Implementation Choice
+
+- Treat `withDefault()` as a relation-preserving fluent method, matching Laravel's relation API rather than falling back to the generic builder method list.
+- Add low-level return-type coverage and semantic assignment-chain coverage.
+
+### Acceptance Criteria
+
+- `withDefault()` on `BelongsTo<Post>` returns the same relation type.
+- `belongsTo(Post::class)->withDefault()->first()` infers `Post` for chained member completions.
+- Existing Laravel relation factory chain inference remains unchanged.
+- Focused domain tests, semantic engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added `withDefault()` to the Laravel relation-preserving fluent method set.
+- Added return-type coverage proving `BelongsTo<Post>::withDefault()` keeps the same relation type.
+- Added semantic-chain coverage proving `belongsTo(Post::class)->withDefault()->first()` infers `Post`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "infers Laravel relation factory and relation chain return types"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel relation factory chains to related model assignments"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Included files:
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+  - `src/domain/phpSemanticEngine.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

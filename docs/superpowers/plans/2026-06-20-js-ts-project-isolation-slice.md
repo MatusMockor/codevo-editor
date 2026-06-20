@@ -1889,7 +1889,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Navigation Target Open Isolation
 
-- Pending commit.
+- Committed and pushed as `175a8274 Guard JS TS navigation during tab switches`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`

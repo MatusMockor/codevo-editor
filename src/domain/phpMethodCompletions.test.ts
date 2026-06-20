@@ -293,6 +293,16 @@ class Post extends Model
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
+        "withDefault",
+        "Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\Post>",
+        "$this->belongsTo(Post::class)",
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\Post>",
+    );
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
         "morphMany",
         "App\\Models\\Comment",
         "$this",
