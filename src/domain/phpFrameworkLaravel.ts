@@ -200,6 +200,7 @@ const laravelEloquentBuilderTerminalModelMethods = new Set([
   "find",
   "findor",
   "findorfail",
+  "findornew",
   "first",
   "firstor",
   "firstorcreate",

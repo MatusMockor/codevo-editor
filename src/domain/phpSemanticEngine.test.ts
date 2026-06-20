@@ -562,6 +562,8 @@ class AlbumController
         $fromFindMany = Album::query()
             ->findMany([1, 2])
             ->first();
+        $foundOrNew = Album::query()
+            ->findOrNew(1);
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
 
@@ -573,6 +575,7 @@ class AlbumController
         $fromLoadedCollection->tit
         $foundOr->tit
         $fromFindMany->tit
+        $foundOrNew->tit
         $query->whe
         $latest->tit
     }
@@ -640,6 +643,14 @@ class AlbumController
         source,
         positionAfter(source, "$fromFindMany->tit"),
         "fromFindMany",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$foundOrNew->tit"),
+        "foundOrNew",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
