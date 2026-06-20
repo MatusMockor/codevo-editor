@@ -86,12 +86,14 @@ export type JavaScriptTypeScriptWorkspaceEditApplier = (
 
 interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __languageServerAction?: LanguageServerCodeAction;
+  __languageServerSessionId?: number;
   __workspaceEditContext?: WorkspaceEditContext;
   __workspaceRoot?: string;
 }
 
 interface LanguageServerBackedCodeLens extends Monaco.languages.CodeLens {
   __languageServerCodeLens?: LanguageServerCodeLens;
+  __languageServerSessionId?: number;
   __workspaceRoot?: string;
 }
 
@@ -99,16 +101,19 @@ interface LanguageServerBackedCompletionItem
   extends Monaco.languages.CompletionItem {
   __completionRange?: Monaco.IRange | Monaco.languages.CompletionItemRanges;
   __languageServerItem?: LanguageServerCompletionItem;
+  __languageServerSessionId?: number;
   __workspaceRoot?: string;
 }
 
 interface LanguageServerBackedLink extends Monaco.languages.ILink {
   __languageServerLink?: LanguageServerDocumentLink;
+  __languageServerSessionId?: number;
   __workspaceRoot?: string;
 }
 
 interface LanguageServerBackedInlayHint extends Monaco.languages.InlayHint {
   __languageServerInlayHint?: LanguageServerInlayHint;
+  __languageServerSessionId?: number;
   __workspaceRoot?: string;
 }
 
@@ -116,6 +121,7 @@ interface ExecuteCommandPayload {
   command?: LanguageServerCodeActionCommand | null;
   edit?: LanguageServerWorkspaceEdit | null;
   rootPath: string;
+  sessionId: number;
 }
 
 const JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS = [
@@ -301,7 +307,13 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         return;
       }
 
-      if (!isStoredWorkspaceRootActive(context, payload.rootPath)) {
+      if (
+        !isStoredLanguageServerPayloadActive(
+          context,
+          payload.rootPath,
+          payload.sessionId,
+        )
+      ) {
         return;
       }
 
@@ -315,7 +327,13 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           );
         }
 
-        if (!isStoredWorkspaceRootActive(context, payload.rootPath)) {
+        if (
+          !isStoredLanguageServerPayloadActive(
+            context,
+            payload.rootPath,
+            payload.sessionId,
+          )
+        ) {
           return;
         }
 
@@ -328,7 +346,13 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           payload.command,
         );
 
-        if (!isStoredWorkspaceRootActive(context, payload.rootPath)) {
+        if (
+          !isStoredLanguageServerPayloadActive(
+            context,
+            payload.rootPath,
+            payload.sessionId,
+          )
+        ) {
           return;
         }
 
@@ -649,7 +673,7 @@ async function provideHover(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -691,7 +715,7 @@ async function provideCompletionItems(
           request.position,
         );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return { suggestions: [] };
     }
 
@@ -710,6 +734,7 @@ async function provideCompletionItems(
           monaco,
           item,
           request.rootPath,
+          request.sessionId,
           range,
           `0_${String(index).padStart(4, "0")}`,
         );
@@ -745,7 +770,12 @@ async function resolveCompletionItem(
   if (
     !backedItem.__languageServerItem ||
     !backedItem.__workspaceRoot ||
-    !isStoredWorkspaceRootActive(context, backedItem.__workspaceRoot)
+    backedItem.__languageServerSessionId == null ||
+    !isStoredLanguageServerPayloadActive(
+      context,
+      backedItem.__workspaceRoot,
+      backedItem.__languageServerSessionId,
+    )
   ) {
     return item;
   }
@@ -756,7 +786,13 @@ async function resolveCompletionItem(
       backedItem.__languageServerItem,
     );
 
-    if (!isStoredWorkspaceRootActive(context, backedItem.__workspaceRoot)) {
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedItem.__workspaceRoot,
+        backedItem.__languageServerSessionId,
+      )
+    ) {
       return item;
     }
 
@@ -766,6 +802,7 @@ async function resolveCompletionItem(
         monaco,
         resolved,
         backedItem.__workspaceRoot,
+        backedItem.__languageServerSessionId,
         backedItem.__completionRange ?? item.range,
         item.sortText,
       ),
@@ -798,7 +835,7 @@ async function provideDefinition(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -831,7 +868,7 @@ async function provideDeclaration(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -869,7 +906,7 @@ async function provideImplementation(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -902,7 +939,7 @@ async function provideTypeDefinition(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -944,7 +981,7 @@ async function provideSignatureHelp(
           request.position,
         );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1055,7 +1092,7 @@ async function provideReferences(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1093,7 +1130,7 @@ async function provideDocumentHighlights(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1127,14 +1164,14 @@ async function provideDocumentLinks(
       request.path,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return emptyLinksList();
     }
 
     return {
       dispose: () => undefined,
       links: links.map((link) =>
-        toMonacoDocumentLink(monaco, request.rootPath, link),
+        toMonacoDocumentLink(monaco, request.rootPath, request.sessionId, link),
       ),
     };
   } catch (error) {
@@ -1164,7 +1201,7 @@ async function provideDocumentSymbols(
       request.path,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1192,7 +1229,7 @@ async function provideWorkspaceSymbols(
       query,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return [];
     }
 
@@ -1215,7 +1252,12 @@ async function resolveDocumentLink(
   if (
     !backedLink.__languageServerLink ||
     !backedLink.__workspaceRoot ||
-    !isStoredWorkspaceRootActive(context, backedLink.__workspaceRoot)
+    backedLink.__languageServerSessionId == null ||
+    !isStoredLanguageServerPayloadActive(
+      context,
+      backedLink.__workspaceRoot,
+      backedLink.__languageServerSessionId,
+    )
   ) {
     return link;
   }
@@ -1226,13 +1268,24 @@ async function resolveDocumentLink(
       backedLink.__languageServerLink,
     );
 
-    if (!isStoredWorkspaceRootActive(context, backedLink.__workspaceRoot)) {
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedLink.__workspaceRoot,
+        backedLink.__languageServerSessionId,
+      )
+    ) {
       return link;
     }
 
     return {
       ...link,
-      ...toMonacoDocumentLink(monaco, backedLink.__workspaceRoot, resolved),
+      ...toMonacoDocumentLink(
+        monaco,
+        backedLink.__workspaceRoot,
+        backedLink.__languageServerSessionId,
+        resolved,
+      ),
     };
   } catch (error) {
     reportErrorForActiveRoot(context, backedLink.__workspaceRoot, error);
@@ -1261,7 +1314,7 @@ async function provideFoldingRanges(
       request.path,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1296,7 +1349,7 @@ async function provideRenameEdits(
       newName,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1340,7 +1393,7 @@ async function provideSelectionRanges(
       })),
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1373,7 +1426,7 @@ async function provideDocumentSemanticTokens(
       request.path,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1411,7 +1464,7 @@ async function provideLinkedEditingRanges(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1444,7 +1497,7 @@ async function resolveRenameLocation(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1459,7 +1512,7 @@ async function resolveRenameLocation(
       text: prepareRename.placeholder ?? model.getValueInRange(range),
     };
   } catch (error) {
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -1494,7 +1547,7 @@ async function provideCodeActions(
       toLanguageServerCodeActionContext(monaco, actionContext),
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return emptyCodeActionList();
     }
 
@@ -1504,6 +1557,7 @@ async function provideCodeActions(
           monaco,
           workspaceEditContext(model),
           request.rootPath,
+          request.sessionId,
           action,
           actionContext,
         ),
@@ -1526,7 +1580,12 @@ async function resolveCodeAction(
   if (
     !backedAction.__languageServerAction ||
     !backedAction.__workspaceRoot ||
-    !isStoredWorkspaceRootActive(context, backedAction.__workspaceRoot)
+    backedAction.__languageServerSessionId == null ||
+    !isStoredLanguageServerPayloadActive(
+      context,
+      backedAction.__workspaceRoot,
+      backedAction.__languageServerSessionId,
+    )
   ) {
     return action;
   }
@@ -1537,7 +1596,13 @@ async function resolveCodeAction(
       backedAction.__languageServerAction,
     );
 
-    if (!isStoredWorkspaceRootActive(context, backedAction.__workspaceRoot)) {
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedAction.__workspaceRoot,
+        backedAction.__languageServerSessionId,
+      )
+    ) {
       return action;
     }
 
@@ -1548,6 +1613,7 @@ async function resolveCodeAction(
         versionId: undefined,
       },
       backedAction.__workspaceRoot,
+      backedAction.__languageServerSessionId,
       resolved,
       {
         markers: action.diagnostics ?? [],
@@ -1584,13 +1650,13 @@ async function provideCodeLenses(
       request.path,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return emptyCodeLensList();
     }
 
     return {
       lenses: lenses.map((lens) =>
-        toMonacoCodeLens(monaco, request.rootPath, lens),
+        toMonacoCodeLens(monaco, request.rootPath, request.sessionId, lens),
       ),
       dispose: () => undefined,
     };
@@ -1610,7 +1676,12 @@ async function resolveCodeLens(
   if (
     !backedCodeLens.__languageServerCodeLens ||
     !backedCodeLens.__workspaceRoot ||
-    !isStoredWorkspaceRootActive(context, backedCodeLens.__workspaceRoot)
+    backedCodeLens.__languageServerSessionId == null ||
+    !isStoredLanguageServerPayloadActive(
+      context,
+      backedCodeLens.__workspaceRoot,
+      backedCodeLens.__languageServerSessionId,
+    )
   ) {
     return codeLens;
   }
@@ -1621,13 +1692,24 @@ async function resolveCodeLens(
       backedCodeLens.__languageServerCodeLens,
     );
 
-    if (!isStoredWorkspaceRootActive(context, backedCodeLens.__workspaceRoot)) {
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedCodeLens.__workspaceRoot,
+        backedCodeLens.__languageServerSessionId,
+      )
+    ) {
       return codeLens;
     }
 
     return {
       ...codeLens,
-      ...toMonacoCodeLens(monaco, backedCodeLens.__workspaceRoot, resolved),
+      ...toMonacoCodeLens(
+        monaco,
+        backedCodeLens.__workspaceRoot,
+        backedCodeLens.__languageServerSessionId,
+        resolved,
+      ),
     };
   } catch (error) {
     reportErrorForActiveRoot(context, backedCodeLens.__workspaceRoot, error);
@@ -1658,7 +1740,7 @@ async function provideDocumentFormattingEdits(
       toLanguageServerFormattingOptions(options),
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return [];
     }
 
@@ -1694,7 +1776,7 @@ async function provideDocumentRangeFormattingEdits(
       toLanguageServerFormattingOptions(options),
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return [];
     }
 
@@ -1735,7 +1817,7 @@ async function provideOnTypeFormattingEdits(
       toLanguageServerFormattingOptions(options),
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return [];
     }
 
@@ -1769,13 +1851,13 @@ async function provideInlayHints(
       toLanguageServerRange(range),
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return emptyInlayHintList();
     }
 
     return {
       hints: hints.map((hint) =>
-        toMonacoInlayHint(monaco, hint, request.rootPath),
+        toMonacoInlayHint(monaco, hint, request.rootPath, request.sessionId),
       ),
       dispose: () => undefined,
     };
@@ -1795,7 +1877,12 @@ async function resolveInlayHint(
   if (
     !backedHint.__languageServerInlayHint ||
     !backedHint.__workspaceRoot ||
-    !isStoredWorkspaceRootActive(context, backedHint.__workspaceRoot)
+    backedHint.__languageServerSessionId == null ||
+    !isStoredLanguageServerPayloadActive(
+      context,
+      backedHint.__workspaceRoot,
+      backedHint.__languageServerSessionId,
+    )
   ) {
     return hint;
   }
@@ -1806,11 +1893,22 @@ async function resolveInlayHint(
       backedHint.__languageServerInlayHint,
     );
 
-    if (!isStoredWorkspaceRootActive(context, backedHint.__workspaceRoot)) {
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedHint.__workspaceRoot,
+        backedHint.__languageServerSessionId,
+      )
+    ) {
       return hint;
     }
 
-    return toMonacoInlayHint(monaco, resolvedHint, backedHint.__workspaceRoot);
+    return toMonacoInlayHint(
+      monaco,
+      resolvedHint,
+      backedHint.__workspaceRoot,
+      backedHint.__languageServerSessionId,
+    );
   } catch (error) {
     reportErrorForActiveRoot(context, backedHint.__workspaceRoot, error);
     return hint;
@@ -1850,6 +1948,11 @@ function featureRequestContext(
   if (!canUseRuntimeFeatureForRoot(context, rootPath, feature)) {
     return null;
   }
+  const sessionId = runningRuntimeSessionIdForRoot(context, rootPath);
+
+  if (sessionId == null) {
+    return null;
+  }
 
   return {
     path: activeDocument.path,
@@ -1858,6 +1961,7 @@ function featureRequestContext(
       lineNumber: position.lineNumber,
     }),
     rootPath,
+    sessionId,
   };
 }
 
@@ -1892,10 +1996,16 @@ function documentRequestContext(
   if (!canUseRuntimeFeatureForRoot(context, rootPath, feature)) {
     return null;
   }
+  const sessionId = runningRuntimeSessionIdForRoot(context, rootPath);
+
+  if (sessionId == null) {
+    return null;
+  }
 
   return {
     path: activeDocument.path,
     rootPath,
+    sessionId,
   };
 }
 
@@ -1911,17 +2021,35 @@ function workspaceSymbolRequestContext(
   if (!canUseRuntimeFeatureForRoot(context, rootPath, "workspaceSymbol")) {
     return null;
   }
+  const sessionId = runningRuntimeSessionIdForRoot(context, rootPath);
 
-  return { rootPath };
+  if (sessionId == null) {
+    return null;
+  }
+
+  return { rootPath, sessionId };
 }
 
 async function flushPendingDocumentChangeForActiveRoot(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
-  request: { path: string; rootPath: string },
+  request: { path: string; rootPath: string; sessionId?: number },
 ): Promise<boolean> {
   await context.flushPendingDocumentChange(request.path);
 
-  return isStoredWorkspaceRootActive(context, request.rootPath);
+  return isFeatureRequestActive(context, request);
+}
+
+function isFeatureRequestActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  request: { rootPath: string; sessionId?: number },
+): boolean {
+  return request.sessionId == null
+    ? isStoredWorkspaceRootActive(context, request.rootPath)
+    : isStoredLanguageServerPayloadActive(
+        context,
+        request.rootPath,
+        request.sessionId,
+      );
 }
 
 function canUseRuntimeFeatureForRoot(
@@ -1929,13 +2057,32 @@ function canUseRuntimeFeatureForRoot(
   rootPath: string,
   feature: LanguageServerFeature,
 ): boolean {
+  const status = runningRuntimeStatusForRoot(context, rootPath);
+
+  return Boolean(status && canUseLanguageServerFeature(status.capabilities, feature));
+}
+
+function runningRuntimeSessionIdForRoot(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  rootPath: string,
+): number | null {
+  return runningRuntimeStatusForRoot(context, rootPath)?.sessionId ?? null;
+}
+
+function runningRuntimeStatusForRoot(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  rootPath: string,
+): Extract<LanguageServerRuntimeStatus, { kind: "running" }> | null {
   const status = context.getRuntimeStatus();
 
-  return (
-    status?.kind === "running" &&
-    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath)) &&
-    canUseLanguageServerFeature(status.capabilities, feature)
-  );
+  if (
+    status?.kind !== "running" ||
+    (status.rootPath && !workspaceRootKeysEqual(status.rootPath, rootPath))
+  ) {
+    return null;
+  }
+
+  return status;
 }
 
 function semanticTokensLegendForActiveRuntime(
@@ -1990,6 +2137,18 @@ function isStoredWorkspaceRootActive(
   const activeRootPath = context.getWorkspaceRoot?.() ?? null;
 
   return Boolean(activeRootPath && workspaceRootKeysEqual(activeRootPath, rootPath));
+}
+
+function isStoredLanguageServerPayloadActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  rootPath: string,
+  sessionId: number,
+): boolean {
+  if (!isStoredWorkspaceRootActive(context, rootPath)) {
+    return false;
+  }
+
+  return runningRuntimeSessionIdForRoot(context, rootPath) === sessionId;
 }
 
 function reportErrorForActiveRoot(
@@ -2047,10 +2206,12 @@ function toMonacoFoldingRange(
 function toMonacoDocumentLink(
   monaco: MonacoApi,
   rootPath: string,
+  sessionId: number,
   link: LanguageServerDocumentLink,
 ): LanguageServerBackedLink {
   return {
     __languageServerLink: link,
+    __languageServerSessionId: sessionId,
     __workspaceRoot: rootPath,
     range: toMonacoRange(monaco, link.range),
     ...(link.target ? { url: link.target } : {}),
@@ -2191,13 +2352,22 @@ function toMonacoDocumentHighlightKind(
 function toMonacoCodeLens(
   monaco: MonacoApi,
   rootPath: string,
+  sessionId: number,
   lens: LanguageServerCodeLens,
 ): LanguageServerBackedCodeLens {
   return {
     __languageServerCodeLens: lens,
+    __languageServerSessionId: sessionId,
     __workspaceRoot: rootPath,
     ...(lens.command
-      ? { command: toMonacoCodeLensCommand(monaco, rootPath, lens.command) }
+      ? {
+          command: toMonacoCodeLensCommand(
+            monaco,
+            rootPath,
+            sessionId,
+            lens.command,
+          ),
+        }
       : {}),
     range: toMonacoRange(monaco, lens.range),
   };
@@ -2206,6 +2376,7 @@ function toMonacoCodeLens(
 function toMonacoCodeLensCommand(
   monaco: MonacoApi,
   rootPath: string,
+  sessionId: number,
   command: LanguageServerCodeActionCommand,
 ): Monaco.languages.Command {
   if (command.command === "editor.action.showReferences") {
@@ -2225,6 +2396,7 @@ function toMonacoCodeLensCommand(
       {
         command,
         rootPath,
+        sessionId,
       } satisfies ExecuteCommandPayload,
     ],
     id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
@@ -2605,6 +2777,7 @@ function toMonacoCodeAction(
   monaco: MonacoApi,
   editContext: WorkspaceEditContext,
   rootPath: string,
+  sessionId: number,
   action: LanguageServerCodeAction,
   context: Monaco.languages.CodeActionContext,
 ): Monaco.languages.CodeAction[] {
@@ -2614,6 +2787,7 @@ function toMonacoCodeAction(
 
   const codeAction: LanguageServerBackedCodeAction = {
     __languageServerAction: action,
+    __languageServerSessionId: sessionId,
     __workspaceEditContext: editContext,
     __workspaceRoot: rootPath,
     diagnostics: context.markers,
@@ -2625,6 +2799,7 @@ function toMonacoCodeAction(
                 command: action.command,
                 edit: action.edit,
                 rootPath,
+                sessionId,
               } satisfies ExecuteCommandPayload,
             ],
             id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,
@@ -2719,10 +2894,11 @@ function toMonacoInlayHint(
   monaco: MonacoApi,
   hint: LanguageServerInlayHint,
   rootPath: string,
+  sessionId: number,
 ): Monaco.languages.InlayHint {
   const monacoHint: Monaco.languages.InlayHint = {
     kind: monacoInlayHintKindFromLspKind(monaco, hint.kind),
-    label: toMonacoInlayHintLabel(monaco, hint.label, rootPath),
+    label: toMonacoInlayHintLabel(monaco, hint.label, rootPath, sessionId),
     paddingLeft: hint.paddingLeft,
     paddingRight: hint.paddingRight,
     position: {
@@ -2743,6 +2919,9 @@ function toMonacoInlayHint(
     __languageServerInlayHint: {
       value: hint,
     },
+    __languageServerSessionId: {
+      value: sessionId,
+    },
     __workspaceRoot: {
       value: rootPath,
     },
@@ -2755,6 +2934,7 @@ function toMonacoInlayHintLabel(
   monaco: MonacoApi,
   label: LanguageServerInlayHint["label"],
   rootPath: string,
+  sessionId: number,
 ): Monaco.languages.InlayHint["label"] {
   if (typeof label === "string") {
     return label;
@@ -2768,7 +2948,13 @@ function toMonacoInlayHintLabel(
     return {
       label: part.label,
       ...(part.command
-        ? { command: toMonacoLanguageServerCommand(rootPath, part.command) }
+        ? {
+            command: toMonacoLanguageServerCommand(
+              rootPath,
+              sessionId,
+              part.command,
+            ),
+          }
         : {}),
       ...(location ? { location } : {}),
       ...(part.tooltip ? { tooltip: part.tooltip } : {}),
@@ -3046,6 +3232,7 @@ function toMonacoCompletionItem(
   monaco: MonacoApi,
   item: LanguageServerCompletionItem,
   rootPath: string,
+  sessionId: number,
   fallbackRange: Monaco.IRange | Monaco.languages.CompletionItemRanges,
   fallbackSortText?: string,
 ): LanguageServerBackedCompletionItem {
@@ -3059,6 +3246,7 @@ function toMonacoCompletionItem(
   return {
     __completionRange: fallbackRange,
     __languageServerItem: item,
+    __languageServerSessionId: sessionId,
     __workspaceRoot: rootPath,
     ...(additionalTextEdits ? { additionalTextEdits } : {}),
     ...(item.commitCharacters && item.commitCharacters.length > 0
@@ -3069,7 +3257,7 @@ function toMonacoCompletionItem(
     filterText: item.filterText || undefined,
     insertText: insert.insertText,
     ...(item.command
-      ? { command: toMonacoLanguageServerCommand(rootPath, item.command) }
+      ? { command: toMonacoLanguageServerCommand(rootPath, sessionId, item.command) }
       : insert.command
         ? { command: insert.command }
         : {}),
@@ -3089,6 +3277,7 @@ function toMonacoCompletionItem(
 
 function toMonacoLanguageServerCommand(
   rootPath: string,
+  sessionId: number,
   command: LanguageServerCodeActionCommand,
 ): Monaco.languages.Command {
   return {
@@ -3096,6 +3285,7 @@ function toMonacoLanguageServerCommand(
       {
         command,
         rootPath,
+        sessionId,
       } satisfies ExecuteCommandPayload,
     ],
     id: EXECUTE_LANGUAGE_SERVER_COMMAND_ID,

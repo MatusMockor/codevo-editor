@@ -1540,7 +1540,59 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: LSP Diagnostic Payload Isolation
 
-- Pending commit.
+- Committed and pushed as `a4fc9a38 Filter LSP diagnostic payload paths`.
 - Included files:
   - `src-tauri/src/lsp_session.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Lazy Payload Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a4fc9a38 Filter LSP diagnostic payload paths`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- JS/TS Monaco providers already stored workspace roots on lazy payloads and command-backed edits.
+- Same-root TypeScript server restarts can leave old completion, link, code-action, CodeLens, or inlay payloads in Monaco UI.
+- Root-only guards allow those stale payloads to resolve or execute against the new session for the same project.
+
+### Implementation Choice
+
+- Capture the active TypeScript runtime `sessionId` in feature/document/workspace-symbol request contexts.
+- Store `sessionId` on backed Monaco completion items, document links, code actions, CodeLens, inlay hints, and command payloads.
+- Guard lazy resolves, command execution, and in-flight provider responses by both active root and active session.
+
+### Acceptance Criteria
+
+- Lazy payloads created under session 1 do not resolve after the same workspace restarts into session 2.
+- Command-backed edits created under session 1 do not execute after same-root restart.
+- Existing project-tab switch stale guards remain green.
+- Full JS/TS provider tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Lazy Payload Session Guard
+
+- Added `__languageServerSessionId` to JS/TS-backed Monaco payloads.
+- Added session-aware active checks for lazy resolves and command execution.
+- Provider responses now drop in-flight results if the same root moved to a newer session before the response returns.
+- Added regression coverage for same-root TypeScript session restart across completion, document link, code action, CodeLens, inlay hint, and command-backed edit paths.
+
+### Verification: JS/TS Lazy Payload Session Guard
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "same-root session restart|stale TypeScript lazy resolves"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Lazy Payload Session Guard
+
+- Pending commit.
+- Included files:
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

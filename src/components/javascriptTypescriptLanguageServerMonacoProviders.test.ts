@@ -2375,6 +2375,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         {
           command: completionCommand,
           rootPath: "/project",
+          sessionId: 1,
         },
       ],
       id: "mockor.javascriptTypeScript.executeLanguageServerCommand",
@@ -2512,6 +2513,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             {
               command: resolvedCommand,
               rootPath: "/project",
+              sessionId: 1,
             },
           ],
           id: "mockor.javascriptTypeScript.executeLanguageServerCommand",
@@ -2620,6 +2622,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         title: "Organize Imports",
       },
       rootPath: "/project",
+      sessionId: 1,
     });
 
     await Promise.resolve();
@@ -2676,6 +2679,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         title: "Organize Imports",
       },
       rootPath: "/project",
+      sessionId: 1,
     });
 
     expect(model.pushEditOperations).toHaveBeenCalledWith(
@@ -3034,6 +3038,137 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
 
     activeRoot = "/other";
+
+    await completionProvider.resolveCompletionItem(completion.suggestions[0]);
+    await linkProvider.resolveLink(links.links[0]);
+    await codeActionProvider.resolveCodeAction(actions.actions[0]);
+    await codeLensProvider.resolveCodeLens(model, lenses.lenses[0]);
+    await inlayHintsProvider.resolveInlayHint(hints.hints[0]);
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+    await commandDescriptor.run(null, actions.actions[0].command.arguments[0]);
+    const inlayLabel = hints.hints[0].label as any[];
+    await commandDescriptor.run(null, inlayLabel[0].command.arguments[0]);
+
+    expect(gateway.resolveCompletionItem).not.toHaveBeenCalled();
+    expect(gateway.resolveDocumentLink).not.toHaveBeenCalled();
+    expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
+    expect(gateway.resolveCodeLens).not.toHaveBeenCalled();
+    expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
+    expect(gateway.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale TypeScript lazy resolves after same-root session restart", async () => {
+    const monaco = createMonaco();
+    let activeSessionId = 1;
+    const codeAction = {
+      command: {
+        arguments: [{ tsActionId: "unusedIdentifier" }],
+        command: "_typescript.applyFixAllCodeAction",
+        title: "Fix all unused identifiers",
+      },
+      data: { globalId: 1, providerId: 2 },
+      edit: null,
+      isPreferred: false,
+      kind: "quickfix",
+      title: "Fix all unused identifiers",
+    };
+    const codeLens = {
+      command: null,
+      data: { kind: "references" },
+      range: range(2, 1, 2, 12),
+    };
+    const gateway = featuresGateway({
+      codeActions: [codeAction],
+      codeLenses: [codeLens],
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            data: { entryNames: ["loadUser"] },
+            detail: "function",
+            documentation: null,
+            insertText: "loadUser",
+            kind: 3,
+            label: "loadUser",
+          },
+        ],
+      },
+      documentLinks: [
+        {
+          data: { file: "/project/src/user.ts" },
+          range: range(0, 15, 0, 23),
+          target: null,
+          tooltip: "Open user module",
+        },
+      ],
+      inlayHints: [
+        {
+          data: { hintId: 1 },
+          kind: 1,
+          label: [
+            {
+              command: {
+                arguments: [{ file: "/project/src/user.ts" }],
+                command: "_typescript.applyCompletionCodeAction",
+                title: "Apply import",
+              },
+              label: "Account",
+            },
+          ],
+          paddingLeft: true,
+          paddingRight: false,
+          position: {
+            character: 10,
+            line: 0,
+          },
+          tooltip: "Inferred type",
+        },
+      ],
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        rootPath: "/project",
+        sessionId: activeSessionId,
+      }),
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+    const position = { column: 4, lineNumber: 1 };
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const linkProvider = (monaco.languages.registerLinkProvider as any).mock
+      .calls[0][1];
+    const codeActionProvider = (
+      monaco.languages.registerCodeActionProvider as any
+    ).mock.calls[0][1];
+    const codeLensProvider = (monaco.languages.registerCodeLensProvider as any)
+      .mock.calls[0][1];
+    const inlayHintsProvider = (
+      monaco.languages.registerInlayHintsProvider as any
+    ).mock.calls[0][1];
+    const completion = await completionProvider.provideCompletionItems(
+      model,
+      position,
+    );
+    const links = await linkProvider.provideLinks(model);
+    const actions = await codeActionProvider.provideCodeActions(
+      model,
+      new monaco.Range(1, 1, 1, 5),
+      {
+        markers: [],
+        only: "quickfix",
+      },
+    );
+    const lenses = await codeLensProvider.provideCodeLenses(model);
+    const hints = await inlayHintsProvider.provideInlayHints(
+      model,
+      new monaco.Range(1, 1, 1, 20),
+    );
+
+    activeSessionId = 2;
 
     await completionProvider.resolveCompletionItem(completion.suggestions[0]);
     await linkProvider.resolveLink(links.links[0]);
