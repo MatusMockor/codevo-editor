@@ -1687,6 +1687,54 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Workspace Edit Resource Operations Capability
 
+- Committed and pushed as `d3449b0b Advertise JS TS workspace edit operations`.
+- Included files:
+  - `src-tauri/src/lsp.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Watched Files Capability Alignment
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d3449b0b Advertise JS TS workspace edit operations`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The TypeScript initialize request advertised dynamic watched-files registration.
+- The session reader currently ignores `client/registerCapability`, and JS/TS file watching is handled by a fixed per-workspace watcher.
+- Advertising dynamic registration could make the server expect a registration path the client does not implement.
+
+### Implementation Choice
+
+- Set `workspace.didChangeWatchedFiles.dynamicRegistration` to `false` for the TypeScript client capabilities.
+- Keep `relativePatternSupport` advertised because the static watcher path can still represent workspace-relative patterns.
+- Update the existing TypeScript initialize planner test.
+
+### Acceptance Criteria
+
+- TypeScript initialize request no longer advertises dynamic watched-file registration.
+- Existing JS/TS watcher behavior remains unchanged.
+- Focused Rust planner test, serial Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Watched Files Capability Alignment
+
+- Changed the TypeScript client watched-files capability to `dynamicRegistration: false`.
+- Updated planner coverage for the aligned capability value.
+
+### Verification: JS/TS Watched Files Capability Alignment
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Watched Files Capability Alignment
+
 - Pending commit.
 - Included files:
   - `src-tauri/src/lsp.rs`

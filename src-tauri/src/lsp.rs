@@ -522,7 +522,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         "configuration": true,
                         "didChangeConfiguration": { "dynamicRegistration": false },
                         "didChangeWatchedFiles": {
-                            "dynamicRegistration": true,
+                            "dynamicRegistration": false,
                             "relativePatternSupport": true
                         },
                         "inlayHint": { "refreshSupport": true },
@@ -957,7 +957,7 @@ mod tests {
         assert_eq!(
             request.params["capabilities"]["workspace"]["didChangeWatchedFiles"]
                 ["dynamicRegistration"],
-            true
+            false
         );
         assert_eq!(
             request.params["capabilities"]["workspace"]["didChangeWatchedFiles"]
