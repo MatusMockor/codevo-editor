@@ -429,6 +429,11 @@ export interface LanguageServerFeaturesGateway {
     rootPath: string,
     path: string,
   ): Promise<LanguageServerSemanticTokens | null>;
+  rangeSemanticTokens(
+    rootPath: string,
+    path: string,
+    range: LanguageServerRange,
+  ): Promise<LanguageServerSemanticTokens | null>;
   signatureHelp(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,

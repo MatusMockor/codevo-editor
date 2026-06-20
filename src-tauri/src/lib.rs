@@ -3183,6 +3183,24 @@ fn text_document_semantic_tokens(
 }
 
 #[tauri::command]
+fn text_document_range_semantic_tokens(
+    root_path: String,
+    path: String,
+    range: LanguageServerRange,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerSemanticTokens>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.range_semantic_tokens(&TextDocumentRange { path, range });
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_semantic_tokens_result(&result)
+}
+
+#[tauri::command]
 fn javascript_typescript_text_document_semantic_tokens(
     root_path: String,
     path: String,
@@ -3192,6 +3210,24 @@ fn javascript_typescript_text_document_semantic_tokens(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.semantic_tokens(&path);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    parse_semantic_tokens_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_range_semantic_tokens(
+    root_path: String,
+    path: String,
+    range: LanguageServerRange,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Option<LanguageServerSemanticTokens>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.range_semantic_tokens(&TextDocumentRange { path, range });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(None);
     };
@@ -4879,6 +4915,7 @@ pub fn run() {
             javascript_typescript_text_document_prepare_rename,
             javascript_typescript_text_document_prepare_type_hierarchy,
             javascript_typescript_text_document_range_formatting,
+            javascript_typescript_text_document_range_semantic_tokens,
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
             javascript_typescript_text_document_selection_ranges,
@@ -4920,6 +4957,7 @@ pub fn run() {
             text_document_prepare_rename,
             text_document_prepare_type_hierarchy,
             text_document_range_formatting,
+            text_document_range_semantic_tokens,
             text_document_references,
             text_document_rename,
             text_document_selection_ranges,

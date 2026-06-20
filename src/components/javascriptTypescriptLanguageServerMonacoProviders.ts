@@ -662,6 +662,16 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         }),
       );
     }
+
+    if (registry.registerDocumentRangeSemanticTokensProvider) {
+      disposables.push(
+        registry.registerDocumentRangeSemanticTokensProvider(language, {
+          getLegend: () => semanticTokensLegendForActiveRuntime(context),
+          provideDocumentRangeSemanticTokens: (model, range) =>
+            provideDocumentRangeSemanticTokens(context, model, range),
+        }),
+      );
+    }
   });
 
   return {
@@ -1465,6 +1475,39 @@ async function provideDocumentSemanticTokens(
     const tokens = await context.featuresGateway.semanticTokens(
       request.rootPath,
       request.path,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    return toMonacoSemanticTokens(tokens);
+  } catch (error) {
+    reportErrorForActiveRoot(context, request.rootPath, error);
+    return null;
+  }
+}
+
+async function provideDocumentRangeSemanticTokens(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+): Promise<Monaco.languages.SemanticTokens | null> {
+  const request = documentRequestContext(context, model, "semanticTokens");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
+    const tokens = await context.featuresGateway.rangeSemanticTokens(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
     );
 
     if (!isFeatureRequestActive(context, request)) {

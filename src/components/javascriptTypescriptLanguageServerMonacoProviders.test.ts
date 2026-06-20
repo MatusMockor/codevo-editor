@@ -55,6 +55,9 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       monaco.languages.registerDocumentSemanticTokensProvider,
     ).toHaveBeenCalledTimes(4);
     expect(
+      monaco.languages.registerDocumentRangeSemanticTokensProvider,
+    ).toHaveBeenCalledTimes(4);
+    expect(
       (monaco.languages.registerCompletionItemProvider as any).mock.calls.map(
         ([language]: [string]) => language,
       ),
@@ -85,7 +88,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(90);
+    expect(monaco.dispose).toHaveBeenCalledTimes(94);
   });
 
   it("requests TypeScript language-server completions for TSX documents", async () => {
@@ -1201,6 +1204,99 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
     expect(context.flushPendingDocumentChange).toHaveBeenCalledWith(
       "/project/src/user.ts",
+    );
+  });
+
+  it("maps range semantic tokens through the language server", async () => {
+    const monaco = createMonaco();
+    const customLegend = {
+      tokenModifiers: ["static", "async"],
+      tokenTypes: ["decorator", "enumMember"],
+    };
+    const gateway = featuresGateway({
+      rangeSemanticTokens: {
+        data: [0, 2, 4, 8, 0, 1, 4, 3, 9, 1],
+        resultId: "range-semantic-1",
+      },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () =>
+        runningStatus({ semanticTokensLegend: customLegend }),
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+
+    const rangeSemanticTokensProvider = (
+      monaco.languages.registerDocumentRangeSemanticTokensProvider as any
+    ).mock.calls[0][1];
+    const tokens =
+      await rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        model,
+        new monaco.Range(2, 3, 4, 12),
+        null,
+      );
+
+    expect(rangeSemanticTokensProvider.getLegend()).toEqual(customLegend);
+    expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      {
+        end: { character: 11, line: 3 },
+        start: { character: 2, line: 1 },
+      },
+    );
+    expect(tokens).toEqual({
+      data: Uint32Array.from([0, 2, 4, 8, 0, 1, 4, 3, 9, 1]),
+      resultId: "range-semantic-1",
+    });
+    expect(context.flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/user.ts",
+    );
+  });
+
+  it("drops stale range semantic tokens after the workspace changes", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway();
+    const rangeSemanticTokens = createDeferred<
+      Awaited<ReturnType<LanguageServerFeaturesGateway["rangeSemanticTokens"]>>
+    >();
+    let activeRoot = "/project";
+    vi.mocked(gateway.rangeSemanticTokens).mockImplementationOnce(
+      async () => rangeSemanticTokens.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const rangeSemanticTokensProvider = (
+      monaco.languages.registerDocumentRangeSemanticTokensProvider as any
+    ).mock.calls[0][1];
+    const tokensPromise =
+      rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        textModel(),
+        new monaco.Range(2, 3, 4, 12),
+        null,
+      );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rangeSemanticTokens.resolve({
+      data: [0, 2, 4, 8, 0],
+      resultId: "range-semantic-1",
+    });
+
+    await expect(tokensPromise).resolves.toBeNull();
+    expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      {
+        end: { character: 11, line: 3 },
+        start: { character: 2, line: 1 },
+      },
     );
   });
 
@@ -3730,6 +3826,9 @@ function featuresGateway(
     rangeFormatting: Awaited<
       ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>
     >;
+    rangeSemanticTokens: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["rangeSemanticTokens"]>
+    >;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
     selectionRanges: Awaited<
       ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>
@@ -3799,6 +3898,9 @@ function featuresGateway(
     prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
+    rangeSemanticTokens: vi.fn(
+      async () => responses.rangeSemanticTokens ?? null,
+    ),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
@@ -4067,6 +4169,7 @@ function createMonaco() {
       registerRenameProvider: vi.fn(() => disposable()),
       registerSelectionRangeProvider: vi.fn(() => disposable()),
       registerDocumentSemanticTokensProvider: vi.fn(() => disposable()),
+      registerDocumentRangeSemanticTokensProvider: vi.fn(() => disposable()),
       registerSignatureHelpProvider: vi.fn(() => disposable()),
       registerTypeDefinitionProvider: vi.fn(() => disposable()),
       registerWorkspaceSymbolProvider: vi.fn(() => disposable()),

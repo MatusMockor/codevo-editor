@@ -545,6 +545,7 @@ pub trait TextDocumentFeatureRequestFactory {
         position: &TextDocumentPosition,
     ) -> LanguageServerFeatureRequest;
     fn semantic_tokens(&self, path: &str) -> LanguageServerFeatureRequest;
+    fn range_semantic_tokens(&self, range: &TextDocumentRange) -> LanguageServerFeatureRequest;
     fn signature_help(
         &self,
         signature_help: &TextDocumentSignatureHelp,
@@ -744,6 +745,18 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
                 "textDocument": {
                     "uri": file_uri(Path::new(path)),
                 },
+            }),
+        }
+    }
+
+    fn range_semantic_tokens(&self, range: &TextDocumentRange) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "textDocument/semanticTokens/range".to_string(),
+            params: json!({
+                "textDocument": {
+                    "uri": file_uri(Path::new(&range.path)),
+                },
+                "range": range.range,
             }),
         }
     }
@@ -2310,6 +2323,24 @@ mod tests {
             .as_str()
             .expect("uri")
             .starts_with("file://"));
+    }
+
+    #[test]
+    fn range_semantic_tokens_request_contains_document_uri_and_range() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let text_range = TextDocumentRange {
+            path: "/tmp/User.ts".to_string(),
+            range: range(1, 2, 4, 8),
+        };
+        let request = factory.range_semantic_tokens(&text_range);
+
+        assert_eq!(request.method, "textDocument/semanticTokens/range");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["range"]["start"]["line"], 1);
+        assert_eq!(request.params["range"]["end"]["character"], 8);
     }
 
     #[test]

@@ -469,7 +469,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "overlappingTokenSupport": false,
                             "requests": {
                                 "full": true,
-                                "range": false
+                                "range": true
                             },
                             "serverCancelSupport": false,
                             "tokenModifiers": [
@@ -935,6 +935,10 @@ mod tests {
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["semanticTokens"]["requests"]["full"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["semanticTokens"]["requests"]["range"],
             true
         );
         assert_eq!(

@@ -15756,6 +15756,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     prepareRename: vi.fn(async () => null),
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => []),
+    rangeSemanticTokens: vi.fn(async () => null),
     references: vi.fn(async () => []),
     rename: vi.fn(async () => null),
     selectionRanges: vi.fn(async () => []),

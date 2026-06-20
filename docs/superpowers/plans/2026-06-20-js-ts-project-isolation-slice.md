@@ -1894,3 +1894,68 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Range Semantic Tokens
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `54f3cd01 Record Laravel relation string commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- Existing subagent slots were full, so read-only scans were queued on existing agents and direct implementation continued.
+- Backend scan found a later candidate: diagnostic `codeDescription.href` workspace isolation.
+- Frontend scan found a later JS/TS candidate: same-root runtime session guard for workbench navigation.
+- This slice stayed on range semantic tokens because the TypeScript language server and Monaco both support the missing capability and the gap was concrete end-to-end.
+
+### Why This Slice
+
+- `typescript-language-server` advertises both full and range semantic tokens when the client supports range requests.
+- Monaco exposes `registerDocumentRangeSemanticTokensProvider`, but the JS/TS provider registered only the full-document provider.
+- The Tauri gateway and Rust request factory exposed only `textDocument/semanticTokens/full`, so viewport/range token refreshes could not use the narrower LSP path.
+
+### Implementation Choice
+
+- Add `rangeSemanticTokens` to the shared language-server feature gateway contract.
+- Map default PHP and JS/TS Tauri command names separately, preserving workspace-root request routing.
+- Register Monaco document range semantic-token providers for all JS/TS language ids.
+- Reuse existing pending document flush, active-root guard, semantic-token legend, and token conversion behavior.
+- Advertise `semanticTokens.requests.range: true` in the TypeScript initialize request.
+- Add Rust request factory and Tauri commands for `textDocument/semanticTokens/range`.
+
+### Acceptance Criteria
+
+- JS/TS range semantic tokens call the JS/TS gateway with the active root, document path, and converted LSP range.
+- In-flight JS/TS range semantic token responses are dropped after a project tab switch.
+- TypeScript initialize capabilities advertise range semantic-token support.
+- Default and JS/TS Tauri gateway command maps route range semantic tokens to the correct command names.
+- Focused provider/gateway tests, TypeScript check, Rust semantic/capability tests, serial Rust lib tests, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Range Semantic Tokens
+
+- Added JS/TS Monaco document range semantic-token registration and stale-root protection.
+- Added `rangeSemanticTokens` to the gateway contract and Tauri command maps.
+- Added PHP and JS/TS Tauri commands backed by `textDocument/semanticTokens/range`.
+- Enabled TypeScript client range semantic-token capability advertising.
+- Added frontend, gateway, Rust request factory, and capability coverage.
+
+### Verification: JS/TS Range Semantic Tokens
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "semantic token"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm test -- src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts src/components/EditorSurface.test.tsx src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml semantic_tokens --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Range Semantic Tokens
+
+- Pending commit and push.

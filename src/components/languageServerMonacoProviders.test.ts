@@ -2030,6 +2030,7 @@ function featuresGateway(
     prepareRename: vi.fn(async () => null),
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => []),
+    rangeSemanticTokens: vi.fn(async () => null),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),

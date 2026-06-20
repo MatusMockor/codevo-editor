@@ -512,6 +512,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return semanticTokens;
       }
 
+      if (command === "text_document_range_semantic_tokens") {
+        return semanticTokens;
+      }
+
       if (command === "text_document_signature_help") {
         return signatureHelp;
       }
@@ -583,6 +587,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     ).resolves.toEqual(linkedEditingRanges);
     await expect(
       gateway.semanticTokens("/project", "/project/src/User.php"),
+    ).resolves.toEqual(semanticTokens);
+    await expect(
+      gateway.rangeSemanticTokens("/project", "/project/src/User.php", range()),
     ).resolves.toEqual(semanticTokens);
     await expect(gateway.rename("/project", requestPosition, "Account")).resolves.toEqual(
       rename,
@@ -781,6 +788,14 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       path: "/project/src/User.php",
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "text_document_range_semantic_tokens",
+      {
+        path: "/project/src/User.php",
+        range: range(),
+        rootPath: "/project",
+      },
+    );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_rename", {
       newName: "Account",
       position: requestPosition,
@@ -961,6 +976,31 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       "javascript_typescript_text_document_source_definition",
       {
         position: requestPosition,
+        rootPath: "/project",
+      },
+    );
+  });
+
+  it("delegates JavaScript and TypeScript range semantic tokens through the JS/TS command map", async () => {
+    const semanticTokens = {
+      data: [0, 6, 4, 8, 0],
+      resultId: "semantic-1",
+    };
+    const invokeCommand = vi.fn<InvokeCommand>(async () => semanticTokens);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+      JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+    );
+
+    await expect(
+      gateway.rangeSemanticTokens("/project", "/project/src/User.ts", range()),
+    ).resolves.toEqual(semanticTokens);
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "javascript_typescript_text_document_range_semantic_tokens",
+      {
+        path: "/project/src/User.ts",
+        range: range(),
         rootPath: "/project",
       },
     );
