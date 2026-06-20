@@ -846,6 +846,17 @@ fn ensure_lsp_code_action_payload_in_workspace(
     ensure_lsp_json_payload_paths_in_workspace(root_path, action.data.as_ref())
 }
 
+fn ensure_lsp_code_action_context_payloads_in_workspace(
+    root_path: &str,
+    context: &LanguageServerCodeActionContext,
+) -> Result<(), String> {
+    for diagnostic in &context.diagnostics {
+        ensure_lsp_json_payload_paths_in_workspace(root_path, diagnostic.data.as_ref())?;
+    }
+
+    Ok(())
+}
+
 fn ensure_lsp_code_lens_payload_in_workspace(
     root_path: &str,
     lens: &LanguageServerCodeLens,
@@ -2176,6 +2187,7 @@ fn javascript_typescript_text_document_code_actions(
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCodeAction>, String> {
     ensure_lsp_path_in_workspace(&root_path, &path)?;
+    ensure_lsp_code_action_context_payloads_in_workspace(&root_path, &context)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
@@ -3471,6 +3483,7 @@ fn hex_value(value: u8) -> Option<u8> {
 mod tests {
     use super::{
         apply_workspace_edit, ensure_lsp_call_hierarchy_item_in_workspace,
+        ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
         ensure_lsp_completion_item_payload_in_workspace,
         ensure_lsp_document_link_payload_in_workspace, ensure_lsp_inlay_hint_payload_in_workspace,
@@ -3492,10 +3505,11 @@ mod tests {
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-        LanguageServerCodeLens, LanguageServerCompletionItem, LanguageServerCompletionList,
-        LanguageServerDocumentLink, LanguageServerIncomingCall, LanguageServerInlayHint,
-        LanguageServerInlayHintLabel, LanguageServerLocation, LanguageServerOutgoingCall,
-        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LanguageServerCodeActionContext, LanguageServerCodeLens, LanguageServerCompletionItem,
+        LanguageServerCompletionList, LanguageServerDocumentLink, LanguageServerIncomingCall,
+        LanguageServerInlayHint, LanguageServerInlayHintLabel, LanguageServerLocation,
+        LanguageServerOutgoingCall, LanguageServerPosition, LanguageServerRange,
+        LanguageServerTextEdit,
         LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
         LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
         LanguageServerWorkspaceSymbol, TextDocumentPosition,
@@ -4009,6 +4023,37 @@ mod tests {
         assert!(ensure_lsp_code_action_payload_in_workspace(
             &path_string(&root),
             &outside_command_action
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn lsp_code_action_context_guard_rejects_outside_diagnostic_data() {
+        let root = temp_workspace("code-action-context-root");
+        let outside = temp_workspace("code-action-context-outside");
+        let inside_context = code_action_context(json!({
+            "file": path_string(&root.join("src/App.ts")),
+        }));
+        let outside_path_context = code_action_context(json!({
+            "file": path_string(&outside.join("Secret.ts")),
+        }));
+        let outside_uri_context = code_action_context(json!({
+            "uri": file_uri(&outside.join("Secret.ts")),
+        }));
+
+        assert!(ensure_lsp_code_action_context_payloads_in_workspace(
+            &path_string(&root),
+            &inside_context
+        )
+        .is_ok());
+        assert!(ensure_lsp_code_action_context_payloads_in_workspace(
+            &path_string(&root),
+            &outside_path_context
+        )
+        .is_err());
+        assert!(ensure_lsp_code_action_context_payloads_in_workspace(
+            &path_string(&root),
+            &outside_uri_context
         )
         .is_err());
     }
@@ -4563,6 +4608,19 @@ mod tests {
         merge_object(&mut value, payload);
 
         serde_json::from_value(value).expect("code action")
+    }
+
+    fn code_action_context(data: Value) -> LanguageServerCodeActionContext {
+        serde_json::from_value(json!({
+            "diagnostics": [
+                {
+                    "range": lsp_range(),
+                    "message": "Cannot find name",
+                    "data": data,
+                }
+            ]
+        }))
+        .expect("code action context")
     }
 
     fn code_lens(payload: Value) -> LanguageServerCodeLens {

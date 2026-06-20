@@ -1436,8 +1436,58 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Linked Editing Null Results
 
-- Pending commit.
+- Committed and pushed as `acdaf82 Handle null linked editing ranges`.
 - Included files:
   - `src-tauri/src/lib.rs`
   - `src-tauri/src/lsp_features.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Code-Action Context Payload Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `acdaf82 Handle null linked editing ranges`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- JS/TS code-action requests forward diagnostics from the editor back to the TypeScript language server.
+- Diagnostics can carry opaque `data` payloads from a previous LSP response.
+- Other JS/TS lazy payloads are root-guarded, but code-action request context data was not checked before being sent back to the selected runtime.
+
+### Implementation Choice
+
+- Add a backend guard for `LanguageServerCodeActionContext.diagnostics[*].data`.
+- Reuse the existing recursive LSP JSON path checker so path-like fields and file URIs follow the same root rules as completion/code-action resolve payloads.
+- Apply the guard only to JS/TS code-action requests, preserving existing PHP command behavior.
+
+### Acceptance Criteria
+
+- JS/TS code-action context diagnostic `data` inside the active root is accepted.
+- JS/TS code-action context diagnostic `data` with outside absolute paths or outside file URIs is rejected before request routing.
+- Existing code-action response filtering remains unchanged.
+- Focused Rust guard test, serial Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Code-Action Context Payload Guard
+
+- Added `ensure_lsp_code_action_context_payloads_in_workspace`.
+- JS/TS code-action requests now reject outside-root diagnostic `data` before calling the runtime.
+- Added regression coverage for inside path, outside path, and outside file URI diagnostic payloads.
+
+### Verification: JS/TS Code-Action Context Payload Guard
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_code_action_context_guard_rejects_outside_diagnostic_data --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Code-Action Context Payload Guard
+
+- Pending commit.
+- Included files:
+  - `src-tauri/src/lib.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
