@@ -2570,7 +2570,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Diagnostics Explicit Root Guard
 
-- Pending commit and push.
+- Committed and pushed as `0ee68c5a Require roots for JS TS diagnostics`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
