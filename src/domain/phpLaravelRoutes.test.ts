@@ -634,4 +634,28 @@ Route::name('outer.')->group(function () {
       },
     ]);
   });
+
+  it("combines array Laravel route group name prefixes", () => {
+    const source = `<?php
+Route::group(['as' => 'admin.'], function () {
+    Route::get('/dashboard', DashboardController::class)->name('dashboard');
+});
+Route::group(['as' => 'outer.'], function () {
+    Route::group(['as' => 'inner.'], function () {
+        Route::resource('reports', ReportController::class)->only(['index']);
+    });
+});
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "admin.dashboard",
+        position: positionOf(source, "dashboard');"),
+      },
+      {
+        name: "outer.inner.reports.index",
+        position: positionOf(source, "reports"),
+      },
+    ]);
+  });
 });

@@ -599,44 +599,53 @@ function phpLaravelNamedRouteGroups(
       continue;
     }
 
-    const statementEnd = phpStatementEndOffset(source, routeCloseParen + 1);
-    const chainSource = source.slice(routeCloseParen + 1, statementEnd);
-    const groupMatch = /->\s*group\s*\(/g.exec(chainSource);
+    let groupCloseParen = routeCloseParen;
+    let groupOpenParen = routeOpenParen;
+    let prefixLiterals: PhpStringLiteral[] = [];
 
-    if (!groupMatch) {
-      continue;
+    if (routeMethod === "group") {
+      prefixLiterals = laravelRouteGroupArrayPrefixLiterals(source, routeOpenParen);
+    } else {
+      const statementEnd = phpStatementEndOffset(source, routeCloseParen + 1);
+      const chainSource = source.slice(routeCloseParen + 1, statementEnd);
+      const groupMatch = /->\s*group\s*\(/g.exec(chainSource);
+
+      if (!groupMatch) {
+        continue;
+      }
+
+      groupOpenParen =
+        routeCloseParen +
+        1 +
+        (groupMatch.index ?? 0) +
+        groupMatch[0].lastIndexOf("(");
+
+      if (!isPhpCodeOffset(source, groupOpenParen)) {
+        continue;
+      }
+
+      prefixLiterals = laravelRouteGroupPrefixLiterals(
+        source,
+        routeMethod,
+        routeOpenParen,
+        routeCloseParen,
+        groupOpenParen,
+      );
+      const resolvedGroupCloseParen = matchingBracketOffset(
+        source,
+        groupOpenParen,
+        "(",
+        ")",
+      );
+
+      if (resolvedGroupCloseParen === null) {
+        continue;
+      }
+
+      groupCloseParen = resolvedGroupCloseParen;
     }
-
-    const groupOpenParen =
-      routeCloseParen +
-      1 +
-      (groupMatch.index ?? 0) +
-      groupMatch[0].lastIndexOf("(");
-
-    if (!isPhpCodeOffset(source, groupOpenParen)) {
-      continue;
-    }
-
-    const prefixLiterals = laravelRouteGroupPrefixLiterals(
-      source,
-      routeMethod,
-      routeOpenParen,
-      routeCloseParen,
-      groupOpenParen,
-    );
 
     if (prefixLiterals.length === 0) {
-      continue;
-    }
-
-    const groupCloseParen = matchingBracketOffset(
-      source,
-      groupOpenParen,
-      "(",
-      ")",
-    );
-
-    if (groupCloseParen === null) {
       continue;
     }
 
@@ -660,6 +669,15 @@ function phpLaravelNamedRouteGroups(
   }
 
   return groups.sort((left, right) => left.bodyStart - right.bodyStart);
+}
+
+function laravelRouteGroupArrayPrefixLiterals(
+  source: string,
+  groupOpenParen: number,
+): PhpStringLiteral[] {
+  return laravelRouteStringMapAtOpenParen(source, groupOpenParen)
+    .filter((entry) => entry.key.value.toLowerCase() === "as")
+    .map((entry) => entry.value);
 }
 
 function laravelRouteGroupPrefixLiterals(

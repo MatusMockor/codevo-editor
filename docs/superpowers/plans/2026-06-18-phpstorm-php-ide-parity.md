@@ -1498,3 +1498,48 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `8165f3a8 Detect chained Laravel route name groups`.
+
+## Slice: Laravel Array Route Group Name Prefixes - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `34660ae9 Record Laravel route group commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize legacy/common Laravel array route group name prefixes such as `Route::group(['as' => 'admin.'], function () { ... })`.
+
+### Implementation Choice
+
+- Add a direct `Route::group(...)` branch to the route group extractor.
+- Reuse the existing literal string map parser to read first-argument `as` entries.
+- Preserve nested group prefix composition with fluent group prefixes.
+
+### Acceptance Criteria
+
+- `Route::group(['as' => 'admin.'], ...)` prefixes child named routes.
+- Nested array route groups compose their `as` prefixes.
+- Resource route names inside array groups receive the composed prefix.
+- Focused route tests, full route tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added direct `Route::group(...)` handling to Laravel route group prefix extraction.
+- Reused literal string map parsing for first-argument `as` group attributes.
+- Added route extractor coverage for simple and nested array group name prefixes with resource routes.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "combines array Laravel route group name prefixes"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
