@@ -213,6 +213,7 @@ const laravelEloquentBuilderTerminalModelMethods = new Set([
 const laravelEloquentBuilderCollectionMethods = new Set([
   "all",
   "cursor",
+  "findmany",
   "get",
 ]);
 

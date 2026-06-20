@@ -192,6 +192,14 @@ class Album extends Model
         "Album::findOr(1, fn () => null)",
       ),
     ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "findMany",
+        "Album",
+        "Album::findMany([1, 2])",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
     for (const methodName of [
       "loadAggregate",
       "loadAvg",
