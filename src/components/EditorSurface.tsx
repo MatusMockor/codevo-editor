@@ -36,6 +36,13 @@ import type {
   PhpMethodCompletion,
   PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
+import {
+  phpMemberAccessCompletionContextAt,
+  phpStaticAccessCompletionContextAt,
+} from "../domain/phpMethodCompletions";
+import {
+  phpLaravelRelationStringCompletionContextAt,
+} from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
 import {
@@ -76,6 +83,7 @@ interface EditorSurfaceProps {
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
+  phpIdeReadinessVersion?: number;
   workspaceRoot?: string | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
@@ -118,6 +126,7 @@ export function EditorSurface({
   javaScriptTypeScriptValidationEnabled = true,
   keymap,
   monacoTheme,
+  phpIdeReadinessVersion = 0,
   workspaceRoot = null,
   onCloseActiveTab,
   onCursorPositionChange,
@@ -245,6 +254,36 @@ export function EditorSurface({
   useEffect(() => {
     phpMethodSignatureRef.current = providePhpMethodSignature;
   }, [providePhpMethodSignature]);
+
+  useEffect(() => {
+    if (!activeDocument || activeDocument.language !== "php") {
+      return;
+    }
+
+    if (!editorApi || phpIdeReadinessVersion <= 0) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+    const position = editorApi.getPosition();
+
+    if (!model || !position || modelPath(model) !== activeDocument.path) {
+      return;
+    }
+
+    const source = model.getValue();
+    const isPhpCompletionContext = Boolean(
+      phpMemberAccessCompletionContextAt(source, position) ||
+        phpStaticAccessCompletionContextAt(source, position) ||
+        phpLaravelRelationStringCompletionContextAt(source, position),
+    );
+
+    if (!isPhpCompletionContext) {
+      return;
+    }
+
+    editorApi.trigger("mockor.phpIdeReadiness", "editor.action.triggerSuggest", {});
+  }, [activeDocument, editorApi, phpIdeReadinessVersion]);
 
   useEffect(() => {
     if (!monacoApi) {

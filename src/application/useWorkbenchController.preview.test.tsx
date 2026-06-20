@@ -2413,6 +2413,66 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("auto-starts PHP IDE services while initial runtime status is still unknown", async () => {
+    const languageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["language-server"],
+        executable: "phpactor",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "PHPactor is ready.",
+      provider: "phpactor",
+      status: "ready",
+    };
+    const pendingStatus = createDeferred<LanguageServerRuntimeStatus>();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 88,
+    };
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => pendingStatus.promise),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus),
+      stop: vi.fn(async () => ({ kind: "stopped" as const })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerPlan,
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().intelligenceMode).toBe("fullSmart");
+    expect(
+      dependencies.languageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace");
+
+    await act(async () => {
+      pendingStatus.resolve(runningStatus);
+      await Promise.resolve();
+    });
+  });
+
   it("starts JavaScript and TypeScript language service in Basic mode", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
@@ -12252,6 +12312,7 @@ final class InvoiceAdapter
     languageServerPlan,
     languageServerDiagnosticsGateway,
     languageServerFeaturesGateway,
+    languageServerRuntimeGateway,
     projectSymbols = [],
     readDirectory,
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
@@ -12272,6 +12333,7 @@ final class InvoiceAdapter
     languageServerPlan?: LanguageServerPlan;
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
+    languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     projectSymbols?: ProjectSymbolSearchResult[];
     readDirectory?: (path: string) => Promise<FileEntry[]>;
     readTextFile?: (path: string) => Promise<string>;
@@ -12302,6 +12364,7 @@ final class InvoiceAdapter
       languageServerPlan,
       languageServerDiagnosticsGateway,
       languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
       projectSymbols,
       readDirectory,
       readTextFile,
@@ -12383,6 +12446,7 @@ function createControllerDependencies({
   languageServerPlan,
   languageServerFeaturesGateway,
   languageServerDiagnosticsGateway,
+  languageServerRuntimeGateway,
   projectSymbols,
   readDirectory,
   readTextFile,
@@ -12403,6 +12467,7 @@ function createControllerDependencies({
   languageServerPlan?: LanguageServerPlan;
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
+  languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
   projectSymbols: ProjectSymbolSearchResult[];
   readDirectory?: (path: string) => Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
@@ -12527,13 +12592,14 @@ function createControllerDependencies({
           },
       ),
     },
-    languageServerRuntimeGateway: {
-      getStatus: vi.fn(async () => runtimeStatus),
-      openLog: vi.fn(async () => null),
-      start: vi.fn(async () => runtimeStatus),
-      stop: vi.fn(async () => ({ kind: "stopped" as const })),
-      subscribeStatus: vi.fn(async () => () => undefined),
-    },
+    languageServerRuntimeGateway:
+      languageServerRuntimeGateway ?? {
+        getStatus: vi.fn(async () => runtimeStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runtimeStatus),
+        stop: vi.fn(async () => ({ kind: "stopped" as const })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
     javaScriptTypeScriptLanguageServerDiagnosticsGateway:
       javaScriptTypeScriptLanguageServerDiagnosticsGateway ?? {
         subscribeDiagnostics: vi.fn(async () => () => undefined),

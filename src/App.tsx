@@ -673,6 +673,7 @@ function App() {
             languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
             keymap={workbench.appSettings.keymap}
             monacoTheme={monacoTheme}
+            phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
             onCloseActiveTab={() => {
               if (workbench.activeDocument) {
                 workbench.closeDocument(workbench.activeDocument.path);

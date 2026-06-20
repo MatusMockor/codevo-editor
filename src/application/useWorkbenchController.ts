@@ -385,6 +385,7 @@ export function useWorkbenchController(
     languageServerRuntimeStatusRoot,
     setLanguageServerRuntimeStatusRoot,
   ] = useState<string | null>(null);
+  const [phpIdeReadinessVersion, setPhpIdeReadinessVersion] = useState(0);
   const [
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     setJavaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -522,6 +523,7 @@ export function useWorkbenchController(
   );
   const workspaceSessionRestoredRef = useRef(false);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
+  const lastPhpIdeReadinessSignatureRef = useRef<string | null>(null);
   const openFileRequestTokenRef = useRef(0);
   const gitDiffRequestTokenRef = useRef(0);
   const editorGitBaselineRequestTokenRef = useRef(0);
@@ -616,6 +618,79 @@ export function useWorkbenchController(
   const shouldAutoStartJavaScriptTypeScriptLanguageServer =
     Boolean(workspaceDescriptor?.javaScriptTypeScript) ||
     (!workspaceDescriptor?.php && hasOpenJavaScriptTypeScriptDocument);
+  const phpIdeReadinessSignature = useMemo(() => {
+    if (!workspaceRoot || !workspaceDescriptor?.php) {
+      return null;
+    }
+
+    if (!shouldStartLanguageServer(intelligenceMode)) {
+      return null;
+    }
+
+    if (!workspaceTrust?.trusted) {
+      return null;
+    }
+
+    if (languageServerRuntimeStatus?.kind !== "running") {
+      return null;
+    }
+
+    if (
+      languageServerRuntimeStatus.rootPath &&
+      !workspaceRootKeysEqual(languageServerRuntimeStatus.rootPath, workspaceRoot)
+    ) {
+      return null;
+    }
+
+    if (
+      !canUseLanguageServerFeature(
+        languageServerRuntimeStatus.capabilities,
+        "completion",
+      )
+    ) {
+      return null;
+    }
+
+    if (
+      indexProgress.status === "scanning" &&
+      (!indexProgress.rootPath ||
+        workspaceRootKeysEqual(indexProgress.rootPath, workspaceRoot))
+    ) {
+      return null;
+    }
+
+    return [
+      workspaceRoot,
+      languageServerRuntimeStatus.sessionId ?? "managed",
+      activePhpFrameworkProviderSignature,
+      indexProgress.rootPath ?? "no-index-root",
+      indexProgress.status,
+      indexProgress.indexedFiles,
+    ].join(":");
+  }, [
+    activePhpFrameworkProviderSignature,
+    indexProgress.indexedFiles,
+    indexProgress.rootPath,
+    indexProgress.status,
+    intelligenceMode,
+    languageServerRuntimeStatus,
+    workspaceDescriptor,
+    workspaceRoot,
+    workspaceTrust,
+  ]);
+
+  useEffect(() => {
+    if (!phpIdeReadinessSignature) {
+      return;
+    }
+
+    if (lastPhpIdeReadinessSignatureRef.current === phpIdeReadinessSignature) {
+      return;
+    }
+
+    lastPhpIdeReadinessSignatureRef.current = phpIdeReadinessSignature;
+    setPhpIdeReadinessVersion((current) => current + 1);
+  }, [phpIdeReadinessSignature]);
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
@@ -2401,9 +2476,11 @@ export function useWorkbenchController(
       setClassOpenResults([]);
       setFileStructureScope("current");
       lastPhpFileOutlineRefreshKeyRef.current = null;
+      lastPhpIdeReadinessSignatureRef.current = null;
       phpClassSourcePathCacheRef.current = {};
       phpClassMemberCacheRef.current = {};
       phpFrameworkBindingCacheRef.current = {};
+      setPhpIdeReadinessVersion(0);
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
       autoStartedLanguageServerRootRef.current = null;
@@ -10437,7 +10514,10 @@ export function useWorkbenchController(
       return;
     }
 
-    if (!workspaceRootKeysEqual(languageServerRuntimeStatusRoot, workspaceRoot)) {
+    if (
+      languageServerRuntimeStatusRoot &&
+      !workspaceRootKeysEqual(languageServerRuntimeStatusRoot, workspaceRoot)
+    ) {
       return;
     }
 
@@ -11167,7 +11247,16 @@ export function useWorkbenchController(
           setLanguageServerRuntimeStatus(rootedStatus);
           setLanguageServerRuntimeStatusRoot(workspaceRoot);
         })
-        .catch((error) => reportError("Language Server", error));
+        .catch((error) => {
+          if (
+            active &&
+            workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)
+          ) {
+            setLanguageServerRuntimeStatusRoot(workspaceRoot);
+          }
+
+          reportError("Language Server", error);
+        });
     } else {
       setLanguageServerRuntimeStatus(null);
       setLanguageServerRuntimeStatusRoot(null);
@@ -11634,6 +11723,7 @@ export function useWorkbenchController(
     phpTree,
     phpTreeExpandedNodeIds,
     phpTreeLoading,
+    phpIdeReadinessVersion,
     phpTools,
     quickOpenLoading,
     quickOpenOpen,
