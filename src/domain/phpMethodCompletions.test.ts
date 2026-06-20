@@ -427,6 +427,47 @@ class Controller
     });
   });
 
+  it("detects member access completion after multiline fluent calls", () => {
+    const source = `<?php
+class Controller
+{
+    public function index(): void
+    {
+        Album::query()
+            ->published()
+            ->ord
+    }
+}
+`;
+
+    expect(
+      phpMemberAccessCompletionContextAt(
+        source,
+        positionAfter(source, "->ord"),
+      ),
+    ).toEqual({
+      prefix: "ord",
+      receiverExpression: "Album::query()->published()",
+      variableName: null,
+    });
+  });
+
+  it("does not read member access completion past the previous statement", () => {
+    const source = `<?php
+Album::query()
+    ->published();
+
+    ->ord
+`;
+
+    expect(
+      phpMemberAccessCompletionContextAt(
+        source,
+        positionAfter(source, "->ord"),
+      ),
+    ).toBeNull();
+  });
+
   it("detects Laravel container receiver completion contexts", () => {
     const sources = [
       {
@@ -506,6 +547,20 @@ service(CommentService::class)->cre
     });
   });
 
+  it("detects multiline static access completion context", () => {
+    const source = `<?php
+return
+    Album::pub
+`;
+
+    expect(
+      phpStaticAccessCompletionContextAt(source, positionAfter(source, "::pub")),
+    ).toEqual({
+      className: "Album",
+      prefix: "pub",
+    });
+  });
+
   it("detects method signature context and active argument", () => {
     const source = `<?php
 class Controller
@@ -558,6 +613,66 @@ class Controller
       className: null,
       methodName: "create",
       receiverExpression: "app(CommentService::class)",
+      variableName: null,
+    });
+  });
+
+  it("detects multiline fluent method signature contexts", () => {
+    const source = `<?php
+Album::query()
+    ->published()
+    ->orderBy(
+        $column,
+`;
+
+    expect(
+      phpMethodSignatureContextAt(source, positionAfter(source, "$column,")),
+    ).toEqual({
+      argumentIndex: 1,
+      className: null,
+      methodName: "orderBy",
+      receiverExpression: "Album::query()->published()",
+      variableName: null,
+    });
+  });
+
+  it("uses the nearest open static call for multiline signature contexts", () => {
+    const source = `<?php
+Album::withRelations(
+Album::pub
+Album::published(
+`;
+
+    expect(
+      phpMethodSignatureContextAt(
+        source,
+        positionAfter(source, "Album::published("),
+      ),
+    ).toEqual({
+      argumentIndex: 0,
+      className: "Album",
+      methodName: "published",
+      receiverExpression: null,
+      variableName: null,
+    });
+  });
+
+  it("uses an inner static call over an outer member call for signatures", () => {
+    const source = `<?php
+$query->where(
+    Album::published(
+`;
+
+    expect(
+      phpMethodSignatureContextAt(
+        source,
+        positionAfter(source, "Album::published("),
+      ),
+    ).toEqual({
+      argumentIndex: 0,
+      className: "Album",
+      methodName: "published",
+      receiverExpression: null,
       variableName: null,
     });
   });

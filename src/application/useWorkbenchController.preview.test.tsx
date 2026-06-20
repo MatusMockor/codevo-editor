@@ -8767,6 +8767,237 @@ class BaseModel
     ).toEqual([missingDiagnostic]);
   });
 
+  it("suppresses trait host-property diagnostics when a Laravel model host exposes the property", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const usesConnectionNamePath =
+      "/workspace/app/Models/Concerns/UsesConnectionName.php";
+    const usesConnectionNameSource = `<?php
+namespace App\\Models\\Concerns;
+
+trait UsesConnectionName
+{
+    public function connectionName(): mixed
+    {
+        return $this->connectionName;
+    }
+
+    public function missingConnectionName(): mixed
+    {
+        return $this->missingConnectionName;
+    }
+}
+`;
+    const missingDiagnostic = {
+      character: 22,
+      line:
+        lineNumberOf(usesConnectionNameSource, "$this->missingConnectionName") -
+        1,
+      message:
+        'Property "$missingConnectionName" does not exist on trait "App\\Models\\Concerns\\UsesConnectionName"',
+      severity: "error" as const,
+      source: "phpactor",
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 24,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use App\\Models\\Concerns\\UsesConnectionName;
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    use UsesConnectionName;
+
+    protected $fillable = [
+        'connectionName',
+    ];
+}
+`;
+        }
+
+        if (path === usesConnectionNamePath) {
+          return usesConnectionNameSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchText: vi.fn(async (_root, query) =>
+        query === "UsesConnectionName"
+          ? [
+              {
+                column: 5,
+                lineNumber: 9,
+                lineText: "    use UsesConnectionName;",
+                path: commentPath,
+                relativePath: "app/Models/Comment.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 22,
+            line:
+              lineNumberOf(usesConnectionNameSource, "$this->connectionName") -
+              1,
+            message:
+              'Property "$connectionName" does not exist on trait "App\\Models\\Concerns\\UsesConnectionName"',
+            severity: "error",
+            source: "phpactor",
+          },
+          missingDiagnostic,
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(usesConnectionNamePath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[usesConnectionNamePath],
+    ).toEqual([missingDiagnostic]);
+  });
+
+  it("suppresses static trait host-property diagnostics when the host declares the property", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const hostStatePath = "/workspace/app/Support/HostState.php";
+    const resolvesHostStatePath = "/workspace/app/Support/ResolvesHostState.php";
+    const resolvesHostStateSource = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): mixed
+    {
+        return static::$hostState;
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 25,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === hostStatePath) {
+          return `<?php
+namespace App\\Support;
+
+class HostState
+{
+    use ResolvesHostState;
+
+    protected static string $hostState = 'ready';
+}
+`;
+        }
+
+        if (path === resolvesHostStatePath) {
+          return resolvesHostStateSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchText: vi.fn(async (_root, query) =>
+        query === "ResolvesHostState"
+          ? [
+              {
+                column: 5,
+                lineNumber: 6,
+                lineText: "    use ResolvesHostState;",
+                path: hostStatePath,
+                relativePath: "app/Support/HostState.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 24,
+            line:
+              lineNumberOf(resolvesHostStateSource, "static::$hostState") - 1,
+            message:
+              'Property "$hostState" does not exist on trait "App\\Support\\ResolvesHostState"',
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(resolvesHostStatePath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[resolvesHostStatePath],
+    ).toEqual([]);
+  });
+
   it("suppresses trait host-method diagnostics through an intermediate trait and parent method", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)

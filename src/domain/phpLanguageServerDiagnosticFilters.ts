@@ -7,6 +7,7 @@ import {
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
   phpNormalizeReceiverExpression,
+  phpStatementPrefixRangeBeforeOffset,
 } from "./phpReceiverExpressions";
 
 export interface PhpTraitHostMethodDiagnosticContext {
@@ -391,13 +392,13 @@ export function phpUnresolvedMemberMethodDiagnosticContext(
     return null;
   }
 
-  const line = lineAt(source, diagnostic.line);
+  const context = statementContextForDiagnostic(source, diagnostic);
 
-  if (!line) {
+  if (!context) {
     return null;
   }
 
-  for (const call of line.matchAll(memberMethodCallPattern)) {
+  for (const call of context.text.matchAll(memberMethodCallPattern)) {
     const receiverExpression = call[1] ?? "";
     const methodName = call[2] ?? "";
 
@@ -409,7 +410,15 @@ export function phpUnresolvedMemberMethodDiagnosticContext(
     const methodStart = callStart + call[0].lastIndexOf(methodName);
     const methodEnd = methodStart + methodName.length;
 
-    if (diagnosticTouchesMethod(diagnostic, methodName, methodStart, methodEnd)) {
+    if (
+      diagnosticTouchesMethod(
+        diagnostic,
+        methodName,
+        context.diagnosticOffset,
+        context.startOffset + methodStart,
+        context.startOffset + methodEnd,
+      )
+    ) {
       return {
         methodName,
         receiverExpression: phpNormalizeReceiverExpression(receiverExpression),
@@ -428,13 +437,13 @@ export function phpUnresolvedStaticMethodDiagnosticContext(
     return null;
   }
 
-  const line = lineAt(source, diagnostic.line);
+  const context = statementContextForDiagnostic(source, diagnostic);
 
-  if (!line) {
+  if (!context) {
     return null;
   }
 
-  for (const call of line.matchAll(staticMethodCallPattern)) {
+  for (const call of context.text.matchAll(staticMethodCallPattern)) {
     const className = call[1]?.replace(/^\\+/, "") ?? "";
     const methodName = call[2] ?? "";
 
@@ -446,7 +455,15 @@ export function phpUnresolvedStaticMethodDiagnosticContext(
     const methodStart = callStart + call[0].lastIndexOf(methodName);
     const methodEnd = methodStart + methodName.length;
 
-    if (diagnosticTouchesMethod(diagnostic, methodName, methodStart, methodEnd)) {
+    if (
+      diagnosticTouchesMethod(
+        diagnostic,
+        methodName,
+        context.diagnosticOffset,
+        context.startOffset + methodStart,
+        context.startOffset + methodEnd,
+      )
+    ) {
       return {
         className,
         methodName,
@@ -503,17 +520,108 @@ function isDependencyPath(path: string | null | undefined): boolean {
 function diagnosticTouchesMethod(
   diagnostic: LanguageServerDiagnostic,
   method: string,
-  methodStart: number,
-  methodEnd: number,
+  diagnosticOffset: number,
+  absoluteMethodStart: number,
+  absoluteMethodEnd: number,
 ): boolean {
   if (diagnostic.message.toLowerCase().includes(method.toLowerCase())) {
     return true;
   }
 
   return (
-    diagnostic.character >= methodStart - 2 &&
-    diagnostic.character <= methodEnd + 2
+    diagnosticOffset >= absoluteMethodStart - 2 &&
+    diagnosticOffset <= absoluteMethodEnd + 2
   );
+}
+
+function statementContextForDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): { diagnosticOffset: number; startOffset: number; text: string } | null {
+  const diagnosticOffset = offsetAtZeroBasedPosition(
+    source,
+    diagnostic.line,
+    diagnostic.character,
+  );
+
+  if (diagnosticOffset === null) {
+    return null;
+  }
+
+  const lineEndOffset = lineEndOffsetAt(source, diagnostic.line);
+  const contextEndOffset = trimTrailingStatementBoundaryBeforeOffset(
+    source,
+    lineEndOffset ?? diagnosticOffset,
+  );
+  const prefix = phpStatementPrefixRangeBeforeOffset(
+    source,
+    Math.max(contextEndOffset, diagnosticOffset),
+  );
+
+  return {
+    diagnosticOffset,
+    startOffset: prefix.startOffset,
+    text: prefix.text,
+  };
+}
+
+function trimTrailingStatementBoundaryBeforeOffset(
+  source: string,
+  offset: number,
+): number {
+  let cursor = Math.max(0, Math.min(source.length, offset));
+
+  while (cursor > 0 && /[ \t\r]/.test(source[cursor - 1] ?? "")) {
+    cursor -= 1;
+  }
+
+  if (source[cursor - 1] === ";") {
+    return cursor - 1;
+  }
+
+  return cursor;
+}
+
+function offsetAtZeroBasedPosition(
+  source: string,
+  zeroBasedLine: number,
+  zeroBasedCharacter: number,
+): number | null {
+  if (zeroBasedLine < 0 || zeroBasedCharacter < 0) {
+    return null;
+  }
+
+  let line = 0;
+  let lineStart = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    if (line === zeroBasedLine) {
+      return Math.min(lineStart + zeroBasedCharacter, source.length);
+    }
+
+    if (source[index] === "\n") {
+      line += 1;
+      lineStart = index + 1;
+    }
+  }
+
+  if (line === zeroBasedLine) {
+    return Math.min(lineStart + zeroBasedCharacter, source.length);
+  }
+
+  return null;
+}
+
+function lineEndOffsetAt(source: string, zeroBasedLine: number): number | null {
+  const lineStart = offsetAtZeroBasedPosition(source, zeroBasedLine, 0);
+
+  if (lineStart === null) {
+    return null;
+  }
+
+  const nextLineOffset = source.indexOf("\n", lineStart);
+
+  return nextLineOffset < 0 ? source.length : nextLineOffset;
 }
 
 function lineAt(source: string, zeroBasedLine: number): string | null {

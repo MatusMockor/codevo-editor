@@ -157,6 +157,38 @@ $album = Album::query()->missingMagic()->first();
     ).toEqual([unknown]);
   });
 
+  it("suppresses confirmed unresolved member method diagnostics on multiline chains", () => {
+    const source = `<?php
+
+$album = Album::query()
+    ->withRelations()
+    ->first();
+$album = Album::query()
+    ->missingMagic()
+    ->first();
+`;
+    const confirmed = diagnostic({
+      character: 6,
+      line: 3,
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+    });
+    const unknown = diagnostic({
+      character: 6,
+      line: 6,
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::missingMagic() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        contextualMemberMethods: new Set([
+          phpMemberMethodDiagnosticKey("Album::query()", "withRelations"),
+        ]),
+      }),
+    ).toEqual([unknown]);
+  });
+
   it("extracts member method diagnostic contexts from unresolved PHPactor messages", () => {
     const source = `<?php
 
@@ -169,6 +201,30 @@ $album = Album::query()->withRelations()->first();
         diagnostic({
           character: 27,
           line: 2,
+          message:
+            "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+        }),
+      ),
+    ).toEqual({
+      methodName: "withRelations",
+      receiverExpression: "Album::query()",
+    });
+  });
+
+  it("extracts member method diagnostic contexts from multiline chains", () => {
+    const source = `<?php
+
+$album = Album::query()
+    ->withRelations()
+    ->first();
+`;
+
+    expect(
+      phpUnresolvedMemberMethodDiagnosticContext(
+        source,
+        diagnostic({
+          character: 6,
+          line: 3,
           message:
             "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
         }),

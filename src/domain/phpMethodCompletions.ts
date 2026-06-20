@@ -9,6 +9,7 @@ import {
   PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
   phpNormalizeReceiverExpression,
   phpSimpleVariableName,
+  phpStatementPrefixBeforeOffset,
 } from "./phpReceiverExpressions";
 import {
   defaultPhpFrameworkProviders,
@@ -60,6 +61,15 @@ export interface PhpMethodSignature {
   parameters: PhpMethodParameter[];
 }
 
+interface PhpMethodSignatureCallContext {
+  argumentsSource: string;
+  className: string | null;
+  methodName: string;
+  openParenOffset: number;
+  receiverExpression: string | null;
+  variableName: string | null;
+}
+
 export interface PhpMethodCompletionOptions {
   frameworkProviders?: readonly PhpFrameworkProvider[];
 }
@@ -69,11 +79,10 @@ export function phpMemberAccessCompletionContextAt(
   position: EditorPosition,
 ): PhpMemberAccessCompletionContext | null {
   const offset = offsetAtPosition(source, position);
-  const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
-  const lineUntilCursor = source.slice(lineStart, offset);
+  const statementUntilCursor = phpStatementPrefixBeforeOffset(source, offset);
   const match = new RegExp(
     `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:${PHP_MEMBER_CHAIN_SEGMENT_PATTERN})*)${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)?$`,
-  ).exec(lineUntilCursor);
+  ).exec(statementUntilCursor);
 
   if (!match?.[1]) {
     return null;
@@ -93,11 +102,10 @@ export function phpStaticAccessCompletionContextAt(
   position: EditorPosition,
 ): PhpStaticAccessCompletionContext | null {
   const offset = offsetAtPosition(source, position);
-  const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
-  const lineUntilCursor = source.slice(lineStart, offset);
+  const statementUntilCursor = phpStatementPrefixBeforeOffset(source, offset);
   const match =
     /((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\s*::\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(
-      lineUntilCursor,
+      statementUntilCursor,
     );
 
   if (!match?.[1]) {
@@ -115,39 +123,19 @@ export function phpMethodSignatureContextAt(
   position: EditorPosition,
 ): PhpMethodSignatureContext | null {
   const offset = offsetAtPosition(source, position);
-  const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
-  const lineUntilCursor = source.slice(lineStart, offset);
-  const memberMatch = new RegExp(
-    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:${PHP_MEMBER_CHAIN_SEGMENT_PATTERN})*)${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)$`,
-  ).exec(lineUntilCursor);
+  const statementUntilCursor = phpStatementPrefixBeforeOffset(source, offset);
+  const context = phpActiveMethodSignatureCallContext(statementUntilCursor);
 
-  if (memberMatch?.[1] && memberMatch[2]) {
-    const receiverExpression = phpNormalizeReceiverExpression(memberMatch[1]);
-
-    return {
-      argumentIndex: phpArgumentIndex(memberMatch[3] ?? ""),
-      className: null,
-      methodName: memberMatch[2],
-      receiverExpression,
-      variableName: phpSimpleVariableName(receiverExpression),
-    };
-  }
-
-  const staticMatch =
-    /((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)$/.exec(
-      lineUntilCursor,
-    );
-
-  if (!staticMatch?.[1] || !staticMatch[2]) {
+  if (!context) {
     return null;
   }
 
   return {
-    argumentIndex: phpArgumentIndex(staticMatch[3] ?? ""),
-    className: staticMatch[1].replace(/^\\+/, ""),
-    methodName: staticMatch[2],
-    receiverExpression: null,
-    variableName: null,
+    argumentIndex: phpArgumentIndex(context.argumentsSource),
+    className: context.className,
+    methodName: context.methodName,
+    receiverExpression: context.receiverExpression,
+    variableName: context.variableName,
   };
 }
 
@@ -586,6 +574,144 @@ function phpArgumentIndex(argumentsSource: string): number {
   }
 
   return argumentIndex;
+}
+
+function phpActiveMethodSignatureCallContext(
+  statementUntilCursor: string,
+): PhpMethodSignatureCallContext | null {
+  const memberContext = lastOpenMemberSignatureCallContext(statementUntilCursor);
+  const staticContext = lastOpenStaticSignatureCallContext(statementUntilCursor);
+
+  if (!memberContext) {
+    return staticContext;
+  }
+
+  if (!staticContext) {
+    return memberContext;
+  }
+
+  return memberContext.openParenOffset > staticContext.openParenOffset
+    ? memberContext
+    : staticContext;
+}
+
+function lastOpenMemberSignatureCallContext(
+  statementUntilCursor: string,
+): PhpMethodSignatureCallContext | null {
+  const pattern = new RegExp(
+    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:${PHP_MEMBER_CHAIN_SEGMENT_PATTERN})*)${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
+    "g",
+  );
+  let context: PhpMethodSignatureCallContext | null = null;
+
+  for (const match of statementUntilCursor.matchAll(pattern)) {
+    const receiverExpressionSource = match[1];
+    const methodName = match[2];
+
+    if (!receiverExpressionSource || !methodName) {
+      continue;
+    }
+
+    const openParenOffset =
+      (match.index ?? 0) + match[0].lastIndexOf("(");
+
+    if (!phpCallIsOpenAtCursor(statementUntilCursor, openParenOffset)) {
+      continue;
+    }
+
+    const receiverExpression = phpNormalizeReceiverExpression(
+      receiverExpressionSource,
+    );
+
+    context = {
+      argumentsSource: statementUntilCursor.slice(openParenOffset + 1),
+      className: null,
+      methodName,
+      openParenOffset,
+      receiverExpression,
+      variableName: phpSimpleVariableName(receiverExpression),
+    };
+  }
+
+  return context;
+}
+
+function lastOpenStaticSignatureCallContext(
+  statementUntilCursor: string,
+): PhpMethodSignatureCallContext | null {
+  const pattern =
+    /((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  let context: PhpMethodSignatureCallContext | null = null;
+
+  for (const match of statementUntilCursor.matchAll(pattern)) {
+    const className = match[1]?.replace(/^\\+/, "");
+    const methodName = match[2];
+
+    if (!className || !methodName) {
+      continue;
+    }
+
+    const openParenOffset =
+      (match.index ?? 0) + match[0].lastIndexOf("(");
+
+    if (!phpCallIsOpenAtCursor(statementUntilCursor, openParenOffset)) {
+      continue;
+    }
+
+    context = {
+      argumentsSource: statementUntilCursor.slice(openParenOffset + 1),
+      className,
+      methodName,
+      openParenOffset,
+      receiverExpression: null,
+      variableName: null,
+    };
+  }
+
+  return context;
+}
+
+function phpCallIsOpenAtCursor(
+  source: string,
+  openParenOffset: number,
+): boolean {
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = openParenOffset; index < source.length; index += 1) {
+    const character = source[index] || "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(") {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== ")") {
+      continue;
+    }
+
+    depth = Math.max(0, depth - 1);
+  }
+
+  return depth > 0;
 }
 
 function normalizeParameterType(beforeName: string): string | null {

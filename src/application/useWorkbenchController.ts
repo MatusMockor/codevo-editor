@@ -58,6 +58,8 @@ import {
   phpMethodDiagnosticKey,
   phpTraitHostMethodDiagnosticContext,
   phpTraitHostMethodDiagnosticKey,
+  phpTraitHostPropertyDiagnosticContext,
+  phpTraitHostPropertyDiagnosticKey,
   phpUnresolvedMemberMethodDiagnosticContext,
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "../domain/phpLanguageServerDiagnosticFilters";
@@ -5810,6 +5812,116 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpClassHierarchyHasProperty = useCallback(
+    async (
+      className: string,
+      propertyName: string,
+      visitedClassNames = new Set<string>(),
+    ): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+      const normalizedPropertyName = propertyName.trim().replace(/^\$+/, "");
+      const visitedKey = normalizedClassName.toLowerCase();
+
+      if (
+        !normalizedClassName ||
+        !normalizedPropertyName ||
+        visitedClassNames.has(visitedKey)
+      ) {
+        return false;
+      }
+
+      visitedClassNames.add(visitedKey);
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        try {
+          const { content, members } = await readPhpClassMembersFromPath(
+            path,
+            normalizedClassName,
+          );
+          const propertyLookup = normalizedPropertyName.toLowerCase();
+
+          if (
+            phpClassSourceHasDeclaredProperty(content, normalizedPropertyName) ||
+            members.some(
+              (member) =>
+                member.kind === "property" &&
+                member.name.toLowerCase() === propertyLookup,
+            )
+          ) {
+            return true;
+          }
+
+          for (const traitName of phpTraitClassNames(content)) {
+            const resolvedTraitName = resolvePhpClassReference(
+              content,
+              traitName,
+            );
+
+            if (
+              resolvedTraitName &&
+              (await phpClassHierarchyHasProperty(
+                resolvedTraitName,
+                normalizedPropertyName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+
+          for (const mixinName of phpMixinClassNames(content)) {
+            const resolvedMixinName = resolvePhpClassReference(
+              content,
+              mixinName,
+            );
+
+            if (
+              resolvedMixinName &&
+              (await phpClassHierarchyHasProperty(
+                resolvedMixinName,
+                normalizedPropertyName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+
+          const parentClassName = phpExtendsClassName(content);
+          const resolvedParentClassName = parentClassName
+            ? resolvePhpClassReference(content, parentClassName)
+            : null;
+
+          if (
+            resolvedParentClassName &&
+            (await phpClassHierarchyHasProperty(
+              resolvedParentClassName,
+              normalizedPropertyName,
+              visitedClassNames,
+            ))
+          ) {
+            return true;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      readPhpClassMembersFromPath,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const phpClassHasLaravelLocalScope = useCallback(
     async (className: string, scopeName: string): Promise<boolean> => {
       if (!isLaravelFrameworkActive) {
@@ -6021,6 +6133,199 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpTraitHostPropertyExists = useCallback(
+    async (traitClassName: string, propertyName: string): Promise<boolean> => {
+      if (!workspaceRoot) {
+        return false;
+      }
+
+      const normalizedTraitClassName = traitClassName
+        .trim()
+        .replace(/^\\+/, "");
+      const normalizedPropertyName = propertyName.trim().replace(/^\$+/, "");
+
+      if (!normalizedTraitClassName || !normalizedPropertyName) {
+        return false;
+      }
+
+      const sourceUsesTrait = (
+        source: string,
+        targetTraitClassName: string,
+      ): boolean => {
+        const targetLookup = targetTraitClassName.toLowerCase();
+
+        return phpTraitClassNames(source).some((traitName) => {
+          const resolvedTraitName = resolvePhpClassReference(source, traitName);
+
+          return resolvedTraitName?.toLowerCase() === targetLookup;
+        });
+      };
+      const descendantClassHierarchyHasProperty = async (
+        className: string,
+        visitedClassNames = new Set<string>(),
+      ): Promise<boolean> => {
+        const normalizedClassName = className.trim().replace(/^\\+/, "");
+        const classLookup = normalizedClassName.toLowerCase();
+
+        if (
+          !normalizedClassName ||
+          visitedClassNames.has(classLookup) ||
+          visitedClassNames.size >= 200
+        ) {
+          return false;
+        }
+
+        visitedClassNames.add(classLookup);
+
+        const results = await textSearch.searchText(
+          workspaceRoot,
+          shortPhpName(normalizedClassName),
+          200,
+        );
+        const visitedPaths = new Set<string>();
+
+        for (const result of results) {
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+            continue;
+          }
+
+          visitedPaths.add(result.path);
+
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (phpCurrentTypeKind(content) !== "class") {
+              continue;
+            }
+
+            const candidateClassName = phpCurrentClassName(content);
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassReference(content, parentClassName)
+              : null;
+
+            if (
+              !candidateClassName ||
+              resolvedParentClassName?.toLowerCase() !== classLookup
+            ) {
+              continue;
+            }
+
+            if (
+              (await phpClassHierarchyHasProperty(
+                candidateClassName,
+                normalizedPropertyName,
+              )) ||
+              (await descendantClassHierarchyHasProperty(
+                candidateClassName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return false;
+      };
+      const traitConcreteUserHierarchyHasProperty = async (
+        targetTraitClassName: string,
+        visitedTraitClassNames = new Set<string>(),
+      ): Promise<boolean> => {
+        const normalizedTargetTraitClassName = targetTraitClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const traitLookup = normalizedTargetTraitClassName.toLowerCase();
+
+        if (
+          !normalizedTargetTraitClassName ||
+          visitedTraitClassNames.has(traitLookup) ||
+          visitedTraitClassNames.size >= 200
+        ) {
+          return false;
+        }
+
+        visitedTraitClassNames.add(traitLookup);
+
+        const results = await textSearch.searchText(
+          workspaceRoot,
+          shortPhpName(normalizedTargetTraitClassName),
+          200,
+        );
+        const visitedPaths = new Set<string>();
+
+        for (const result of results) {
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+            continue;
+          }
+
+          visitedPaths.add(result.path);
+
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (!sourceUsesTrait(content, normalizedTargetTraitClassName)) {
+              continue;
+            }
+
+            const userTypeKind = phpCurrentTypeKind(content);
+            const userClassName = phpCurrentClassName(content);
+
+            if (!userTypeKind || !userClassName) {
+              continue;
+            }
+
+            if (userTypeKind === "trait") {
+              if (
+                await traitConcreteUserHierarchyHasProperty(
+                  userClassName,
+                  visitedTraitClassNames,
+                )
+              ) {
+                return true;
+              }
+
+              continue;
+            }
+
+            if (userTypeKind !== "class" && userTypeKind !== "enum") {
+              continue;
+            }
+
+            if (
+              (await phpClassHierarchyHasProperty(
+                userClassName,
+                normalizedPropertyName,
+              )) ||
+              (userTypeKind === "class" &&
+                (await descendantClassHierarchyHasProperty(
+                  userClassName,
+                  new Set<string>(),
+                )))
+            ) {
+              return true;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return false;
+      };
+
+      return traitConcreteUserHierarchyHasProperty(normalizedTraitClassName);
+    },
+    [
+      phpClassHierarchyHasProperty,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      textSearch,
+      workspaceRoot,
+    ],
+  );
+
   const filterPhpDiagnosticsWithContext = useCallback(
     async (
       path: string,
@@ -6039,6 +6344,7 @@ export function useWorkbenchController(
       }
 
       const contextualTraitHostMethods = new Set<string>();
+      const contextualTraitHostProperties = new Set<string>();
       const contextualExistingMethods = new Set<string>();
       const contextualMemberMethods = new Set<string>();
 
@@ -6120,39 +6426,78 @@ export function useWorkbenchController(
           }
         }
 
-        const traitContext = phpTraitHostMethodDiagnosticContext(
+        const traitMethodContext = phpTraitHostMethodDiagnosticContext(
           source,
           diagnostic,
         );
 
-        if (!traitContext) {
-          continue;
+        if (traitMethodContext) {
+          const normalizedTraitName = traitMethodContext.traitName.replace(
+            /^\\+/,
+            "",
+          );
+          const traitClassName = normalizedTraitName.includes("\\")
+            ? normalizedTraitName
+            : (resolvePhpClassReference(source, traitMethodContext.traitName) ??
+              normalizedTraitName);
+
+          if (
+            await phpTraitHostMethodExists(
+              traitClassName,
+              traitMethodContext.methodName,
+            )
+          ) {
+            contextualTraitHostMethods.add(
+              phpTraitHostMethodDiagnosticKey(
+                traitMethodContext.traitName,
+                traitMethodContext.methodName,
+              ),
+            );
+            contextualTraitHostMethods.add(
+              phpTraitHostMethodDiagnosticKey(
+                traitClassName,
+                traitMethodContext.methodName,
+              ),
+            );
+          }
         }
 
-        const normalizedTraitName = traitContext.traitName.replace(/^\\+/, "");
-        const traitClassName = normalizedTraitName.includes("\\")
-          ? normalizedTraitName
-          : (resolvePhpClassReference(source, traitContext.traitName) ??
-            normalizedTraitName);
+        const traitPropertyContext = phpTraitHostPropertyDiagnosticContext(
+          source,
+          diagnostic,
+        );
 
-        if (
-          await phpTraitHostMethodExists(
-            traitClassName,
-            traitContext.methodName,
-          )
-        ) {
-          contextualTraitHostMethods.add(
-            phpTraitHostMethodDiagnosticKey(
-              traitContext.traitName,
-              traitContext.methodName,
-            ),
+        if (traitPropertyContext) {
+          const normalizedTraitName = traitPropertyContext.traitName.replace(
+            /^\\+/,
+            "",
           );
-          contextualTraitHostMethods.add(
-            phpTraitHostMethodDiagnosticKey(
+          const traitClassName = normalizedTraitName.includes("\\")
+            ? normalizedTraitName
+            : (resolvePhpClassReference(
+                source,
+                traitPropertyContext.traitName,
+              ) ?? normalizedTraitName);
+
+          if (
+            await phpTraitHostPropertyExists(
               traitClassName,
-              traitContext.methodName,
-            ),
-          );
+              traitPropertyContext.propertyName,
+            )
+          ) {
+            contextualTraitHostProperties.add(
+              phpTraitHostPropertyDiagnosticKey(
+                traitPropertyContext.traitName,
+                traitPropertyContext.propertyName,
+              ),
+            );
+            contextualTraitHostProperties.add(
+              phpTraitHostPropertyDiagnosticKey(
+                traitClassName,
+                traitPropertyContext.propertyName,
+              ),
+            );
+          }
         }
       }
 
@@ -6160,6 +6505,7 @@ export function useWorkbenchController(
         contextualExistingMethods,
         contextualMemberMethods,
         contextualTraitHostMethods,
+        contextualTraitHostProperties,
         frameworkProviders: activePhpFrameworkProviders,
         path,
       });
@@ -6170,6 +6516,7 @@ export function useWorkbenchController(
       activePhpFrameworkProviders,
       isLaravelFrameworkActive,
       phpTraitHostMethodExists,
+      phpTraitHostPropertyExists,
       readNavigationFileContent,
       resolvePhpClassReference,
     ],
@@ -12515,6 +12862,31 @@ function phpClassMemberCacheKey(
   frameworkProviderSignature: string,
 ): string {
   return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}#${frameworkProviderSignature}`;
+}
+
+function phpClassSourceHasDeclaredProperty(
+  source: string,
+  propertyName: string,
+): boolean {
+  const normalizedPropertyName = propertyName.trim().replace(/^\$+/, "");
+
+  if (!normalizedPropertyName) {
+    return false;
+  }
+
+  const escapedPropertyName = escapeRegExp(normalizedPropertyName);
+  const docPropertyPattern = new RegExp(
+    String.raw`@property(?:-read|-write)?\s+[^\r\n*]+?\s+\$${escapedPropertyName}\b`,
+    "i",
+  );
+  const declaredPropertyPattern = new RegExp(
+    String.raw`(?:^|\n)\s*(?:(?:public|protected|private|readonly|static|var)\s+)*(?:\??[\\A-Za-z_][\\A-Za-z0-9_]*(?:\|[\\A-Za-z_][\\A-Za-z0-9_]*)?\s+)?\$${escapedPropertyName}\b`,
+    "i",
+  );
+
+  return (
+    docPropertyPattern.test(source) || declaredPropertyPattern.test(source)
+  );
 }
 
 function escapeRegExp(value: string): string {
