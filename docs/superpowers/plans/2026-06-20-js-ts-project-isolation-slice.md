@@ -3018,7 +3018,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Provider Runtime Root Guard
 
-- Commit pending.
+- Committed and pushed as `3b5dfd05 Require rooted PHP provider runtime status`.
 - Included files:
   - `src/components/languageServerMonacoProviders.ts`
   - `src/components/languageServerMonacoProviders.test.ts`
