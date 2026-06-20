@@ -6,6 +6,7 @@ import type {
   LanguageServerRuntimeStatus,
   UnsubscribeFn,
 } from "../domain/languageServerRuntime";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 const STATUS_EVENT = "language-server://status";
 const DESKTOP_RUNTIME_REQUIRED =
@@ -56,11 +57,11 @@ function statusForRequestedRoot(
   status: LanguageServerRuntimeStatus,
   rootPath: string,
 ): LanguageServerRuntimeStatus {
-  if (status.rootPath) {
+  if (status.rootPath && workspaceRootKeysEqual(status.rootPath, rootPath)) {
     return status;
   }
 
-  return { ...status, rootPath };
+  return stoppedStatus(rootPath);
 }
 
 export class TauriLanguageServerRuntimeGateway

@@ -3581,3 +3581,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: LSP Direct Status Response Root Contract
 
 - Committed and pushed as `bdaf85a0 Root direct LSP status command responses`.
+
+## Next Slice: Runtime Gateway Direct Root Strictness
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `09bd1ac9 Record Laravel relation method collection commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Backend direct `get/start/stop` LSP status commands now return rooted payloads.
+- The frontend runtime gateway still filled in the requested root when a direct backend response was rootless, which could mask a backend regression and let a rootless `running` status look active for the requested workspace.
+- Workspace isolation is stronger if direct runtime responses must carry the requested root explicitly.
+
+### Implementation Choice
+
+- Accept a direct runtime response only when `status.rootPath` matches the requested root.
+- Treat rootless or mismatched direct runtime responses as a safe `stopped` status for the requested root.
+- Keep browser/outside-Tauri fallback statuses rooted locally.
+
+### Acceptance Criteria
+
+- Direct rootless `running` responses are not converted into active requested-workspace statuses.
+- Direct mismatched-root `running` responses are not accepted for the requested workspace.
+- Rooted direct responses with the requested root keep working.
+- Focused runtime gateway tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: Runtime Gateway Direct Root Strictness
+
+- PASS: `npm test -- src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: Runtime Gateway Direct Root Strictness
+
+- PENDING.

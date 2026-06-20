@@ -45,43 +45,13 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     const running: LanguageServerRuntimeStatus = {
       kind: "running",
       sessionId: 1,
-      capabilities: {
-      callHierarchy: true,
-        codeAction: true,
-        codeLens: true,
-        completion: true,
-        declaration: true,
-        definition: true,
-        documentHighlight: true,
-        documentLink: true,
-        documentSymbol: true,
-        didRenameFiles: true,
-        foldingRange: true,
-        formatting: true,
-        hover: true,
-        implementation: true,
-        inlayHint: true,
-        linkedEditingRange: true,
-        onTypeFormatting: true,
-        prepareRename: true,
-        rangeFormatting: true,
-        references: true,
-        rename: true,
-        selectionRange: true,
-        semanticTokens: true,
-        signatureHelp: true,
-        sourceDefinition: true,
-        typeDefinition: true,
-        typeHierarchy: true,
-        willRenameFiles: true,
-        workspaceSymbol: true,
-      },
+      capabilities: runtimeCapabilities(),
     };
     const rootedRunning: LanguageServerRuntimeStatus = {
       ...running,
       rootPath: "/workspace",
     };
-    const invokeCommand = vi.fn<InvokeCommand>(async () => running);
+    const invokeCommand = vi.fn<InvokeCommand>(async () => rootedRunning);
     const listenToEvent = vi.fn<ListenToEvent>(async (_event, handler) => {
       handler({ payload: running });
       return () => undefined;
@@ -116,38 +86,53 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     expect(listener).toHaveBeenCalledWith(running);
   });
 
+  it("does not root unsafe direct runtime responses for the requested workspace", async () => {
+    const rootlessRunning: LanguageServerRuntimeStatus = {
+      kind: "running",
+      sessionId: 5,
+      capabilities: runtimeCapabilities(),
+    };
+    const mismatchedRunning: LanguageServerRuntimeStatus = {
+      ...rootlessRunning,
+      rootPath: "/other",
+    };
+    const invokeCommand = vi.fn<InvokeCommand>(async (command) => {
+      if (command === "get_php_language_server_status") {
+        return rootlessRunning;
+      }
+
+      if (command === "start_php_language_server") {
+        return mismatchedRunning;
+      }
+
+      return { kind: "stopped", rootPath: "/workspace" };
+    });
+    const gateway = new TauriLanguageServerRuntimeGateway(
+      invokeCommand,
+      vi.fn<ListenToEvent>(),
+      () => true,
+    );
+
+    await expect(gateway.getStatus("/workspace")).resolves.toEqual({
+      kind: "stopped",
+      rootPath: "/workspace",
+    });
+    await expect(gateway.start("/workspace")).resolves.toEqual({
+      kind: "stopped",
+      rootPath: "/workspace",
+    });
+    await expect(gateway.stop("/workspace")).resolves.toEqual({
+      kind: "stopped",
+      rootPath: "/workspace",
+    });
+  });
+
   it("passes TypeScript version preference to JavaScript and TypeScript start command", async () => {
     const running: LanguageServerRuntimeStatus = {
       capabilities: {
-      callHierarchy: true,
+        ...runtimeCapabilities(),
         codeAction: false,
-        codeLens: true,
-        completion: true,
-        declaration: true,
-        definition: true,
-        documentHighlight: true,
-        documentLink: true,
-        documentSymbol: true,
-        didRenameFiles: true,
-        foldingRange: true,
         formatting: false,
-        hover: true,
-        implementation: true,
-        inlayHint: true,
-        linkedEditingRange: true,
-        onTypeFormatting: true,
-        prepareRename: true,
-        rangeFormatting: true,
-        references: true,
-        rename: true,
-        selectionRange: true,
-        semanticTokens: true,
-        signatureHelp: true,
-        sourceDefinition: true,
-        typeDefinition: true,
-        typeHierarchy: true,
-        willRenameFiles: true,
-        workspaceSymbol: true,
       },
       kind: "running",
       sessionId: 4,
@@ -156,7 +141,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       ...running,
       rootPath: "/workspace",
     };
-    const invokeCommand = vi.fn<InvokeCommand>(async () => running);
+    const invokeCommand = vi.fn<InvokeCommand>(async () => rootedRunning);
     const gateway = new TauriLanguageServerRuntimeGateway(
       invokeCommand,
       vi.fn<ListenToEvent>(),
@@ -212,3 +197,40 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     );
   });
 });
+
+function runtimeCapabilities(): Extract<
+  LanguageServerRuntimeStatus,
+  { kind: "running" }
+>["capabilities"] {
+  return {
+    callHierarchy: true,
+    codeAction: true,
+    codeLens: true,
+    completion: true,
+    declaration: true,
+    definition: true,
+    documentHighlight: true,
+    documentLink: true,
+    documentSymbol: true,
+    didRenameFiles: true,
+    foldingRange: true,
+    formatting: true,
+    hover: true,
+    implementation: true,
+    inlayHint: true,
+    linkedEditingRange: true,
+    onTypeFormatting: true,
+    prepareRename: true,
+    rangeFormatting: true,
+    references: true,
+    rename: true,
+    selectionRange: true,
+    semanticTokens: true,
+    signatureHelp: true,
+    sourceDefinition: true,
+    typeDefinition: true,
+    typeHierarchy: true,
+    willRenameFiles: true,
+    workspaceSymbol: true,
+  };
+}
