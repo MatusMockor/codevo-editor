@@ -1553,9 +1553,11 @@ fn spawn_reader(
                         }
 
                         if let Some(event) = parse_publish_diagnostics(&value, session_id) {
-                            if !is_diagnostic_event_in_workspace(&workspace_root, &event) {
+                            let Some(event) =
+                                filter_diagnostic_event_to_workspace(&workspace_root, event)
+                            else {
                                 continue;
-                            }
+                            };
 
                             diagnostics_sink.emit_diagnostics(event);
                         }
@@ -1954,11 +1956,28 @@ fn ensure_workspace_edit_paths_in_workspace(
     Ok(())
 }
 
-fn is_diagnostic_event_in_workspace(
+fn filter_diagnostic_event_to_workspace(
     workspace_root: &str,
-    event: &LanguageServerDiagnosticEvent,
-) -> bool {
-    is_file_uri_in_workspace(workspace_root, &event.uri)
+    mut event: LanguageServerDiagnosticEvent,
+) -> Option<LanguageServerDiagnosticEvent> {
+    if !is_file_uri_in_workspace(workspace_root, &event.uri) {
+        return None;
+    }
+
+    for diagnostic in &mut event.diagnostics {
+        diagnostic.related_information.retain(|related| {
+            !related.uri.starts_with("file://")
+                || is_file_uri_in_workspace(workspace_root, &related.uri)
+        });
+
+        if diagnostic.data.as_ref().is_some_and(|data| {
+            ensure_diagnostic_json_payload_paths_in_workspace(workspace_root, data, false).is_err()
+        }) {
+            diagnostic.data = None;
+        }
+    }
+
+    Some(event)
 }
 
 fn workspace_file_operation_uris(operation: &LanguageServerWorkspaceFileOperation) -> Vec<&str> {
@@ -1981,6 +2000,111 @@ fn ensure_workspace_edit_uri_in_workspace(workspace_root: &str, uri: &str) -> Re
     }
 
     Err("Workspace edit path is outside the workspace root.".to_string())
+}
+
+fn ensure_diagnostic_json_payload_paths_in_workspace(
+    workspace_root: &str,
+    value: &Value,
+    path_context: bool,
+) -> Result<(), String> {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                ensure_diagnostic_json_payload_paths_in_workspace(
+                    workspace_root,
+                    item,
+                    path_context,
+                )?;
+            }
+        }
+        Value::Object(fields) => {
+            for (key, field_value) in fields {
+                ensure_diagnostic_payload_string_in_workspace(workspace_root, key, false)?;
+                ensure_diagnostic_json_payload_paths_in_workspace(
+                    workspace_root,
+                    field_value,
+                    path_context || is_lsp_path_payload_key(key),
+                )?;
+            }
+        }
+        Value::String(value) => {
+            ensure_diagnostic_payload_string_in_workspace(workspace_root, value, path_context)?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn ensure_diagnostic_payload_string_in_workspace(
+    workspace_root: &str,
+    value: &str,
+    path_context: bool,
+) -> Result<(), String> {
+    if value.starts_with("file://") {
+        if is_file_uri_in_workspace(workspace_root, value) {
+            return Ok(());
+        }
+
+        return Err("Diagnostic payload path is outside the workspace root.".to_string());
+    }
+
+    if !path_context || has_non_file_uri_scheme(value) {
+        return Ok(());
+    }
+
+    let root = workspace_guard_path(workspace_root)?;
+    let Some(path) = resolve_existing_or_parent_path(Path::new(value)) else {
+        return Err("Diagnostic payload path could not be resolved.".to_string());
+    };
+
+    if path.starts_with(root) {
+        return Ok(());
+    }
+
+    Err("Diagnostic payload path is outside the workspace root.".to_string())
+}
+
+fn is_lsp_path_payload_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|character| *character != '_' && *character != '-')
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+
+    normalized == "file"
+        || normalized == "target"
+        || normalized.ends_with("uri")
+        || normalized.ends_with("path")
+        || normalized.ends_with("filename")
+}
+
+fn has_non_file_uri_scheme(value: &str) -> bool {
+    let bytes = value.as_bytes();
+
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+
+    let Some(first) = bytes.first() else {
+        return false;
+    };
+
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+
+    for byte in bytes.iter().skip(1) {
+        if *byte == b':' {
+            return !value.starts_with("file:");
+        }
+
+        if !(byte.is_ascii_alphanumeric() || matches!(*byte, b'+' | b'-' | b'.')) {
+            return false;
+        }
+    }
+
+    false
 }
 
 fn is_file_uri_in_workspace(workspace_root: &str, uri: &str) -> bool {
@@ -3260,6 +3384,122 @@ mod tests {
         assert_eq!(event.uri, file_uri(&source_path));
         assert_eq!(event.diagnostics[0].message, "Possible issue");
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn publish_diagnostics_filters_related_information_and_data_outside_session_root() {
+        let root = test_workspace_root("diagnostics-related-root");
+        let outside = test_workspace_root("diagnostics-related-outside");
+        let source_path = root.join("src/User.ts");
+        let inside_related_path = root.join("src/Related.ts");
+        let outside_related_path = outside.join("src/Secret.ts");
+        fs::create_dir_all(source_path.parent().expect("source parent")).expect("source parent");
+        fs::create_dir_all(inside_related_path.parent().expect("inside related parent"))
+            .expect("inside related parent");
+        fs::create_dir_all(
+            outside_related_path
+                .parent()
+                .expect("outside related parent"),
+        )
+        .expect("outside related parent");
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, status_rx, diagnostics_sink, diagnostics_rx) = ChannelSink::with_diagnostics();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start(
+                &command_for_root(path_string(&root).as_str()),
+                &initialize_request(),
+                &spawner,
+                sink,
+                diagnostics_sink,
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        let mut held = held.lock().expect("held writer lock");
+        let writer = held.as_mut().expect("held writer");
+        writer
+            .write_all(&framed(json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/publishDiagnostics",
+                "params": {
+                    "uri": file_uri(&source_path),
+                    "diagnostics": [
+                        {
+                            "range": {
+                                "start": { "line": 1, "character": 2 },
+                                "end": { "line": 1, "character": 3 }
+                            },
+                            "severity": 2,
+                            "source": "tsserver",
+                            "message": "Issue with unsafe metadata",
+                            "data": {
+                                "uri": file_uri(&outside.join("src/FixTarget.ts"))
+                            },
+                            "relatedInformation": [
+                                {
+                                    "location": {
+                                        "uri": file_uri(&inside_related_path),
+                                        "range": {
+                                            "start": { "line": 2, "character": 4 },
+                                            "end": { "line": 2, "character": 8 }
+                                        }
+                                    },
+                                    "message": "Inside related info"
+                                },
+                                {
+                                    "location": {
+                                        "uri": file_uri(&outside_related_path),
+                                        "range": {
+                                            "start": { "line": 3, "character": 5 },
+                                            "end": { "line": 3, "character": 9 }
+                                        }
+                                    },
+                                    "message": "Outside related info"
+                                }
+                            ]
+                        },
+                        {
+                            "range": {
+                                "start": { "line": 5, "character": 2 },
+                                "end": { "line": 5, "character": 3 }
+                            },
+                            "severity": 3,
+                            "source": "tsserver",
+                            "message": "Issue with safe metadata",
+                            "data": {
+                                "file": path_string(&root.join("src/SafeFix.ts"))
+                            }
+                        }
+                    ]
+                }
+            })))
+            .expect("write diagnostics");
+        drop(held);
+
+        let event = diagnostics_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("diagnostic event");
+
+        assert_eq!(event.uri, file_uri(&source_path));
+        assert_eq!(event.diagnostics.len(), 2);
+        assert_eq!(event.diagnostics[0].data, None);
+        assert_eq!(event.diagnostics[0].related_information.len(), 1);
+        assert_eq!(
+            event.diagnostics[0].related_information[0].uri,
+            file_uri(&inside_related_path)
+        );
+        assert_eq!(
+            event.diagnostics[1]
+                .data
+                .as_ref()
+                .and_then(|data| data.get("file")),
+            Some(&json!(path_string(&root.join("src/SafeFix.ts"))))
+        );
+        fs::remove_dir_all(root).expect("cleanup root");
+        fs::remove_dir_all(outside).expect("cleanup outside");
     }
 
     #[test]

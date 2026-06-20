@@ -1487,7 +1487,60 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Code-Action Context Payload Guard
 
-- Pending commit.
+- Committed and pushed as `9db232f Guard JS TS code action diagnostic payloads`.
 - Included files:
   - `src-tauri/src/lib.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: LSP Diagnostic Payload Isolation
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9db232f Guard JS TS code action diagnostic payloads`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Session diagnostics already reject a primary `textDocument/publishDiagnostics` URI outside the workspace root.
+- Individual diagnostics can still carry `relatedInformation` locations and opaque `data` payloads.
+- Those nested fields may contain file URIs or path-like metadata from another workspace, which would leak into the frontend diagnostics surface or later code-action requests.
+
+### Implementation Choice
+
+- Replace the primary-URI-only diagnostic check with a diagnostic event sanitizer.
+- Keep the whole event only when the primary URI belongs to the session root.
+- Drop outside-root related-information entries and clear unsafe diagnostic `data` while preserving the diagnostic itself.
+- Reuse the same path-key heuristic as other JS/TS payload guards for diagnostic `data`.
+
+### Acceptance Criteria
+
+- Diagnostics for files outside the session root are still ignored.
+- Diagnostics for active-root files keep safe related information and safe `data`.
+- Related information outside the session root is removed.
+- Diagnostic `data` containing outside-root paths or file URIs is cleared before emit.
+- Focused Rust session test, serial Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: LSP Diagnostic Payload Isolation
+
+- Added `filter_diagnostic_event_to_workspace` in the LSP session reader path.
+- Related diagnostic locations outside the workspace root are removed before events reach the frontend.
+- Diagnostic `data` is cleared when it carries outside-root path or file URI payloads.
+- Added fake-session coverage for mixed inside/outside related information and safe/unsafe diagnostic metadata.
+
+### Verification: LSP Diagnostic Payload Isolation
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml publish_diagnostics_filters_related_information_and_data_outside_session_root --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: LSP Diagnostic Payload Isolation
+
+- Pending commit.
+- Included files:
+  - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
