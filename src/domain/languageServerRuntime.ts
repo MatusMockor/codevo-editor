@@ -31,13 +31,23 @@ export interface LanguageServerCapabilities {
   workspaceSymbol: boolean;
 }
 
+export interface LanguageServerSemanticTokensLegend {
+  tokenModifiers: string[];
+  tokenTypes: string[];
+}
+
+export interface LanguageServerRuntimeCapabilities
+  extends LanguageServerCapabilities {
+  semanticTokensLegend?: LanguageServerSemanticTokensLegend | null;
+}
+
 export type LanguageServerRuntimeStatus =
   | { kind: "starting"; rootPath?: string; sessionId: number }
   | {
       kind: "running";
       rootPath?: string;
       sessionId: number;
-      capabilities: LanguageServerCapabilities;
+      capabilities: LanguageServerRuntimeCapabilities;
     }
   | { kind: "stopped"; rootPath?: string }
   | { kind: "crashed"; message: string; rootPath?: string };

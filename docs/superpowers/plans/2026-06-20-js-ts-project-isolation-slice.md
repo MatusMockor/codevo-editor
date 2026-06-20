@@ -187,3 +187,64 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lib.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Semantic Token Legend Parity
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2acf5b5 Allow external JS TS navigation targets`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Why This Slice
+
+- Semantic tokens are wired, but the JS/TS Monaco provider currently uses a hard-coded semantic token legend.
+- TypeScript-language-server advertises its actual `semanticTokensProvider.legend` during initialize.
+- If Monaco decodes token indexes with a different legend than the server used, semantic highlighting can be systematically wrong even while requests succeed.
+
+### Delegation
+
+- Worker owns:
+  - `src-tauri/src/lsp_session.rs`
+  - `src/domain/languageServerRuntime.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - focused tests for those files
+- Main agent owns this plan document, integration review, verification, commit, and push.
+
+### Acceptance Criteria
+
+- Runtime capabilities preserve the server-advertised semantic token legend.
+- JS/TS Monaco semantic-token provider returns the active runtime legend.
+- Provider falls back to the current default legend when no usable server legend exists.
+- Focused frontend/domain/Rust tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: Semantic Token Legend Parity
+
+- Runtime status capabilities now preserve the server-advertised `semanticTokensProvider.legend` as `semanticTokensLegend`.
+- JS/TS Monaco semantic-token provider now reads the active runtime legend instead of always using the hard-coded fallback.
+- The default legend remains as fallback for stopped runtimes, stale-root runtimes, or missing/malformed server legends.
+- Added regression coverage for custom runtime legends and default fallback behavior.
+
+### Verification: Semantic Token Legend Parity
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/domain/languageServerRuntime.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml semantic_token_legend_is_preserved_from_initialize_capabilities --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml capability_values_are_normalized --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: Semantic Token Legend Parity
+
+- Included files:
+  - `src-tauri/src/lsp_session.rs`
+  - `src/domain/languageServerRuntime.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

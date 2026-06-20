@@ -80,11 +80,20 @@ pub struct LanguageServerCapabilities {
     pub rename: bool,
     pub selection_range: bool,
     pub semantic_tokens: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_tokens_legend: Option<SemanticTokensLegend>,
     pub signature_help: bool,
     pub type_definition: bool,
     pub type_hierarchy: bool,
     pub will_rename_files: bool,
     pub workspace_symbol: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticTokensLegend {
+    pub token_types: Vec<String>,
+    pub token_modifiers: Vec<String>,
 }
 
 pub trait StatusSink: Send + Sync {
@@ -1902,6 +1911,9 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         rename: is_capability_enabled(capabilities.get("renameProvider")),
         selection_range: is_capability_enabled(capabilities.get("selectionRangeProvider")),
         semantic_tokens: is_capability_enabled(capabilities.get("semanticTokensProvider")),
+        semantic_tokens_legend: parse_semantic_tokens_legend(
+            capabilities.get("semanticTokensProvider"),
+        ),
         signature_help: is_capability_enabled(capabilities.get("signatureHelpProvider")),
         type_definition: is_capability_enabled(capabilities.get("typeDefinitionProvider")),
         type_hierarchy: is_capability_enabled(capabilities.get("typeHierarchyProvider")),
@@ -1912,6 +1924,29 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
             .is_some(),
         workspace_symbol: is_capability_enabled(capabilities.get("workspaceSymbolProvider")),
     })
+}
+
+fn parse_semantic_tokens_legend(provider: Option<&Value>) -> Option<SemanticTokensLegend> {
+    let legend = provider?.get("legend")?;
+    let token_types = parse_string_array(legend.get("tokenTypes")?)?;
+    let token_modifiers = parse_string_array(legend.get("tokenModifiers")?)?;
+
+    if token_types.is_empty() {
+        return None;
+    }
+
+    Some(SemanticTokensLegend {
+        token_types,
+        token_modifiers,
+    })
+}
+
+fn parse_string_array(value: &Value) -> Option<Vec<String>> {
+    value
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(str::to_string))
+        .collect()
 }
 
 fn is_capability_enabled(value: Option<&Value>) -> bool {
@@ -1931,7 +1966,8 @@ mod tests {
     use super::{
         parse_capabilities, DiagnosticsSink, LanguageServerCapabilities, LanguageServerRegistry,
         LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
-        ProcessKiller, ServerProcessSpawner, SpawnedServer, StatusSink, WorkspaceEditSink,
+        ProcessKiller, SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StatusSink,
+        WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
@@ -2601,6 +2637,7 @@ mod tests {
                     rename: false,
                     selection_range: false,
                     semantic_tokens: false,
+                    semantic_tokens_legend: None,
                     signature_help: false,
                     type_definition: false,
                     type_hierarchy: false,
@@ -2640,6 +2677,10 @@ mod tests {
                 rename: true,
                 selection_range: true,
                 semantic_tokens: true,
+                semantic_tokens_legend: Some(SemanticTokensLegend {
+                    token_types: vec!["decorator".to_string(), "enumMember".to_string()],
+                    token_modifiers: vec!["static".to_string(), "async".to_string()],
+                }),
                 signature_help: true,
                 type_definition: true,
                 type_hierarchy: true,
@@ -2674,6 +2715,10 @@ mod tests {
                     "rename": true,
                     "selectionRange": true,
                     "semanticTokens": true,
+                    "semanticTokensLegend": {
+                        "tokenTypes": ["decorator", "enumMember"],
+                        "tokenModifiers": ["static", "async"],
+                    },
                     "signatureHelp": true,
                     "typeDefinition": true,
                     "typeHierarchy": true,
@@ -2782,12 +2827,43 @@ mod tests {
                 rename: true,
                 selection_range: true,
                 semantic_tokens: true,
+                semantic_tokens_legend: Some(SemanticTokensLegend {
+                    token_types: vec!["class".to_string()],
+                    token_modifiers: vec!["readonly".to_string()],
+                }),
                 signature_help: true,
                 type_definition: true,
                 type_hierarchy: true,
                 will_rename_files: true,
                 workspace_symbol: true,
             }
+        );
+    }
+
+    #[test]
+    fn semantic_token_legend_is_preserved_from_initialize_capabilities() {
+        let capabilities = parse_capabilities(&json!({
+            "result": {
+                "capabilities": {
+                    "semanticTokensProvider": {
+                        "full": true,
+                        "legend": {
+                            "tokenTypes": ["component", "hook"],
+                            "tokenModifiers": ["exported", "reactive"]
+                        }
+                    }
+                }
+            }
+        }))
+        .expect("capabilities");
+
+        assert!(capabilities.semantic_tokens);
+        assert_eq!(
+            capabilities.semantic_tokens_legend,
+            Some(SemanticTokensLegend {
+                token_types: vec!["component".to_string(), "hook".to_string()],
+                token_modifiers: vec!["exported".to_string(), "reactive".to_string()],
+            })
         );
     }
 

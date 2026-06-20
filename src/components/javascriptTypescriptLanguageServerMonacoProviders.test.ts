@@ -4,7 +4,7 @@ import type {
   LanguageServerRange,
 } from "../domain/languageServerFeatures";
 import type {
-  LanguageServerCapabilities,
+  LanguageServerRuntimeCapabilities,
   LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
 import type { EditorDocument } from "../domain/workspace";
@@ -1095,15 +1095,23 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
-  it("maps TypeScript semantic tokens through the language server", async () => {
+  it("uses the runtime semantic token legend and maps tokens through the language server", async () => {
     const monaco = createMonaco();
+    const customLegend = {
+      tokenModifiers: ["static", "async"],
+      tokenTypes: ["decorator", "enumMember"],
+    };
     const gateway = featuresGateway({
       semanticTokens: {
         data: [0, 6, 4, 8, 0, 1, 2, 3, 9, 1],
         resultId: "semantic-1",
       },
     });
-    const context = providerContext({ featuresGateway: gateway });
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () =>
+        runningStatus({ semanticTokensLegend: customLegend }),
+    });
     registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
     const model = textModel();
 
@@ -1115,10 +1123,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       null,
     );
 
-    expect(semanticTokensProvider.getLegend()).toEqual({
-      tokenModifiers: expect.arrayContaining(["readonly", "static"]),
-      tokenTypes: expect.arrayContaining(["class", "method", "variable"]),
-    });
+    expect(semanticTokensProvider.getLegend()).toEqual(customLegend);
     expect(gateway.semanticTokens).toHaveBeenCalledWith(
       "/project",
       "/project/src/user.ts",
@@ -1130,6 +1135,55 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(context.flushPendingDocumentChange).toHaveBeenCalledWith(
       "/project/src/user.ts",
     );
+  });
+
+  it("falls back to the default semantic token legend without a runtime legend", () => {
+    const monaco = createMonaco();
+    const context = providerContext();
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+
+    const semanticTokensProvider = (
+      monaco.languages.registerDocumentSemanticTokensProvider as any
+    ).mock.calls[0][1];
+
+    expect(semanticTokensProvider.getLegend()).toEqual({
+      tokenModifiers: [
+        "declaration",
+        "definition",
+        "readonly",
+        "static",
+        "deprecated",
+        "abstract",
+        "async",
+        "modification",
+        "documentation",
+        "defaultLibrary",
+      ],
+      tokenTypes: [
+        "namespace",
+        "type",
+        "class",
+        "enum",
+        "interface",
+        "struct",
+        "typeParameter",
+        "parameter",
+        "variable",
+        "property",
+        "enumMember",
+        "event",
+        "function",
+        "method",
+        "macro",
+        "keyword",
+        "modifier",
+        "comment",
+        "string",
+        "number",
+        "regexp",
+        "operator",
+      ],
+    });
   });
 
   it("maps references, rename edits, code actions, commands and formatting through the gateway", async () => {
@@ -2991,7 +3045,7 @@ function featuresGateway(
 }
 
 function runningStatus(
-  capabilities: Partial<LanguageServerCapabilities> = {},
+  capabilities: Partial<LanguageServerRuntimeCapabilities> = {},
 ): LanguageServerRuntimeStatus {
   return {
     capabilities: {

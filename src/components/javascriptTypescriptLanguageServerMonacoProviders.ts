@@ -492,7 +492,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerDocumentSemanticTokensProvider) {
       disposables.push(
         registry.registerDocumentSemanticTokensProvider(language, {
-          getLegend: () => JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND,
+          getLegend: () => semanticTokensLegendForActiveRuntime(context),
           provideDocumentSemanticTokens: (model) =>
             provideDocumentSemanticTokens(context, model),
           releaseDocumentSemanticTokens: () => undefined,
@@ -1662,6 +1662,51 @@ function canUseRuntimeFeatureForRoot(
     (!status.rootPath || workspaceRootKeysEqual(status.rootPath, rootPath)) &&
     canUseLanguageServerFeature(status.capabilities, feature)
   );
+}
+
+function semanticTokensLegendForActiveRuntime(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+): Monaco.languages.SemanticTokensLegend {
+  const status = context.getRuntimeStatus();
+
+  if (status?.kind !== "running") {
+    return JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND;
+  }
+
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (
+    status.rootPath &&
+    (!rootPath || !workspaceRootKeysEqual(status.rootPath, rootPath))
+  ) {
+    return JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND;
+  }
+
+  if (!isUsableSemanticTokensLegend(status.capabilities.semanticTokensLegend)) {
+    return JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND;
+  }
+
+  return status.capabilities.semanticTokensLegend;
+}
+
+function isUsableSemanticTokensLegend(
+  legend: unknown,
+): legend is Monaco.languages.SemanticTokensLegend {
+  if (!legend || typeof legend !== "object") {
+    return false;
+  }
+
+  const candidate = legend as Partial<Monaco.languages.SemanticTokensLegend>;
+
+  return (
+    isStringArray(candidate.tokenTypes) &&
+    candidate.tokenTypes.length > 0 &&
+    isStringArray(candidate.tokenModifiers)
+  );
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isStoredWorkspaceRootActive(
