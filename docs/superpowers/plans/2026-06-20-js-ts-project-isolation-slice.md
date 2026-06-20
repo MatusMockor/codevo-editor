@@ -306,3 +306,55 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lsp.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Directory Watch Events
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `312128b Enable JS TS client file watcher mode`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Why This Slice
+
+- The previous slice enables TypeScript-language-server's client-side watch-event bridge.
+- TypeScript server watch management can register directory watchers. The bridge matches directory watcher paths against incoming `workspace/didChangeWatchedFiles` changes.
+- Our JS/TS watcher currently drops all directory events, so bulk directory creates/deletes/renames can leave tsserver's project graph stale if the OS/backend reports only directory-level changes.
+
+### Implementation Choice
+
+- This slice is backend-contained in `src-tauri/src/js_ts_file_watcher.rs`.
+- Main agent implements directly because it is a one-file mapping/test update following the backend explorer's read-only analysis.
+
+### Acceptance Criteria
+
+- Directory create/delete/rename events inside the workspace are forwarded as LSP watched-file changes.
+- PHP and unsupported file events remain ignored.
+- Root guards and cross-root rename behavior remain strict.
+- Focused Rust watcher tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: JS/TS Directory Watch Events
+
+- Directory create/modify/delete events inside the JS/TS workspace now map to `workspace/didChangeWatchedFiles` changes.
+- Directory renames now map to deleted + created changes, matching file rename behavior.
+- Unsupported file extensions, PHP files, rescan events, and outside-root paths remain filtered out.
+- Existing cross-root rename behavior remains strict: only the side inside the watched workspace is forwarded.
+
+### Verification: JS/TS Directory Watch Events
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml js_ts_file_watcher --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: JS/TS Directory Watch Events
+
+- Included files:
+  - `src-tauri/src/js_ts_file_watcher.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

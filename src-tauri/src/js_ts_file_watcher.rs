@@ -163,23 +163,19 @@ fn watched_file_changes_for_event(
     root_path: &str,
     event: &WorkspaceWatchEvent,
 ) -> Vec<WorkspaceFileChange> {
-    if event.file_kind == Some(WorkspaceWatchFileKind::Directory) {
-        return Vec::new();
-    }
-
     match event.kind {
         WorkspaceWatchEventKind::Created => {
-            watched_change(root_path, &event.path, WorkspaceFileChangeType::Created)
+            watched_change(root_path, event, &event.path, WorkspaceFileChangeType::Created)
                 .into_iter()
                 .collect()
         }
         WorkspaceWatchEventKind::Modified => {
-            watched_change(root_path, &event.path, WorkspaceFileChangeType::Changed)
+            watched_change(root_path, event, &event.path, WorkspaceFileChangeType::Changed)
                 .into_iter()
                 .collect()
         }
         WorkspaceWatchEventKind::Deleted => {
-            watched_change(root_path, &event.path, WorkspaceFileChangeType::Deleted)
+            watched_change(root_path, event, &event.path, WorkspaceFileChangeType::Deleted)
                 .into_iter()
                 .collect()
         }
@@ -189,6 +185,7 @@ fn watched_file_changes_for_event(
             if let Some(previous_path) = event.previous_path.as_deref() {
                 changes.extend(watched_change(
                     root_path,
+                    event,
                     previous_path,
                     WorkspaceFileChangeType::Deleted,
                 ));
@@ -196,6 +193,7 @@ fn watched_file_changes_for_event(
 
             changes.extend(watched_change(
                 root_path,
+                event,
                 &event.path,
                 WorkspaceFileChangeType::Created,
             ));
@@ -207,15 +205,15 @@ fn watched_file_changes_for_event(
 
 fn watched_change(
     root_path: &str,
+    event: &WorkspaceWatchEvent,
     path: &str,
     change_type: WorkspaceFileChangeType,
 ) -> Option<WorkspaceFileChange> {
-    (is_path_inside_root(root_path, path) && is_javascript_typescript_watched_path(path)).then(
-        || WorkspaceFileChange {
+    (is_path_inside_root(root_path, path) && is_javascript_typescript_watched_event(event, path))
+        .then(|| WorkspaceFileChange {
             path: path.to_string(),
             change_type,
-        },
-    )
+        })
 }
 
 fn is_path_inside_root(root_path: &str, path: &str) -> bool {
@@ -242,6 +240,11 @@ fn is_javascript_typescript_watched_path(path: &str) -> bool {
         extension.as_str(),
         "cjs" | "cts" | "js" | "json" | "jsx" | "mjs" | "mts" | "ts" | "tsx"
     )
+}
+
+fn is_javascript_typescript_watched_event(event: &WorkspaceWatchEvent, path: &str) -> bool {
+    event.file_kind == Some(WorkspaceWatchFileKind::Directory)
+        || is_javascript_typescript_watched_path(path)
 }
 
 fn workspace_watch_id(root_path: &Path) -> String {
@@ -396,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_directories_php_files_and_rescan_events() {
+    fn maps_directory_events_and_ignores_php_files_and_rescan_events() {
         let mut directory = event(WorkspaceWatchEventKind::Created, "/workspace/src");
         directory.file_kind = Some(WorkspaceWatchFileKind::Directory);
 
@@ -412,7 +415,27 @@ mod tests {
             ],
         );
 
-        assert!(changes.is_empty());
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "/workspace/src");
+        assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Created);
+    }
+
+    #[test]
+    fn maps_directory_renames_to_delete_and_create_changes() {
+        let mut rename = event(
+            WorkspaceWatchEventKind::Renamed,
+            "/workspace/src/features",
+        );
+        rename.file_kind = Some(WorkspaceWatchFileKind::Directory);
+        rename.previous_path = Some("/workspace/src/components".to_string());
+
+        let changes = watched_file_changes_for_events(WORKSPACE_ROOT, &[rename]);
+
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].path, "/workspace/src/components");
+        assert_eq!(changes[0].change_type, WorkspaceFileChangeType::Deleted);
+        assert_eq!(changes[1].path, "/workspace/src/features");
+        assert_eq!(changes[1].change_type, WorkspaceFileChangeType::Created);
     }
 
     #[test]
