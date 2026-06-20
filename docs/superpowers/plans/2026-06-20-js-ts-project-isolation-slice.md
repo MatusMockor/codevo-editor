@@ -480,3 +480,71 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Server Refresh Requests
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6bc7a38 Preserve JS TS inlay hint label parts`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Why This Slice
+
+- The TypeScript language server can ask the client to refresh dynamic editor surfaces such as CodeLens and inlay hints.
+- CodeLens refresh support is already advertised, but server refresh requests are only acknowledged and do not cause Monaco providers to re-query.
+- Inlay hint refresh support is not advertised yet.
+
+### Implementation Choice
+
+- Add a typed refresh event with `feature`, `rootPath`, and `sessionId` metadata.
+- Emit refresh events from Rust when handling `workspace/codeLens/refresh` and `workspace/inlayHint/refresh` requests.
+- Add a JS/TS Tauri refresh gateway and optional provider subscription.
+- Fire Monaco provider `onDidChange` events only for the active workspace and current runtime session.
+
+### Acceptance Criteria
+
+- JS/TS initialize capabilities advertise inlay hint refresh support.
+- Rust session emits refresh events and still acknowledges the server request.
+- JS/TS Monaco CodeLens provider exposes `onDidChange`; inlay hint provider exposes `onDidChangeInlayHints`.
+- Refresh events from stale sessions, inactive workspaces, or unknown features are ignored.
+- Focused Rust and provider tests pass.
+
+### Completed Slice: JS/TS Server Refresh Requests
+
+- JS/TS initialize capabilities now advertise workspace inlay hint refresh support.
+- Rust language-server sessions emit typed refresh events for `workspace/codeLens/refresh` and `workspace/inlayHint/refresh` while acknowledging both requests.
+- App/Tauri wiring now includes a JS/TS refresh gateway separate from workspace edits.
+- JS/TS Monaco providers subscribe to refresh events and fire CodeLens/Inlay refresh hooks only for the active workspace and current runtime session.
+- Stale session, inactive workspace, and unknown refresh feature events are ignored.
+
+### Verification: JS/TS Server Refresh Requests
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml workspace_refresh_requests_emit_refresh_events_and_acknowledge --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "refreshes CodeLens"`
+- PASS: `npm test -- src/infrastructure/tauriLanguageServerRefreshGateway.test.ts`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/infrastructure/tauriLanguageServerRefreshGateway.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: JS/TS Server Refresh Requests
+
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/lsp.rs`
+  - `src-tauri/src/lsp_session.rs`
+  - `src/App.tsx`
+  - `src/components/EditorSurface.tsx`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `src/domain/languageServerFeatures.ts`
+  - `src/infrastructure/tauriLanguageServerRefreshGateway.ts`
+  - `src/infrastructure/tauriLanguageServerRefreshGateway.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

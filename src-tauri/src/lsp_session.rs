@@ -24,11 +24,14 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 pub const PHP_STATUS_EVENT: &str = "language-server://status";
 pub const PHP_DIAGNOSTICS_EVENT: &str = "language-server://diagnostics";
+pub const PHP_REFRESH_EVENT: &str = "language-server://refresh";
 pub const PHP_WORKSPACE_EDIT_EVENT: &str = "language-server://workspace-edit";
 pub const JAVASCRIPT_TYPESCRIPT_STATUS_EVENT: &str =
     "javascript-typescript-language-server://status";
 pub const JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT: &str =
     "javascript-typescript-language-server://diagnostics";
+pub const JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT: &str =
+    "javascript-typescript-language-server://refresh";
 pub const JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT: &str =
     "javascript-typescript-language-server://workspace-edit";
 type PendingRequestResult = Result<Value, String>;
@@ -104,9 +107,14 @@ pub trait DiagnosticsSink: Send + Sync {
     fn emit_diagnostics(&self, event: LanguageServerDiagnosticEvent);
 }
 
+pub trait RefreshSink: Send + Sync {
+    fn emit_refresh(&self, event: LanguageServerRefreshEvent) -> bool;
+}
+
 pub struct AppHandleEventSink {
     app: tauri::AppHandle,
     diagnostics_event: &'static str,
+    refresh_event: &'static str,
     root_path: Option<String>,
     status_event: &'static str,
     workspace_edit_event: &'static str,
@@ -118,6 +126,7 @@ impl AppHandleEventSink {
             app,
             PHP_STATUS_EVENT,
             PHP_DIAGNOSTICS_EVENT,
+            PHP_REFRESH_EVENT,
             PHP_WORKSPACE_EDIT_EVENT,
             Some(root_path),
         )
@@ -128,6 +137,7 @@ impl AppHandleEventSink {
             app,
             JAVASCRIPT_TYPESCRIPT_STATUS_EVENT,
             JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
+            JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT,
             JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT,
             Some(root_path),
         )
@@ -137,12 +147,14 @@ impl AppHandleEventSink {
         app: tauri::AppHandle,
         status_event: &'static str,
         diagnostics_event: &'static str,
+        refresh_event: &'static str,
         workspace_edit_event: &'static str,
         root_path: Option<String>,
     ) -> Self {
         Self {
             app,
             diagnostics_event,
+            refresh_event,
             root_path,
             status_event,
             workspace_edit_event,
@@ -169,6 +181,19 @@ impl DiagnosticsSink for AppHandleEventSink {
             self.diagnostics_event,
             diagnostics_event_payload(&self.root_path, event),
         );
+    }
+}
+
+impl RefreshSink for AppHandleEventSink {
+    fn emit_refresh(&self, event: LanguageServerRefreshEvent) -> bool {
+        use tauri::Emitter;
+
+        self.app
+            .emit(
+                self.refresh_event,
+                refresh_event_payload(&self.root_path, event),
+            )
+            .is_ok()
     }
 }
 
@@ -208,6 +233,16 @@ fn diagnostics_event_payload(
     value
 }
 
+fn refresh_event_payload(root_path: &Option<String>, event: LanguageServerRefreshEvent) -> Value {
+    let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
+
+    if let (Some(root_path), Value::Object(object)) = (root_path, &mut value) {
+        object.insert("rootPath".to_string(), Value::String(root_path.clone()));
+    }
+
+    value
+}
+
 fn workspace_edit_event_payload(
     root_path: &Option<String>,
     event: LanguageServerWorkspaceEditEvent,
@@ -219,6 +254,20 @@ fn workspace_edit_event_payload(
     }
 
     value
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LanguageServerRefreshFeature {
+    CodeLens,
+    InlayHint,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerRefreshEvent {
+    pub session_id: u64,
+    pub feature: LanguageServerRefreshFeature,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -239,6 +288,16 @@ struct NoopWorkspaceEditSink;
 #[cfg(test)]
 impl WorkspaceEditSink for NoopWorkspaceEditSink {
     fn emit_workspace_edit(&self, _event: LanguageServerWorkspaceEditEvent) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+struct NoopRefreshSink;
+
+#[cfg(test)]
+impl RefreshSink for NoopRefreshSink {
+    fn emit_refresh(&self, _event: LanguageServerRefreshEvent) -> bool {
         false
     }
 }
@@ -566,6 +625,7 @@ impl LanguageServerRegistry {
         )
     }
 
+    #[cfg(test)]
     pub fn start_with_workspace_edit_sink(
         &self,
         root_path: &str,
@@ -576,15 +636,38 @@ impl LanguageServerRegistry {
         diagnostics_sink: Arc<dyn DiagnosticsSink>,
         workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
-        self.supervisor_for(root_path)?
-            .start_with_workspace_edit_sink(
-                command,
-                initialize_request,
-                spawner,
-                status_sink,
-                diagnostics_sink,
-                workspace_edit_sink,
-            )
+        self.start_with_event_sinks(
+            root_path,
+            command,
+            initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            Arc::new(NoopRefreshSink),
+        )
+    }
+
+    pub fn start_with_event_sinks(
+        &self,
+        root_path: &str,
+        command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
+        spawner: &dyn ServerProcessSpawner,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        refresh_sink: Arc<dyn RefreshSink>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        self.supervisor_for(root_path)?.start_with_event_sinks(
+            command,
+            initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+        )
     }
 
     pub fn stop(&self, root_path: &str) -> LanguageServerRuntimeStatus {
@@ -769,6 +852,7 @@ impl LanguageServerSupervisor {
         )
     }
 
+    #[cfg(test)]
     fn start_with_workspace_edit_sink(
         &self,
         command: &LanguageServerCommand,
@@ -777,6 +861,27 @@ impl LanguageServerSupervisor {
         status_sink: Arc<dyn StatusSink>,
         diagnostics_sink: Arc<dyn DiagnosticsSink>,
         workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        self.start_with_event_sinks(
+            command,
+            initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            Arc::new(NoopRefreshSink),
+        )
+    }
+
+    fn start_with_event_sinks(
+        &self,
+        command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
+        spawner: &dyn ServerProcessSpawner,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        refresh_sink: Arc<dyn RefreshSink>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         self.terminate_stale_session();
@@ -845,6 +950,7 @@ impl LanguageServerSupervisor {
             Arc::clone(&self.status),
             diagnostics_sink,
             workspace_edit_sink,
+            refresh_sink,
             pending_requests,
             Arc::clone(&status_sink),
             Arc::clone(&stop_requested),
@@ -1383,6 +1489,7 @@ fn spawn_reader(
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
     diagnostics_sink: Arc<dyn DiagnosticsSink>,
     workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+    refresh_sink: Arc<dyn RefreshSink>,
     pending_requests: PendingRequests,
     status_sink: Arc<dyn StatusSink>,
     stop_requested: Arc<AtomicBool>,
@@ -1417,6 +1524,7 @@ fn spawn_reader(
                             &stdin,
                             &value,
                             workspace_edit_sink.as_ref(),
+                            refresh_sink.as_ref(),
                             session_id,
                             &server_configuration,
                             &workspace_root,
@@ -1496,6 +1604,7 @@ fn respond_to_server_request(
     stdin: &Arc<Mutex<Box<dyn Write + Send>>>,
     value: &Value,
     workspace_edit_sink: &dyn WorkspaceEditSink,
+    refresh_sink: &dyn RefreshSink,
     session_id: u64,
     server_configuration: &Arc<Mutex<Value>>,
     workspace_root: &str,
@@ -1515,6 +1624,7 @@ fn respond_to_server_request(
         method,
         value.get("params"),
         workspace_edit_sink,
+        refresh_sink,
         session_id,
         &configuration,
         workspace_root,
@@ -1535,6 +1645,7 @@ fn server_request_result(
     method: &str,
     params: Option<&Value>,
     workspace_edit_sink: &dyn WorkspaceEditSink,
+    refresh_sink: &dyn RefreshSink,
     session_id: u64,
     server_configuration: &Value,
     workspace_root: &str,
@@ -1544,6 +1655,20 @@ fn server_request_result(
         "workspace/workspaceFolders" => workspace_folders_result(workspace_root),
         "workspace/applyEdit" => {
             workspace_apply_edit_result(params, workspace_edit_sink, session_id, workspace_root)
+        }
+        "workspace/codeLens/refresh" => {
+            let _ = refresh_sink.emit_refresh(LanguageServerRefreshEvent {
+                session_id,
+                feature: LanguageServerRefreshFeature::CodeLens,
+            });
+            Value::Null
+        }
+        "workspace/inlayHint/refresh" => {
+            let _ = refresh_sink.emit_refresh(LanguageServerRefreshEvent {
+                session_id,
+                feature: LanguageServerRefreshFeature::InlayHint,
+            });
+            Value::Null
         }
         "client/registerCapability" | "client/unregisterCapability" => Value::Null,
         _ => Value::Null,
@@ -1964,10 +2089,11 @@ fn is_capability_enabled(value: Option<&Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_capabilities, DiagnosticsSink, LanguageServerCapabilities, LanguageServerRegistry,
+        parse_capabilities, DiagnosticsSink, LanguageServerCapabilities,
+        LanguageServerRefreshEvent, LanguageServerRefreshFeature, LanguageServerRegistry,
         LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
-        ProcessKiller, SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StatusSink,
-        WorkspaceEditSink,
+        NoopWorkspaceEditSink, ProcessKiller, RefreshSink, SemanticTokensLegend,
+        ServerProcessSpawner, SpawnedServer, StatusSink, WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
@@ -3128,6 +3254,75 @@ mod tests {
     }
 
     #[test]
+    fn workspace_refresh_requests_emit_refresh_events_and_acknowledge() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, status_rx) = ChannelSink::new();
+        let (refresh_sink, refresh_rx) = ChannelRefreshSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start_with_event_sinks(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                refresh_sink,
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 46,
+                "method": "workspace/codeLens/refresh",
+                "params": null
+            }),
+        );
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 47,
+                "method": "workspace/inlayHint/refresh",
+                "params": null
+            }),
+        );
+
+        assert_eq!(
+            refresh_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("code lens refresh"),
+            LanguageServerRefreshEvent {
+                session_id: 1,
+                feature: LanguageServerRefreshFeature::CodeLens,
+            }
+        );
+        assert_eq!(
+            refresh_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("inlay hint refresh"),
+            LanguageServerRefreshEvent {
+                session_id: 1,
+                feature: LanguageServerRefreshFeature::InlayHint,
+            }
+        );
+        assert_eq!(
+            wait_for_captured_response(&capture, 46)["result"],
+            Value::Null
+        );
+        assert_eq!(
+            wait_for_captured_response(&capture, 47)["result"],
+            Value::Null
+        );
+    }
+
+    #[test]
     fn workspace_apply_edit_requests_reject_paths_outside_workspace() {
         let root = test_workspace_root("apply-edit-root");
         let outside_root = test_workspace_root("apply-edit-outside");
@@ -4175,6 +4370,27 @@ mod tests {
             self.tx
                 .lock()
                 .expect("workspace edit sink lock")
+                .send(event)
+                .is_ok()
+        }
+    }
+
+    struct ChannelRefreshSink {
+        tx: Mutex<Sender<LanguageServerRefreshEvent>>,
+    }
+
+    impl ChannelRefreshSink {
+        fn new() -> (Arc<dyn RefreshSink>, Receiver<LanguageServerRefreshEvent>) {
+            let (tx, rx) = mpsc::channel();
+            (Arc::new(Self { tx: Mutex::new(tx) }), rx)
+        }
+    }
+
+    impl RefreshSink for ChannelRefreshSink {
+        fn emit_refresh(&self, event: LanguageServerRefreshEvent) -> bool {
+            self.tx
+                .lock()
+                .expect("refresh sink lock")
                 .send(event)
                 .is_ok()
         }

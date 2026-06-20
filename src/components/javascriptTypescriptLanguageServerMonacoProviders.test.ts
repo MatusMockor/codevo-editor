@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   LanguageServerFeaturesGateway,
   LanguageServerRange,
+  LanguageServerRefreshEvent,
+  LanguageServerRefreshGateway,
 } from "../domain/languageServerFeatures";
 import type {
   LanguageServerRuntimeCapabilities,
@@ -2965,6 +2967,94 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(model.pushEditOperations).not.toHaveBeenCalled();
     expect(applyWorkspaceEdit).not.toHaveBeenCalled();
   });
+
+  it("refreshes CodeLens and inlay hint providers for active server refresh events", async () => {
+    const monaco = createMonaco();
+    const unsubscribe = vi.fn();
+    let refreshListener: ((event: LanguageServerRefreshEvent) => void) | null =
+      null;
+    const refreshGateway: LanguageServerRefreshGateway = {
+      subscribeRefreshEvents: vi.fn(async (listener) => {
+        refreshListener = listener;
+        return unsubscribe;
+      }),
+    };
+    const disposable = registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          rootPath: "/project",
+          sessionId: 2,
+        }),
+        refreshGateway,
+      }),
+    );
+    await Promise.resolve();
+    const codeLensProvider = (monaco.languages.registerCodeLensProvider as any)
+      .mock.calls[0][1];
+    const inlayHintsProvider = (
+      monaco.languages.registerInlayHintsProvider as any
+    ).mock.calls[0][1];
+    const codeLensRefresh = vi.fn();
+    const inlayHintRefresh = vi.fn();
+    const codeLensSubscription = codeLensProvider.onDidChange(codeLensRefresh);
+    const inlayHintSubscription =
+      inlayHintsProvider.onDidChangeInlayHints(inlayHintRefresh);
+    const emitRefresh = (event: LanguageServerRefreshEvent) => {
+      expect(refreshListener).not.toBeNull();
+      refreshListener?.(event);
+    };
+
+    emitRefresh({
+      feature: "codeLens",
+      rootPath: "/project/",
+      sessionId: 2,
+    });
+    emitRefresh({
+      feature: "inlayHint",
+      rootPath: "/project",
+      sessionId: 2,
+    });
+    emitRefresh({
+      feature: "codeLens",
+      rootPath: "/other",
+      sessionId: 2,
+    });
+    emitRefresh({
+      feature: "inlayHint",
+      rootPath: "/project",
+      sessionId: 1,
+    });
+    emitRefresh({
+      feature: "unknown",
+      rootPath: "/project",
+      sessionId: 2,
+    } as any);
+
+    expect(codeLensRefresh).toHaveBeenCalledTimes(1);
+    expect(inlayHintRefresh).toHaveBeenCalledTimes(1);
+
+    codeLensSubscription.dispose();
+    inlayHintSubscription.dispose();
+    emitRefresh({
+      feature: "codeLens",
+      rootPath: "/project",
+      sessionId: 2,
+    });
+    emitRefresh({
+      feature: "inlayHint",
+      rootPath: "/project",
+      sessionId: 2,
+    });
+
+    expect(codeLensRefresh).toHaveBeenCalledTimes(1);
+    expect(inlayHintRefresh).toHaveBeenCalledTimes(1);
+
+    disposable.dispose();
+
+    expect(unsubscribe).toHaveBeenCalled();
+  });
 });
 
 function providerContext(
@@ -2978,6 +3068,7 @@ function providerContext(
     getActiveDocument: overrides.getActiveDocument ?? (() => document()),
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runningStatus()),
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
+    refreshGateway: overrides.refreshGateway,
     reportError: overrides.reportError ?? vi.fn(),
     workspaceEditGateway: overrides.workspaceEditGateway,
   };

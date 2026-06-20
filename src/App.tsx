@@ -70,6 +70,10 @@ import {
   TauriLanguageServerRuntimeGateway,
 } from "./infrastructure/tauriLanguageServerRuntimeGateway";
 import {
+  JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT,
+  TauriLanguageServerRefreshGateway,
+} from "./infrastructure/tauriLanguageServerRefreshGateway";
+import {
   JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT,
   TauriLanguageServerWorkspaceEditGateway,
 } from "./infrastructure/tauriLanguageServerWorkspaceEditGateway";
@@ -134,6 +138,12 @@ const javaScriptTypeScriptLanguageServerFeaturesGateway =
     undefined,
     undefined,
     JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
+  );
+const javaScriptTypeScriptLanguageServerRefreshGateway =
+  new TauriLanguageServerRefreshGateway(
+    undefined,
+    undefined,
+    JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT,
   );
 const javaScriptTypeScriptLanguageServerWorkspaceEditGateway =
   new TauriLanguageServerWorkspaceEditGateway(
@@ -659,6 +669,9 @@ function App() {
             }
             javaScriptTypeScriptLanguageServerRuntimeStatus={
               workbench.javaScriptTypeScriptLanguageServerRuntimeStatus
+            }
+            javaScriptTypeScriptLanguageServerRefreshGateway={
+              javaScriptTypeScriptLanguageServerRefreshGateway
             }
             javaScriptTypeScriptLanguageServerWorkspaceEditGateway={
               javaScriptTypeScriptLanguageServerWorkspaceEditGateway

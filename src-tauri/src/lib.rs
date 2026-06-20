@@ -85,7 +85,7 @@ use lsp_features::{
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
     JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRuntimeStatus,
-    PhpLanguageServerRegistry, StatusSink, WorkspaceEditSink,
+    PhpLanguageServerRegistry, RefreshSink, StatusSink, WorkspaceEditSink,
 };
 use php_file_outline::{
     build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
@@ -1405,9 +1405,10 @@ fn start_php_language_server(
     let event_sink = Arc::new(AppHandleEventSink::for_workspace(app, root_path.clone()));
     let status_sink: Arc<dyn StatusSink> = event_sink.clone();
     let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
-    let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink;
+    let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
+    let refresh_sink: Arc<dyn RefreshSink> = event_sink;
 
-    registry.start_with_workspace_edit_sink(
+    registry.start_with_event_sinks(
         &root_path,
         &command,
         &initialize_request,
@@ -1415,6 +1416,7 @@ fn start_php_language_server(
         status_sink,
         diagnostics_sink,
         workspace_edit_sink,
+        refresh_sink,
     )
 }
 
@@ -1456,9 +1458,10 @@ fn start_javascript_typescript_language_server(
     ));
     let status_sink: Arc<dyn StatusSink> = event_sink.clone();
     let diagnostics_sink: Arc<dyn DiagnosticsSink> = event_sink.clone();
-    let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink;
+    let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
+    let refresh_sink: Arc<dyn RefreshSink> = event_sink;
 
-    let status = registry.start_with_workspace_edit_sink(
+    let status = registry.start_with_event_sinks(
         &root_path,
         &command,
         &initialize_request,
@@ -1466,6 +1469,7 @@ fn start_javascript_typescript_language_server(
         status_sink,
         diagnostics_sink,
         workspace_edit_sink,
+        refresh_sink,
     )?;
 
     if matches!(status, LanguageServerRuntimeStatus::Running { .. }) {

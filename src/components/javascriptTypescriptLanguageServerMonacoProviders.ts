@@ -21,6 +21,8 @@ import {
   type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
   type LanguageServerRange,
+  type LanguageServerRefreshEvent,
+  type LanguageServerRefreshGateway,
   type LanguageServerSelectionRange,
   type LanguageServerSemanticTokens,
   type LanguageServerSignature,
@@ -42,6 +44,16 @@ type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
+type MonacoEvent<T> = (
+  listener: (event: T) => unknown,
+  thisArgs?: unknown,
+  disposables?: Disposable[],
+) => Disposable;
+type MonacoEventEmitter<T> = {
+  dispose(): void;
+  event: MonacoEvent<T>;
+  fire(event: T): void;
+};
 type WorkspaceEditContext = {
   path: string;
   versionId: number | undefined;
@@ -157,8 +169,40 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
+  refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
+}
+
+function createMonacoEventEmitter<T>(): MonacoEventEmitter<T> {
+  const listeners = new Set<{
+    listener: (event: T) => unknown;
+    thisArgs?: unknown;
+  }>();
+
+  return {
+    dispose: () => {
+      listeners.clear();
+    },
+    event: (listener, thisArgs, disposables) => {
+      const entry = { listener, thisArgs };
+      listeners.add(entry);
+      const disposable = {
+        dispose: () => {
+          listeners.delete(entry);
+        },
+      };
+
+      disposables?.push(disposable);
+
+      return disposable;
+    },
+    fire: (event) => {
+      for (const entry of Array.from(listeners)) {
+        entry.listener.call(entry.thisArgs, event);
+      }
+    },
+  };
 }
 
 export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
@@ -168,6 +212,23 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   const languages = JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS;
   const registry = monaco.languages as Partial<typeof monaco.languages>;
   const disposables: Disposable[] = [];
+  const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
+  const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
+  disposables.push({
+    dispose: () => {
+      codeLensRefreshEmitter.dispose();
+      inlayHintRefreshEmitter.dispose();
+    },
+  });
+  let refreshUnsubscribe: (() => void) | null = null;
+  let refreshSubscriptionDisposed = false;
+  const refreshSubscriptionDisposable = {
+    dispose: () => {
+      refreshSubscriptionDisposed = true;
+      refreshUnsubscribe?.();
+      refreshUnsubscribe = null;
+    },
+  };
   let workspaceEditUnsubscribe: (() => void) | null = null;
   let workspaceEditSubscriptionDisposed = false;
   const workspaceEditSubscriptionDisposable = {
@@ -177,6 +238,28 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       workspaceEditUnsubscribe = null;
     },
   };
+
+  if (context.refreshGateway) {
+    disposables.push(refreshSubscriptionDisposable);
+    context.refreshGateway
+      .subscribeRefreshEvents((event) => {
+        handleLanguageServerRefreshEvent(
+          context,
+          event,
+          codeLensRefreshEmitter,
+          inlayHintRefreshEmitter,
+        );
+      })
+      .then((unsubscribe) => {
+        if (refreshSubscriptionDisposed) {
+          unsubscribe();
+          return;
+        }
+
+        refreshUnsubscribe = unsubscribe;
+      })
+      .catch((error) => context.reportError(error));
+  }
 
   if (context.workspaceEditGateway) {
     disposables.push(workspaceEditSubscriptionDisposable);
@@ -384,6 +467,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerCodeLensProvider) {
       disposables.push(
         registry.registerCodeLensProvider(language, {
+          onDidChange:
+            codeLensRefreshEmitter.event as unknown as Monaco.languages.CodeLensProvider["onDidChange"],
           provideCodeLenses: (model) => provideCodeLenses(monaco, context, model),
           resolveCodeLens: (_model, codeLens) =>
             resolveCodeLens(monaco, context, codeLens),
@@ -435,6 +520,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerInlayHintsProvider) {
       disposables.push(
         registry.registerInlayHintsProvider(language, {
+          onDidChangeInlayHints: inlayHintRefreshEmitter.event,
           provideInlayHints: (model, range) =>
             provideInlayHints(monaco, context, model, range),
         }),
@@ -2597,6 +2683,49 @@ async function applyWorkspaceEditEvent(
 function isWorkspaceEditEventActive(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   event: LanguageServerWorkspaceEditEvent,
+): boolean {
+  const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
+
+  if (!workspaceRoot) {
+    return false;
+  }
+
+  if (event.rootPath && !workspaceRootKeysEqual(event.rootPath, workspaceRoot)) {
+    return false;
+  }
+
+  const status = context.getRuntimeStatus();
+
+  return (
+    status?.kind === "running" &&
+    status.sessionId === event.sessionId &&
+    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, workspaceRoot))
+  );
+}
+
+function handleLanguageServerRefreshEvent(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  event: LanguageServerRefreshEvent,
+  codeLensRefreshEmitter: MonacoEventEmitter<void>,
+  inlayHintRefreshEmitter: MonacoEventEmitter<void>,
+): void {
+  if (!isRefreshEventActive(context, event)) {
+    return;
+  }
+
+  if (event.feature === "codeLens") {
+    codeLensRefreshEmitter.fire(undefined);
+    return;
+  }
+
+  if (event.feature === "inlayHint") {
+    inlayHintRefreshEmitter.fire(undefined);
+  }
+}
+
+function isRefreshEventActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  event: LanguageServerRefreshEvent,
 ): boolean {
   const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
 

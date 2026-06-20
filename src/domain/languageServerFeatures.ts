@@ -240,6 +240,22 @@ export interface LanguageServerWorkspaceEditGateway {
   ): Promise<LanguageServerWorkspaceEditUnsubscribeFn>;
 }
 
+export type LanguageServerRefreshFeature = "codeLens" | "inlayHint";
+
+export interface LanguageServerRefreshEvent {
+  feature: LanguageServerRefreshFeature;
+  rootPath?: string;
+  sessionId: number;
+}
+
+export type LanguageServerRefreshUnsubscribeFn = () => void;
+
+export interface LanguageServerRefreshGateway {
+  subscribeRefreshEvents(
+    listener: (event: LanguageServerRefreshEvent) => void,
+  ): Promise<LanguageServerRefreshUnsubscribeFn>;
+}
+
 export interface LanguageServerCodeActionCommand {
   arguments: unknown[] | null;
   command: string;

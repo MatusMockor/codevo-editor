@@ -15,6 +15,7 @@ import type {
   EditorPosition,
   EditorRevealTarget,
   LanguageServerFeaturesGateway,
+  LanguageServerRefreshGateway,
   LanguageServerWorkspaceEdit,
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
@@ -75,6 +76,7 @@ interface EditorSurfaceProps {
   ): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
+  javaScriptTypeScriptLanguageServerRefreshGateway?: LanguageServerRefreshGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus?: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   javaScriptTypeScriptValidationEnabled?: boolean;
@@ -121,6 +123,7 @@ export function EditorSurface({
   languageServerFeaturesGateway,
   languageServerRuntimeStatus,
   javaScriptTypeScriptLanguageServerFeaturesGateway = languageServerFeaturesGateway,
+  javaScriptTypeScriptLanguageServerRefreshGateway,
   javaScriptTypeScriptLanguageServerRuntimeStatus = null,
   javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
   javaScriptTypeScriptValidationEnabled = true,
@@ -327,6 +330,7 @@ export function EditorSurface({
         getActiveDocument: () => activeDocumentRef.current,
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
         getWorkspaceRoot: () => workspaceRoot,
+        refreshGateway: javaScriptTypeScriptLanguageServerRefreshGateway,
         reportError: (error) => errorReporterRef.current(error),
         workspaceEditGateway:
           javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
@@ -336,6 +340,7 @@ export function EditorSurface({
     return () => disposable.dispose();
   }, [
     javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRefreshGateway,
     javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
     monacoApi,
     workspaceRoot,
