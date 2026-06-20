@@ -2912,3 +2912,57 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Application Workspace Edit Root Contract
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `fc66380d Record JS TS workspace edit root contract commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is limited to the application-side JS/TS workspace edit applier.
+- Main agent implemented directly because the affected helper and regression coverage are in the workbench controller preview surface.
+
+### Why This Slice
+
+- The Monaco JS/TS provider now requires workspace edit contexts to carry `rootPath`.
+- The application-side applier still accepted `context.rootPath` as optional and fell back to the active workspace.
+- That fallback kept a rootless edit application path alive below the provider contract.
+
+### Implementation Choice
+
+- Require `context.rootPath` in `applyJavaScriptTypeScriptLanguageServerWorkspaceEdit`.
+- Require roots for open-document workspace edit application and changed-open-path detection.
+- Remove optional-root guards that allowed rootless edit filtering to apply broadly.
+
+### Acceptance Criteria
+
+- JS/TS workspace edits without a compile-time root are no longer accepted by the application applier.
+- Existing root-filtered open and closed file behavior remains unchanged.
+- Focused workspace-edit preview tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Application Workspace Edit Root Contract
+
+- Tightened the workbench JS/TS workspace edit applier context to require `rootPath`.
+- Tightened open-document workspace edit helpers to require explicit root filtering.
+- Preserved existing workspace edit behavior for rooted command, code-action, server, and rename flows.
+
+### Verification: JS/TS Application Workspace Edit Root Contract
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace edits|workspace edit file operations|reapply JavaScript TypeScript workspace edits|filters JavaScript TypeScript workspace edits"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Application Workspace Edit Root Contract
+
+- Commit pending.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

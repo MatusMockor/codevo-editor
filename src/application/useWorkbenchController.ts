@@ -4446,7 +4446,7 @@ export function useWorkbenchController(
   );
 
   const applyWorkspaceEditToOpenDocuments = useCallback(
-    (edit: LanguageServerWorkspaceEdit, rootPath?: string): string[] => {
+    (edit: LanguageServerWorkspaceEdit, rootPath: string): string[] => {
       const editedPaths = changedOpenDocumentPathsForWorkspaceEdit(
         edit,
         documentsRef.current,
@@ -4464,7 +4464,7 @@ export function useWorkbenchController(
             continue;
           }
 
-          if (rootPath && !isSessionPathInWorkspace(rootPath, path)) {
+          if (!isSessionPathInWorkspace(rootPath, path)) {
             continue;
           }
 
@@ -4573,12 +4573,11 @@ export function useWorkbenchController(
   const applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = useCallback(
     async (
       edit: LanguageServerWorkspaceEdit,
-      context: { editedOpenPaths?: string[]; rootPath?: string },
+      context: { editedOpenPaths?: string[]; rootPath: string },
     ): Promise<void> => {
-      const requestedRoot = context.rootPath ?? currentWorkspaceRootRef.current;
+      const requestedRoot = context.rootPath;
 
       if (
-        !requestedRoot ||
         !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
       ) {
         return;
@@ -14343,7 +14342,7 @@ function applyLanguageServerTextEdits(
 function changedOpenDocumentPathsForWorkspaceEdit(
   edit: LanguageServerWorkspaceEdit,
   documents: Record<string, EditorDocument>,
-  rootPath?: string,
+  rootPath: string,
 ): string[] {
   return Object.entries(edit.changes).flatMap(([uri, textEdits]) => {
     const path = pathFromLanguageServerUri(uri);
@@ -14352,7 +14351,7 @@ function changedOpenDocumentPathsForWorkspaceEdit(
       return [];
     }
 
-    if (rootPath && !isSessionPathInWorkspace(rootPath, path)) {
+    if (!isSessionPathInWorkspace(rootPath, path)) {
       return [];
     }
 
