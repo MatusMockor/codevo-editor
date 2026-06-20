@@ -1216,9 +1216,58 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `a1c72e38 Recognize Laravel morph query fluents`.
 - Included files:
   - `src/domain/phpFrameworkLaravel.ts`
   - `src/domain/phpMethodCompletions.test.ts`
   - `src/domain/phpSemanticEngine.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Laravel Singleton Route Name Extraction - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a1c72e38 Recognize Laravel morph query fluents`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Include Laravel singleton resource route names in route-name completion/navigation, matching Laravel's generated `show`, `edit`, `update` names and API singleton `show`, `update` names.
+
+### Implementation Choice
+
+- Extend the existing literal resource route expansion table with `singleton` and `apiSingleton` defaults.
+- Preserve existing group prefix and nested dot-name behavior.
+- Leave `creatable()` / `destroyable()` singleton modifiers as a follow-up instead of over-parsing chain options in this slice.
+
+### Acceptance Criteria
+
+- `Route::singleton('profile', ...)` contributes `profile.show`, `profile.edit`, and `profile.update`.
+- `Route::apiSingleton('api.profile', ...)` contributes `api.profile.show` and `api.profile.update`.
+- Name-group-prefixed nested singleton resources keep their full dotted names.
+- Focused route tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added singleton and API singleton action expansion to Laravel named route extraction.
+- Preserved route name-group prefixes and nested dotted resource names while expanding singleton defaults.
+- Added route extractor coverage for standard singleton, API singleton, and nested/group-prefixed singleton routes.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "expands literal Laravel singleton route names"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Included files:
+  - `src/domain/phpLaravelRoutes.ts`
+  - `src/domain/phpLaravelRoutes.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`

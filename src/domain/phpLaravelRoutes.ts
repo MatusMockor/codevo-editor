@@ -48,7 +48,9 @@ const laravelRouteDefinitionMethods = new Set([
 ]);
 const laravelResourceRouteActions = new Map<string, string[]>([
   ["apiresource", ["index", "store", "show", "update", "destroy"]],
+  ["apisingleton", ["show", "update"]],
   ["resource", ["index", "create", "store", "show", "edit", "update", "destroy"]],
+  ["singleton", ["show", "edit", "update"]],
 ]);
 
 export function phpLaravelNamedRouteReferenceContextAt(

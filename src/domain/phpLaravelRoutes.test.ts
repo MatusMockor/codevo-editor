@@ -301,6 +301,51 @@ Route::name('admin.')->group(function () {
     ]);
   });
 
+  it("expands literal Laravel singleton route names", () => {
+    const source = `<?php
+Route::singleton('profile', ProfileController::class);
+Route::apiSingleton('api.profile', ApiProfileController::class);
+Route::name('admin.')->group(function () {
+    Route::singleton('reports.thumbnail', ReportThumbnailController::class);
+});
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "profile.show",
+        position: positionOf(source, "profile"),
+      },
+      {
+        name: "profile.edit",
+        position: positionOf(source, "profile"),
+      },
+      {
+        name: "profile.update",
+        position: positionOf(source, "profile"),
+      },
+      {
+        name: "api.profile.show",
+        position: positionOf(source, "api.profile"),
+      },
+      {
+        name: "api.profile.update",
+        position: positionOf(source, "api.profile"),
+      },
+      {
+        name: "admin.reports.thumbnail.show",
+        position: positionOf(source, "reports.thumbnail"),
+      },
+      {
+        name: "admin.reports.thumbnail.edit",
+        position: positionOf(source, "reports.thumbnail"),
+      },
+      {
+        name: "admin.reports.thumbnail.update",
+        position: positionOf(source, "reports.thumbnail"),
+      },
+    ]);
+  });
+
   it("combines nested Laravel route name group prefixes", () => {
     const source = `<?php
 Route::name('admin.')->group(function () {
