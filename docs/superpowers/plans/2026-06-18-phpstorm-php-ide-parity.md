@@ -2591,4 +2591,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- PENDING.
+- Committed as `569430d7 Infer Laravel fluent through semantic chains`.
