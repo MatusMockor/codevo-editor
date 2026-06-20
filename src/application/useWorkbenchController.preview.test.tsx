@@ -1130,6 +1130,236 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale JavaScript TypeScript did-change errors after same-root session restart", async () => {
+    const path = "/workspace/src/App.ts";
+    const didChange = createDeferred<void>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(311)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(311)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(311),
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(311),
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+        .didChange,
+    ).mockImplementationOnce(() => didChange.promise);
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+          .didChange,
+      ).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({
+          path,
+          text: "export const value = 2;\n",
+        }),
+      );
+    });
+
+    act(() => {
+      publishStatus?.(runningStatus(312));
+    });
+    await flushAsyncTurns();
+
+    didChange.reject(new Error("stale did change"));
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale did change"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores stale JavaScript TypeScript did-save errors after same-root session restart", async () => {
+    const path = "/workspace/src/App.ts";
+    const didSave = createDeferred<void>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(321)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(321)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(321),
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(321),
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didSave,
+    ).mockImplementationOnce(() => didSave.promise);
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.save",
+    );
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+          .didSave,
+      ).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({
+          path,
+          text: "export const value = 1;\n",
+        }),
+      );
+    });
+
+    act(() => {
+      publishStatus?.(runningStatus(322));
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      didSave.reject(new Error("stale did save"));
+      await savePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().message).toBe("Saved App.ts");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale did save"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores stale JavaScript TypeScript did-close errors after same-root session restart", async () => {
+    const path = "/workspace/src/App.ts";
+    const didClose = createDeferred<void>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(331)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(331)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(331),
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(331),
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway.didClose,
+    ).mockImplementationOnce(() => didClose.promise);
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    act(() => {
+      getWorkbench().closeDocument(path);
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway
+          .didClose,
+      ).toHaveBeenCalledWith("/workspace", path);
+    });
+
+    act(() => {
+      publishStatus?.(runningStatus(332));
+    });
+    await flushAsyncTurns();
+
+    didClose.reject(new Error("stale did close"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activePath).toBe(null);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale did close"),
+      ),
+    ).toBe(false);
+  });
+
   it("shows JavaScript and TypeScript diagnostics in Problems and opens the diagnostic range", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)

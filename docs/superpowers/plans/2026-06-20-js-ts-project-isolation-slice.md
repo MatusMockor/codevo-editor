@@ -2463,3 +2463,61 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Document Sync Error Same-Root Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8ec7a4af Record JS TS document sync session resync commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is a direct follow-up in the same document-sync controller and preview test surface.
+- Main agent implemented directly because the guard logic shares the same refs and helper functions as the previous session-resync slice.
+
+### Why This Slice
+
+- Open-document resync on JS/TS session change now works, but pending `didChange`, `didSave`, and `didClose` operations could still reject after a same-root TypeScript session restart.
+- Those stale rejects could surface false JavaScript/TypeScript errors even though the current session had already replaced the old one.
+- `didClose` also needed the same guard pattern to avoid reporting stale close-sync errors after session replacement.
+
+### Implementation Choice
+
+- Reuse the current-session-for-root guard introduced in the previous document-sync slice.
+- Capture the JS/TS `sessionId` before queued `didChange`, `didSave`, and `didClose` operations.
+- Suppress errors only when the captured session is no longer current for that root.
+- Preserve current-session error reporting for real sync failures.
+
+### Acceptance Criteria
+
+- Same-root stale `didChange` failures after TypeScript session restart are ignored.
+- Same-root stale `didSave` failures after TypeScript session restart are ignored while save flow completes.
+- Same-root stale `didClose` failures after TypeScript session restart are ignored while close flow completes.
+- Focused sync tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Document Sync Error Same-Root Session Guard
+
+- Added same-root session guards around timer-driven JS/TS `didChange` sync errors.
+- Added same-root session guards around explicit flush `didChange` errors.
+- Added same-root session guards around JS/TS `didSave` and `didClose` errors.
+- Added regression coverage for stale same-root `didChange`, `didSave`, and `didClose` failures.
+
+### Verification: JS/TS Document Sync Error Same-Root Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "did-change errors|did-save errors|did-close errors"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Document Sync Error Same-Root Session Guard
+
+- Pending commit and push.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
