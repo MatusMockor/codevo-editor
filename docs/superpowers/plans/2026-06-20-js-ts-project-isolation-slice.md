@@ -2185,3 +2185,51 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src-tauri/src/lib.rs`
   - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS File Structure Same-Root Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `68f08cee Record workspace edit URI guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- JS/TS navigation and hierarchy command flows now drop stale same-root TypeScript session responses.
+- JS/TS file structure still loaded document symbols with only a root check after the async LSP request.
+- A same-root TypeScript runtime restart during `documentSymbols` could store stale outline data in the active workspace.
+
+### Implementation Choice
+
+- Reuse the shared workbench JS/TS root + session guard for file-structure document-symbol loads.
+- Guard successful outline writes and error reporting by session.
+- Keep final loading cleanup root-scoped so stale same-root responses clear the spinner without writing stale outline data.
+- Add same-root restart regression coverage for JS/TS file structure.
+
+### Acceptance Criteria
+
+- Same-root TypeScript session restarts drop stale JS/TS file-structure outlines.
+- Stale same-root file-structure loads still clear the loading state.
+- Existing successful JS/TS file-structure command flow still works.
+- Focused file-structure tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS File Structure Same-Root Session Guard
+
+- Applied the shared JS/TS session guard to file-structure document-symbol loads.
+- Preserved loading cleanup after stale same-root file-structure responses.
+- Added regression coverage for stale JS/TS file-structure results after same-root TypeScript session restart.
+
+### Verification: JS/TS File Structure Same-Root Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "file structure.*same-root session restart|loads JavaScript and TypeScript file structure"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS File Structure Same-Root Session Guard
+
+- Pending commit and push.

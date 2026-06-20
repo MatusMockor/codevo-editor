@@ -4681,6 +4681,94 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("drops stale JavaScript and TypeScript file structure after same-root session restart", async () => {
+    const path = "/workspace/src/userService.ts";
+    const documentSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(12)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(12)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+    ).mockImplementationOnce(async () => documentSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(12),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(12),
+      readTextFile: vi.fn(async () => "export class UserService {}"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.fileStructure",
+    );
+
+    await act(async () => {
+      await command?.run();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace", path);
+    });
+    expect(getWorkbench().fileStructureLoading).toBe(true);
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(13));
+    });
+    await flushAsyncTurns();
+
+    documentSymbols.resolve([
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "UserService",
+        range: range(1, 0, 6, 1),
+        selectionRange: range(1, 13, 1, 24),
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().fileStructureOpen).toBe(true);
+    expect(getWorkbench().fileStructureLoading).toBe(false);
+    expect(getWorkbench().fileStructureOutline).toBeNull();
+  });
+
   it("opens JavaScript and TypeScript call hierarchy from command palette actions", async () => {
     const path = "/workspace/src/userService.ts";
     const callerPath = "/workspace/src/app.ts";
