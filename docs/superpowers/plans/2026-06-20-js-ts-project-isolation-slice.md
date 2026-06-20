@@ -1224,3 +1224,52 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/infrastructure/tauriLanguageServerFeaturesGateway.ts`
   - `src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Inlay Hint Payload Filtering
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a44b8b6 Update PHP parity plan status`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Completion resolve, code-action resolve, CodeLens resolve, and document-link resolve already guard and filter JS/TS lazy payloads by workspace root.
+- JS/TS inlay hints preserve `data` and label-part `location`, but the backend returned them without filtering and resolved them without an inbound payload guard.
+- That left a small cross-project metadata leak risk even though the active workspace/session frontend guard was already present.
+
+### Implementation Choice
+
+- Keep the slice backend-contained in `src-tauri/src/lib.rs`.
+- Strip unsafe inlay hint `data` payloads, clear unsafe label-part `location`, and keep visible labels/tooltips intact.
+- Reject unsafe inbound inlay hint resolve payloads before sending them to the TypeScript language server.
+
+### Acceptance Criteria
+
+- JS/TS inlay hint responses cannot return `data` payload paths from another workspace.
+- JS/TS inlay hint label-part locations outside the current workspace are cleared while labels/tooltips remain visible.
+- JS/TS inlay hint resolve rejects inbound unsafe payloads and filters resolved hints.
+- Focused Rust tests, serial Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Inlay Hint Payload Filtering
+
+- Added backend inlay hint payload filtering for JS/TS responses.
+- Added an inbound JS/TS inlay hint resolve guard for unsafe `data` and label-part locations.
+- Preserved visible inlay hint labels and tooltips while stripping unsafe metadata.
+- Added Rust coverage for unsafe resolve payload rejection and response payload stripping.
+
+### Verification: JS/TS Inlay Hint Payload Filtering
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_inlay_hint_resolve_guard_rejects_outside_payload_paths --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_response_inlay_hint_filter_strips_outside_payloads --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Inlay Hint Payload Filtering
+
+- Pending commit.

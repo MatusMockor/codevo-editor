@@ -70,13 +70,14 @@ use lsp_features::{
     LanguageServerCompletionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
     LanguageServerDocumentHighlight, LanguageServerDocumentLink, LanguageServerDocumentSymbol,
     LanguageServerFoldingRange, LanguageServerFormattingOptions, LanguageServerHover,
-    LanguageServerIncomingCall, LanguageServerInlayHint, LanguageServerLinkedEditingRanges,
-    LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerPosition,
-    LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
-    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerSignatureHelpContext,
-    LanguageServerTextEdit, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
-    LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
-    LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
+    LanguageServerIncomingCall, LanguageServerInlayHint, LanguageServerInlayHintLabel,
+    LanguageServerLinkedEditingRanges, LanguageServerLocation, LanguageServerOutgoingCall,
+    LanguageServerPosition, LanguageServerPrepareRenameResult, LanguageServerRange,
+    LanguageServerSelectionRange, LanguageServerSemanticTokens, LanguageServerSignatureHelp,
+    LanguageServerSignatureHelpContext, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
+    LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
+    LanguageServerWorkspaceFileOperationOptions, LanguageServerWorkspaceSymbol,
+    LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
     TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
     TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
     TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
@@ -685,6 +686,50 @@ fn filter_lsp_document_link_to_workspace(
     (link.target.is_some() || link.data.is_some()).then_some(link)
 }
 
+fn filter_lsp_inlay_hints_to_workspace(
+    root_path: &str,
+    hints: Vec<LanguageServerInlayHint>,
+) -> Vec<LanguageServerInlayHint> {
+    hints
+        .into_iter()
+        .map(|hint| filter_lsp_inlay_hint_to_workspace(root_path, hint))
+        .collect()
+}
+
+fn filter_lsp_inlay_hint_to_workspace(
+    root_path: &str,
+    mut hint: LanguageServerInlayHint,
+) -> LanguageServerInlayHint {
+    if hint.data.as_ref().is_some_and(|data| {
+        ensure_lsp_json_payload_paths_in_workspace(root_path, Some(data)).is_err()
+    }) {
+        hint.data = None;
+    }
+
+    filter_lsp_inlay_hint_label_to_workspace(root_path, &mut hint.label);
+
+    hint
+}
+
+fn filter_lsp_inlay_hint_label_to_workspace(
+    root_path: &str,
+    label: &mut LanguageServerInlayHintLabel,
+) {
+    let LanguageServerInlayHintLabel::Parts(parts) = label else {
+        return;
+    };
+
+    for part in parts {
+        if part
+            .location
+            .as_ref()
+            .is_some_and(|location| !is_lsp_file_uri_in_workspace(root_path, &location.uri))
+        {
+            part.location = None;
+        }
+    }
+}
+
 fn filter_lsp_call_hierarchy_items_to_workspace(
     root_path: &str,
     items: Vec<LanguageServerCallHierarchyItem>,
@@ -815,6 +860,31 @@ fn ensure_lsp_document_link_payload_in_workspace(
     }
 
     ensure_lsp_json_payload_paths_in_workspace(root_path, link.data.as_ref())
+}
+
+fn ensure_lsp_inlay_hint_payload_in_workspace(
+    root_path: &str,
+    hint: &LanguageServerInlayHint,
+) -> Result<(), String> {
+    ensure_lsp_json_payload_paths_in_workspace(root_path, hint.data.as_ref())?;
+    ensure_lsp_inlay_hint_label_locations_in_workspace(root_path, &hint.label)
+}
+
+fn ensure_lsp_inlay_hint_label_locations_in_workspace(
+    root_path: &str,
+    label: &LanguageServerInlayHintLabel,
+) -> Result<(), String> {
+    let LanguageServerInlayHintLabel::Parts(parts) = label else {
+        return Ok(());
+    };
+
+    for part in parts {
+        if let Some(location) = &part.location {
+            ensure_lsp_uri_in_workspace(root_path, &location.uri)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn ensure_lsp_call_hierarchy_item_in_workspace(
@@ -2773,7 +2843,10 @@ fn javascript_typescript_text_document_inlay_hints(
         return Ok(Vec::new());
     };
 
-    parse_inlay_hints_result(&result)
+    Ok(filter_lsp_inlay_hints_to_workspace(
+        &root_path,
+        parse_inlay_hints_result(&result)?,
+    ))
 }
 
 #[tauri::command]
@@ -2782,13 +2855,18 @@ fn javascript_typescript_text_document_inlay_hint_resolve(
     hint: LanguageServerInlayHint,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerInlayHint, String> {
+    ensure_lsp_inlay_hint_payload_in_workspace(&root_path, &hint)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_inlay_hint(&hint);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(hint);
     };
 
-    parse_inlay_hint_result(&result)
+    Ok(filter_lsp_inlay_hint_to_workspace(
+        &root_path,
+        parse_inlay_hint_result(&result)?,
+    ))
 }
 
 #[tauri::command]
@@ -3393,13 +3471,14 @@ mod tests {
         apply_workspace_edit, ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
         ensure_lsp_completion_item_payload_in_workspace,
-        ensure_lsp_document_link_payload_in_workspace, ensure_lsp_path_in_workspace,
-        ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
-        ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
-        ensure_lsp_workspace_edit_paths_in_workspace, ensure_path_in_workspace,
-        filter_lsp_call_hierarchy_items_to_workspace, filter_lsp_code_actions_to_workspace,
-        filter_lsp_code_lenses_to_workspace, filter_lsp_completion_list_to_workspace,
-        filter_lsp_document_links_to_workspace, filter_lsp_incoming_calls_to_workspace,
+        ensure_lsp_document_link_payload_in_workspace, ensure_lsp_inlay_hint_payload_in_workspace,
+        ensure_lsp_path_in_workspace, ensure_lsp_position_in_workspace,
+        ensure_lsp_text_document_content_in_workspace, ensure_lsp_text_document_path_in_workspace,
+        ensure_lsp_type_hierarchy_item_in_workspace, ensure_lsp_workspace_edit_paths_in_workspace,
+        ensure_path_in_workspace, filter_lsp_call_hierarchy_items_to_workspace,
+        filter_lsp_code_actions_to_workspace, filter_lsp_code_lenses_to_workspace,
+        filter_lsp_completion_list_to_workspace, filter_lsp_document_links_to_workspace,
+        filter_lsp_incoming_calls_to_workspace, filter_lsp_inlay_hints_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
         filter_lsp_workspace_symbols_to_workspace,
@@ -3412,9 +3491,10 @@ mod tests {
     use crate::lsp_features::{
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
         LanguageServerCodeLens, LanguageServerCompletionItem, LanguageServerCompletionList,
-        LanguageServerDocumentLink, LanguageServerIncomingCall, LanguageServerLocation,
-        LanguageServerOutgoingCall, LanguageServerPosition, LanguageServerRange,
-        LanguageServerTextEdit, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
+        LanguageServerDocumentLink, LanguageServerIncomingCall, LanguageServerInlayHint,
+        LanguageServerInlayHintLabel, LanguageServerLocation, LanguageServerOutgoingCall,
+        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
         LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
         LanguageServerWorkspaceSymbol, TextDocumentPosition,
     };
@@ -3971,6 +4051,46 @@ mod tests {
     }
 
     #[test]
+    fn lsp_inlay_hint_resolve_guard_rejects_outside_payload_paths() {
+        let root = temp_workspace("inlay-hint-resolve-root");
+        let outside = temp_workspace("inlay-hint-resolve-outside");
+        let inside_hint = inlay_hint(json!({
+            "data": { "file": path_string(&root.join("src/App.ts")) },
+            "label": [
+                {
+                    "label": "App",
+                    "location": location(&file_uri(&root.join("src/App.ts"))),
+                },
+            ],
+        }));
+        let outside_data_hint = inlay_hint(json!({
+            "data": { "file": path_string(&outside.join("Secret.ts")) },
+        }));
+        let outside_location_hint = inlay_hint(json!({
+            "label": [
+                {
+                    "label": "Secret",
+                    "location": location(&file_uri(&outside.join("Secret.ts"))),
+                },
+            ],
+        }));
+
+        assert!(
+            ensure_lsp_inlay_hint_payload_in_workspace(&path_string(&root), &inside_hint).is_ok()
+        );
+        assert!(ensure_lsp_inlay_hint_payload_in_workspace(
+            &path_string(&root),
+            &outside_data_hint,
+        )
+        .is_err());
+        assert!(ensure_lsp_inlay_hint_payload_in_workspace(
+            &path_string(&root),
+            &outside_location_hint,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn lsp_response_completion_filter_strips_outside_resolve_payloads() {
         let root = temp_workspace("completion-response-filter-root");
         let outside = temp_workspace("completion-response-filter-outside");
@@ -4114,6 +4234,46 @@ mod tests {
         .expect("filtered document links");
 
         assert_eq!(filtered, vec![safe_file_link, safe_web_link]);
+    }
+
+    #[test]
+    fn lsp_response_inlay_hint_filter_strips_outside_payloads() {
+        let root = temp_workspace("inlay-hint-response-filter-root");
+        let outside = temp_workspace("inlay-hint-response-filter-outside");
+        let root_path = path_string(&root);
+        let safe_hint = inlay_hint(json!({
+            "data": { "file": path_string(&root.join("src/App.ts")) },
+            "label": [
+                {
+                    "label": "App",
+                    "location": location(&file_uri(&root.join("src/App.ts"))),
+                    "tooltip": "Inside workspace",
+                },
+            ],
+        }));
+        let unsafe_hint = inlay_hint(json!({
+            "data": { "file": path_string(&outside.join("Secret.ts")) },
+            "label": [
+                {
+                    "label": "Secret",
+                    "location": location(&file_uri(&outside.join("Secret.ts"))),
+                    "tooltip": "Outside workspace",
+                },
+            ],
+        }));
+
+        let filtered =
+            filter_lsp_inlay_hints_to_workspace(&root_path, vec![safe_hint.clone(), unsafe_hint]);
+
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0], safe_hint);
+        assert!(filtered[1].data.is_none());
+        let LanguageServerInlayHintLabel::Parts(parts) = &filtered[1].label else {
+            panic!("expected label parts");
+        };
+        assert_eq!(parts[0].label, "Secret");
+        assert_eq!(parts[0].tooltip.as_deref(), Some("Outside workspace"));
+        assert!(parts[0].location.is_none());
     }
 
     #[test]
@@ -4386,6 +4546,21 @@ mod tests {
         merge_object(&mut value, payload);
 
         serde_json::from_value(value).expect("document link")
+    }
+
+    fn inlay_hint(payload: Value) -> LanguageServerInlayHint {
+        let mut value = json!({
+            "label": "hint",
+            "paddingLeft": false,
+            "paddingRight": false,
+            "position": {
+                "line": 0,
+                "character": 4,
+            },
+        });
+        merge_object(&mut value, payload);
+
+        serde_json::from_value(value).expect("inlay hint")
     }
 
     fn location(uri: &str) -> LanguageServerLocation {
