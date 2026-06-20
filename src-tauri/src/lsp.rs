@@ -529,7 +529,8 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         "semanticTokens": { "refreshSupport": true },
                         "symbol": { "dynamicRegistration": false },
                         "workspaceEdit": {
-                            "documentChanges": true
+                            "documentChanges": true,
+                            "resourceOperations": ["create", "rename", "delete"]
                         },
                         "fileOperations": {
                             "didRename": true,
@@ -947,6 +948,11 @@ mod tests {
         assert_eq!(
             request.params["capabilities"]["workspace"]["semanticTokens"]["refreshSupport"],
             true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["workspaceEdit"]
+                ["resourceOperations"],
+            json!(["create", "rename", "delete"])
         );
         assert_eq!(
             request.params["capabilities"]["workspace"]["didChangeWatchedFiles"]

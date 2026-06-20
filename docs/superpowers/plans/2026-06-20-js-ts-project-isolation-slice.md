@@ -1640,7 +1640,54 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Workspace Edit Repeated URI Merge
 
-- Pending commit.
+- Committed and pushed as `2668370d Merge repeated LSP workspace edits`.
 - Included files:
   - `src-tauri/src/lsp_features.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Workspace Edit Resource Operations Capability
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2668370d Merge repeated LSP workspace edits`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The backend parses and applies LSP workspace file operations for create, rename, and delete.
+- The TypeScript initialize capabilities only advertised `workspaceEdit.documentChanges`.
+- If the server does not see `resourceOperations`, it may withhold file-operation edits that the editor can already handle.
+
+### Implementation Choice
+
+- Advertise `workspace.workspaceEdit.resourceOperations` as `["create", "rename", "delete"]` for the TypeScript language-server client.
+- Extend the existing TypeScript planner initialize test.
+
+### Acceptance Criteria
+
+- TypeScript initialize request advertises workspace edit create/rename/delete resource operations.
+- Existing workspace edit parser/apply behavior remains unchanged.
+- Focused Rust planner test, serial Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Workspace Edit Resource Operations Capability
+
+- Added workspace edit resource-operation capability advertising for TypeScript language-server initialization.
+- Added planner coverage for the advertised `create`, `rename`, and `delete` operations.
+
+### Verification: JS/TS Workspace Edit Resource Operations Capability
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Workspace Edit Resource Operations Capability
+
+- Pending commit.
+- Included files:
+  - `src-tauri/src/lsp.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
