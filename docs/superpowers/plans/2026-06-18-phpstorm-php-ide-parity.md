@@ -1727,3 +1727,48 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `6007e6b2 Preserve Laravel lazy aggregate model chains`.
+
+## Slice: Laravel Collection Lazy Aggregate Fluents - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `fda4b316 Record Laravel lazy aggregate commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Laravel Eloquent Collection lazy loaders such as `loadSum` as collection-preserving fluents so terminal calls like `first()` keep model-aware inference.
+
+### Implementation Choice
+
+- Add Eloquent Collection `load*` methods documented in the Laravel 13 API to the collection fluent set.
+- Keep model-only `loadMorph*` aggregate variants scoped to model fluent handling.
+- Add semantic-chain coverage for `get()->loadSum(...)->first()`.
+
+### Acceptance Criteria
+
+- Eloquent Collection `load`, `loadAggregate`, `loadAvg`, `loadCount`, `loadExists`, `loadMax`, `loadMin`, `loadMissing`, `loadMorph`, `loadMorphCount`, and `loadSum` preserve `Collection<int, Model>`.
+- `Album::query()->get()->loadSum(...)->first()` infers `Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added Laravel Eloquent Collection lazy loader methods to collection fluent recognition.
+- Added return-type coverage proving collection `load*` calls preserve `Collection<int, Model>`.
+- Added semantic-chain coverage proving `get()->loadSum(...)->first()` resolves to the model type.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

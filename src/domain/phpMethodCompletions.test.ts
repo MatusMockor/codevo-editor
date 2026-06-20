@@ -152,6 +152,28 @@ class Album extends Model
         null,
       ),
     ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    for (const methodName of [
+      "load",
+      "loadAggregate",
+      "loadAvg",
+      "loadCount",
+      "loadExists",
+      "loadMax",
+      "loadMin",
+      "loadMissing",
+      "loadMorph",
+      "loadMorphCount",
+      "loadSum",
+    ]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+          null,
+        ),
+      ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
