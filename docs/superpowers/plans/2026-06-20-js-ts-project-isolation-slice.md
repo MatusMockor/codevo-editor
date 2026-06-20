@@ -2908,7 +2908,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Workspace Edit Root Contract
 
-- Commit pending.
+- Committed and pushed as `60d14975 Require roots for JS TS workspace edits`.
 - Included files:
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
