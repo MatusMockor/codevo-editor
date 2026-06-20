@@ -3304,7 +3304,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Runtime Gateway Direct Root Contract
 
-- Pending commit.
+- Committed and pushed as `df4f6d57 Root direct runtime gateway statuses`.
 - Included files:
   - `src/infrastructure/tauriLanguageServerRuntimeGateway.ts`
   - `src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
