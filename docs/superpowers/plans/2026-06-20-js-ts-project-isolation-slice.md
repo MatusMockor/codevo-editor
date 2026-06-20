@@ -3418,7 +3418,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Controller Runtime Workspace Root Guard
 
-- Pending commit.
+- Committed and pushed as `9a2d3e11 Require roots for controller runtime status matching`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
