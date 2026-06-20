@@ -615,6 +615,12 @@ class AlbumController
         $afterToBaseTerminal = Album::query()
             ->toBase()
             ->first();
+        $afterQualifyColumnTerminal = Album::query()
+            ->qualifyColumn('title')
+            ->first();
+        $afterGetRelationTerminal = Album::query()
+            ->getRelation('tracks')
+            ->first();
 
         $album->tit
         $morphAlbum->tit
@@ -644,6 +650,8 @@ class AlbumController
         $afterCursorPaginateTerminal->tit
         $afterGetModelsTerminal->tit
         $afterToBaseTerminal->tit
+        $afterQualifyColumnTerminal->tit
+        $afterGetRelationTerminal->tit
     }
 }
 `;
@@ -869,6 +877,22 @@ class AlbumController
         source,
         positionAfter(source, "$afterToBaseTerminal->tit"),
         "afterToBaseTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterQualifyColumnTerminal->tit"),
+        "afterQualifyColumnTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterGetRelationTerminal->tit"),
+        "afterGetRelationTerminal",
         laravelOptions,
       ),
     ).toBeNull();
