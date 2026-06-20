@@ -30,6 +30,7 @@ import {
   type LanguageServerWorkspaceEdit,
   type LanguageServerWorkspaceFileOperation,
   type LanguageServerWorkspaceFileOperationOptions,
+  type LanguageServerWorkspaceSymbol,
   type LanguageServerWorkspaceEditEvent,
   type LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
@@ -44,6 +45,20 @@ type Disposable = Monaco.IDisposable;
 type WorkspaceEditContext = {
   path: string;
   versionId: number | undefined;
+};
+type MonacoWorkspaceSymbol = {
+  containerName?: string;
+  kind: Monaco.languages.SymbolKind;
+  location: Monaco.languages.Location;
+  name: string;
+};
+type MonacoWorkspaceSymbolProvider = {
+  provideWorkspaceSymbols(query: string): Promise<MonacoWorkspaceSymbol[]>;
+};
+type MonacoWorkspaceSymbolRegistry = {
+  registerWorkspaceSymbolProvider?(
+    provider: MonacoWorkspaceSymbolProvider,
+  ): Disposable;
 };
 
 export interface JavaScriptTypeScriptWorkspaceEditApplicationContext {
@@ -239,6 +254,17 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     },
   });
   disposables.push(commandDisposable);
+
+  const workspaceSymbolRegistry = registry as MonacoWorkspaceSymbolRegistry;
+
+  if (workspaceSymbolRegistry.registerWorkspaceSymbolProvider) {
+    disposables.push(
+      workspaceSymbolRegistry.registerWorkspaceSymbolProvider({
+        provideWorkspaceSymbols: (query) =>
+          provideWorkspaceSymbols(monaco, context, query),
+      }),
+    );
+  }
 
   languages.forEach((language) => {
     if (registry.registerHoverProvider) {
@@ -910,6 +936,36 @@ async function provideDocumentSymbols(
   }
 }
 
+async function provideWorkspaceSymbols(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  query: string,
+): Promise<MonacoWorkspaceSymbol[]> {
+  const request = workspaceSymbolRequestContext(context);
+
+  if (!request) {
+    return [];
+  }
+
+  try {
+    const symbols = await context.featuresGateway.workspaceSymbols(
+      request.rootPath,
+      query,
+    );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return [];
+    }
+
+    return symbols.flatMap((symbol) =>
+      toMonacoWorkspaceSymbol(monaco, symbol, request.rootPath),
+    );
+  } catch (error) {
+    reportErrorForActiveRoot(context, request.rootPath, error);
+    return [];
+  }
+}
+
 async function resolveDocumentLink(
   monaco: MonacoApi,
   context: JavaScriptTypeScriptLanguageServerProviderContext,
@@ -1569,6 +1625,22 @@ function documentRequestContext(
   };
 }
 
+function workspaceSymbolRequestContext(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+) {
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (!rootPath) {
+    return null;
+  }
+
+  if (!canUseRuntimeFeatureForRoot(context, rootPath, "workspaceSymbol")) {
+    return null;
+  }
+
+  return { rootPath };
+}
+
 async function flushPendingDocumentChangeForActiveRoot(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   request: { path: string; rootPath: string },
@@ -1683,6 +1755,31 @@ function toMonacoDocumentSymbol(
     selectionRange: toMonacoRange(monaco, symbol.selectionRange),
     tags: [],
   };
+}
+
+function toMonacoWorkspaceSymbol(
+  monaco: MonacoApi,
+  symbol: LanguageServerWorkspaceSymbol,
+  rootPath: string,
+): MonacoWorkspaceSymbol[] {
+  if (!symbol.location) {
+    return [];
+  }
+
+  const [location] = toMonacoLocations(monaco, [symbol.location], rootPath);
+
+  if (!location) {
+    return [];
+  }
+
+  return [
+    {
+      ...(symbol.containerName ? { containerName: symbol.containerName } : {}),
+      kind: monacoSymbolKindFromLspKind(monaco, symbol.kind),
+      location,
+      name: symbol.name,
+    },
+  ];
 }
 
 function monacoSymbolKindFromLspKind(

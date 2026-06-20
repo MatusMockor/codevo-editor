@@ -42,6 +42,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(monaco.languages.registerInlayHintsProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerDocumentHighlightProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerDocumentSymbolProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerWorkspaceSymbolProvider).toHaveBeenCalledTimes(1);
     expect(monaco.languages.registerLinkProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerFoldingRangeProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerSelectionRangeProvider).toHaveBeenCalledTimes(4);
@@ -67,7 +68,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(85);
+    expect(monaco.dispose).toHaveBeenCalledTimes(86);
   });
 
   it("requests TypeScript language-server completions for TSX documents", async () => {
@@ -463,6 +464,115 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(context.flushPendingDocumentChange).toHaveBeenCalledWith(
       "/project/src/user.ts",
     );
+  });
+
+  it("maps TypeScript workspace symbols through the active project root", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      workspaceSymbols: [
+        {
+          containerName: "src/user.ts",
+          kind: 5,
+          location: {
+            range: range(0, 6, 0, 20),
+            uri: "file:///project/src/user.ts",
+          },
+          name: "UserController",
+        },
+        {
+          containerName: "src/other.ts",
+          kind: 12,
+          location: {
+            range: range(2, 0, 2, 8),
+            uri: "file:///other/src/other.ts",
+          },
+          name: "loadOther",
+        },
+        {
+          containerName: "src/neighbor.ts",
+          kind: 12,
+          location: {
+            range: range(4, 0, 4, 12),
+            uri: "file:///project-neighbor/src/neighbor.ts",
+          },
+          name: "loadNeighbor",
+        },
+        {
+          containerName: null,
+          kind: 13,
+          location: null,
+          name: "unresolved",
+        },
+      ],
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    const symbolProvider = (
+      monaco.languages.registerWorkspaceSymbolProvider as any
+    ).mock.calls[0][0];
+    const symbols = await symbolProvider.provideWorkspaceSymbols("User");
+
+    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
+    expect(symbols).toEqual([
+      {
+        containerName: "src/user.ts",
+        kind: monaco.languages.SymbolKind.Class,
+        location: {
+          range: expect.objectContaining({
+            endColumn: 21,
+            endLineNumber: 1,
+            startColumn: 7,
+            startLineNumber: 1,
+          }),
+          uri: { fsPath: "/project/src/user.ts", path: "/project/src/user.ts" },
+        },
+        name: "UserController",
+      },
+    ]);
+  });
+
+  it("drops in-flight TypeScript workspace symbols after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(
+      async () => workspaceSymbols.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const symbolProvider = (
+      monaco.languages.registerWorkspaceSymbolProvider as any
+    ).mock.calls[0][0];
+    const symbolsPromise = symbolProvider.provideWorkspaceSymbols("User");
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    workspaceSymbols.resolve([
+      {
+        containerName: "src/user.ts",
+        kind: 5,
+        location: {
+          range: range(0, 6, 0, 20),
+          uri: "file:///project/src/user.ts",
+        },
+        name: "UserController",
+      },
+    ]);
+
+    await expect(symbolsPromise).resolves.toEqual([]);
+    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
   });
 
   it("maps TypeScript type definitions through the language server including external targets", async () => {
@@ -3059,6 +3169,7 @@ function createMonaco() {
       registerDocumentSemanticTokensProvider: vi.fn(() => disposable()),
       registerSignatureHelpProvider: vi.fn(() => disposable()),
       registerTypeDefinitionProvider: vi.fn(() => disposable()),
+      registerWorkspaceSymbolProvider: vi.fn(() => disposable()),
     },
     MarkerSeverity: {
       Error: 8,
