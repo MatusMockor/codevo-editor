@@ -65,6 +65,7 @@ describe("phpMethodCompletions", () => {
 namespace App\\Models;
 
 use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
 use Illuminate\\Database\\Eloquent\\Model;
 
 class Album extends Model
@@ -80,6 +81,11 @@ class Album extends Model
     public function scopeWithRelations(Builder $query): Builder
     {
         return $query;
+    }
+
+    #[Scope]
+    protected function popular(Builder $query, bool $strict = true): void
+    {
     }
 }
 `;
@@ -138,6 +144,14 @@ class Album extends Model
         "withRelations",
         "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
         "Album::query()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "popular",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        null,
       ),
     ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
     expect(
@@ -587,11 +601,15 @@ class Request
     const methods = phpMethodCompletionsFromSource(
       `<?php
 use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
 
 class Comment
 {
     public function scopePublished(Builder $query, bool $strict = true): Builder {}
     public function scopeRecentlyCreated($query, int $days = 7): void {}
+    #[Scope]
+    protected function popular(Builder $query, bool $featured = false): void {}
+    protected function internalScopeCandidate(Builder $query): void {}
     public static function scopeGlobalOnly($query): void {}
     public function normalMethod(): void {}
 }
@@ -612,17 +630,30 @@ class Comment
         parameters: "int $days = 7",
         returnType: "Illuminate\\Database\\Eloquent\\Builder",
       },
+      {
+        declaringClassName: "Comment",
+        name: "popular",
+        parameters: "bool $featured = false",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
+      },
     ]);
+    expect(methods.some((method) => method.name === "popular")).toBe(true);
+    expect(
+      methods.some((method) => method.name === "internalScopeCandidate"),
+    ).toBe(false);
   });
 
   it("maps Laravel local scopes to static model completions", () => {
     const methods = phpMethodCompletionsFromSource(
       `<?php
 use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
 
 class Comment
 {
     public function scopeWithRelations(Builder $query): Builder {}
+    #[Scope]
+    protected function popular(Builder $query): void {}
 }
 `,
       "Comment",
@@ -635,6 +666,13 @@ class Comment
         name: "withRelations",
         parameters: "",
         returnType: "Builder",
+      },
+      {
+        declaringClassName: "Comment",
+        isStatic: true,
+        name: "popular",
+        parameters: "",
+        returnType: "Illuminate\\Database\\Eloquent\\Builder",
       },
     ]);
   });

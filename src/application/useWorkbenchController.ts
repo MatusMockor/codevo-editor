@@ -5790,6 +5790,24 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpClassHasLaravelLocalScope = useCallback(
+    async (className: string, scopeName: string): Promise<boolean> => {
+      if (!isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const scopeLookup = scopeName.toLowerCase();
+      const scopeCompletions = phpLaravelLocalScopeCompletionsFromMethods(
+        await collectPhpMethodsForClass(className),
+      );
+
+      return scopeCompletions.some(
+        (scope) => scope.name.toLowerCase() === scopeLookup,
+      );
+    },
+    [collectPhpMethodsForClass, isLaravelFrameworkActive],
+  );
+
   const phpTraitHostMethodExists = useCallback(
     async (traitClassName: string, methodName: string): Promise<boolean> => {
       if (!workspaceRoot) {
@@ -6015,14 +6033,11 @@ export function useWorkbenchController(
             source,
             staticMethodContext.className,
           );
-          const scopeMethodName = isLaravelFrameworkActive
-            ? phpLaravelScopeMethodName(staticMethodContext.methodName)
-            : null;
           const hasContextualScopeMethod =
-            resolvedClassName && scopeMethodName
-              ? await phpClassHierarchyHasMethod(
+            resolvedClassName && isLaravelFrameworkActive
+              ? await phpClassHasLaravelLocalScope(
                   resolvedClassName,
-                  scopeMethodName,
+                  staticMethodContext.methodName,
                 )
               : false;
           const hasContextualDynamicWhereMethod =
@@ -6060,14 +6075,11 @@ export function useWorkbenchController(
                 memberMethodContext.receiverExpression,
               )
             : null;
-          const scopeMethodName = isLaravelFrameworkActive
-            ? phpLaravelScopeMethodName(memberMethodContext.methodName)
-            : null;
           const hasContextualScopeMethod =
-            builderModelType && scopeMethodName
-              ? await phpClassHierarchyHasMethod(
+            builderModelType && isLaravelFrameworkActive
+              ? await phpClassHasLaravelLocalScope(
                   builderModelType,
-                  scopeMethodName,
+                  memberMethodContext.methodName,
                 )
               : false;
           const hasContextualDynamicWhereMethod =
@@ -6133,7 +6145,7 @@ export function useWorkbenchController(
       });
     },
     [
-      phpClassHierarchyHasMethod,
+      phpClassHasLaravelLocalScope,
       phpClassHasLaravelDynamicWhere,
       activePhpFrameworkProviders,
       isLaravelFrameworkActive,
@@ -6655,24 +6667,6 @@ export function useWorkbenchController(
       workspaceDescriptor,
       workspaceRoot,
     ],
-  );
-
-  const phpClassHasLaravelLocalScope = useCallback(
-    async (className: string, scopeName: string): Promise<boolean> => {
-      if (!isLaravelFrameworkActive) {
-        return false;
-      }
-
-      const scopeLookup = scopeName.toLowerCase();
-      const scopeCompletions = phpLaravelLocalScopeCompletionsFromMethods(
-        await collectPhpMethodsForClass(className),
-      );
-
-      return scopeCompletions.some(
-        (scope) => scope.name.toLowerCase() === scopeLookup,
-      );
-    },
-    [collectPhpMethodsForClass, isLaravelFrameworkActive],
   );
 
   const resolvePhpLaravelRelationPathOwnerType = useCallback(
@@ -12448,6 +12442,10 @@ function mergePhpMethodCompletions(
 
   for (const group of groups) {
     for (const completion of group) {
+      if (completion.kind === "scope") {
+        continue;
+      }
+
       const key = `${completion.kind ?? "method"}:${completion.name.toLowerCase()}`;
 
       if (!completions.has(key)) {

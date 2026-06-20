@@ -8897,6 +8897,7 @@ class AlbumController
     public function index(): void
     {
         Album::published()->first();
+        Album::popular()->first();
         Album::missingMagic()->first();
     }
 }
@@ -8928,12 +8929,18 @@ class AlbumController
 namespace App\\Models;
 
 use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
 
 class Album
 {
     public function scopePublished(Builder $query): Builder
     {
         return $query;
+    }
+
+    #[Scope]
+    protected function popular(Builder $query): void
+    {
     }
 }
 `;
@@ -8965,6 +8972,13 @@ class Album
           {
             character: 16,
             line: 10,
+            message: "Method App\\Models\\Album::popular() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            character: 16,
+            line: 11,
             message: "Method App\\Models\\Album::missingMagic() does not exist",
             severity: "error",
             source: "phpactor",
@@ -8980,7 +8994,7 @@ class Album
     expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
       {
         character: 16,
-        line: 10,
+        line: 11,
         message: "Method App\\Models\\Album::missingMagic() does not exist",
         severity: "error",
         source: "phpactor",

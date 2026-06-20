@@ -982,7 +982,8 @@ export function phpLaravelLocalScopeCompletionsFromMethods(
         return [];
       }
 
-      const scopeName = laravelLocalScopeName(method.name);
+      const scopeName =
+        method.kind === "scope" ? method.name : laravelLocalScopeName(method.name);
 
       if (!scopeName) {
         return [];
@@ -2146,22 +2147,56 @@ function phpLaravelModelHasLocalScope(
       source.slice(range.bodyStart, range.bodyEnd),
     );
     const pattern = new RegExp(
-      `(?:^|\\n)\\s*((?:(?:abstract|final|private|protected|public|static)\\s+)*)function\\s+&?\\s*${escapeRegExp(
-        scopeMethodName,
-      )}\\s*\\(`,
+      `(?:^|\\n)\\s*((?:#\\[[\\s\\S]*?\\]\\s*)*)((?:(?:abstract|final|private|protected|public|static)\\s+)*)function\\s+&?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
       "g",
     );
 
     for (const match of body.matchAll(pattern)) {
-      const modifiers = (match[1] ?? "").toLowerCase();
+      const attributes = match[1] ?? "";
+      const modifiers = (match[2] ?? "").toLowerCase();
+      const methodName = match[3] ?? "";
 
-      if (!/\b(?:private|static)\b/.test(modifiers)) {
+      if (/\b(?:private|static)\b/.test(modifiers)) {
+        continue;
+      }
+
+      if (methodName.toLowerCase() === scopeMethodName.toLowerCase()) {
+        return true;
+      }
+
+      if (
+        methodName.toLowerCase() === scopeName.toLowerCase() &&
+        phpLaravelAttributeBlockHasName(attributes, "Scope")
+      ) {
         return true;
       }
     }
 
     return false;
   });
+}
+
+function phpLaravelAttributeBlockHasName(
+  attributesSource: string,
+  expectedName: string,
+): boolean {
+  const normalizedExpectedName = expectedName.toLowerCase();
+
+  for (const match of attributesSource.matchAll(
+    /(?:^|[\s,#[])(\\?[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\b/g,
+  )) {
+    const attributeName = match[1]?.replace(/^\\+/, "");
+    const shortName = attributeName?.split("\\").pop()?.toLowerCase();
+
+    if (
+      attributeName?.toLowerCase() === normalizedExpectedName ||
+      shortName === normalizedExpectedName
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function phpLaravelModelHasDynamicWhere(

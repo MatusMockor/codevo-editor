@@ -27,7 +27,7 @@ export interface PhpMethodCompletion {
   declaringClassName: string;
   insertText?: string;
   isStatic?: boolean;
-  kind?: "property" | "relation" | "route";
+  kind?: "property" | "relation" | "route" | "scope";
   name: string;
   parameters: string;
   returnType: string | null;
@@ -163,11 +163,6 @@ export function phpMethodCompletionsFromSource(
 
   for (const match of masked.matchAll(pattern)) {
     const modifiers = (match[1] ?? "").toLowerCase();
-
-    if (/\bprivate\b/.test(modifiers) || /\bprotected\b/.test(modifiers)) {
-      continue;
-    }
-
     const name = match[2];
 
     if (!name) {
@@ -175,6 +170,17 @@ export function phpMethodCompletionsFromSource(
     }
 
     const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
+    const attributes = phpAttributeNamesBefore(source, functionOffset);
+    const isScopeAttribute = phpHasAttributeName(attributes, "Scope");
+
+    if (
+      /\bprivate\b/.test(modifiers) ||
+      /\bstatic\b/.test(modifiers) && isScopeAttribute ||
+      (/\bprotected\b/.test(modifiers) && !isScopeAttribute)
+    ) {
+      continue;
+    }
+
     const docBlock = phpDocBlockBefore(source, functionOffset);
     const parameters = phpFunctionParametersAt(source, functionOffset) ?? match[3] ?? "";
     const declaredReturnType = normalizeReturnType(match[4] ?? null);
@@ -184,6 +190,7 @@ export function phpMethodCompletionsFromSource(
     members.push({
       ...(classStringTemplate ? { classStringTemplate } : {}),
       declaringClassName,
+      ...(isScopeAttribute ? { kind: "scope" as const } : {}),
       name,
       parameters: enrichParametersFromPhpDoc(
         normalizeWhitespace(parameters),
@@ -412,6 +419,46 @@ export function phpMixinClassNames(source: string): string[] {
   return Array.from(new Set(mixins));
 }
 
+function phpAttributeNamesBefore(
+  source: string,
+  functionOffset: number,
+): string[] {
+  const beforeFunction = source
+    .slice(0, functionOffset)
+    .replace(/\s*(?:(?:abstract|final|private|protected|public|static)\s+)*$/, "");
+  const match = /((?:\s*#\[[\s\S]*?\]\s*)+)$/.exec(beforeFunction);
+  const attributesSource = match?.[1] ?? "";
+  const attributeNames: string[] = [];
+
+  for (const attributeMatch of attributesSource.matchAll(
+    /(?:^|[\s,#[])(\\?[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\b/g,
+  )) {
+    const attributeName = attributeMatch[1]?.replace(/^\\+/, "");
+
+    if (attributeName) {
+      attributeNames.push(attributeName);
+    }
+  }
+
+  return attributeNames;
+}
+
+function phpHasAttributeName(
+  attributeNames: readonly string[],
+  expectedName: string,
+): boolean {
+  const normalizedExpectedName = expectedName.toLowerCase();
+
+  return attributeNames.some((attributeName) => {
+    const shortName = attributeName.split("\\").pop()?.toLowerCase();
+
+    return (
+      attributeName.toLowerCase() === normalizedExpectedName ||
+      shortName === normalizedExpectedName
+    );
+  });
+}
+
 function phpDocBlockBefore(source: string, functionOffset: number): string | null {
   const beforeFunction = source.slice(0, functionOffset);
   const docStart = beforeFunction.lastIndexOf("/**");
@@ -423,6 +470,7 @@ function phpDocBlockBefore(source: string, functionOffset: number): string | nul
 
   const betweenDocAndFunction = beforeFunction
     .slice(docEnd + 2)
+    .replace(/#\[[\s\S]*?\]/g, " ")
     .replace(/\b(?:abstract|final|private|protected|public|static)\b/g, " ")
     .trim();
 
