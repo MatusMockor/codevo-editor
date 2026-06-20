@@ -8025,6 +8025,162 @@ class CommentIdeHelper
     ]);
   });
 
+  it("suppresses implemented interface member-method diagnostics on inferred receivers", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Contracts/CommentRepositoryInterface.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\CommentRepository;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepository $commentRepository,
+    ) {}
+
+    public function getOne(): void
+    {
+        $this->commentRepository->findOrFail(1);
+        $this->commentRepository->missingMethod();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 24,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const methodDiagnosticPosition = (methodName: string) => {
+      const position = positionAfter(
+        controllerSource,
+        `$this->commentRepository->${methodName}`,
+      );
+
+      return {
+        character: position.column - methodName.length - 1,
+        line: position.lineNumber - 1,
+      };
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Repositories\\CommentRepository",
+          kind: "class",
+          lineNumber: 6,
+          name: "CommentRepository",
+          path: repositoryPath,
+          relativePath: "app/Repositories/CommentRepository.php",
+        },
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\CommentRepositoryInterface",
+          kind: "interface",
+          lineNumber: 5,
+          name: "CommentRepositoryInterface",
+          path: repositoryInterfacePath,
+          relativePath: "app/Contracts/CommentRepositoryInterface.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === repositoryPath) {
+          return `<?php
+namespace App\\Repositories;
+
+use App\\Contracts\\CommentRepositoryInterface;
+
+class CommentRepository implements CommentRepositoryInterface
+{
+}
+`;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+interface CommentRepositoryInterface
+{
+    public function findOrFail(int $id): object;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    const findPosition = methodDiagnosticPosition("findOrFail");
+    const missingPosition = methodDiagnosticPosition("missingMethod");
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            ...findPosition,
+            message:
+              "Method App\\Repositories\\CommentRepository::findOrFail() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...missingPosition,
+            message:
+              "Method App\\Repositories\\CommentRepository::missingMethod() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        ...missingPosition,
+        message:
+          "Method App\\Repositories\\CommentRepository::missingMethod() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("infers Laravel relation model completions from property and relation chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

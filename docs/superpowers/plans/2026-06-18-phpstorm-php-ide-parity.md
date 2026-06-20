@@ -384,8 +384,55 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
-- Intended included files:
+- Committed and pushed as `deadfd5 Infer dynamic fluent through relations`.
+- Included files:
   - `src/domain/phpFrameworkLaravel.ts`
   - `src/domain/phpMethodCompletions.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Implemented Interface Member-Method Diagnostic Reconciliation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `deadfd5 Infer dynamic fluent through relations`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let member-method diagnostic reconciliation prove methods declared by implemented interfaces, matching the broader PHP hierarchy behavior used elsewhere in IDE Mode.
+
+### Implementation Choice
+
+- Reuse `phpSuperTypeReferences` inside `phpClassHierarchyHasMethod` instead of checking only `phpExtendsClassName`.
+- Preserve existing trait, mixin, and parent behavior while adding `implements` and multiple interface references through the shared parser.
+- Add a preview diagnostic regression where a concrete repository class implements an interface declaring the method.
+
+### Acceptance Criteria
+
+- A PHPactor diagnostic for a method declared only on an implemented interface is suppressed when the receiver resolves to the concrete class.
+- An unknown method on the same receiver remains visible.
+- Full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- `phpClassHierarchyHasMethod` now walks all parsed supertypes, including implemented interfaces.
+- Added preview coverage proving interface-declared methods suppress member-method false positives while unknown methods still surface.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "suppresses implemented interface member-method diagnostics on inferred receivers"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Intended included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
