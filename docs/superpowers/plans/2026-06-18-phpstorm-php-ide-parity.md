@@ -481,6 +481,56 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
+- Committed and pushed as `0f2a504 Infer dynamic fluent relation callbacks`.
+- Included files:
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: MorphMap ResolveRelationUsing MorphTo Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0f2a504 Infer dynamic fluent relation callbacks`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let `Model::resolveRelationUsing(...)` callbacks that return `morphTo()` use the existing single-target morph map fallback.
+
+### Implementation Choice
+
+- Broaden the `morphTo()` guard from only `$this->morphTo()` to model-variable receivers such as `$comment->morphTo()`.
+- Keep the existing conservative target selection:
+  - documented multi-target `MorphTo<Post|Video, ...>` remains ambiguous;
+  - morph map fallback only returns a target when the project has exactly one morph-map model.
+- Add coverage through dynamic relation callbacks rather than changing relation factory inference broadly.
+
+### Acceptance Criteria
+
+- A `resolveRelationUsing` callback returning `$comment->morphTo()` exposes the single morph-map target.
+- Existing dynamic relation callback tests remain green.
+- Focused PHP domain tests pass.
+- `npm run check` and `git diff --check` pass.
+
+### Completed
+
+- `phpLaravelMorphToTargetClassNameFromContext` now accepts variable receivers for `morphTo()` in addition to `$this`.
+- Added regression coverage for `Relation::morphMap([... Post::class ...])` plus a `resolveRelationUsing` morphTo callback.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "extracts Laravel dynamic relation targets from resolveRelationUsing callbacks"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
 - Pending commit.
 - Intended included files:
   - `src/domain/phpFrameworkLaravel.ts`

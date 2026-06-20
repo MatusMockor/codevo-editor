@@ -2185,7 +2185,7 @@ function phpLaravelMorphToTargetClassNameFromContext(
 ): string | null {
   const normalizedExpression = normalizePhpExpressionForComparison(expression);
 
-  if (!/\$this\??->morphTo\s*\(/i.test(expression)) {
+  if (!/\$(?:this|[A-Za-z_][A-Za-z0-9_]*)\??->morphTo\s*\(/i.test(expression)) {
     return null;
   }
 

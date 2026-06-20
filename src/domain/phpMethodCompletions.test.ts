@@ -1601,6 +1601,7 @@ class Comment
 use App\\Models\\Attachment;
 use App\\Models\\Post;
 use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\Relation;
 
 class Comment extends Model
 {
@@ -1628,6 +1629,12 @@ Comment::resolveRelationUsing('legacyComments', function (Comment $comment) {
 });
 
 \\Comment::resolveRelationUsing('owner', fn (Comment $comment) => $comment->belongsTo(Owner::class));
+
+Relation::morphMap([
+    'post' => Post::class,
+]);
+
+Comment::resolveRelationUsing('commentable', fn (Comment $comment) => $comment->morphTo());
 
 Reaction::resolveRelationUsing('comment', fn (Reaction $reaction) => $reaction->belongsTo(Comment::class));
 
@@ -1664,6 +1671,13 @@ Comment::resolveRelationUsing('notRelation', fn () => 'not a relation');
         name: "owner",
         parameters: "",
         returnType: "Owner",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "commentable",
+        parameters: "",
+        returnType: "App\\Models\\Post",
       },
     ]);
   });
