@@ -2000,4 +2000,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending.
+- Committed and pushed as `b7fa1a89 Infer Laravel hydrate collection results`.
