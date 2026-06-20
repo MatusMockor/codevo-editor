@@ -3246,7 +3246,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: LSP Reader Stop Guard
 
-- Pending commit.
+- Committed and pushed as `24f15b94 Ignore stopped LSP reader messages`.
 - Included files:
   - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
