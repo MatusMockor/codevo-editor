@@ -1863,4 +1863,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `f30cef71 Infer Laravel findMany collections`.
