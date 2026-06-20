@@ -108,6 +108,7 @@ function running(sessionId: number): LanguageServerRuntimeStatus {
       codeAction: true,
       codeLens: true,
       completion: true,
+      declaration: true,
       definition: true,
       documentHighlight: true,
       documentLink: true,

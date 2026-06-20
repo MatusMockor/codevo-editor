@@ -1814,6 +1814,23 @@ fn text_document_definition(
 }
 
 #[tauri::command]
+fn text_document_declaration(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.declaration(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_definition_result(&result)
+}
+
+#[tauri::command]
 fn javascript_typescript_text_document_definition(
     root_path: String,
     position: TextDocumentPosition,
@@ -1823,6 +1840,23 @@ fn javascript_typescript_text_document_definition(
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.definition(&position);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(Vec::new());
+    };
+
+    parse_javascript_typescript_navigation_locations_result(&result)
+}
+
+#[tauri::command]
+fn javascript_typescript_text_document_declaration(
+    root_path: String,
+    position: TextDocumentPosition,
+    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    ensure_lsp_position_in_workspace(&root_path, &position)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.declaration(&position);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(Vec::new());
     };
@@ -4540,6 +4574,7 @@ pub fn run() {
             javascript_typescript_text_document_code_lenses,
             javascript_typescript_text_document_completion,
             javascript_typescript_text_document_completion_resolve,
+            javascript_typescript_text_document_declaration,
             javascript_typescript_text_document_definition,
             javascript_typescript_text_document_document_highlights,
             javascript_typescript_text_document_document_link_resolve,
@@ -4575,6 +4610,7 @@ pub fn run() {
             text_document_code_lenses,
             text_document_completion,
             text_document_completion_resolve,
+            text_document_declaration,
             text_document_definition,
             text_document_document_highlights,
             text_document_document_link_resolve,

@@ -69,6 +69,7 @@ pub struct LanguageServerCapabilities {
     pub call_hierarchy: bool,
     pub code_action: bool,
     pub code_lens: bool,
+    pub declaration: bool,
     pub hover: bool,
     pub completion: bool,
     pub definition: bool,
@@ -2062,6 +2063,7 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         call_hierarchy: is_capability_enabled(capabilities.get("callHierarchyProvider")),
         code_action: is_capability_enabled(capabilities.get("codeActionProvider")),
         code_lens: is_capability_enabled(capabilities.get("codeLensProvider")),
+        declaration: is_capability_enabled(capabilities.get("declarationProvider")),
         hover: is_capability_enabled(capabilities.get("hoverProvider")),
         completion: is_capability_enabled(capabilities.get("completionProvider")),
         definition: is_capability_enabled(capabilities.get("definitionProvider")),
@@ -2888,6 +2890,7 @@ mod tests {
                     call_hierarchy: false,
                     code_action: false,
                     code_lens: false,
+                    declaration: true,
                     hover: true,
                     completion: true,
                     definition: true,
@@ -2928,6 +2931,7 @@ mod tests {
                 call_hierarchy: true,
                 code_action: true,
                 code_lens: true,
+                declaration: true,
                 hover: true,
                 completion: false,
                 definition: true,
@@ -2966,6 +2970,7 @@ mod tests {
                 "sessionId": 1,
                 "capabilities": {
                     "callHierarchy": true,
+                    "declaration": true,
                     "hover": true,
                     "completion": false,
                     "definition": true,
@@ -3030,6 +3035,7 @@ mod tests {
                 "capabilities": {
                     "hoverProvider": false,
                     "completionProvider": null,
+                    "declarationProvider": true,
                     "definitionProvider": {},
                     "documentHighlightProvider": true,
                     "documentLinkProvider": { "resolveProvider": true },
@@ -3078,6 +3084,7 @@ mod tests {
                 call_hierarchy: true,
                 code_action: true,
                 code_lens: true,
+                declaration: true,
                 hover: false,
                 completion: false,
                 definition: true,
@@ -4177,6 +4184,7 @@ mod tests {
                 "capabilities": {
                     "hoverProvider": true,
                     "completionProvider": { "triggerCharacters": [">"] },
+                    "declarationProvider": true,
                     "definitionProvider": true,
                     "implementationProvider": true,
                 }

@@ -934,3 +934,82 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lib.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Declaration Navigation
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2a7a2d2 Nest JS TS configuration updates`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Monaco exposes `registerDeclarationProvider`, and LSP exposes `textDocument/declaration`.
+- TypeScript-language-server can advertise `declarationProvider`, giving VS Code-like "Go to Declaration" navigation.
+- The editor currently wires definition, implementation, and type definition, but not declaration.
+
+### Implementation Choice
+
+- Add `declaration` to runtime capability parsing and frontend capability types.
+- Add a request factory method and Tauri feature commands for `textDocument/declaration`.
+- Register a JS/TS Monaco declaration provider that reuses the same active workspace guards and location mapping as definition.
+- Preserve external declaration targets, matching the previous external JS/TS navigation decision for definition/typeDefinition/implementation.
+
+### Acceptance Criteria
+
+- JS/TS runtime status can report `declarationProvider`.
+- Frontend JS/TS Monaco providers register declaration support for JS/TS languages.
+- Tauri gateway and Rust feature factory can request `textDocument/declaration`.
+- JS/TS declaration locations can include external file URI targets.
+- Focused Rust, gateway, provider, and runtime tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: JS/TS Declaration Navigation
+
+- Runtime capability models now include `declaration` and parse/report `declarationProvider`.
+- TypeScript initialize capabilities advertise declaration support with `linkSupport`.
+- Rust feature request factory and Tauri command handlers now issue `textDocument/declaration`.
+- JS/TS Tauri gateway and Monaco providers now expose "Go to Declaration" for JavaScript and TypeScript language IDs.
+- JS/TS declaration results preserve external file URI targets, matching definition, type definition, and implementation navigation behavior.
+
+### Verification: JS/TS Declaration Navigation
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml declaration --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_navigation_locations_preserve_external_file_uris --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts src/components/languageServerMonacoProviders.test.ts src/components/EditorSurface.test.tsx src/application/useWorkbenchController.preview.test.tsx src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts src/domain/languageServerRuntime.test.ts src/domain/languageServerFeatures.test.ts src/domain/languageServerRuntimeStatusCache.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+- NOTE: `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` still reports unrelated formatting differences in `src-tauri/src/js_ts_file_watcher.rs`; the file was not changed for this slice.
+
+### Commit Status: JS/TS Declaration Navigation
+
+- Pending commit.
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/lsp.rs`
+  - `src-tauri/src/lsp_features.rs`
+  - `src-tauri/src/lsp_session.rs`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `src/components/EditorSurface.test.tsx`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/languageServerMonacoProviders.test.ts`
+  - `src/domain/languageServerFeatures.test.ts`
+  - `src/domain/languageServerFeatures.ts`
+  - `src/domain/languageServerRuntime.test.ts`
+  - `src/domain/languageServerRuntime.ts`
+  - `src/domain/languageServerRuntimeStatusCache.test.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.ts`
+  - `src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

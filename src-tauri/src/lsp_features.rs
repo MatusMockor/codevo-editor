@@ -522,6 +522,7 @@ pub trait TextDocumentFeatureRequestFactory {
         item: &LanguageServerCompletionItem,
     ) -> LanguageServerFeatureRequest;
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn declaration(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn document_highlights(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn document_links(&self, path: &str) -> LanguageServerFeatureRequest;
     fn resolve_document_link(
@@ -633,6 +634,10 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
 
     fn definition(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
         request("textDocument/definition", position)
+    }
+
+    fn declaration(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
+        request("textDocument/declaration", position)
     }
 
     fn document_highlights(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
@@ -2126,6 +2131,20 @@ mod tests {
         let request = factory.implementation(&position());
 
         assert_eq!(request.method, "textDocument/implementation");
+        assert!(request.params["textDocument"]["uri"]
+            .as_str()
+            .expect("uri")
+            .starts_with("file://"));
+        assert_eq!(request.params["position"]["line"], 10);
+        assert_eq!(request.params["position"]["character"], 4);
+    }
+
+    #[test]
+    fn declaration_request_contains_document_uri_and_position() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.declaration(&position());
+
+        assert_eq!(request.method, "textDocument/declaration");
         assert!(request.params["textDocument"]["uri"]
             .as_str()
             .expect("uri")

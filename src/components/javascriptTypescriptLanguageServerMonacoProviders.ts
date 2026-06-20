@@ -412,6 +412,15 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       );
     }
 
+    if (registry.registerDeclarationProvider) {
+      disposables.push(
+        registry.registerDeclarationProvider(language, {
+          provideDeclaration: (model, position) =>
+            provideDeclaration(monaco, context, model, position),
+        }),
+      );
+    }
+
     if (registry.registerImplementationProvider) {
       disposables.push(
         registry.registerImplementationProvider(language, {
@@ -784,6 +793,39 @@ async function provideDefinition(
     }
 
     const locations = await context.featuresGateway.definition(
+      request.rootPath,
+      request.position,
+    );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
+    return toMonacoLocations(monaco, locations);
+  } catch (error) {
+    reportErrorForActiveRoot(context, request.rootPath, error);
+    return null;
+  }
+}
+
+async function provideDeclaration(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Definition | null> {
+  const request = featureRequestContext(context, model, position, "declaration");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRoot(context, request))) {
+      return null;
+    }
+
+    const locations = await context.featuresGateway.declaration(
       request.rootPath,
       request.position,
     );
@@ -1780,6 +1822,7 @@ function featureRequestContext(
   position: MonacoPosition,
   feature:
     | "completion"
+    | "declaration"
     | "definition"
     | "documentHighlight"
     | "hover"

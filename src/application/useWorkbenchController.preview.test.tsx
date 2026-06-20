@@ -14081,6 +14081,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
       isIncomplete: false,
       items: [],
     })),
+    declaration: vi.fn(async () => []),
     definition: vi.fn(async () => []),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),

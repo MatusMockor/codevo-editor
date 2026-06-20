@@ -25,6 +25,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     expect(monaco.languages.registerHoverProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerCompletionItemProvider).toHaveBeenCalledTimes(4);
+    expect(monaco.languages.registerDeclarationProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerDefinitionProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerImplementationProvider).toHaveBeenCalledTimes(4);
     expect(monaco.languages.registerTypeDefinitionProvider).toHaveBeenCalledTimes(4);
@@ -83,7 +84,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     disposable.dispose();
 
-    expect(monaco.dispose).toHaveBeenCalledTimes(86);
+    expect(monaco.dispose).toHaveBeenCalledTimes(90);
   });
 
   it("requests TypeScript language-server completions for TSX documents", async () => {
@@ -699,9 +700,19 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
   });
 
-  it("maps TypeScript definitions and implementations to external read-only targets", async () => {
+  it("maps TypeScript definitions, declarations and implementations to external read-only targets", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
+      declaration: [
+        {
+          range: range(6, 4, 6, 13),
+          uri: "file:///project/node_modules/pkg/types.d.ts",
+        },
+        {
+          range: range(20, 0, 20, 6),
+          uri: "file:///Library/Developer/TypeScript/lib/lib.es2022.d.ts",
+        },
+      ],
       definition: [
         {
           range: range(12, 8, 12, 15),
@@ -762,6 +773,46 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           fsPath:
             "/Applications/Mockor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
           path: "/Applications/Mockor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
+        },
+      },
+    ]);
+
+    const declarationProvider = (
+      monaco.languages.registerDeclarationProvider as any
+    ).mock.calls[0][1];
+    const declarations = await declarationProvider.provideDeclaration(
+      model,
+      position,
+    );
+
+    expect(gateway.declaration).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+    expect(declarations).toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 14,
+          endLineNumber: 7,
+          startColumn: 5,
+          startLineNumber: 7,
+        }),
+        uri: {
+          fsPath: "/project/node_modules/pkg/types.d.ts",
+          path: "/project/node_modules/pkg/types.d.ts",
+        },
+      },
+      {
+        range: expect.objectContaining({
+          endColumn: 7,
+          endLineNumber: 21,
+          startColumn: 1,
+          startLineNumber: 21,
+        }),
+        uri: {
+          fsPath: "/Library/Developer/TypeScript/lib/lib.es2022.d.ts",
+          path: "/Library/Developer/TypeScript/lib/lib.es2022.d.ts",
         },
       },
     ]);
@@ -3246,6 +3297,7 @@ function featuresGateway(
     codeActions: Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>;
     codeLenses: Awaited<ReturnType<LanguageServerFeaturesGateway["codeLenses"]>>;
     completion: Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>;
+    declaration: Awaited<ReturnType<LanguageServerFeaturesGateway["declaration"]>>;
     definition: Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>;
     documentHighlights: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>
@@ -3321,6 +3373,7 @@ function featuresGateway(
           items: [],
         },
     ),
+    declaration: vi.fn(async () => responses.declaration ?? []),
     definition: vi.fn(async () => responses.definition ?? []),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
@@ -3383,6 +3436,7 @@ function runningStatus(
       codeAction: true,
       codeLens: true,
       completion: true,
+      declaration: true,
       definition: true,
       documentHighlight: true,
       documentLink: true,
@@ -3594,6 +3648,7 @@ function createMonaco() {
       registerCodeActionProvider: vi.fn(() => disposable()),
       registerCodeLensProvider: vi.fn(() => disposable()),
       registerCompletionItemProvider: vi.fn(() => disposable()),
+      registerDeclarationProvider: vi.fn(() => disposable()),
       registerDefinitionProvider: vi.fn(() => disposable()),
       registerDocumentHighlightProvider: vi.fn(() => disposable()),
       registerDocumentFormattingEditProvider: vi.fn(() => disposable()),

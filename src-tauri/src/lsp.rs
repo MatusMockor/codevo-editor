@@ -360,7 +360,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
             .and_then(|name| name.to_str())
             .unwrap_or("workspace");
 
-        JsonRpcRequest {
+        let mut request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: 1,
             method: "initialize".to_string(),
@@ -574,7 +574,14 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                     }
                 ],
             }),
-        }
+        };
+
+        request.params["capabilities"]["textDocument"]["declaration"] = json!({
+            "dynamicRegistration": false,
+            "linkSupport": true,
+        });
+
+        request
     }
 }
 
@@ -860,6 +867,14 @@ mod tests {
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["signatureHelp"]["contextSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["declaration"]["dynamicRegistration"],
+            false
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["declaration"]["linkSupport"],
             true
         );
         assert_eq!(

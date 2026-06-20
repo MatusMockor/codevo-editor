@@ -15,6 +15,7 @@ describe("canUseLanguageServerFeature", () => {
       codeAction: false,
       codeLens: false,
       completion: false,
+      declaration: false,
       definition: true,
       documentHighlight: false,
       documentLink: false,

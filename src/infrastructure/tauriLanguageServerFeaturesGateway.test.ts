@@ -27,6 +27,7 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.resolveCompletionItem("/project", completionItem()),
     ).resolves.toEqual(completionItem());
     await expect(gateway.definition("/project", position())).resolves.toEqual([]);
+    await expect(gateway.declaration("/project", position())).resolves.toEqual([]);
     await expect(
       gateway.typeDefinition("/project", position()),
     ).resolves.toEqual([]);
@@ -535,6 +536,7 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       documentation: "Resolved docs",
     });
     await expect(gateway.definition("/project", requestPosition)).resolves.toEqual(definition);
+    await expect(gateway.declaration("/project", requestPosition)).resolves.toEqual(definition);
     await expect(
       gateway.documentSymbols("/project", "/project/src/User.php"),
     ).resolves.toEqual(documentSymbols);
@@ -708,6 +710,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       rootPath: "/project",
     });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_definition", {
+      position: requestPosition,
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_declaration", {
       position: requestPosition,
       rootPath: "/project",
     });

@@ -1974,6 +1974,7 @@ function featuresGateway(
       ReturnType<LanguageServerFeaturesGateway["codeActions"]>
     >;
     completion: LanguageServerCompletionList;
+    declaration: LanguageServerLocation[];
     definition: LanguageServerLocation[];
     documentSymbols: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
@@ -2006,6 +2007,7 @@ function featuresGateway(
         items: [],
       },
     ),
+    declaration: vi.fn(async () => responses.declaration ?? []),
     definition: vi.fn(async () => responses.definition ?? []),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
@@ -2056,6 +2058,7 @@ function runningStatus(
       codeAction: true,
       codeLens: true,
       completion: true,
+      declaration: true,
       definition: true,
       documentHighlight: true,
       documentLink: true,

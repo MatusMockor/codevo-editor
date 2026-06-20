@@ -5,6 +5,7 @@ export interface LanguageServerCapabilities {
   callHierarchy: boolean;
   codeAction: boolean;
   codeLens: boolean;
+  declaration: boolean;
   hover: boolean;
   completion: boolean;
   definition: boolean;
@@ -186,6 +187,10 @@ export function languageServerCapabilityLabels(
     labels.push("definition");
   }
 
+  if (capabilities.declaration) {
+    labels.push("declaration");
+  }
+
   if (capabilities.documentSymbol) {
     labels.push("document symbols");
   }
@@ -286,6 +291,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     callHierarchy: false,
     codeAction: false,
     codeLens: false,
+    declaration: false,
     completion: false,
     definition: false,
     documentHighlight: false,
