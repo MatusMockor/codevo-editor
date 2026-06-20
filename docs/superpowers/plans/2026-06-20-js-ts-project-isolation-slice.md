@@ -2125,4 +2125,8 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Hierarchy Same-Root Session Guard
 
-- Pending commit and push.
+- Committed and pushed as `3a70ef4a Guard JS TS hierarchy by session`.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
