@@ -2707,3 +2707,41 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `810bb272 Guard Laravel morphTo relation method chains`.
+
+## Slice: Laravel Relation Method Collection Chains - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `48e95808 Record Laravel morphTo relation method guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Verify relation-method semantic inference holds through collection-producing relation chains.
+
+### Implementation Choice
+
+- Extend the relation-method semantic fixture with `$this->posts()->get()` and `$this->posts()->get()->first()`.
+- Keep the slice focused on coverage unless the new assertions expose a resolver gap.
+
+### Acceptance Criteria
+
+- `$this->posts()->get()` infers `Illuminate\Database\Eloquent\Collection<int, App\Models\Post>`.
+- `$this->posts()->get()->first()` infers `App\Models\Post`.
+- Existing direct relation factory, fluent-through, and relation-method chain tests remain green.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- PENDING.

@@ -1082,6 +1082,8 @@ class Comment extends Model
         $selfComment = $relation->first();
         $constantPost = $this->hasMany(self::POST_MODEL)->firstOrFail();
         $relationMethodPost = $this->posts()->first();
+        $relationMethodPosts = $this->posts()->get();
+        $relationMethodCollectionPost = $this->posts()->get()->first();
         $throughTrack = $this->hasManyThrough(self::TRACK_MODEL, Playlist::class)
             ->whereNull('archived_at')
             ->first();
@@ -1112,6 +1114,8 @@ class Comment extends Model
         $selfComment->bod
         $constantPost->tit
         $relationMethodPost->tit
+        $relationMethodPosts->first()->tit
+        $relationMethodCollectionPost->tit
         $throughTrack->dur
         $documentedThroughTrack->dur
         $namedThroughTrack->dur
@@ -1230,6 +1234,24 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodPost->tit"),
         "relationMethodPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodPosts->first()->tit"),
+        "relationMethodPosts",
+        laravelOptions,
+      ),
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Post>",
+    );
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodCollectionPost->tit"),
+        "relationMethodCollectionPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
