@@ -2164,6 +2164,18 @@ class Comment
             ->hasMechanics();
     }
 
+    public function namedCarOwner(): HasOneThrough
+    {
+        return $this->through(relationship: 'cars')->has(relation: 'owner');
+    }
+
+    public function namedCarMechanics(): HasManyThrough
+    {
+        return $this
+            ->through(relationship: 'cars')
+            ->has(callback: fn () => true, relation: 'mechanics');
+    }
+
     public function unknownThrough(): HasOneThrough
     {
         return $this->through($cars)->has('owner');
@@ -2235,6 +2247,20 @@ class Mechanic
         declaringClassName: "Comment",
         kind: "property",
         name: "dynamicCarMechanics",
+        parameters: "",
+        returnType: "Mechanic",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "namedCarOwner",
+        parameters: "",
+        returnType: "Owner",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "namedCarMechanics",
         parameters: "",
         returnType: "Mechanic",
       },

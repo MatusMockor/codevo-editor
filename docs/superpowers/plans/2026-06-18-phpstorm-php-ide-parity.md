@@ -2508,3 +2508,48 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `1201efed Cover Laravel relation string helpers`.
+
+## Slice: Laravel Fluent Through Named Arguments - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `06c6d6ad Record App runtime label root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Infer fluent-through relation targets when Laravel PHP 8 named arguments are used in `through(...)` and `has(...)`.
+
+### Implementation Choice
+
+- Reuse the fluent-through relation path parser but read preferred named relation arguments before falling back to the first positional argument.
+- Support `relationship:` and `relation:` for `through(...)`, and `relation:` and `relationship:` for `has(...)`.
+- Add property-completion coverage for direct named arguments and mixed named arguments where `relation:` follows a callback.
+
+### Acceptance Criteria
+
+- `$this->through(relationship: 'cars')->has(relation: 'owner')` resolves the distant relation target.
+- `$this->through(relationship: 'cars')->has(callback: fn () => true, relation: 'mechanics')` ignores the non-relation callback argument and resolves the named relation.
+- Existing positional fluent-through relation parsing keeps working.
+- Focused and full PHP method-completion tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added a relation-name argument selector for fluent-through parser calls.
+- Preserved positional fallback for existing Laravel fluent-through relation strings.
+- Added regression coverage for named `through(...)` and named `has(...)` relation arguments.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "fluent through relation targets"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

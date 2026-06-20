@@ -1768,9 +1768,10 @@ function phpLaravelFluentThroughRelationPathFromExpression(
     }
 
     const throughRelationName = phpStringLiteralValue(
-      splitPhpParameterList(
+      phpLaravelRelationNameArgument(
         normalizedExpression.slice(throughOpenOffset + 1, throughCloseOffset),
-      )[0] ?? "",
+        ["relationship", "relation"],
+      ) ?? "",
     );
 
     if (!isPhpAttributeName(throughRelationName)) {
@@ -1798,9 +1799,10 @@ function phpLaravelFluentThroughRelationPathFromExpression(
     }
 
     const distantRelationName = phpStringLiteralValue(
-      splitPhpParameterList(
+      phpLaravelRelationNameArgument(
         normalizedExpression.slice(hasOpenOffset + 1, hasCloseOffset),
-      )[0] ?? "",
+        ["relation", "relationship"],
+      ) ?? "",
     );
 
     if (isPhpAttributeName(distantRelationName)) {
@@ -1809,6 +1811,21 @@ function phpLaravelFluentThroughRelationPathFromExpression(
   }
 
   return null;
+}
+
+function phpLaravelRelationNameArgument(
+  argumentsSource: string,
+  namedArguments: string[],
+): string | null {
+  for (const name of namedArguments) {
+    const value = phpNamedArgumentExpression(argumentsSource, name);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return phpFirstPositionalArgument(argumentsSource);
 }
 
 function phpLaravelDynamicFluentThroughRelationPathFromExpression(
