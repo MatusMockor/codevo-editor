@@ -557,6 +557,7 @@ class AlbumController
             ->applyScopes()
             ->first();
         $fromRelationHelpers = Album::query()
+            ->withWhereRelation('tracks', 'visible', true)
             ->whereDoesntHaveRelation('tracks', 'visible', true)
             ->orWhereMorphDoesntHaveRelation('commentable', [Post::class], 'visible', true)
             ->first();

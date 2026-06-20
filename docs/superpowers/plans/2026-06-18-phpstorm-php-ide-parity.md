@@ -2461,3 +2461,50 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `3089a697 Infer Laravel soft delete create restore models`.
+
+## Slice: Laravel Relation String Helper Coverage - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `63954a8d Record Laravel soft delete terminal commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Extend Laravel relation-name string detection and completion to newer relation helpers such as `withWhereRelation(...)`, `whereDoesntHaveRelation(...)`, and morph relation negative helpers.
+
+### Implementation Choice
+
+- Add the missing helpers to the relation-string method set in PHP navigation.
+- Add `withWhereRelation` to Laravel Eloquent builder method recognition so diagnostics and return inference agree with navigation.
+- Extend existing relation-string detection/completion tests and builder semantic coverage.
+
+### Acceptance Criteria
+
+- Relation strings in `withWhereRelation`, `whereDoesntHaveRelation`, `orWhereDoesntHaveRelation`, `whereMorphDoesntHaveRelation`, and `orWhereMorphDoesntHaveRelation` are detected.
+- Completion contexts are produced for incomplete relation strings in those helpers.
+- `withWhereRelation` preserves `Builder<Model>` inference.
+- Focused PHP navigation tests, relevant PHP domain tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added newer relation helpers to the PHP navigation relation-string method set.
+- Added `withWhereRelation` to Laravel Eloquent builder method recognition and builder-preserving inference coverage.
+- Extended relation-string detection and completion-context tests for `withWhereRelation`, negative relation helpers, and morph negative relation helpers.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts -t "Laravel relation strings"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending.

@@ -347,10 +347,15 @@ class CommentController
         Comment::query()->whereHas('attachments', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_visible', true);
         Comment::query()->orWhereRelation('visibleChildren', 'is_visible', true);
+        Comment::query()->withWhereRelation('eagerVisibleChildren', 'is_visible', true);
+        Comment::query()->whereDoesntHaveRelation('filteredChildren', 'is_visible', true);
+        Comment::query()->orWhereDoesntHaveRelation('orFilteredChildren', 'is_visible', true);
         Comment::query()->orDoesntHave('archivedChildren');
         Comment::withOnly('primaryParent')->first();
         $comment->without('hiddenChildren');
         Comment::query()->hasMorph('morphableComments', [Post::class]);
+        Comment::query()->whereMorphDoesntHaveRelation('morphFilteredChildren', [Post::class], 'is_visible', true);
+        Comment::query()->orWhereMorphDoesntHaveRelation('orMorphFilteredChildren', [Post::class], 'is_visible', true);
         Comment::query()->whereDoesntHaveMorph('ghostableComments', [Post::class], fn ($query) => $query);
         Comment::query()->orWhereDoesntHaveMorph('archivableComments', [Post::class], fn ($query) => $query);
     }
@@ -410,6 +415,33 @@ class CommentController
       relationName: "visibleChildren",
     });
     expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'eagerVisibleChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "withWhereRelation",
+      receiverExpression: "Comment::query()",
+      relationName: "eagerVisibleChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'filteredChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "whereDoesntHaveRelation",
+      receiverExpression: "Comment::query()",
+      relationName: "filteredChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'orFilteredChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "orWhereDoesntHaveRelation",
+      receiverExpression: "Comment::query()",
+      relationName: "orFilteredChildren",
+    });
+    expect(
       phpIdentifierContextAt(source, positionAfter(source, "'archivedChildren'")),
     ).toEqual({
       className: null,
@@ -444,6 +476,24 @@ class CommentController
       methodName: "hasMorph",
       receiverExpression: "Comment::query()",
       relationName: "morphableComments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'morphFilteredChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "whereMorphDoesntHaveRelation",
+      receiverExpression: "Comment::query()",
+      relationName: "morphFilteredChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'orMorphFilteredChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "orWhereMorphDoesntHaveRelation",
+      receiverExpression: "Comment::query()",
+      relationName: "orMorphFilteredChildren",
     });
     expect(
       phpIdentifierContextAt(source, positionAfter(source, "'ghostableComments'")),
@@ -546,10 +596,15 @@ class CommentController
         Comment::query()->whereHas('attachments', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_visible', true);
         Comment::query()->orWhereRelation('visibleChi', 'is_visible', true);
+        Comment::query()->withWhereRelation('eagerVisibleChi', 'is_visible', true);
+        Comment::query()->whereDoesntHaveRelation('filteredChi', 'is_visible', true);
+        Comment::query()->orWhereDoesntHaveRelation('orFilteredChi', 'is_visible', true);
         Comment::query()->orDoesntHave('archivedChi');
         Comment::withOnly('primaryPar');
         $comment->without('hiddenChi');
         Comment::query()->hasMorph('morphableCom', [Post::class]);
+        Comment::query()->whereMorphDoesntHaveRelation('morphFilteredChi', [Post::class], 'is_visible', true);
+        Comment::query()->orWhereMorphDoesntHaveRelation('orMorphFilteredChi', [Post::class], 'is_visible', true);
         Comment::query()->whereDoesntHaveMorph('ghostableCom', [Post::class], fn ($query) => $query);
         Comment::query()->orWhereDoesntHaveMorph('archivableCom', [Post::class], fn ($query) => $query);
     }
@@ -630,6 +685,39 @@ class CommentController
     expect(
       phpLaravelRelationStringCompletionContextAt(
         source,
+        cursorAfter(source, "withWhereRelation('eagerVisibleChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "withWhereRelation",
+      prefix: "eagerVisibleChi",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "whereDoesntHaveRelation('filteredChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "whereDoesntHaveRelation",
+      prefix: "filteredChi",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "orWhereDoesntHaveRelation('orFilteredChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "orWhereDoesntHaveRelation",
+      prefix: "orFilteredChi",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
         cursorAfter(source, "orDoesntHave('archivedChi"),
       ),
     ).toEqual({
@@ -669,6 +757,28 @@ class CommentController
       className: null,
       methodName: "hasMorph",
       prefix: "morphableCom",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "whereMorphDoesntHaveRelation('morphFilteredChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "whereMorphDoesntHaveRelation",
+      prefix: "morphFilteredChi",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "orWhereMorphDoesntHaveRelation('orMorphFilteredChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "orWhereMorphDoesntHaveRelation",
+      prefix: "orMorphFilteredChi",
       receiverExpression: "Comment::query()",
     });
     expect(
