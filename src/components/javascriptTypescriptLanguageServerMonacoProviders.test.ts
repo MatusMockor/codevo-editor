@@ -1321,6 +1321,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             character: 10,
             line: 0,
           },
+          textEdits: [
+            {
+              newText: ": Account",
+              range: range(0, 10, 0, 10),
+            },
+          ],
           tooltip: "Inferred type",
         },
         {
@@ -1362,6 +1368,12 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           character: 10,
           line: 0,
         },
+        textEdits: [
+          {
+            newText: ": Account",
+            range: range(0, 10, 0, 10),
+          },
+        ],
         tooltip: "Resolved inferred type",
       },
       prepareRename: {
@@ -1723,6 +1735,17 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             column: 11,
             lineNumber: 1,
           },
+          textEdits: [
+            {
+              range: expect.objectContaining({
+                endColumn: 11,
+                endLineNumber: 1,
+                startColumn: 11,
+                startLineNumber: 1,
+              }),
+              text: ": Account",
+            },
+          ],
           tooltip: "Inferred type",
         },
         {
@@ -1784,6 +1807,17 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(resolvedHint).toEqual(
       expect.objectContaining({
         label: ": Account",
+        textEdits: [
+          expect.objectContaining({
+            range: expect.objectContaining({
+              endColumn: 11,
+              endLineNumber: 1,
+              startColumn: 11,
+              startLineNumber: 1,
+            }),
+            text: ": Account",
+          }),
+        ],
         tooltip: "Resolved inferred type",
       }),
     );

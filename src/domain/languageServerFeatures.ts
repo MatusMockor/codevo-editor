@@ -132,6 +132,7 @@ export interface LanguageServerInlayHint {
   paddingLeft: boolean;
   paddingRight: boolean;
   position: LanguageServerPosition;
+  textEdits?: LanguageServerTextEdit[];
   tooltip: string | null;
 }
 

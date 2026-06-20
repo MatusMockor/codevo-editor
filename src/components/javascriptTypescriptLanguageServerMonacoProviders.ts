@@ -2729,6 +2729,13 @@ function toMonacoInlayHint(
       column: hint.position.character + 1,
       lineNumber: hint.position.line + 1,
     },
+    ...(hint.textEdits?.length
+      ? {
+          textEdits: hint.textEdits.map((edit) =>
+            toMonacoTextEdit(monaco, edit),
+          ),
+        }
+      : {}),
     tooltip: hint.tooltip || undefined,
   };
 

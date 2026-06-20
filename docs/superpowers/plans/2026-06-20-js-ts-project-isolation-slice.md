@@ -1334,3 +1334,53 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Inlay Hint Text Edits
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3e00071 Update PHP parity plan status`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- LSP inlay hints can carry `textEdits` for default hint application.
+- Monaco supports inlay hint `textEdits` and applies them through its built-in inlay hint interaction.
+- The editor already maps normal formatting/code-action/completion text edits, but inlay hints currently drop this metadata.
+
+### Implementation Choice
+
+- Extend the shared inlay hint model with optional `textEdits`.
+- Parse and serialize inlay hint `textEdits` in Rust using the existing `LanguageServerTextEdit` shape.
+- Map inlay text edits to Monaco with the existing root-guarded JS/TS inlay provider and shared text-edit mapper.
+
+### Acceptance Criteria
+
+- Safe inlay hint `textEdits` are preserved from LSP parse through Monaco provider output.
+- Inlay hint resolve serializes existing `textEdits` back to the language server.
+- Stale inlay hint resolve behavior after project-tab switches remains unchanged.
+- Focused Rust and provider tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Inlay Hint Text Edits
+
+- Added optional `textEdits` to the shared JS/TS inlay hint model.
+- Rust now parses inlay hint `textEdits` and serializes them for `inlayHint/resolve`.
+- Monaco inlay hints now receive mapped text edits through the existing text-edit mapper.
+- Added Rust and provider coverage for parse, serialize, and Monaco mapping.
+
+### Verification: JS/TS Inlay Hint Text Edits
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml inlay_hint --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "maps references, rename edits|stale TypeScript lazy resolves"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Inlay Hint Text Edits
+
+- Pending commit.

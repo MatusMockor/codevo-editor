@@ -391,6 +391,8 @@ pub struct LanguageServerInlayHint {
     pub padding_left: bool,
     pub padding_right: bool,
     pub position: LanguageServerPosition,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_edits: Vec<LanguageServerTextEdit>,
     pub tooltip: Option<String>,
 }
 
@@ -1766,6 +1768,11 @@ fn parse_inlay_hint_item(value: &Value) -> Result<LanguageServerInlayHint, Strin
             .and_then(Value::as_bool)
             .unwrap_or(false),
         position,
+        text_edits: value
+            .get("textEdits")
+            .and_then(Value::as_array)
+            .map(|items| parse_text_edits(items).unwrap_or_default())
+            .unwrap_or_default(),
         tooltip: value.get("tooltip").and_then(markup_to_string),
     })
 }
@@ -2610,6 +2617,19 @@ mod tests {
                 line: 2,
                 character: 4,
             },
+            text_edits: vec![LanguageServerTextEdit {
+                range: LanguageServerRange {
+                    start: LanguageServerPosition {
+                        line: 2,
+                        character: 4,
+                    },
+                    end: LanguageServerPosition {
+                        line: 2,
+                        character: 4,
+                    },
+                },
+                new_text: ": User".to_string(),
+            }],
             tooltip: None,
         };
         let request = factory.resolve_inlay_hint(&hint);
@@ -2623,6 +2643,7 @@ mod tests {
             "_typescript.applyCompletionCodeAction"
         );
         assert!(request.params["label"][0].get("label").is_none());
+        assert_eq!(request.params["textEdits"][0]["newText"], ": User");
         assert_eq!(request.params["position"]["line"], 2);
     }
 
@@ -3509,6 +3530,15 @@ mod tests {
                 "kind": 1,
                 "data": { "hintId": 1 },
                 "paddingLeft": true,
+                "textEdits": [
+                    {
+                        "range": {
+                            "start": { "line": 2, "character": 10 },
+                            "end": { "line": 2, "character": 10 }
+                        },
+                        "newText": ": User"
+                    }
+                ],
                 "tooltip": { "kind": "markdown", "value": "Inferred type" }
             },
             {
@@ -3546,6 +3576,22 @@ mod tests {
         assert_eq!(hints[0].data, Some(json!({ "hintId": 1 })));
         assert_eq!(hints[0].kind, Some(1));
         assert!(hints[0].padding_left);
+        assert_eq!(
+            hints[0].text_edits,
+            vec![LanguageServerTextEdit {
+                range: LanguageServerRange {
+                    start: LanguageServerPosition {
+                        line: 2,
+                        character: 10,
+                    },
+                    end: LanguageServerPosition {
+                        line: 2,
+                        character: 10,
+                    },
+                },
+                new_text: ": User".to_string(),
+            }]
+        );
         assert_eq!(hints[0].tooltip.as_deref(), Some("Inferred type"));
         assert_eq!(
             hints[1].label,
