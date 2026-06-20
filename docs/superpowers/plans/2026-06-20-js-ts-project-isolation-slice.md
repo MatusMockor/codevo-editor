@@ -2024,3 +2024,49 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Diagnostic Code Description URI Isolation
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0a96e386 Record JS TS navigation session guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Diagnostic isolation already filters primary diagnostic URIs, `relatedInformation`, and diagnostic `data` payload paths.
+- `diagnostic.codeDescription.href` is another URI-bearing diagnostic field and was emitted untouched.
+- A language server could send a `file://` code-description URL outside the session root, leaking a cross-workspace local path through diagnostics.
+
+### Implementation Choice
+
+- Preserve web and other non-file documentation links.
+- Clear `codeDescription.href` only when it is a `file://` URI outside the active language-server workspace root.
+- Extend the existing diagnostic related-information/data isolation regression test to cover unsafe file href removal and safe HTTPS href preservation.
+
+### Acceptance Criteria
+
+- Diagnostics keep safe HTTPS `codeDescription.href` values.
+- Diagnostics drop outside-workspace `file://` code-description href values.
+- Existing diagnostic related-info/data filtering behavior remains unchanged.
+- Focused diagnostics tests, serial Rust lib tests, and `git diff --check` pass.
+
+### Completed Slice: Diagnostic Code Description URI Isolation
+
+- Added backend diagnostic filtering for outside-workspace `file://` `codeDescription.href` values.
+- Added regression coverage for removing unsafe local diagnostic documentation links while preserving safe web links.
+
+### Verification: Diagnostic Code Description URI Isolation
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml publish_diagnostics_filters_related_information_and_data_outside_session_root --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml parses_publish_diagnostics_notification --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `git diff --check`
+
+### Commit Status: Diagnostic Code Description URI Isolation
+
+- Pending commit and push.

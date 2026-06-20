@@ -1970,6 +1970,16 @@ fn filter_diagnostic_event_to_workspace(
                 || is_file_uri_in_workspace(workspace_root, &related.uri)
         });
 
+        if diagnostic
+            .code_description_href
+            .as_ref()
+            .is_some_and(|href| {
+                href.starts_with("file://") && !is_file_uri_in_workspace(workspace_root, href)
+            })
+        {
+            diagnostic.code_description_href = None;
+        }
+
         if diagnostic.data.as_ref().is_some_and(|data| {
             ensure_diagnostic_json_payload_paths_in_workspace(workspace_root, data, false).is_err()
         }) {
@@ -3435,6 +3445,9 @@ mod tests {
                             "severity": 2,
                             "source": "tsserver",
                             "message": "Issue with unsafe metadata",
+                            "codeDescription": {
+                                "href": file_uri(&outside.join("docs/unsafe.html"))
+                            },
                             "data": {
                                 "uri": file_uri(&outside.join("src/FixTarget.ts"))
                             },
@@ -3469,6 +3482,9 @@ mod tests {
                             "severity": 3,
                             "source": "tsserver",
                             "message": "Issue with safe metadata",
+                            "codeDescription": {
+                                "href": "https://typescript.example/docs/safe"
+                            },
                             "data": {
                                 "file": path_string(&root.join("src/SafeFix.ts"))
                             }
@@ -3485,11 +3501,16 @@ mod tests {
 
         assert_eq!(event.uri, file_uri(&source_path));
         assert_eq!(event.diagnostics.len(), 2);
+        assert_eq!(event.diagnostics[0].code_description_href, None);
         assert_eq!(event.diagnostics[0].data, None);
         assert_eq!(event.diagnostics[0].related_information.len(), 1);
         assert_eq!(
             event.diagnostics[0].related_information[0].uri,
             file_uri(&inside_related_path)
+        );
+        assert_eq!(
+            event.diagnostics[1].code_description_href.as_deref(),
+            Some("https://typescript.example/docs/safe")
         );
         assert_eq!(
             event.diagnostics[1]
