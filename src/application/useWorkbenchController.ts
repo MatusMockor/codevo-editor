@@ -231,6 +231,7 @@ import {
 import {
   phpClassPathCandidates,
   phpCurrentTypeKind,
+  phpDocMethodPositionOrNull,
   phpExtendsClassName,
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
@@ -8986,7 +8987,9 @@ export function useWorkbenchController(
         for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
           try {
             const content = await readNavigationFileContent(path);
-            const position = phpMethodPositionOrNull(content, methodName);
+            const position =
+              phpMethodPositionOrNull(content, methodName) ??
+              phpDocMethodPositionOrNull(content, methodName);
 
             if (position) {
               return openNavigationTarget(path, position, `${methodName}()`);

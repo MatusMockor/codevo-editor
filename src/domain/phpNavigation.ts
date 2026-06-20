@@ -322,6 +322,26 @@ export function phpMethodPositionOrNull(
   );
 }
 
+export function phpDocMethodPositionOrNull(
+  source: string,
+  methodName: string,
+): EditorPosition | null {
+  const pattern = new RegExp(
+    String.raw`@method\s+(?:static\s+)?(?:[^\s(]+\s+)?` +
+      escapeRegExp(methodName) +
+      String.raw`\s*\(`,
+    "g",
+  );
+
+  for (const match of source.matchAll(pattern)) {
+    const methodOffset = (match.index ?? 0) + match[0].lastIndexOf(methodName);
+
+    return editorPositionAtOffset(source, methodOffset);
+  }
+
+  return null;
+}
+
 export function phpImplementationDeclarationContextAt(
   source: string,
   position: EditorPosition,

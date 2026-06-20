@@ -632,3 +632,48 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: PHPDoc Magic Method Navigation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `546fbe7 Update PHP parity plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let Cmd+B / Go To Definition navigate to PHPDoc `@method` magic method declarations when no real PHP method body exists.
+
+### Implementation Choice
+
+- Keep real method navigation first, then fall back to a PHPDoc `@method` position resolver.
+- Reuse the existing class hierarchy navigation path so traits, mixins, parents, interfaces, and framework-bound concretes inherit the fallback without another navigation pipeline.
+- Return the cursor target at the magic method name itself, matching normal method declaration reveal behavior.
+
+### Acceptance Criteria
+
+- Static PHPDoc magic calls such as `CommentFactory::fromNamed()` open the declaring `@method static` line.
+- Missing magic methods remain unresolved.
+- Relevant parser and preview navigation tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added `phpDocMethodPositionOrNull` to locate PHPDoc `@method` declarations.
+- Wired direct PHP method navigation to fall back from real methods to PHPDoc magic methods while reusing the existing class hierarchy traversal.
+- Added parser and workbench preview coverage for `@method static` Go To Definition.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts -t "locates PHPDoc magic method definitions"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "opens PHPDoc magic method definitions"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

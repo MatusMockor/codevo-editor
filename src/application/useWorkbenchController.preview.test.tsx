@@ -12883,6 +12883,82 @@ class Builder
     });
   });
 
+  it("opens PHPDoc magic method definitions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const factoryPath = "/workspace/app/Factories/CommentFactory.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Factories\\CommentFactory;
+
+class CommentController
+{
+    public function store(): void
+    {
+        CommentFactory::fromNamed('draft');
+    }
+}
+`;
+    const factorySource = `<?php
+namespace App\\Factories;
+
+/**
+ * @method static object fromNamed(string $name)
+ */
+class CommentFactory
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === factoryPath) {
+          return factorySource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::fromNamed"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: 26,
+        lineNumber: 5,
+      },
+    });
+  });
+
   it("falls back to verified PHP filename lookup before the index is warm", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

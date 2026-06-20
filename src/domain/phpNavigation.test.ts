@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   phpClassPathCandidates,
+  phpDocMethodPositionOrNull,
   phpExtendsClassName,
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
@@ -68,6 +69,28 @@ class CommentController
       receiverExpression: "$request",
       variableName: "request",
     });
+  });
+
+  it("locates PHPDoc magic method definitions", () => {
+    const source = `<?php
+/**
+ * @method static object fromNamed(string $name)
+ * @method publish(bool $quietly = false)
+ */
+class CommentFactory
+{
+}
+`;
+
+    expect(phpDocMethodPositionOrNull(source, "fromNamed")).toEqual({
+      column: 26,
+      lineNumber: 3,
+    });
+    expect(phpDocMethodPositionOrNull(source, "publish")).toEqual({
+      column: 12,
+      lineNumber: 4,
+    });
+    expect(phpDocMethodPositionOrNull(source, "missing")).toBeNull();
   });
 
   it("detects chained method calls under the cursor", () => {
