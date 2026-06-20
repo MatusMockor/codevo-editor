@@ -576,6 +576,9 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
             }),
         };
 
+        request.params["capabilities"]["textDocument"]["callHierarchy"] = json!({
+            "dynamicRegistration": false,
+        });
         request.params["capabilities"]["textDocument"]["declaration"] = json!({
             "dynamicRegistration": false,
             "linkSupport": true,
@@ -868,6 +871,10 @@ mod tests {
         assert_eq!(
             request.params["capabilities"]["textDocument"]["signatureHelp"]["contextSupport"],
             true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["callHierarchy"]["dynamicRegistration"],
+            false
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["declaration"]["dynamicRegistration"],

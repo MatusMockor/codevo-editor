@@ -993,7 +993,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Declaration Navigation
 
-- Pending commit.
+- Committed and pushed as `e080053 Add JS TS declaration navigation`.
 - Included files:
   - `src-tauri/src/lib.rs`
   - `src-tauri/src/lsp.rs`
@@ -1012,4 +1012,67 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
   - `src/infrastructure/tauriLanguageServerFeaturesGateway.ts`
   - `src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Call Hierarchy Capability Advertisement
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e080053 Add JS TS declaration navigation`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Choice
+
+- Backend explorer Aquinas completed a read-only scan and identified that `typescript-language-server` gates `callHierarchyProvider` on the client advertising `textDocument.callHierarchy`.
+- The main agent will integrate this slice directly because the implementation is intentionally limited to `src-tauri/src/lsp.rs` and the explorer already provided the backend evidence.
+
+### Why This Slice
+
+- JS/TS call hierarchy UI and gateway paths already exist, including prepare, incoming, and outgoing calls.
+- Runtime capability parsing already reads `callHierarchyProvider`.
+- The TypeScript language server does not advertise call hierarchy unless the initialize request includes `textDocument.callHierarchy`.
+- Without this capability advertisement, the existing call hierarchy UI path remains hidden for TypeScript projects even though the backend request pipeline is present.
+
+### Implementation Choice
+
+- Add `textDocument.callHierarchy.dynamicRegistration = false` to the JS/TS initialize capabilities.
+- Keep the setting outside the large `json!` macro payload, matching the declaration capability approach and avoiding macro recursion growth.
+- Add focused assertion coverage in `javascript_typescript_workspace_builds_typescript_language_server_plan`.
+- Do not add type hierarchy to this slice; local `typescript-language-server` code shows a clear call hierarchy gate but no equivalent type hierarchy capability gate.
+
+### Acceptance Criteria
+
+- JS/TS initialize request advertises `textDocument.callHierarchy`.
+- Existing JS/TS call hierarchy command/gateway path can become visible when the server advertises `callHierarchyProvider`.
+- Focused Rust capability/request tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: JS/TS Call Hierarchy Capability Advertisement
+
+- JS/TS initialize capabilities now advertise `textDocument.callHierarchy`.
+- The setting is applied after the large initialize JSON payload, matching the declaration capability approach and avoiding additional `serde_json::json!` macro nesting.
+- Existing call hierarchy gateway, command palette, request factory, parser, and workspace filtering paths remain unchanged and can now be enabled by `typescript-language-server` when TS version support is present.
+
+### Verification: JS/TS Call Hierarchy Capability Advertisement
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml call_hierarchy --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml capability_values_are_normalized --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: JS/TS Call Hierarchy Capability Advertisement
+
+- Pending commit.
+- Included files:
+  - `src-tauri/src/lsp.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
