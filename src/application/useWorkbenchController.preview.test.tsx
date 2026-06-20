@@ -3656,6 +3656,47 @@ describe("useWorkbenchController preview tabs", () => {
     ]);
   });
 
+  it("notifies the JavaScript TypeScript service when package metadata is created", async () => {
+    const newPath = "/workspace/package.json";
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 26,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("package.json");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.new",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      dependencies.workspaceGateways.files.createTextFile,
+    ).toHaveBeenCalledWith(newPath);
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+    ).toHaveBeenCalledWith("/workspace", [
+      {
+        changeType: "created",
+        path: newPath,
+      },
+    ]);
+  });
+
   it("closes a JS TS document before notifying the service that its file was deleted", async () => {
     const path = "/workspace/src/User.ts";
     const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();

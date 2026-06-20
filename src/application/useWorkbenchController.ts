@@ -124,6 +124,7 @@ import {
   cacheLanguageServerRuntimeStatus,
   removeCachedLanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntimeStatusCache";
+import { isJavaScriptTypeScriptWatchedPath } from "../domain/javascriptTypeScriptWatchedFiles";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import {
@@ -4409,7 +4410,7 @@ export function useWorkbenchController(
       }
 
       const relevantChanges = changes.filter((change) =>
-        isJavaScriptTypeScriptPath(change.path),
+        isJavaScriptTypeScriptWatchedPath(change.path),
       );
 
       if (relevantChanges.length === 0) {
@@ -13801,12 +13802,6 @@ function javaScriptTypeScriptLanguageServerConfiguration(
       includeCompletionsForModuleExports: autoImportsEnabled,
     },
   };
-}
-
-function isJavaScriptTypeScriptPath(path: string): boolean {
-  const language = detectLanguage(path);
-
-  return language === "javascript" || language === "typescript";
 }
 
 function cachedWorkspaceHasDirtyDocuments(
