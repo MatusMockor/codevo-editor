@@ -2069,4 +2069,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Diagnostic Code Description URI Isolation
 
-- Pending commit and push.
+- Committed and pushed as `9b049395 Filter diagnostic code description file links`.
+- Included files:
+  - `src-tauri/src/lsp_session.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
