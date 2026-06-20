@@ -2130,3 +2130,54 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Workspace Edit Non-File URI Rejection
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `7015f90c Record JS TS hierarchy session guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- A read-only backend scan identified that server-initiated workspace edits rejected outside `file://` paths but accepted arbitrary non-file URI schemes.
+
+### Why This Slice
+
+- `workspace/applyEdit` emits server-initiated workspace edit events after validation and acknowledges success/failure to the language server.
+- The existing guard rejected outside `file://` targets but treated `untitled:`, `https:`, and other non-file URIs as safe.
+- The editor's workspace model applies file-backed edits, so accepting non-file edit targets is inconsistent with root/session isolation and response-side workspace edit filtering.
+
+### Implementation Choice
+
+- Keep general LSP URI guards permissive where web/document links can be valid.
+- Add dedicated workspace-edit URI guards that require `file://` and then require the URI path to stay inside the active workspace root.
+- Cover both direct Tauri workspace edit guards and server-initiated `workspace/applyEdit` requests.
+
+### Acceptance Criteria
+
+- In-root `file://` workspace edit targets still pass.
+- Outside-root `file://` workspace edit targets still fail.
+- Non-file workspace edit targets fail before any workspace edit event is emitted.
+- Focused workspace edit guard tests, serial Rust lib tests, and `git diff --check` pass.
+
+### Completed Slice: Workspace Edit Non-File URI Rejection
+
+- Added dedicated workspace-edit URI validation for Tauri guards and `workspace/applyEdit`.
+- Rejected non-file URI edit targets before acknowledging server-initiated workspace edits.
+- Added regression coverage for non-file `changes` keys and file-operation URIs.
+
+### Verification: Workspace Edit Non-File URI Rejection
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_workspace_edit_guard_rejects_paths_outside_workspace_root --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml workspace_apply_edit_requests_reject_paths_outside_workspace --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `git diff --check`
+
+### Commit Status: Workspace Edit Non-File URI Rejection
+
+- Pending commit and push.

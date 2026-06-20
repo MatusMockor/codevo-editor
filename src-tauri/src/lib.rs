@@ -500,16 +500,24 @@ fn ensure_lsp_workspace_edit_paths_in_workspace(
     edit: &LanguageServerWorkspaceEdit,
 ) -> Result<(), String> {
     for uri in edit.changes.keys() {
-        ensure_lsp_uri_in_workspace(root_path, uri)?;
+        ensure_lsp_workspace_edit_uri_in_workspace(root_path, uri)?;
     }
 
     for operation in &edit.file_operations {
         for uri in workspace_file_operation_uris(operation) {
-            ensure_lsp_uri_in_workspace(root_path, uri)?;
+            ensure_lsp_workspace_edit_uri_in_workspace(root_path, uri)?;
         }
     }
 
     Ok(())
+}
+
+fn ensure_lsp_workspace_edit_uri_in_workspace(root_path: &str, uri: &str) -> Result<(), String> {
+    if !uri.starts_with("file://") {
+        return Err("Workspace edit URI must be a file URI.".to_string());
+    }
+
+    ensure_lsp_uri_in_workspace(root_path, uri)
 }
 
 fn workspace_file_operation_uris(operation: &LanguageServerWorkspaceFileOperation) -> Vec<&str> {
@@ -3682,6 +3690,8 @@ mod tests {
         inside_changes.insert(file_uri(&root.join("src/App.ts")), Vec::new());
         let mut outside_changes = BTreeMap::new();
         outside_changes.insert(file_uri(&outside.join("Secret.ts")), Vec::new());
+        let mut non_file_changes = BTreeMap::new();
+        non_file_changes.insert("untitled:Scratch.ts".to_string(), Vec::new());
         let inside_operations = vec![
             LanguageServerWorkspaceFileOperation::Create {
                 uri: file_uri(&root.join("src/Created.ts")),
@@ -3700,6 +3710,10 @@ mod tests {
         let outside_operations = vec![LanguageServerWorkspaceFileOperation::Rename {
             old_uri: file_uri(&root.join("src/Old.ts")),
             new_uri: file_uri(&outside.join("Secret.ts")),
+            options: None,
+        }];
+        let non_file_operations = vec![LanguageServerWorkspaceFileOperation::Create {
+            uri: "https://example.test/Created.ts".to_string(),
             options: None,
         }];
 
@@ -3724,6 +3738,22 @@ mod tests {
             &LanguageServerWorkspaceEdit {
                 changes: BTreeMap::new(),
                 file_operations: outside_operations,
+            }
+        )
+        .is_err());
+        assert!(ensure_lsp_workspace_edit_paths_in_workspace(
+            &path_string(&root),
+            &LanguageServerWorkspaceEdit {
+                changes: non_file_changes,
+                file_operations: Vec::new(),
+            }
+        )
+        .is_err());
+        assert!(ensure_lsp_workspace_edit_paths_in_workspace(
+            &path_string(&root),
+            &LanguageServerWorkspaceEdit {
+                changes: BTreeMap::new(),
+                file_operations: non_file_operations,
             }
         )
         .is_err());
