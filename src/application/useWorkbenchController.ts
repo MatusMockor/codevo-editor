@@ -185,6 +185,7 @@ import {
   phpLaravelEloquentBuilderModelTypeCandidate,
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelModelAttributeTargetFromSource,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
   phpLaravelRelationPropertyCompletionsFromSource,
   phpLaravelRelationTargetClassNameFromExpression,
@@ -9059,6 +9060,52 @@ export function useWorkbenchController(
     ],
   );
 
+  const openPhpLaravelModelAttributeTarget = useCallback(
+    async (className: string, attributeName: string): Promise<boolean> => {
+      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+
+      if (!normalizedClassName) {
+        return false;
+      }
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        try {
+          const content = await readNavigationFileContent(path);
+          const target = phpLaravelModelAttributeTargetFromSource(
+            content,
+            attributeName,
+          );
+
+          if (!target) {
+            continue;
+          }
+
+          return openNavigationTarget(
+            path,
+            target.position,
+            target.attributeName,
+          );
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      openNavigationTarget,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+      isLaravelFrameworkActive,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpMethodCallDefinition = useCallback(
     async (
       context: Extract<PhpIdentifierContext, { kind: "methodCall" }>,
@@ -9192,6 +9239,16 @@ export function useWorkbenchController(
         return true;
       }
 
+      if (
+        propertyExists &&
+        (await openPhpLaravelModelAttributeTarget(
+          receiverType,
+          context.propertyName,
+        ))
+      ) {
+        return true;
+      }
+
       setMessage(
         `No relation method found for ${receiverType}::${context.propertyName}().`,
       );
@@ -9200,6 +9257,7 @@ export function useWorkbenchController(
     [
       activeDocument,
       openDirectPhpMethodTarget,
+      openPhpLaravelModelAttributeTarget,
       phpClassHierarchyHasProperty,
       resolvePhpExpressionType,
     ],

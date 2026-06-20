@@ -8323,6 +8323,10 @@ use Illuminate\\Database\\Eloquent\\Model;
 
 class Comment extends Model
 {
+    protected $fillable = [
+        'content',
+    ];
+
     public function parent()
     {
         return $this->belongsTo(self::class, 'parent_id');
@@ -8344,6 +8348,7 @@ class CommentController
     public function show(Comment $comment): void
     {
         echo $comment->parent;
+        echo $comment->content;
     }
 }
 `;
@@ -8392,6 +8397,32 @@ class CommentController
       position: {
         column: 21,
         lineNumber: lineNumberOf(commentModelSource, "parent"),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->content"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(commentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentPath,
+      position: {
+        column: 10,
+        lineNumber: lineNumberOf(commentModelSource, "'content'"),
       },
     });
   });

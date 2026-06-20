@@ -18,6 +18,7 @@ import {
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelMethodCallReturnTypeFromSource,
+  phpLaravelModelAttributeTargetFromSource,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
 import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
@@ -914,6 +915,50 @@ class Comment
     expect(
       phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereMissing"),
     ).toBeNull();
+  });
+
+  it("locates Laravel model source attributes", () => {
+    const source = `<?php
+class Comment
+{
+    protected $fillable = [
+        'content',
+    ];
+
+    protected array $casts = [
+        'is_pinned' => 'bool',
+    ];
+
+    protected $appends = [
+        'display_name',
+    ];
+}
+`;
+
+    expect(phpLaravelModelAttributeTargetFromSource(source, "content")).toEqual({
+      attributeName: "content",
+      position: {
+        column: 10,
+        lineNumber: 5,
+      },
+    });
+    expect(phpLaravelModelAttributeTargetFromSource(source, "is_pinned")).toEqual({
+      attributeName: "is_pinned",
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+    expect(
+      phpLaravelModelAttributeTargetFromSource(source, "display_name"),
+    ).toEqual({
+      attributeName: "display_name",
+      position: {
+        column: 10,
+        lineNumber: 13,
+      },
+    });
+    expect(phpLaravelModelAttributeTargetFromSource(source, "missing")).toBeNull();
   });
 
   it("recognizes compound and orWhere Laravel dynamic where attributes", () => {

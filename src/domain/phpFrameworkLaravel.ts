@@ -1075,6 +1075,33 @@ export function phpLaravelDynamicWhereAttributeTargetFromSource(
   };
 }
 
+export function phpLaravelModelAttributeTargetFromSource(
+  source: string,
+  attributeName: string,
+): PhpLaravelDynamicWhereAttributeTarget | null {
+  const attributeLookup = attributeName.trim().toLowerCase();
+
+  if (!attributeLookup) {
+    return null;
+  }
+
+  const firstOccurrence = [
+    ...phpLaravelDynamicWhereAttributeOccurrences(source),
+    ...phpArrayStringValueOccurrences(source, "appends"),
+  ].find(
+    (occurrence) => occurrence.attributeName.toLowerCase() === attributeLookup,
+  );
+
+  if (!firstOccurrence) {
+    return null;
+  }
+
+  return {
+    attributeName: firstOccurrence.attributeName,
+    position: editorPositionAtOffset(source, firstOccurrence.attributeOffset),
+  };
+}
+
 export function isLaravelDynamicWhereMethodForSource(
   source: string,
   methodName: string,
