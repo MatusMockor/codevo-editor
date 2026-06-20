@@ -3561,6 +3561,74 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("does not let a rootless JavaScript and TypeScript status probe suppress autostart", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const rootlessRunningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 65,
+    };
+    const rootedRunningStatus: LanguageServerRuntimeStatus = {
+      ...rootlessRunningStatus,
+      rootPath: "/workspace",
+      sessionId: 66,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => rootlessRunningStatus),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => rootedRunningStatus),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      };
+
+    renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      javaScriptTypeScriptLanguageServerRuntimeGateway.getStatus,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(
+      javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
+      codeLensEnabled: false,
+      inlayHintsEnabled: true,
+      typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
+    });
+  });
+
   it("starts JavaScript and TypeScript language service lazily for inferred workspaces", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
@@ -4979,6 +5047,7 @@ describe("useWorkbenchController preview tabs", () => {
       javaScriptTypeScriptInitialRuntimeStatus: {
         kind: "crashed",
         message: "tsserver crashed",
+        rootPath: "/workspace",
       },
       javaScriptTypeScriptLanguageServerPlan,
       workspaceSettings: {

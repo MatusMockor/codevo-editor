@@ -3621,3 +3621,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Runtime Gateway Direct Root Strictness
 
 - Committed as `9e0742a0 Reject rootless direct runtime statuses`.
+
+## Next Slice: JS/TS Autostart Probe Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f65e08b8 Record runtime gateway direct root strictness commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The frontend runtime gateway now rejects rootless direct runtime statuses.
+- The workbench JS/TS autostart probe still treated a rootless `getStatus()` result as belonging to the requested root through a local fallback.
+- If a future gateway or test double returned rootless `running`, autostart could incorrectly decide the active workspace already had a running TypeScript service.
+
+### Implementation Choice
+
+- Preserve `latestStatusRoot` as `null` when a probe response has no explicit root.
+- Use workspace-aware active/crashed status helpers for autostart probe decisions.
+- Add preview coverage proving a rootless probe result does not suppress JS/TS autostart.
+
+### Acceptance Criteria
+
+- Rootless JS/TS `getStatus()` probe responses do not suppress autostart.
+- Rooted active or crashed statuses for the requested workspace still suppress autostart as before.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: JS/TS Autostart Probe Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rootless JavaScript and TypeScript status probe"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rootless JavaScript and TypeScript status probe|does not restart a crashed JavaScript"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Autostart Probe Root Guard
+
+- PENDING.

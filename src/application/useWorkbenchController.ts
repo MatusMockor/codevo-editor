@@ -12338,7 +12338,7 @@ export function useWorkbenchController(
 
         if (probedStatus) {
           latestStatus = probedStatus;
-          latestStatusRoot = probedStatus.rootPath ?? requestedRoot;
+          latestStatusRoot = probedStatus.rootPath ?? null;
         }
       }
 
@@ -12360,11 +12360,23 @@ export function useWorkbenchController(
         return;
       }
 
-      if (isLanguageServerActive(latestStatus)) {
+      if (
+        isLanguageServerActiveForWorkspace(
+          latestStatus,
+          latestStatusRoot,
+          requestedRoot,
+        )
+      ) {
         return;
       }
 
-      if (latestStatus?.kind === "crashed") {
+      if (
+        isCrashedLanguageServerForWorkspace(
+          latestStatus,
+          latestStatusRoot,
+          requestedRoot,
+        )
+      ) {
         return;
       }
 
