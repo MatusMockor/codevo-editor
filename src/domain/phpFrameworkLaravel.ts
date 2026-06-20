@@ -486,6 +486,27 @@ export function phpLaravelCollectionModelTypeCandidate(
   return phpLaravelGenericModelTypeCandidate(typeName);
 }
 
+export function phpLaravelRepositoryConventionModelTypeFromCarrierReturnType(
+  source: string,
+  receiverType: string | null,
+  returnType: string | null,
+  carrierKind: "builder" | "collection",
+): string | null {
+  const acceptedCarriers =
+    carrierKind === "builder"
+      ? ["builder", "illuminate\\database\\eloquent\\builder"]
+      : [
+          "collection",
+          "illuminate\\database\\eloquent\\collection",
+          "illuminate\\support\\collection",
+          "illuminate\\support\\lazycollection",
+        ];
+
+  return phpLaravelGenericCarrierMatches(source, returnType, acceptedCarriers)
+    ? phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType)
+    : null;
+}
+
 export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
   source: string,
   methodName: string,
@@ -532,6 +553,11 @@ export function phpLaravelMethodCallReturnTypeFromSource(
       receiverType,
     ) ??
     phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+    ) ??
+    phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
       source,
       methodName,
       receiverType,
@@ -1390,6 +1416,57 @@ function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
 
   return conventionModelType
     ? phpLaravelEloquentBuilderType(conventionModelType)
+    : null;
+}
+
+function phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+): string | null {
+  if (!isLaravelRepositoryType(receiverType)) {
+    return null;
+  }
+
+  const receiverClassName = phpLaravelResolvedClassName(source, receiverType ?? "");
+  const returnTypes = [
+    ...phpLaravelRepositoryDeclaredMethodReturnTypes(
+      source,
+      methodName,
+      receiverClassName,
+    ),
+    ...phpLaravelRepositoryPhpDocMethodReturnTypes(
+      source,
+      methodName,
+      receiverClassName,
+    ),
+  ];
+  const genericModelType = returnTypes
+    .map((returnType) =>
+      phpLaravelResolvedModelTypeCandidate(
+        source,
+        phpLaravelCollectionModelTypeCandidate(source, returnType),
+      ),
+    )
+    .find((modelType): modelType is string => Boolean(modelType));
+
+  if (genericModelType) {
+    return phpLaravelEloquentBuilderCollectionType(genericModelType, "get");
+  }
+
+  const conventionModelType = returnTypes.some((returnType) =>
+    phpLaravelGenericCarrierMatches(source, returnType, [
+      "collection",
+      "illuminate\\database\\eloquent\\collection",
+      "illuminate\\support\\collection",
+      "illuminate\\support\\lazycollection",
+    ]),
+  )
+    ? phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType)
+    : null;
+
+  return conventionModelType
+    ? phpLaravelEloquentBuilderCollectionType(conventionModelType, "get")
     : null;
 }
 

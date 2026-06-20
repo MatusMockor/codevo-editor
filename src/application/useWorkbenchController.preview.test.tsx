@@ -9885,7 +9885,6 @@ class AlbumRepository
     /** @return Builder<Album> */
     public function query(): Builder {}
 
-    /** @return Collection<int, Album> */
     public function matching(): Collection {}
 }
 `;

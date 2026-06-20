@@ -198,6 +198,38 @@ class AlbumRepository
     ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
   });
 
+  it("infers Laravel repository collection generics from repository naming conventions", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use Illuminate\\Database\\Eloquent\\Collection;
+
+class AlbumRepository
+{
+    public function matching(): Collection
+    {
+    }
+}
+`;
+
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "matching",
+        "AlbumRepository",
+        "$this->matching()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "first",
+        "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+        null,
+      ),
+    ).toBe("App\\Models\\Album");
+  });
+
   it("infers Laravel relation factory and relation chain return types", () => {
     const source = `<?php
 namespace App\\Models;

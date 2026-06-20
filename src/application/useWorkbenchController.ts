@@ -174,6 +174,7 @@ import {
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelEloquentBuilderModelTypeCandidate,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
   phpLaravelRelationPropertyCompletionsFromSource,
   phpLaravelRelationTargetClassNameFromExpression,
   phpLaravelScopeMethodName,
@@ -6462,6 +6463,20 @@ export function useWorkbenchController(
           if (modelType) {
             return modelType;
           }
+
+          const conventionModelType =
+            method?.returnType
+              ? phpLaravelRepositoryConventionModelTypeFromCarrierReturnType(
+                  content,
+                  normalizedClassName,
+                  method.returnType,
+                  carrierKind,
+                )
+              : null;
+
+          if (conventionModelType) {
+            return conventionModelType;
+          }
         } catch {
           continue;
         }
@@ -6474,6 +6489,7 @@ export function useWorkbenchController(
       readPhpClassMembersFromPath,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
+      phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
       workspaceDescriptor,
       workspaceRoot,
     ],
