@@ -881,3 +881,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: PHPDoc Interface Method Navigation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e7dc06c Update JS TS isolation plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let Cmd+B / Go To Definition navigate from instance calls to PHPDoc `@method` declarations inherited through implemented interfaces.
+
+### Implementation Choice
+
+- Reuse `phpSuperTypeReferences` in direct method navigation, matching property navigation and diagnostic reconciliation.
+- Keep real method targets preferred before PHPDoc targets and preserve trait/mixin traversal.
+
+### Acceptance Criteria
+
+- `$comment->publish()` on a class implementing an interface with `@method void publish()` opens the interface docblock method.
+- Missing instance methods remain unresolved.
+- Existing static PHPDoc magic method navigation still passes.
+- Relevant preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Direct PHP method navigation now walks all parsed supertypes, so implemented interfaces participate alongside parents.
+- Existing real-method and PHPDoc method target priority is preserved inside each visited type.
+- Added preview coverage for interface-level PHPDoc `@method` navigation and missing-method non-navigation.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc magic method definitions|PHPDoc magic property definitions"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

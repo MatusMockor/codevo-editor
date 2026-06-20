@@ -9041,16 +9041,18 @@ export function useWorkbenchController(
               }
             }
 
-            const parentClassName = phpExtendsClassName(content);
-            const resolvedParentClassName = parentClassName
-              ? resolvePhpClassReference(content, parentClassName)
-              : null;
+            for (const superTypeName of phpSuperTypeReferences(content)) {
+              const resolvedSuperTypeName = resolvePhpClassReference(
+                content,
+                superTypeName,
+              );
 
-            if (
-              resolvedParentClassName &&
-              (await openMethodInClassHierarchy(resolvedParentClassName))
-            ) {
-              return true;
+              if (
+                resolvedSuperTypeName &&
+                (await openMethodInClassHierarchy(resolvedSuperTypeName))
+              ) {
+                return true;
+              }
             }
           } catch {
             continue;

@@ -13109,6 +13109,116 @@ class CommentFactory
     });
   });
 
+  it("opens implemented interface PHPDoc magic method definitions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const interfacePath = "/workspace/app/Contracts/PublishesComments.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->publish();
+        $comment->missingPublish();
+    }
+}
+`;
+    const commentSource = `<?php
+namespace App\\Models;
+
+use App\\Contracts\\PublishesComments;
+
+class Comment implements PublishesComments
+{
+}
+`;
+    const interfaceSource = `<?php
+namespace App\\Contracts;
+
+/**
+ * @method void publish()
+ */
+interface PublishesComments
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentSource;
+        }
+
+        if (path === interfacePath) {
+          return interfaceSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->publish"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: {
+        column: 17,
+        lineNumber: 5,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->missingPublish"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(controllerPath);
+  });
+
   it("opens PHPDoc magic property definitions", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const commentPath = "/workspace/app/Models/Comment.php";
