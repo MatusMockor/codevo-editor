@@ -1,6 +1,8 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
+  PHP_MEMBER_ACCESS_PATTERN,
+  PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
   phpNormalizeReceiverExpression,
   phpSimpleVariableName,
 } from "./phpReceiverExpressions";
@@ -433,7 +435,14 @@ function methodCallContextAt(
     contextEnd < 0 ? source.length : contextEnd,
   );
   const methodPattern = new RegExp(
-    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b\\s*\\(`,
+    String.raw`(` +
+      PHP_EXPRESSION_RECEIVER_PATTERN +
+      String.raw`(?:` +
+      PHP_MEMBER_CHAIN_SEGMENT_PATTERN +
+      String.raw`)*?)` +
+      PHP_MEMBER_ACCESS_PATTERN +
+      escapeRegExp(identifier.name) +
+      String.raw`\b\s*\(`,
     "g",
   );
 
@@ -466,7 +475,14 @@ function memberPropertyAccessContextAt(
     contextEnd < 0 ? source.length : contextEnd,
   );
   const propertyPattern = new RegExp(
-    `(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:\\s*->\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\([^)]*\\))?)*)\\s*->\\s*${escapeRegExp(identifier.name)}\\b(?!\\s*\\()`,
+    String.raw`(` +
+      PHP_EXPRESSION_RECEIVER_PATTERN +
+      String.raw`(?:` +
+      PHP_MEMBER_CHAIN_SEGMENT_PATTERN +
+      String.raw`)*?)` +
+      PHP_MEMBER_ACCESS_PATTERN +
+      escapeRegExp(identifier.name) +
+      String.raw`\b(?!\s*\()`,
     "g",
   );
 

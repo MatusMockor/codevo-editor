@@ -731,3 +731,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/domain/phpLanguageServerDiagnosticFilters.ts`
   - `src/domain/phpLanguageServerDiagnosticFilters.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Nullsafe Member Navigation Contexts - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2033b7c Update JS TS isolation plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let PHP identifier context detection recognize nullsafe `?->` member methods and properties for Cmd+B / Go To Definition.
+
+### Implementation Choice
+
+- Reuse the same shared PHP member-access regex fragments that already power completion, signature, semantic, and diagnostic contexts.
+- Keep property accesses distinct from method calls through the existing final `(` guard.
+
+### Acceptance Criteria
+
+- `$comment?->nullableParent` is detected as a member property access.
+- `$comment?->nullableParentCall()` is detected as a method call.
+- `$comment?->children?->first()` keeps the nullsafe property chain in the method receiver expression.
+- Existing PHP navigation and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Method-call identifier context detection now accepts nullsafe `?->` chain segments and final operators.
+- Member-property identifier context detection now accepts nullsafe `?->` chain segments and final operators.
+- Added PHP navigation coverage for nullsafe property, method, and chained property-to-method contexts.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts -t "member property accesses"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

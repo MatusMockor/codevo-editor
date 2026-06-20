@@ -173,6 +173,9 @@ class CommentController
         $comment->parent;
         $comment->parentCall();
         $comment->children->first();
+        $comment?->nullableParent;
+        $comment?->nullableParentCall();
+        $comment?->children?->first();
     }
 }
 `;
@@ -207,6 +210,36 @@ class CommentController
       kind: "methodCall",
       methodName: "first",
       receiverExpression: "$comment->children",
+      variableName: "",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "$comment?->nullableParent"),
+      ),
+    ).toEqual({
+      kind: "memberPropertyAccess",
+      propertyName: "nullableParent",
+      receiverExpression: "$comment",
+      variableName: "comment",
+    });
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "$comment?->nullableParentCall"),
+      ),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "nullableParentCall",
+      receiverExpression: "$comment",
+      variableName: "comment",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "?->first")),
+    ).toEqual({
+      kind: "methodCall",
+      methodName: "first",
+      receiverExpression: "$comment?->children",
       variableName: "",
     });
   });
