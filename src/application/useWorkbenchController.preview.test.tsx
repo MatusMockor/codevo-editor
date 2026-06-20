@@ -968,6 +968,64 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveLength(1);
   });
 
+  it("ignores PHP diagnostics without an explicit workspace root", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 61,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const uri = fileUriFromPath(path);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Rootless PHP diagnostic should be ignored.",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: 61,
+        uri,
+        version: null,
+      } as any);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "phpactor" &&
+          notice.message.includes("Rootless PHP diagnostic"),
+      ),
+    ).toBe(false);
+  });
+
   it("does not sync JavaScript and TypeScript documents with a runtime from another project tab", async () => {
     let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
       null;

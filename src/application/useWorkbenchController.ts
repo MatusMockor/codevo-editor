@@ -988,8 +988,11 @@ export function useWorkbenchController(
 
   const applyLanguageServerDiagnostics = useCallback(
     (event: LanguageServerDiagnosticEvent) => {
+      if (!event.rootPath) {
+        return;
+      }
+
       if (
-        event.rootPath &&
         currentWorkspaceRootRef.current &&
         !workspaceRootKeysEqual(event.rootPath, currentWorkspaceRootRef.current)
       ) {
@@ -1005,7 +1008,7 @@ export function useWorkbenchController(
         return;
       }
 
-      const diagnosticsRootPath = event.rootPath ?? currentWorkspaceRootRef.current;
+      const diagnosticsRootPath = event.rootPath;
       const currentVersion = diagnosticsRootPath
         ? documentVersionsByUriRef.current[
             languageServerUriSyncKey(diagnosticsRootPath, event.uri)

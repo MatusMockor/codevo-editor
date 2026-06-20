@@ -3079,3 +3079,58 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/languageServerMonacoProviders.ts`
   - `src/components/languageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: PHP Diagnostics Explicit Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5232d8dd Record PHP provider workspace edit root contract commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens application-side PHP diagnostic routing.
+- Main agent implemented directly because the guard and regression live in the workbench controller preview surface.
+
+### Why This Slice
+
+- The diagnostic event type now requires `rootPath`, and JS/TS diagnostics already reject rootless events.
+- The PHP diagnostic handler still fell back to the active workspace when `event.rootPath` was missing.
+- Rootless or malformed PHP diagnostics should not be assigned to whichever project tab is active.
+
+### Implementation Choice
+
+- Require `event.rootPath` before applying PHP diagnostics.
+- Keep rooted same-workspace diagnostics behavior unchanged.
+- Add a malformed rootless PHP diagnostic regression using `as any`.
+
+### Acceptance Criteria
+
+- Rootless PHP diagnostics do not create Problems notices or diagnostics state.
+- Rooted JS/TS diagnostics and rootless JS/TS diagnostic regressions still pass.
+- Focused diagnostics preview tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: PHP Diagnostics Explicit Root Guard
+
+- Tightened PHP diagnostic routing to reject missing-root events.
+- Added regression coverage proving rootless PHP diagnostics are ignored.
+- Preserved rooted diagnostic handling for existing PHP and JS/TS paths.
+
+### Verification: PHP Diagnostics Explicit Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP diagnostics without an explicit workspace root|diagnostics without an explicit workspace root|shows JavaScript and TypeScript diagnostics"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Diagnostics Explicit Root Guard
+
+- Commit pending.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
