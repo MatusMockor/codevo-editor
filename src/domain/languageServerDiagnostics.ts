@@ -33,7 +33,7 @@ export interface LanguageServerDiagnosticRelatedInformation {
 }
 
 export interface LanguageServerDiagnosticEvent {
-  rootPath?: string;
+  rootPath: string;
   sessionId: number;
   uri: string;
   version: number | null;

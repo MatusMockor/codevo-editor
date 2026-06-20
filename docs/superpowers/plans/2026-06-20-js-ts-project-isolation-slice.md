@@ -2743,3 +2743,61 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Diagnostics Root Contract
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `112b4e3b Record JS TS provider runtime root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens the TypeScript diagnostic event contract after the JS/TS runtime guard.
+- Main agent implemented directly because the change is limited to domain event types and existing diagnostic fixtures.
+
+### Why This Slice
+
+- JS/TS diagnostic routing now rejects events without an explicit `rootPath`.
+- The shared TypeScript diagnostic event interface still described missing roots as valid, which left the old permissive contract available to new callers.
+- Rooted diagnostic event types make the workspace boundary explicit at compile time while keeping malformed-event regression coverage with `as any`.
+
+### Implementation Choice
+
+- Make `LanguageServerDiagnosticEvent.rootPath` required.
+- Update valid domain, infrastructure, JS/TS, and PHP preview diagnostic fixtures with explicit workspace roots.
+- Keep the rootless JS/TS diagnostic regression as intentionally malformed input with `as any`.
+
+### Acceptance Criteria
+
+- Valid diagnostic events now satisfy a rooted event contract.
+- Rootless JS/TS diagnostic runtime regression still proves malformed events are ignored.
+- Focused diagnostics tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Diagnostics Root Contract
+
+- Tightened the shared diagnostic event interface to require `rootPath`.
+- Updated diagnostic fixtures to model rooted events by default.
+- Preserved the rootless JS/TS diagnostic regression as a malformed event test.
+
+### Verification: JS/TS Diagnostics Root Contract
+
+- PASS: `npm test -- src/domain/languageServerDiagnostics.test.ts src/infrastructure/tauriLanguageServerDiagnosticsGateway.test.ts src/application/useWorkbenchController.preview.test.tsx -t "diagnostics without an explicit workspace root|shows JavaScript and TypeScript diagnostics|languageServerDiagnostics|TauriLanguageServerDiagnosticsGateway"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test -- src/domain/languageServerDiagnostics.test.ts src/infrastructure/tauriLanguageServerDiagnosticsGateway.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Diagnostics Root Contract
+
+- Commit pending.
+- Included files:
+  - `src/domain/languageServerDiagnostics.ts`
+  - `src/domain/languageServerDiagnostics.test.ts`
+  - `src/infrastructure/tauriLanguageServerDiagnosticsGateway.test.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

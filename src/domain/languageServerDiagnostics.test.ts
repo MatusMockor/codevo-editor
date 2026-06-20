@@ -54,6 +54,7 @@ function diagnostic(): LanguageServerDiagnostic {
 function event(version: number | null): LanguageServerDiagnosticEvent {
   return {
     diagnostics: [diagnostic()],
+    rootPath: "/tmp",
     sessionId: 1,
     uri: "file:///tmp/User.php",
     version,

@@ -54,6 +54,7 @@ function diagnosticsEvent(): LanguageServerDiagnosticEvent {
         source: "phpactor",
       },
     ],
+    rootPath: "/tmp",
     sessionId: 1,
     uri: "file:///tmp/User.php",
     version: 3,
