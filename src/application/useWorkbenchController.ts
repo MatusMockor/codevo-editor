@@ -4617,6 +4617,13 @@ export function useWorkbenchController(
       }
 
       const requestedRoot = workspaceRoot;
+      const requestedSessionId =
+        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const isRequestedJavaScriptTypeScriptSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          requestedSessionId,
+        );
 
       try {
         await javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles(
@@ -4629,7 +4636,7 @@ export function useWorkbenchController(
           return;
         }
       } catch (error) {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return;
         }
 
@@ -4637,6 +4644,7 @@ export function useWorkbenchController(
       }
     },
     [
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
@@ -4667,6 +4675,13 @@ export function useWorkbenchController(
       }
 
       const requestedRoot = workspaceRoot;
+      const requestedSessionId =
+        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const isRequestedJavaScriptTypeScriptSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          requestedSessionId,
+        );
 
       try {
         await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles(
@@ -4674,7 +4689,7 @@ export function useWorkbenchController(
           relevantChanges,
         );
       } catch (error) {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return;
         }
 
@@ -4682,6 +4697,7 @@ export function useWorkbenchController(
       }
     },
     [
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,

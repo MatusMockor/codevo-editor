@@ -3342,6 +3342,100 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
   });
 
+  it("ignores stale JavaScript TypeScript did-rename errors after same-root session restart", async () => {
+    const oldPath = "/workspace/src/User.ts";
+    const newPath = "/workspace/src/Account.ts";
+    const didRenameFiles = createDeferred<void>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(24)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(24)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+    ).mockImplementationOnce(() => didRenameFiles.promise);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(24),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(24),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+      ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(25));
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      didRenameFiles.reject(new Error("stale did rename"));
+      await renamePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(getWorkbench().message).toBe("Renamed User.ts");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript Rename" &&
+          notice.message.includes("stale did rename"),
+      ),
+    ).toBe(false);
+  });
+
   it("does not reapply JavaScript TypeScript workspace edits to already edited open Monaco models", async () => {
     const openPath = "/workspace/src/User.ts";
     const closedPath = "/workspace/src/Helper.ts";
@@ -4031,6 +4125,90 @@ describe("useWorkbenchController preview tabs", () => {
         path: newPath,
       },
     ]);
+  });
+
+  it("ignores stale JavaScript TypeScript watched-file errors after same-root session restart", async () => {
+    const newPath = "/workspace/src/NewWidget.ts";
+    const watchedFilesChanged = createDeferred<void>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(25)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(25)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+    ).mockImplementationOnce(() => watchedFilesChanged.promise);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(25),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(25),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("src/NewWidget.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.new",
+    );
+    let createPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      createPromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+      ).toHaveBeenCalledWith("/workspace", [
+        {
+          changeType: "created",
+          path: newPath,
+        },
+      ]);
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(26));
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      watchedFilesChanged.reject(new Error("stale watched files"));
+      await createPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.workspaceGateways.files.createTextFile,
+    ).toHaveBeenCalledWith(newPath);
+    expect(getWorkbench().activePath).toBe(newPath);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale watched files"),
+      ),
+    ).toBe(false);
   });
 
   it("notifies the JavaScript TypeScript service when package metadata is created", async () => {

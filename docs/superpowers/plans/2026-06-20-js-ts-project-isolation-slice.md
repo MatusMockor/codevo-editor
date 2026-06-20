@@ -2346,3 +2346,60 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS File Operation Notification Same-Root Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8284d56e Record JS TS settings config session guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is tightly coupled to existing workbench file-operation command tests.
+- Main agent implemented directly to avoid multiple workers editing the same controller and preview test file.
+
+### Why This Slice
+
+- Rename import edits and settings configuration now ignore stale same-root TypeScript session errors.
+- File-operation notifications still reported `didRenameFiles` and `didChangeWatchedFiles` errors using root-only checks.
+- A TypeScript runtime restart while these notifications are in flight could surface stale errors from the replaced same-root session even though the file operation itself completed.
+
+### Implementation Choice
+
+- Capture the running JS/TS `sessionId` before sending `didRenameFiles`.
+- Capture the running JS/TS `sessionId` before sending `didChangeWatchedFiles`.
+- Reuse the shared active root + session guard before reporting notification errors.
+- Keep successful notification and file-operation behavior unchanged.
+
+### Acceptance Criteria
+
+- Same-root stale `didRenameFiles` failures after TypeScript session restart are ignored.
+- Same-root stale `didChangeWatchedFiles` failures after TypeScript session restart are ignored.
+- Completed file rename/create flows continue after stale notification errors.
+- Focused notification tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS File Operation Notification Same-Root Session Guard
+
+- Added same-root JS/TS session checks around `didRenameFiles` error reporting.
+- Added same-root JS/TS session checks around `didChangeWatchedFiles` error reporting.
+- Added regression coverage for stale same-root TypeScript session errors during file rename and watched-file notifications.
+
+### Verification: JS/TS File Operation Notification Same-Root Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "did-rename errors|watched-file errors|notifies the JavaScript TypeScript service after rename|notifies the JavaScript TypeScript service when a JS TS file is created"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS File Operation Notification Same-Root Session Guard
+
+- Pending commit and push.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
