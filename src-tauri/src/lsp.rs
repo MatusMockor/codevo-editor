@@ -426,7 +426,11 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         "onTypeFormatting": { "dynamicRegistration": false },
                         "rangeFormatting": { "dynamicRegistration": false },
                         "publishDiagnostics": {
+                            "codeDescriptionSupport": true,
                             "relatedInformation": true,
+                            "tagSupport": {
+                                "valueSet": [1, 2]
+                            },
                             "versionSupport": true
                         },
                         "references": { "dynamicRegistration": false },
@@ -637,6 +641,7 @@ mod tests {
     use crate::tools::{
         JavaScriptTypeScriptToolAvailability, PhpToolAvailability, ToolLocation, ToolSource,
     };
+    use serde_json::json;
     use std::{fs, path::Path, time::SystemTime};
 
     #[test]
@@ -761,6 +766,16 @@ mod tests {
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["codeAction"]["disabledSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["publishDiagnostics"]["tagSupport"]
+                ["valueSet"],
+            json!([1, 2])
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["publishDiagnostics"]
+                ["codeDescriptionSupport"],
             true
         );
         assert_eq!(
