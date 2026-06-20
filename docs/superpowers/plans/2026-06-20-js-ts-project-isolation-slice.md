@@ -1326,4 +1326,11 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Inlay Hint Label-Part Commands
 
-- Pending commit.
+- Committed and pushed as `f56ae6e Enable JS TS inlay label commands`.
+- Included files:
+  - `src/domain/languageServerFeatures.ts`
+  - `src-tauri/src/lsp_features.rs`
+  - `src-tauri/src/lib.rs`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
