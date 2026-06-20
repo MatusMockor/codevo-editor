@@ -873,3 +873,64 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 - Backend explorer Hypatia identified that flat JS/TS settings should remain in the session cache for `workspace/configuration`, while `workspace/didChangeConfiguration` notifications should be sent with VS Code-like nested `typescript` and `javascript` settings.
 - This is the next queued backend parity slice after the signature-help context commit.
+
+## Next Slice: JS/TS DidChangeConfiguration Shape
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `4ad3472 Forward JS TS signature help context`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation
+
+- Backend explorer Hypatia identified this gap and verified the existing `workspace_configuration_requests` tests were green before implementation.
+- Main agent implemented directly because the slice is constrained to the Rust Tauri boundary and one private helper/test in `src-tauri/src/lib.rs`.
+
+### Why This Slice
+
+- `typescript-language-server` deep-merges `workspace/didChangeConfiguration` payloads into its workspace configuration.
+- Language-specific settings such as CodeLens, inlay hints, format, suggest, and validation are read under `typescript` or `javascript` namespaces.
+- The editor previously sent the flat settings shape used for `workspace/configuration` section replies, so runtime setting toggles could update the cache without updating TypeScript server behavior.
+
+### Implementation Choice
+
+- Keep the flat settings unchanged for `registry.update_server_configuration`, preserving `workspace/configuration` section replies.
+- Send `workspace/didChangeConfiguration` with duplicated `typescript` and `javascript` language settings.
+- Preserve root-level `implicitProjectConfiguration` and `formattingOptions`, because the TypeScript server reads inferred project config at the workspace root and still asks formatting options through the dedicated section.
+
+### Acceptance Criteria
+
+- JS/TS `workspace/didChangeConfiguration` notification settings include nested `typescript` and `javascript` settings.
+- Flat `workspace/configuration` cache behavior remains unchanged.
+- Existing workspace configuration request tests keep passing.
+- Focused Rust helper test and full Rust suite pass.
+- `git diff --check` passes.
+
+### Completed Slice: JS/TS DidChangeConfiguration Shape
+
+- JS/TS configuration notifications now wrap flat language settings under both `typescript` and `javascript`.
+- Root-level `implicitProjectConfiguration` and `formattingOptions` are preserved in notification payloads.
+- Session configuration cache still receives the original flat settings object for section-based `workspace/configuration` responses.
+- Added Rust coverage for the flat-to-nested notification shape.
+
+### Verification: JS/TS DidChangeConfiguration Shape
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_configuration_notifications_use_language_namespaces --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml workspace_configuration_requests --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: JS/TS DidChangeConfiguration Shape
+
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

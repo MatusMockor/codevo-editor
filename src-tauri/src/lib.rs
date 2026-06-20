@@ -2501,7 +2501,9 @@ fn javascript_typescript_workspace_did_change_configuration(
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<(), String> {
     let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.did_change_configuration(settings.clone());
+    let request = factory.did_change_configuration(
+        javascript_typescript_did_change_configuration_settings(&settings),
+    );
 
     registry.update_server_configuration(&root_path, settings)?;
     registry.send_notification(
@@ -2512,6 +2514,32 @@ fn javascript_typescript_workspace_did_change_configuration(
             params: request.params,
         },
     )
+}
+
+fn javascript_typescript_did_change_configuration_settings(settings: &Value) -> Value {
+    let mut language_settings = settings.clone();
+
+    if let Some(object) = language_settings.as_object_mut() {
+        object.remove("formattingOptions");
+        object.remove("implicitProjectConfiguration");
+    }
+
+    let mut notification_settings = json!({
+        "javascript": language_settings.clone(),
+        "typescript": language_settings,
+    });
+
+    if let Some(object) = notification_settings.as_object_mut() {
+        if let Some(value) = settings.get("formattingOptions") {
+            object.insert("formattingOptions".to_string(), value.clone());
+        }
+
+        if let Some(value) = settings.get("implicitProjectConfiguration") {
+            object.insert("implicitProjectConfiguration".to_string(), value.clone());
+        }
+    }
+
+    notification_settings
 }
 
 #[tauri::command]
@@ -3323,9 +3351,10 @@ mod tests {
         filter_lsp_document_links_to_workspace, filter_lsp_incoming_calls_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-        filter_lsp_workspace_symbols_to_workspace, normalize_path, parse_definition_result,
-        parse_javascript_typescript_navigation_locations_result, path_from_file_uri,
-        workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        filter_lsp_workspace_symbols_to_workspace,
+        javascript_typescript_did_change_configuration_settings, normalize_path,
+        parse_definition_result, parse_javascript_typescript_navigation_locations_result,
+        path_from_file_uri, workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -3360,6 +3389,74 @@ mod tests {
             &path_string(&root.join(".").join("src/User.php"))
         )
         .is_ok());
+    }
+
+    #[test]
+    fn javascript_typescript_configuration_notifications_use_language_namespaces() {
+        let settings = json!({
+            "format": {
+                "insertSpaceAfterCommaDelimiter": true,
+            },
+            "formattingOptions": {
+                "insertSpaces": true,
+                "tabSize": 2,
+            },
+            "implicitProjectConfiguration": {
+                "checkJs": false,
+                "strict": true,
+                "target": 11,
+            },
+            "implementationsCodeLens": {
+                "enabled": true,
+            },
+            "inlayHints": {
+                "functionLikeReturnTypes": { "enabled": false },
+                "parameterNames": {
+                    "enabled": "none",
+                    "suppressWhenArgumentMatchesName": false,
+                },
+            },
+            "referencesCodeLens": {
+                "enabled": true,
+                "showOnAllFunctions": false,
+            },
+            "suggest": {
+                "autoImports": false,
+                "includeCompletionsForModuleExports": false,
+            },
+            "validate": {
+                "enable": false,
+            },
+        });
+
+        let notification = javascript_typescript_did_change_configuration_settings(&settings);
+
+        for language in ["javascript", "typescript"] {
+            assert_eq!(notification[language]["suggest"]["autoImports"], false);
+            assert_eq!(
+                notification[language]["inlayHints"]["parameterNames"]["enabled"],
+                "none"
+            );
+            assert_eq!(
+                notification[language]["implementationsCodeLens"]["enabled"],
+                true
+            );
+            assert_eq!(
+                notification[language]["referencesCodeLens"]["enabled"],
+                true
+            );
+            assert_eq!(
+                notification[language]["format"]["insertSpaceAfterCommaDelimiter"],
+                true
+            );
+            assert_eq!(notification[language]["validate"]["enable"], false);
+            assert!(notification[language].get("formattingOptions").is_none());
+            assert!(notification[language]
+                .get("implicitProjectConfiguration")
+                .is_none());
+        }
+        assert_eq!(notification["implicitProjectConfiguration"]["strict"], true);
+        assert_eq!(notification["formattingOptions"]["tabSize"], 2);
     }
 
     #[test]
