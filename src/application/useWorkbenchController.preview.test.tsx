@@ -4478,6 +4478,93 @@ describe("useWorkbenchController preview tabs", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("ignores stale JavaScript and TypeScript configuration errors after same-root session restart", async () => {
+    const configurationChange = createDeferred<void>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(15)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(15)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration,
+    ).mockImplementationOnce(() => configurationChange.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(15),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(15),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: true,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = getWorkbench().saveWorkbenchSettings(
+        {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        {
+          ...defaultWorkspaceSettings(),
+          javaScriptTypeScriptAutoImports: false,
+        },
+        true,
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration,
+      ).toHaveBeenCalledWith("/workspace", expect.any(Object));
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(16));
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      configurationChange.reject(new Error("stale configuration"));
+      await savePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().message).toBe("Settings saved.");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Settings" &&
+          notice.message.includes("stale configuration"),
+      ),
+    ).toBe(false);
+  });
+
   it("restarts JavaScript and TypeScript language service with current settings", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {

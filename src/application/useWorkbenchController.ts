@@ -11102,12 +11102,27 @@ export function useWorkbenchController(
             workspaceRoot,
           )
         ) {
-          await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration(
-            workspaceRoot,
-            javaScriptTypeScriptLanguageServerConfiguration(
-              resolvedWorkspaceSettings,
-            ),
-          );
+          const requestedRoot = workspaceRoot;
+          const requestedSessionId =
+            javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+
+          try {
+            await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration(
+              requestedRoot,
+              javaScriptTypeScriptLanguageServerConfiguration(
+                resolvedWorkspaceSettings,
+              ),
+            );
+          } catch (error) {
+            if (
+              isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+                requestedRoot,
+                requestedSessionId,
+              )
+            ) {
+              throw error;
+            }
+          }
         }
 
         if (shouldRestartJavaScriptTypeScriptRuntime) {
@@ -11164,6 +11179,7 @@ export function useWorkbenchController(
     },
     [
       clearWorkspaceIndex,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       persistAppSettings,
       persistWorkspaceSettings,
       javaScriptTypeScriptLanguageServerFeaturesGateway,

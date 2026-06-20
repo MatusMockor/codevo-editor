@@ -2289,3 +2289,60 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Settings Configuration Same-Root Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `407e8e48 Record JS TS rename session guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice touched the same workbench controller and preview test boundary only.
+- Main agent implemented directly because a parallel worker would have targeted the same files and increased conflict risk for a narrow session-guard change.
+
+### Why This Slice
+
+- Settings save notifies the running TypeScript service with `didChangeConfiguration` when JS/TS auto-import, CodeLens, inlay-hint, or validation settings change.
+- If the same workspace root restarts the TypeScript runtime while that notification is in flight, a stale reject from the old session could bubble into the global `Settings` error path.
+- The expected behavior is to keep real current-session configuration errors visible while dropping stale errors from replaced same-root sessions.
+
+### Implementation Choice
+
+- Capture the running JS/TS `sessionId` before sending `didChangeConfiguration`.
+- Reuse the shared active root + session guard before rethrowing configuration notification errors.
+- Let stale same-root configuration rejects be ignored so the settings save can continue and show the normal success message.
+- Add regression coverage for a pending configuration notification that rejects after session `15` is replaced by session `16` on the same root.
+
+### Acceptance Criteria
+
+- Current-session `didChangeConfiguration` failures still surface as `Settings` errors.
+- Same-root stale `didChangeConfiguration` failures after TypeScript session restart are ignored.
+- Settings save still persists settings and finishes with `Settings saved.`.
+- Focused settings tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Settings Configuration Same-Root Session Guard
+
+- Added a same-root JS/TS session check around settings `didChangeConfiguration` error handling.
+- Preserved real current-session settings errors by rethrowing only when the captured session is still active.
+- Added regression coverage for stale same-root TypeScript configuration notification errors during settings save.
+
+### Verification: JS/TS Settings Configuration Same-Root Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "configuration|workspace settings change|same-root session restart"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Settings Configuration Same-Root Session Guard
+
+- Pending commit and push.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
