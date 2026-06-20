@@ -346,6 +346,99 @@ Route::name('admin.')->group(function () {
     ]);
   });
 
+  it("expands Laravel singleton route name modifiers", () => {
+    const source = `<?php
+Route::singleton('photos.thumbnail', ThumbnailController::class)->creatable();
+Route::singleton('profile.avatar', AvatarController::class)->destroyable();
+Route::apiSingleton('api.profile.avatar', ApiAvatarController::class)->creatable();
+Route::apiSingleton('api.profile.settings', ApiSettingsController::class)->destroyable();
+Route::singleton('comments.badge', BadgeController::class); // ->creatable()
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "photos.thumbnail.create",
+        position: positionOf(source, "photos.thumbnail"),
+      },
+      {
+        name: "photos.thumbnail.store",
+        position: positionOf(source, "photos.thumbnail"),
+      },
+      {
+        name: "photos.thumbnail.show",
+        position: positionOf(source, "photos.thumbnail"),
+      },
+      {
+        name: "photos.thumbnail.edit",
+        position: positionOf(source, "photos.thumbnail"),
+      },
+      {
+        name: "photos.thumbnail.update",
+        position: positionOf(source, "photos.thumbnail"),
+      },
+      {
+        name: "photos.thumbnail.destroy",
+        position: positionOf(source, "photos.thumbnail"),
+      },
+      {
+        name: "profile.avatar.show",
+        position: positionOf(source, "profile.avatar"),
+      },
+      {
+        name: "profile.avatar.edit",
+        position: positionOf(source, "profile.avatar"),
+      },
+      {
+        name: "profile.avatar.update",
+        position: positionOf(source, "profile.avatar"),
+      },
+      {
+        name: "profile.avatar.destroy",
+        position: positionOf(source, "profile.avatar"),
+      },
+      {
+        name: "api.profile.avatar.store",
+        position: positionOf(source, "api.profile.avatar"),
+      },
+      {
+        name: "api.profile.avatar.show",
+        position: positionOf(source, "api.profile.avatar"),
+      },
+      {
+        name: "api.profile.avatar.update",
+        position: positionOf(source, "api.profile.avatar"),
+      },
+      {
+        name: "api.profile.avatar.destroy",
+        position: positionOf(source, "api.profile.avatar"),
+      },
+      {
+        name: "api.profile.settings.show",
+        position: positionOf(source, "api.profile.settings"),
+      },
+      {
+        name: "api.profile.settings.update",
+        position: positionOf(source, "api.profile.settings"),
+      },
+      {
+        name: "api.profile.settings.destroy",
+        position: positionOf(source, "api.profile.settings"),
+      },
+      {
+        name: "comments.badge.show",
+        position: positionOf(source, "comments.badge"),
+      },
+      {
+        name: "comments.badge.edit",
+        position: positionOf(source, "comments.badge"),
+      },
+      {
+        name: "comments.badge.update",
+        position: positionOf(source, "comments.badge"),
+      },
+    ]);
+  });
+
   it("combines nested Laravel route name group prefixes", () => {
     const source = `<?php
 Route::name('admin.')->group(function () {

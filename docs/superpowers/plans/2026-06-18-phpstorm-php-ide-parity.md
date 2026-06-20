@@ -1271,3 +1271,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/domain/phpLaravelRoutes.ts`
   - `src/domain/phpLaravelRoutes.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Laravel Singleton Route Modifier Names - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ea9c327d Record Laravel singleton route commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Include Laravel singleton route names added by `creatable()` and `destroyable()` modifiers in route-name completion/navigation.
+
+### Implementation Choice
+
+- Inspect the route chain between the resource call and statement end only for singleton resource methods.
+- Treat `creatable()` as adding create/store plus destroy for web singletons and store plus destroy for API singletons, matching Laravel documentation.
+- Treat `destroyable()` as adding only destroy to the default singleton action set.
+
+### Acceptance Criteria
+
+- `Route::singleton(...)->creatable()` contributes `create`, `store`, default singleton actions, and `destroy`.
+- `Route::singleton(...)->destroyable()` contributes default singleton actions plus `destroy`.
+- `Route::apiSingleton(...)->creatable()` contributes `store`, `show`, `update`, and `destroy`.
+- Comments containing modifier-looking text do not change the extracted route names.
+- Focused route tests, full route tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added singleton route chain modifier detection from the resource call through statement end.
+- Expanded `creatable()` and `destroyable()` singleton actions for web and API singleton routes.
+- Added route extraction coverage for creatable, destroyable, API singleton modifier, and comment false-positive cases.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "expands Laravel singleton route name modifiers"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -46,11 +46,15 @@ const laravelRouteDefinitionMethods = new Set([
   "redirect",
   "view",
 ]);
-const laravelResourceRouteActions = new Map<string, string[]>([
+const laravelResourceRouteActions = new Map<string, readonly string[]>([
   ["apiresource", ["index", "store", "show", "update", "destroy"]],
   ["apisingleton", ["show", "update"]],
   ["resource", ["index", "create", "store", "show", "edit", "update", "destroy"]],
   ["singleton", ["show", "edit", "update"]],
+]);
+const laravelSingletonResourceRouteMethods = new Set([
+  "apisingleton",
+  "singleton",
 ]);
 
 export function phpLaravelNamedRouteReferenceContextAt(
@@ -112,7 +116,11 @@ export function phpLaravelNamedRouteDefinitions(
     }
 
     const openParen = routeStart + match[0].lastIndexOf("(");
-    const resourceActions = laravelResourceRouteActions.get(routeMethod);
+    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+    const resourceActions =
+      closeParen === null
+        ? null
+        : laravelResourceRouteActionsForMethod(source, routeMethod, closeParen);
 
     if (resourceActions) {
       const literal = firstLiteralArgumentAtOpenParen(source, openParen);
@@ -132,8 +140,6 @@ export function phpLaravelNamedRouteDefinitions(
 
       continue;
     }
-
-    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
 
     if (closeParen === null) {
       continue;
@@ -166,6 +172,66 @@ export function phpLaravelNamedRouteDefinitions(
   }
 
   return definitions;
+}
+
+function laravelResourceRouteActionsForMethod(
+  source: string,
+  routeMethod: string,
+  closeParen: number,
+): readonly string[] | null {
+  const baseActions = laravelResourceRouteActions.get(routeMethod);
+
+  if (!baseActions || !laravelSingletonResourceRouteMethods.has(routeMethod)) {
+    return baseActions ?? null;
+  }
+
+  const chainStart = closeParen + 1;
+  const chainEnd = phpStatementEndOffset(source, chainStart);
+  const creatable = hasLaravelRouteChainMethod(
+    source,
+    chainStart,
+    chainEnd,
+    "creatable",
+  );
+  const destroyable =
+    creatable ||
+    hasLaravelRouteChainMethod(source, chainStart, chainEnd, "destroyable");
+
+  if (routeMethod === "apisingleton") {
+    return [
+      ...(creatable ? ["store"] : []),
+      "show",
+      "update",
+      ...(destroyable ? ["destroy"] : []),
+    ];
+  }
+
+  return [
+    ...(creatable ? ["create", "store"] : []),
+    ...baseActions,
+    ...(destroyable ? ["destroy"] : []),
+  ];
+}
+
+function hasLaravelRouteChainMethod(
+  source: string,
+  chainStart: number,
+  chainEnd: number,
+  method: string,
+): boolean {
+  const pattern = new RegExp(`->\\s*${method}\\s*\\(`, "gi");
+  const chainSource = source.slice(chainStart, chainEnd);
+
+  for (const match of chainSource.matchAll(pattern)) {
+    const methodOpenParen =
+      chainStart + (match.index ?? 0) + match[0].lastIndexOf("(");
+
+    if (isPhpCodeOffset(source, methodOpenParen)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function phpLaravelNamedRouteGroups(
