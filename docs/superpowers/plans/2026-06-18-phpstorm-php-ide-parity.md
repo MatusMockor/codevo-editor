@@ -779,3 +779,51 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/domain/phpNavigation.ts`
   - `src/domain/phpNavigation.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: PHPDoc Magic Property Navigation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d03df7d Update PHP parity plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let Cmd+B / Go To Definition navigate to PHPDoc `@property`, `@property-read`, and `@property-write` declarations when a receiver type proves the magic property exists.
+
+### Implementation Choice
+
+- Add PHP property position helpers alongside the existing PHPDoc `@method` locator.
+- Prefer real declared property targets before PHPDoc property targets.
+- Reuse the same property hierarchy traversal used by diagnostics and completions, including traits, mixins, parents, and implemented interfaces.
+- Preserve existing Laravel relation-method and model-attribute navigation priority before falling back to PHPDoc/declaration property targets.
+
+### Acceptance Criteria
+
+- `$comment->externalId` on a class implementing an interface with `@property-read string $externalId` opens the interface docblock property.
+- Missing properties do not navigate to the PHPDoc target.
+- Real declared properties are preferred over duplicate PHPDoc property entries.
+- Relevant PHP navigation and preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added PHPDoc and declared property position helpers in the PHP navigation domain.
+- Wired member-property Go To Definition to fall back to direct property targets after relation-method and Laravel attribute targets.
+- Added preview coverage for interface-level `@property-read` navigation and missing-property non-navigation.
+- Added domain coverage for `@property`, `@property-read`, `@property-write`, and declared-property priority.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts -t "property definitions|declared property"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "opens PHPDoc magic property definitions"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

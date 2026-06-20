@@ -232,6 +232,7 @@ import {
   phpClassPathCandidates,
   phpCurrentTypeKind,
   phpDocMethodPositionOrNull,
+  phpPropertyPositionOrNull,
   phpExtendsClassName,
   phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
@@ -9066,6 +9067,95 @@ export function useWorkbenchController(
     ],
   );
 
+  const openDirectPhpPropertyTarget = useCallback(
+    async (className: string, propertyName: string): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      const visitedClassNames = new Set<string>();
+      const openPropertyInClassHierarchy = async (
+        candidateClassName: string,
+      ): Promise<boolean> => {
+        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
+        const visitedKey = normalizedCandidate.toLowerCase();
+
+        if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
+          return false;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+          try {
+            const content = await readNavigationFileContent(path);
+            const position = phpPropertyPositionOrNull(content, propertyName);
+
+            if (position) {
+              return openNavigationTarget(path, position, `$${propertyName}`);
+            }
+
+            for (const traitName of phpTraitClassNames(content)) {
+              const resolvedTraitName = resolvePhpClassReference(
+                content,
+                traitName,
+              );
+
+              if (
+                resolvedTraitName &&
+                (await openPropertyInClassHierarchy(resolvedTraitName))
+              ) {
+                return true;
+              }
+            }
+
+            for (const mixinName of phpMixinClassNames(content)) {
+              const resolvedMixinName = resolvePhpClassReference(
+                content,
+                mixinName,
+              );
+
+              if (
+                resolvedMixinName &&
+                (await openPropertyInClassHierarchy(resolvedMixinName))
+              ) {
+                return true;
+              }
+            }
+
+            for (const superTypeName of phpSuperTypeReferences(content)) {
+              const resolvedSuperTypeName = resolvePhpClassReference(
+                content,
+                superTypeName,
+              );
+
+              if (
+                resolvedSuperTypeName &&
+                (await openPropertyInClassHierarchy(resolvedSuperTypeName))
+              ) {
+                return true;
+              }
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return false;
+      };
+
+      return openPropertyInClassHierarchy(className);
+    },
+    [
+      openNavigationTarget,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const phpSourceInheritsOrImplementsType = useCallback(
     async (
       source: string,
@@ -9486,6 +9576,13 @@ export function useWorkbenchController(
         return true;
       }
 
+      if (
+        propertyExists &&
+        (await openDirectPhpPropertyTarget(receiverType, context.propertyName))
+      ) {
+        return true;
+      }
+
       setMessage(
         `No relation method found for ${receiverType}::${context.propertyName}().`,
       );
@@ -9493,6 +9590,7 @@ export function useWorkbenchController(
     },
     [
       activeDocument,
+      openDirectPhpPropertyTarget,
       openDirectPhpMethodTarget,
       openPhpLaravelModelAttributeTarget,
       phpClassHierarchyHasProperty,

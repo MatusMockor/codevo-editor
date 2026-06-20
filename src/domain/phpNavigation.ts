@@ -344,6 +344,70 @@ export function phpDocMethodPositionOrNull(
   return null;
 }
 
+export function phpPropertyPositionOrNull(
+  source: string,
+  propertyName: string,
+): EditorPosition | null {
+  return (
+    phpDeclaredPropertyPositionOrNull(source, propertyName) ??
+    phpDocPropertyPositionOrNull(source, propertyName)
+  );
+}
+
+export function phpDocPropertyPositionOrNull(
+  source: string,
+  propertyName: string,
+): EditorPosition | null {
+  const normalizedPropertyName = propertyName.trim().replace(/^\$+/, "");
+
+  if (!normalizedPropertyName) {
+    return null;
+  }
+
+  const pattern = new RegExp(
+    String.raw`@property(?:-read|-write)?\s+[^\r\n*]+?\s+\$` +
+      escapeRegExp(normalizedPropertyName) +
+      String.raw`\b`,
+    "g",
+  );
+
+  for (const match of source.matchAll(pattern)) {
+    const propertyOffset =
+      (match.index ?? 0) + match[0].lastIndexOf(normalizedPropertyName);
+
+    return editorPositionAtOffset(source, propertyOffset);
+  }
+
+  return null;
+}
+
+function phpDeclaredPropertyPositionOrNull(
+  source: string,
+  propertyName: string,
+): EditorPosition | null {
+  const normalizedPropertyName = propertyName.trim().replace(/^\$+/, "");
+
+  if (!normalizedPropertyName) {
+    return null;
+  }
+
+  const pattern = new RegExp(
+    String.raw`(?:^|\n)\s*(?:(?:public|protected|private|readonly|static|var)\s+)*(?:\??[\\A-Za-z_][\\A-Za-z0-9_]*(?:\|[\\A-Za-z_][\\A-Za-z0-9_]*)?\s+)?\$` +
+      escapeRegExp(normalizedPropertyName) +
+      String.raw`\b`,
+    "g",
+  );
+
+  for (const match of source.matchAll(pattern)) {
+    const propertyOffset =
+      (match.index ?? 0) + match[0].lastIndexOf(normalizedPropertyName);
+
+    return editorPositionAtOffset(source, propertyOffset);
+  }
+
+  return null;
+}
+
 export function phpImplementationDeclarationContextAt(
   source: string,
   position: EditorPosition,

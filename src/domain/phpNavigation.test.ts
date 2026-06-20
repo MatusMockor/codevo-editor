@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   phpClassPathCandidates,
+  phpDocPropertyPositionOrNull,
   phpDocMethodPositionOrNull,
   phpExtendsClassName,
   phpIdentifierContextAt,
@@ -10,6 +11,7 @@ import {
   phpMethodPosition,
   phpNamedTypePosition,
   phpParameterTypeForVariable,
+  phpPropertyPositionOrNull,
   phpSuperTypeReferences,
   resolvePhpClassName,
 } from "./phpNavigation";
@@ -91,6 +93,54 @@ class CommentFactory
       lineNumber: 4,
     });
     expect(phpDocMethodPositionOrNull(source, "missing")).toBeNull();
+  });
+
+  it("locates PHPDoc magic property definitions", () => {
+    const source = `<?php
+/**
+ * @property string $body
+ * @property-read int $externalId
+ * @property-write bool $archived
+ */
+class Comment
+{
+}
+`;
+
+    expect(phpPropertyPositionOrNull(source, "body")).toEqual({
+      column: 22,
+      lineNumber: 3,
+    });
+    expect(phpDocPropertyPositionOrNull(source, "body")).toEqual({
+      column: 22,
+      lineNumber: 3,
+    });
+    expect(phpDocPropertyPositionOrNull(source, "externalId")).toEqual({
+      column: 24,
+      lineNumber: 4,
+    });
+    expect(phpDocPropertyPositionOrNull(source, "$archived")).toEqual({
+      column: 26,
+      lineNumber: 5,
+    });
+    expect(phpDocPropertyPositionOrNull(source, "missing")).toBeNull();
+  });
+
+  it("prefers declared property definitions over PHPDoc properties", () => {
+    const source = `<?php
+/**
+ * @property string $status
+ */
+class Comment
+{
+    public string $status;
+}
+`;
+
+    expect(phpPropertyPositionOrNull(source, "status")).toEqual({
+      column: 20,
+      lineNumber: 7,
+    });
   });
 
   it("detects chained method calls under the cursor", () => {
