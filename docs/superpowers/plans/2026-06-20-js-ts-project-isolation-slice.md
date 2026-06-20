@@ -3129,7 +3129,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Diagnostics Explicit Root Guard
 
-- Commit pending.
+- Committed and pushed as `bc5b3a7f Require roots for PHP diagnostics`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
