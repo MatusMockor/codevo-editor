@@ -371,8 +371,10 @@ const laravelEloquentRelationFluentMethods = new Set([
   "ofmany",
   "oldestofmany",
   "orderbypivot",
+  "onlytrashed",
   "using",
   "withdefault",
+  "withtrashed",
   "wherepivot",
   "wherepivotbetween",
   "wherepivotin",
@@ -383,6 +385,7 @@ const laravelEloquentRelationFluentMethods = new Set([
   "withpivot",
   "withpivotvalue",
   "withtimestamps",
+  "withouttrashed",
 ]);
 
 export interface PhpLaravelDynamicWhereAttributeTarget {

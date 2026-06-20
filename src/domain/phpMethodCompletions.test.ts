@@ -300,6 +300,18 @@ class Post extends Model
     ).toBe(
       "Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\Post>",
     );
+    for (const methodName of ["withTrashed", "withoutTrashed", "onlyTrashed"]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\Post>",
+          "$this->belongsTo(Post::class)",
+        ),
+      ).toBe(
+        "Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\Post>",
+      );
+    }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,

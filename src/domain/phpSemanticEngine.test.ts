@@ -670,6 +670,10 @@ class Comment extends Model
         $defaultParent = $this->belongsTo(Post::class)
             ->withDefault()
             ->first();
+        $defaultSoftDeletedParent = $this->belongsTo(Post::class)
+            ->withTrashed()
+            ->withDefault()
+            ->first();
         $morphed = $this->morphMany(Post::class, 'commentable')->get()->first();
         $relation = $this->hasOne(self::class);
         $selfComment = $relation->first();
@@ -689,6 +693,7 @@ class Comment extends Model
         $direct->tit
         $parent->tit
         $defaultParent->tit
+        $defaultSoftDeletedParent->tit
         $morphed->tit
         $selfComment->bod
         $constantPost->tit
@@ -746,6 +751,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$defaultParent->tit"),
         "defaultParent",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$defaultSoftDeletedParent->tit"),
+        "defaultSoftDeletedParent",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");

@@ -1115,10 +1115,60 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `6a512c7a Infer Laravel relation defaults`.
 - Included files:
   - `src/domain/phpFrameworkLaravel.ts`
   - `src/domain/phpMethodCompletions.test.ts`
   - `src/domain/phpSemanticEngine.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Slice: Laravel Soft-Deleting Relation Fluent Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6a512c7a Infer Laravel relation defaults`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Preserve relation type through soft-delete relation fluents before additional relation-only calls, such as `belongsTo(Post::class)->withTrashed()->withDefault()->first()`.
+
+### Implementation Choice
+
+- Treat `withTrashed()`, `withoutTrashed()`, and `onlyTrashed()` as relation-preserving fluent calls when the receiver is an Eloquent relation.
+- Keep the existing builder behavior unchanged for builder receivers.
+
+### Acceptance Criteria
+
+- `withTrashed()`, `withoutTrashed()`, and `onlyTrashed()` on `BelongsTo<Post>` keep the `BelongsTo<Post>` relation type.
+- `belongsTo(Post::class)->withTrashed()->withDefault()->first()` infers `Post`.
+- Existing Laravel relation factory chain inference remains unchanged.
+- Focused domain tests, semantic engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added soft-delete relation fluent methods to the relation-preserving path.
+- Added return-type coverage proving `withTrashed()`, `withoutTrashed()`, and `onlyTrashed()` keep `BelongsTo<Post>`.
+- Added semantic-chain coverage proving `withTrashed()->withDefault()->first()` still infers `Post`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "infers Laravel relation factory and relation chain return types"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel relation factory chains to related model assignments"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Included files:
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+  - `src/domain/phpSemanticEngine.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
