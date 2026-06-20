@@ -1838,8 +1838,59 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Lazy Resolve Document Sync
 
-- Pending commit.
+- Committed and pushed as `5119be34 Flush JS TS lazy resolves before LSP calls`.
 - Included files:
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Navigation Target Open Isolation
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5119be34 Flush JS TS lazy resolves before LSP calls`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- JS/TS language-server navigation already re-checked the active workspace after document flush and after the LSP response.
+- The command still opened the target path and then set reveal/message without re-checking whether the user switched project tabs while the target file was loading.
+- The shared `openFile` request token was not invalidated by workspace switches, so an in-flight target open from a previous tab could still update active editor state after a switch.
+
+### Implementation Choice
+
+- Invalidate in-flight `openFile` requests when clearing the active workspace or switching to a different workspace root.
+- Add a post-open active-root check in JS/TS language-server navigation before setting reveal target and message.
+- Add preview coverage for switching from `/workspace-a` to `/workspace-b` while a JS/TS definition target file read is still pending.
+
+### Acceptance Criteria
+
+- Switching project tabs while a JS/TS LSP navigation target is loading does not reveal or message the stale target.
+- In-flight file opens from a previous workspace are invalidated by workspace switch/clear.
+- Existing JS/TS definition navigation still opens and reveals targets while the workspace remains active.
+- Focused preview tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Navigation Target Open Isolation
+
+- Invalidated in-flight `openFile` requests when clearing the workspace or switching to a different workspace root.
+- Added a JS/TS language-server navigation root re-check after target open and before reveal/message updates.
+- Added preview coverage for switching project tabs while a JS/TS definition target file is still loading.
+
+### Verification: JS/TS Navigation Target Open Isolation
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "drops stale JavaScript and TypeScript navigation after switching project tabs during target open|opens JavaScript and TypeScript definitions through workbench commands"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Navigation Target Open Isolation
+
+- Pending commit.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

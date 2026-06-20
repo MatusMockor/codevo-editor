@@ -1905,6 +1905,7 @@ export function useWorkbenchController(
     languageServerRuntimeStatusByRootRef.current = {};
     javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
     javaScriptTypeScriptDiagnosticsByRootRef.current = {};
+    openFileRequestTokenRef.current += 1;
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -2578,8 +2579,12 @@ export function useWorkbenchController(
     async (path: string) => {
       const previousRootPath = currentWorkspaceRootRef.current;
       const cachedWorkspaceState = workspaceStateCacheRef.current[path] ?? null;
+      const switchingWorkspace =
+        previousRootPath &&
+        !workspaceRootKeysEqual(previousRootPath, path);
 
-      if (previousRootPath && previousRootPath !== path) {
+      if (switchingWorkspace) {
+        openFileRequestTokenRef.current += 1;
         cacheCurrentWorkspaceState(previousRootPath);
         await Promise.allSettled([
           closeSyncedLanguageServerDocumentsForRoot(previousRootPath),
@@ -10142,6 +10147,10 @@ export function useWorkbenchController(
       const opened = await openPathForNavigation(targetPath);
 
       if (!opened) {
+        return false;
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return false;
       }
 
