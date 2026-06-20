@@ -3074,7 +3074,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Provider Workspace Edit Root Contract
 
-- Commit pending.
+- Committed and pushed as `46bca8e5 Require roots for PHP provider workspace edits`.
 - Included files:
   - `src/components/languageServerMonacoProviders.ts`
   - `src/components/languageServerMonacoProviders.test.ts`
