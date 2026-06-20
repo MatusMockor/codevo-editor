@@ -122,7 +122,7 @@ pub struct AppHandleEventSink {
     app: tauri::AppHandle,
     diagnostics_event: &'static str,
     refresh_event: &'static str,
-    root_path: Option<String>,
+    root_path: String,
     status_event: &'static str,
     workspace_edit_event: &'static str,
 }
@@ -135,7 +135,7 @@ impl AppHandleEventSink {
             PHP_DIAGNOSTICS_EVENT,
             PHP_REFRESH_EVENT,
             PHP_WORKSPACE_EDIT_EVENT,
-            Some(root_path),
+            root_path,
         )
     }
 
@@ -146,7 +146,7 @@ impl AppHandleEventSink {
             JAVASCRIPT_TYPESCRIPT_DIAGNOSTICS_EVENT,
             JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT,
             JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT,
-            Some(root_path),
+            root_path,
         )
     }
 
@@ -156,7 +156,7 @@ impl AppHandleEventSink {
         diagnostics_event: &'static str,
         refresh_event: &'static str,
         workspace_edit_event: &'static str,
-        root_path: Option<String>,
+        root_path: String,
     ) -> Self {
         Self {
             app,
@@ -217,47 +217,41 @@ impl WorkspaceEditSink for AppHandleEventSink {
     }
 }
 
-fn status_event_payload(root_path: &Option<String>, status: LanguageServerRuntimeStatus) -> Value {
+fn status_event_payload(root_path: &str, status: LanguageServerRuntimeStatus) -> Value {
     let mut value = serde_json::to_value(status).unwrap_or(Value::Null);
 
-    if let (Some(root_path), Value::Object(object)) = (root_path, &mut value) {
-        object.insert("rootPath".to_string(), Value::String(root_path.clone()));
+    if let Value::Object(object) = &mut value {
+        object.insert("rootPath".to_string(), Value::String(root_path.to_string()));
     }
 
     value
 }
 
-fn diagnostics_event_payload(
-    root_path: &Option<String>,
-    event: LanguageServerDiagnosticEvent,
-) -> Value {
+fn diagnostics_event_payload(root_path: &str, event: LanguageServerDiagnosticEvent) -> Value {
     let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
 
-    if let (Some(root_path), Value::Object(object)) = (root_path, &mut value) {
-        object.insert("rootPath".to_string(), Value::String(root_path.clone()));
+    if let Value::Object(object) = &mut value {
+        object.insert("rootPath".to_string(), Value::String(root_path.to_string()));
     }
 
     value
 }
 
-fn refresh_event_payload(root_path: &Option<String>, event: LanguageServerRefreshEvent) -> Value {
+fn refresh_event_payload(root_path: &str, event: LanguageServerRefreshEvent) -> Value {
     let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
 
-    if let (Some(root_path), Value::Object(object)) = (root_path, &mut value) {
-        object.insert("rootPath".to_string(), Value::String(root_path.clone()));
+    if let Value::Object(object) = &mut value {
+        object.insert("rootPath".to_string(), Value::String(root_path.to_string()));
     }
 
     value
 }
 
-fn workspace_edit_event_payload(
-    root_path: &Option<String>,
-    event: LanguageServerWorkspaceEditEvent,
-) -> Value {
+fn workspace_edit_event_payload(root_path: &str, event: LanguageServerWorkspaceEditEvent) -> Value {
     let mut value = serde_json::to_value(event).unwrap_or(Value::Null);
 
-    if let (Some(root_path), Value::Object(object)) = (root_path, &mut value) {
-        object.insert("rootPath".to_string(), Value::String(root_path.clone()));
+    if let Value::Object(object) = &mut value {
+        object.insert("rootPath".to_string(), Value::String(root_path.to_string()));
     }
 
     value
@@ -2311,6 +2305,7 @@ mod tests {
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
+    use crate::lsp_features::LanguageServerWorkspaceEdit;
     use crate::lsp_transport::{read_message, write_message};
     use serde_json::{json, Value};
     use std::fs;
@@ -3173,15 +3168,65 @@ mod tests {
     }
 
     #[test]
-    fn runtime_status_payload_includes_workspace_root() {
+    fn event_payloads_include_workspace_root() {
         assert_eq!(
-            super::status_event_payload(
-                &Some("/tmp/workspace-a".to_string()),
-                LanguageServerRuntimeStatus::Stopped,
-            ),
+            super::status_event_payload("/tmp/workspace-a", LanguageServerRuntimeStatus::Stopped),
             json!({
                 "kind": "stopped",
                 "rootPath": "/tmp/workspace-a",
+            }),
+        );
+        assert_eq!(
+            super::diagnostics_event_payload(
+                "/tmp/workspace-a",
+                LanguageServerDiagnosticEvent {
+                    diagnostics: Vec::new(),
+                    session_id: 7,
+                    uri: file_uri(Path::new("/tmp/workspace-a/src/App.php")),
+                    version: Some(3),
+                },
+            ),
+            json!({
+                "diagnostics": [],
+                "rootPath": "/tmp/workspace-a",
+                "sessionId": 7,
+                "uri": file_uri(Path::new("/tmp/workspace-a/src/App.php")),
+                "version": 3,
+            }),
+        );
+        assert_eq!(
+            super::refresh_event_payload(
+                "/tmp/workspace-a",
+                LanguageServerRefreshEvent {
+                    feature: LanguageServerRefreshFeature::CodeLens,
+                    session_id: 7,
+                },
+            ),
+            json!({
+                "feature": "codeLens",
+                "rootPath": "/tmp/workspace-a",
+                "sessionId": 7,
+            }),
+        );
+        assert_eq!(
+            super::workspace_edit_event_payload(
+                "/tmp/workspace-a",
+                LanguageServerWorkspaceEditEvent {
+                    edit: LanguageServerWorkspaceEdit {
+                        changes: Default::default(),
+                        file_operations: Vec::new(),
+                    },
+                    label: Some("Apply edit".to_string()),
+                    session_id: 7,
+                },
+            ),
+            json!({
+                "edit": {
+                    "changes": {},
+                },
+                "label": "Apply edit",
+                "rootPath": "/tmp/workspace-a",
+                "sessionId": 7,
             }),
         );
     }

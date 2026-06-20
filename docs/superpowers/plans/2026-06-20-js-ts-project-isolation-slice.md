@@ -3475,3 +3475,56 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src/App.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: LSP Event Sink Explicit Root Contract
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d2daa173 Record Laravel fluent through named arguments commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens the backend event-sink root contract after the frontend/runtime root guards.
+- Main agent implemented directly because the affected code is local to `src-tauri/src/lsp_session.rs`.
+
+### Why This Slice
+
+- Runtime, diagnostics, refresh, and workspace-edit event routing now requires explicit workspace roots at the frontend boundaries.
+- The Tauri `AppHandleEventSink` was only constructed through rooted constructors, but internally still stored its root as `Option<String>`.
+- That optional helper shape kept a rootless backend event payload path available to future callers.
+
+### Implementation Choice
+
+- Store a required `String` root on `AppHandleEventSink`.
+- Make status, diagnostics, refresh, and workspace-edit payload helpers accept `&str` and always write `rootPath`.
+- Extend backend regression coverage across all four payload helper surfaces.
+
+### Acceptance Criteria
+
+- Runtime status event payloads always include `rootPath`.
+- Diagnostics event payloads always include `rootPath`.
+- Refresh and workspace-edit event payloads always include `rootPath`.
+- Focused Rust payload tests, Rust lib tests, `rustfmt --check`, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: LSP Event Sink Explicit Root Contract
+
+- Made the Tauri LSP app event sink root mandatory.
+- Removed optional-root branches from backend event payload helpers.
+- Added regression coverage for rooted status, diagnostics, refresh, and workspace-edit payloads.
+
+### Verification: LSP Event Sink Explicit Root Contract
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml event_payloads_include_workspace_root --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `rustfmt --check src-tauri/src/lsp_session.rs`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: LSP Event Sink Explicit Root Contract
+
+- Pending commit.
