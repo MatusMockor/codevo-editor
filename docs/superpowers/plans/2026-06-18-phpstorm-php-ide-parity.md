@@ -2369,3 +2369,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `3e537fd6 Stop Laravel fill insert builder leaks`.
+
+## Slice: Laravel Relation Helper Recognition - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `aee1600e Record Laravel fill insert commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize additional Laravel 13 relation query helpers such as `whereAttachedTo(...)` and `whereDoesntHaveRelation(...)` while preserving model-aware builder inference.
+
+### Implementation Choice
+
+- Add the missing relation helper names to Laravel Eloquent static/fluent builder method recognition.
+- Reuse existing builder-preserving return inference for known fluent methods.
+- Add semantic coverage proving representative relation helper chains infer the model after `first()`.
+
+### Acceptance Criteria
+
+- `whereAttachedTo`, `orWhereAttachedTo`, `whereDoesntHaveRelation`, `orWhereDoesntHaveRelation`, `whereMorphDoesntHaveRelation`, and `orWhereMorphDoesntHaveRelation` are recognized as Laravel Eloquent builder method names.
+- Direct return inference for these helpers resolves to `Builder<Model>`.
+- Representative relation helper chains infer `App\Models\Album` after `first()`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added the missing Laravel 13 relation helper names to known Eloquent static/fluent builder method recognition.
+- Added direct return-type coverage proving the helpers preserve `Builder<App\Models\Album>`.
+- Added semantic assignment coverage proving representative relation helper chains infer `App\Models\Album` after `first()`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending.

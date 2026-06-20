@@ -556,6 +556,13 @@ class AlbumController
             ->scopes(['popular'])
             ->applyScopes()
             ->first();
+        $fromRelationHelpers = Album::query()
+            ->whereDoesntHaveRelation('tracks', 'visible', true)
+            ->orWhereMorphDoesntHaveRelation('commentable', [Post::class], 'visible', true)
+            ->first();
+        $fromAttachedHelper = Album::query()
+            ->whereAttachedTo(new Album())
+            ->first();
         $summedAlbum = Album::query()
             ->withSum('tracks', 'duration')
             ->first();
@@ -630,6 +637,8 @@ class AlbumController
         $withWhereHasAlbum->tit
         $fromEagerHelpers->tit
         $fromScopeHelpers->tit
+        $fromRelationHelpers->tit
+        $fromAttachedHelper->tit
         $summedAlbum->tit
         $lazySummedAlbum->tit
         $fromLoadedCollection->tit
@@ -697,6 +706,22 @@ class AlbumController
         source,
         positionAfter(source, "$fromScopeHelpers->tit"),
         "fromScopeHelpers",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromRelationHelpers->tit"),
+        "fromRelationHelpers",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromAttachedHelper->tit"),
+        "fromAttachedHelper",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
