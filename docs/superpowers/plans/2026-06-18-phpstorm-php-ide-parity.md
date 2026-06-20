@@ -1453,3 +1453,48 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `b9b27d43 Use Laravel resource route name overrides`.
+
+## Slice: Laravel Chained Route Group Name Prefixes - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0e4f969d Record Laravel resource route override commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize Laravel route name group prefixes when `name(...)` / `as(...)` appears inside a fluent group chain such as `Route::middleware(...)->name('admin.')->group(...)`.
+
+### Implementation Choice
+
+- Scan full `Route::...(...)->...->group(...)` statements instead of only direct `Route::name(...)->group(...)` calls.
+- Collect direct and chained `name(...)` / `as(...)` prefix literals before the group call.
+- Reuse the existing group body tracking and nested-prefix join behavior.
+
+### Acceptance Criteria
+
+- `Route::middleware(...)->name('admin.')->group(...)` prefixes child route names.
+- `Route::prefix(...)->as('reports.')->group(...)` prefixes child resource route names.
+- Nested direct and chained group prefixes compose in declaration order.
+- Focused route tests, full route tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Reworked Laravel route group prefix extraction to scan full `Route::...->group(...)` chains.
+- Added direct and chained `name(...)` / `as(...)` prefix literal collection before the group call.
+- Added route extractor coverage for chained middleware/name groups, `as(...)` groups, and nested direct/chained prefixes.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "combines chained Laravel route name group prefixes"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

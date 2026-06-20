@@ -577,27 +577,30 @@ function phpLaravelNamedRouteGroups(
   source: string,
 ): PhpLaravelNamedRouteGroup[] {
   const groups: PhpLaravelNamedRouteGroup[] = [];
-  const namePattern = /\bRoute\s*::\s*name\s*\(/g;
+  const routePattern = /\bRoute\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
-  for (const match of source.matchAll(namePattern)) {
+  for (const match of source.matchAll(routePattern)) {
     const routeStart = match.index ?? 0;
+    const routeMethod = match[1]?.toLowerCase() ?? "";
 
     if (!isPhpCodeOffset(source, routeStart)) {
       continue;
     }
 
-    const nameOpenParen = routeStart + match[0].lastIndexOf("(");
-    const prefixLiteral = firstClosedLiteralArgumentAtOpenParen(
+    const routeOpenParen = routeStart + match[0].lastIndexOf("(");
+    const routeCloseParen = matchingBracketOffset(
       source,
-      nameOpenParen,
+      routeOpenParen,
+      "(",
+      ")",
     );
 
-    if (!prefixLiteral) {
+    if (routeCloseParen === null) {
       continue;
     }
 
-    const statementEnd = phpStatementEndOffset(source, prefixLiteral.quoteEnd + 1);
-    const chainSource = source.slice(prefixLiteral.quoteEnd + 1, statementEnd);
+    const statementEnd = phpStatementEndOffset(source, routeCloseParen + 1);
+    const chainSource = source.slice(routeCloseParen + 1, statementEnd);
     const groupMatch = /->\s*group\s*\(/g.exec(chainSource);
 
     if (!groupMatch) {
@@ -605,10 +608,27 @@ function phpLaravelNamedRouteGroups(
     }
 
     const groupOpenParen =
-      prefixLiteral.quoteEnd +
+      routeCloseParen +
       1 +
       (groupMatch.index ?? 0) +
       groupMatch[0].lastIndexOf("(");
+
+    if (!isPhpCodeOffset(source, groupOpenParen)) {
+      continue;
+    }
+
+    const prefixLiterals = laravelRouteGroupPrefixLiterals(
+      source,
+      routeMethod,
+      routeOpenParen,
+      routeCloseParen,
+      groupOpenParen,
+    );
+
+    if (prefixLiterals.length === 0) {
+      continue;
+    }
+
     const groupCloseParen = matchingBracketOffset(
       source,
       groupOpenParen,
@@ -635,11 +655,49 @@ function phpLaravelNamedRouteGroups(
     groups.push({
       bodyEnd,
       bodyStart,
-      prefix: prefixLiteral.value,
+      prefix: prefixLiterals.map((literal) => literal.value).join(""),
     });
   }
 
   return groups.sort((left, right) => left.bodyStart - right.bodyStart);
+}
+
+function laravelRouteGroupPrefixLiterals(
+  source: string,
+  routeMethod: string,
+  routeOpenParen: number,
+  routeCloseParen: number,
+  groupOpenParen: number,
+): PhpStringLiteral[] {
+  const prefixLiterals: PhpStringLiteral[] = [];
+
+  if (routeMethod === "name" || routeMethod === "as") {
+    const literal = firstClosedLiteralArgumentAtOpenParen(source, routeOpenParen);
+
+    if (literal) {
+      prefixLiterals.push(literal);
+    }
+  }
+
+  const chainSource = source.slice(routeCloseParen + 1, groupOpenParen);
+  const prefixPattern = /->\s*(?:name|as)\s*\(/gi;
+
+  for (const match of chainSource.matchAll(prefixPattern)) {
+    const prefixOpenParen =
+      routeCloseParen + 1 + (match.index ?? 0) + match[0].lastIndexOf("(");
+
+    if (!isPhpCodeOffset(source, prefixOpenParen)) {
+      continue;
+    }
+
+    const literal = firstClosedLiteralArgumentAtOpenParen(source, prefixOpenParen);
+
+    if (literal) {
+      prefixLiterals.push(literal);
+    }
+  }
+
+  return prefixLiterals;
 }
 
 function routeNamePrefixAtOffset(

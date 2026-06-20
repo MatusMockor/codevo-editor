@@ -603,4 +603,35 @@ Route::name('admin.')->group(function () {
       },
     ]);
   });
+
+  it("combines chained Laravel route name group prefixes", () => {
+    const source = `<?php
+Route::middleware(['web'])->name('admin.')->group(function () {
+    Route::get('/dashboard', DashboardController::class)->name('dashboard');
+});
+Route::prefix('reports')->as('reports.')->group(function () {
+    Route::resource('exports', ExportController::class)->only(['index']);
+});
+Route::name('outer.')->group(function () {
+    Route::middleware('auth')->name('inner.')->group(function () {
+        Route::get('/home', HomeController::class)->name('home');
+    });
+});
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "admin.dashboard",
+        position: positionOf(source, "dashboard');"),
+      },
+      {
+        name: "reports.exports.index",
+        position: positionOf(source, "exports"),
+      },
+      {
+        name: "outer.inner.home",
+        position: positionOf(source, "home');"),
+      },
+    ]);
+  });
 });
