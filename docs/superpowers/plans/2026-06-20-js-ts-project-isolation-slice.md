@@ -1383,4 +1383,10 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Inlay Hint Text Edits
 
-- Pending commit.
+- Committed and pushed as `1b45078 Preserve JS TS inlay text edits`.
+- Included files:
+  - `src/domain/languageServerFeatures.ts`
+  - `src-tauri/src/lsp_features.rs`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
