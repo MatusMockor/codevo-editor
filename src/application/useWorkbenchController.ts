@@ -9072,6 +9072,18 @@ export function useWorkbenchController(
             builderReceiverExpression,
           )
         : null;
+      const builderScopeMethodName =
+        isLaravelFrameworkActive && builderModelType
+          ? phpLaravelScopeMethodName(context.methodName)
+          : null;
+
+      if (
+        builderModelType &&
+        builderScopeMethodName &&
+        (await openDirectPhpMethodTarget(builderModelType, builderScopeMethodName))
+      ) {
+        return true;
+      }
 
       if (
         builderModelType &&

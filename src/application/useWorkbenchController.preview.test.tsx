@@ -11694,7 +11694,7 @@ class Builder
     });
   });
 
-  it("opens Laravel static model scope and builder magic methods", async () => {
+  it("opens Laravel model scopes and builder magic methods", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumPath = "/workspace/app/Models/Album.php";
     const builderPath =
@@ -11708,7 +11708,9 @@ class AlbumController
 {
     public function index(): void
     {
-        Album::withRelations()->findOrFail(1);
+        Album::published()->findOrFail(1);
+        $query = Album::query();
+        $query->published()->first();
         Album::whereNull('parent_id')->first();
     }
 }
@@ -11731,7 +11733,7 @@ use Illuminate\\Database\\Eloquent\\Builder;
 
 class Album
 {
-    public function scopeWithRelations(Builder $query): Builder
+    public function scopePublished(Builder $query): Builder
     {
         return $query;
     }
@@ -11771,7 +11773,31 @@ class Builder
     });
     act(() => {
       getWorkbench().updateActiveEditorPosition(
-        positionAfter(controllerSource, "Album::withRelations"),
+        positionAfter(controllerSource, "Album::published"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(albumPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: albumPath,
+      position: {
+        column: 21,
+        lineNumber: 8,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "AlbumController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$query->published"),
       );
     });
 
