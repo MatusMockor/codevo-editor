@@ -836,6 +836,177 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(providePhpMethodCompletions).toHaveBeenCalled();
   });
 
+  it("filters PHP LSP locals and keywords inside member access completions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "instance",
+            documentation: null,
+            insertText: "$this",
+            kind: 6,
+            label: "$this",
+          },
+          {
+            detail: "StoreCommentRequest",
+            documentation: null,
+            insertText: "$request",
+            kind: 6,
+            label: "$request",
+          },
+          {
+            detail: "Comment",
+            documentation: null,
+            insertText: "$comment",
+            kind: 6,
+            label: "$comment",
+          },
+          {
+            detail: null,
+            documentation: null,
+            insertText: "function",
+            kind: null,
+            label: "function",
+          },
+          {
+            detail: null,
+            documentation: null,
+            insertText: "const",
+            kind: 21,
+            label: "const",
+          },
+          {
+            detail: "App\\Models\\Comment::refresh(): static",
+            documentation: null,
+            insertText: "refresh",
+            kind: 2,
+            label: "refresh",
+          },
+          {
+            detail: "App\\Models\\Comment::restore(): bool",
+            documentation: null,
+            insertText: "restore",
+            kind: null,
+            label: "restore",
+          },
+        ],
+      },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(Comment $comment, StoreCommentRequest $request): void\n{\n    $comment->\n}\n",
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    $comment->",
+        word: {
+          endColumn: 15,
+          startColumn: 15,
+        },
+      }),
+      {
+        column: 15,
+        lineNumber: 4,
+      },
+    );
+
+    expect(completionLabels(result.suggestions)).toEqual(["refresh", "restore"]);
+    expect(gateway.completion).toHaveBeenCalled();
+  });
+
+  it("filters PHP LSP locals and globals inside static access completions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "instance",
+            documentation: null,
+            insertText: "$this",
+            kind: 6,
+            label: "$this",
+          },
+          {
+            detail: "App\\Models\\Comment",
+            documentation: null,
+            insertText: "Comment",
+            kind: 7,
+            label: "Comment",
+          },
+          {
+            detail: null,
+            documentation: null,
+            insertText: "function",
+            kind: null,
+            label: "function",
+          },
+          {
+            detail: "class constant",
+            documentation: null,
+            insertText: "STATUS_ACTIVE",
+            kind: 21,
+            label: "STATUS_ACTIVE",
+          },
+          {
+            detail: "App\\Models\\Comment::query(): Illuminate\\Database\\Eloquent\\Builder",
+            documentation: null,
+            insertText: "query",
+            kind: 2,
+            label: "query",
+          },
+          {
+            detail: "App\\Models\\Comment::whereNull(string $column): Illuminate\\Database\\Eloquent\\Builder",
+            documentation: null,
+            insertText: "whereNull",
+            kind: 3,
+            label: "whereNull",
+          },
+        ],
+      },
+    });
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nComment::\n",
+      },
+      featuresGateway: gateway,
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "Comment::",
+        word: {
+          endColumn: 10,
+          startColumn: 10,
+        },
+      }),
+      {
+        column: 10,
+        lineNumber: 2,
+      },
+    );
+
+    expect(completionLabels(result.suggestions)).toEqual([
+      "STATUS_ACTIVE",
+      "query",
+      "whereNull",
+    ]);
+  });
+
   it("uses the live Monaco model source for fresh PHP member access completions", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
@@ -1756,6 +1927,14 @@ function createRegisteredProviders() {
   };
 
   return registered;
+}
+
+function completionLabels(
+  suggestions: Array<{ label: string | { label: string } }>,
+): string[] {
+  return suggestions.map((suggestion) =>
+    typeof suggestion.label === "string" ? suggestion.label : suggestion.label.label,
+  );
 }
 
 function providerContext(

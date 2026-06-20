@@ -650,22 +650,24 @@ async function provideCompletionItems(
     position,
     range,
   );
-  const isMemberOrStaticCompletion = Boolean(
-    phpMemberAccessCompletionContextAt(
-      source,
-      position,
-    ) ||
-      phpStaticAccessCompletionContextAt(
-        source,
-        position,
-      ) ||
-      phpLaravelRelationStringCompletionContextAt(
-        source,
-        position,
-      ),
+  const memberAccessCompletionContext = phpMemberAccessCompletionContextAt(
+    source,
+    position,
+  );
+  const staticAccessCompletionContext = phpStaticAccessCompletionContextAt(
+    source,
+    position,
+  );
+  const relationStringCompletionContext =
+    phpLaravelRelationStringCompletionContextAt(source, position);
+  const isMemberOrStaticAccessCompletion = Boolean(
+    memberAccessCompletionContext || staticAccessCompletionContext,
+  );
+  const isScopedCompletion = Boolean(
+    isMemberOrStaticAccessCompletion || relationStringCompletionContext,
   );
   const variableSuggestions: Monaco.languages.CompletionItem[] =
-    methodSuggestions.length > 0 || isMemberOrStaticCompletion
+    methodSuggestions.length > 0 || isScopedCompletion
       ? []
       : phpVariableCompletionsAt(
           source,
@@ -691,11 +693,24 @@ async function provideCompletionItems(
       request.rootPath,
       request.position,
     );
-    const lspSuggestions = completion.items.map((item, index) => {
+    const lspSuggestions = completion.items.flatMap((item, index) => {
       const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
+
+      if (
+        isMemberOrStaticAccessCompletion &&
+        !phpLspCompletionAllowedInMemberContext(
+          monaco,
+          item,
+          kind,
+          Boolean(staticAccessCompletionContext),
+        )
+      ) {
+        return [];
+      }
+
       const insert = lspCompletionInsert(monaco, item, kind);
 
-      return {
+      return [{
         detail: item.detail || undefined,
         documentation: item.documentation || undefined,
         insertText: insert.insertText,
@@ -707,7 +722,7 @@ async function provideCompletionItems(
         label: item.label,
         range,
         sortText: `1_${String(index).padStart(4, "0")}`,
-      };
+      }];
     });
 
     return {
@@ -720,6 +735,64 @@ async function provideCompletionItems(
     context.reportError(error);
     return { suggestions };
   }
+}
+
+const invalidPhpMemberCompletionNames = new Set([
+  "class",
+  "const",
+  "function",
+  "interface",
+  "namespace",
+  "private",
+  "protected",
+  "public",
+  "return",
+  "static",
+  "trait",
+  "use",
+]);
+
+function phpLspCompletionAllowedInMemberContext(
+  monaco: MonacoApi,
+  item: {
+    detail: string | null;
+    documentation: string | null;
+    insertText: string | null;
+    label: string;
+  },
+  kind: Monaco.languages.CompletionItemKind,
+  allowConstants: boolean,
+): boolean {
+  const labelName = phpCallableCompletionName(item.label);
+
+  if (labelName && invalidPhpMemberCompletionNames.has(labelName.toLowerCase())) {
+    return false;
+  }
+
+  if (
+    kind === monaco.languages.CompletionItemKind.Method ||
+    kind === monaco.languages.CompletionItemKind.Property ||
+    kind === monaco.languages.CompletionItemKind.Field
+  ) {
+    return true;
+  }
+
+  if (kind === monaco.languages.CompletionItemKind.Constant) {
+    return allowConstants;
+  }
+
+  if (
+    kind !== monaco.languages.CompletionItemKind.Function &&
+    kind !== monaco.languages.CompletionItemKind.Text
+  ) {
+    return false;
+  }
+
+  if (!labelName) {
+    return false;
+  }
+
+  return completionItemValuesLookLikeSignature(item, item.insertText, labelName);
 }
 
 async function phpMethodSuggestions(
