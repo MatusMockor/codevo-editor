@@ -629,7 +629,7 @@ export function useWorkbenchController(
   );
   const shouldAutoStartJavaScriptTypeScriptLanguageServer =
     Boolean(workspaceDescriptor?.javaScriptTypeScript) ||
-    (!workspaceDescriptor?.php && hasOpenJavaScriptTypeScriptDocument);
+    hasOpenJavaScriptTypeScriptDocument;
   const phpIdeReadinessSignature = useMemo(() => {
     if (!workspaceRoot || !workspaceDescriptor?.php) {
       return null;

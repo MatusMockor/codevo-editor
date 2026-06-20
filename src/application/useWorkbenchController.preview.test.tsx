@@ -2821,7 +2821,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
   });
 
-  it("does not start JavaScript and TypeScript service for PHP-only project tabs", async () => {
+  it("starts inferred JavaScript and TypeScript service for restored JS TS tabs in PHP workspaces", async () => {
     const restoredPath = "/workspace/scripts/tool.ts";
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
@@ -2877,7 +2877,13 @@ describe("useWorkbenchController preview tabs", () => {
     });
     expect(
       dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: true,
+      codeLensEnabled: false,
+      inlayHintsEnabled: true,
+      typeScriptVersionPreference: "bundled",
+      validationEnabled: true,
+    });
     expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
   });
 
