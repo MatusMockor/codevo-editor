@@ -3580,4 +3580,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: LSP Direct Status Response Root Contract
 
-- Pending commit.
+- Committed and pushed as `bdaf85a0 Root direct LSP status command responses`.
