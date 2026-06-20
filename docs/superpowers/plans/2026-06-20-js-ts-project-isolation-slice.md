@@ -3422,3 +3422,56 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: App Runtime Label Workspace Memo Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `7dba706f Record controller runtime root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice closes a UI follow-up from the runtime status label guard.
+- Main agent implemented directly because the remaining rootless label call and stale memo dependencies were in `src/App.tsx`.
+
+### Why This Slice
+
+- The main PHP and TS Server labels now pass `workspaceRoot`, but their `useMemo` dependency lists did not include `workbench.workspaceRoot`.
+- The toolbar `smartModeSummary` still called `languageServerStatusLabel` without a workspace root, preserving one rootless PHP runtime label path.
+- Workspace-tab switches should recompute runtime labels and should not display rootless runtime state as active IDE status.
+
+### Implementation Choice
+
+- Add `workbench.workspaceRoot` to PHP and JS/TS runtime label memo dependencies.
+- Pass the actual `workspaceRoot` into `smartModeSummary` instead of a boolean.
+- Root the toolbar PHPactor status label with that workspace root.
+
+### Acceptance Criteria
+
+- Runtime labels recompute when the active workspace root changes.
+- Toolbar IDE summary does not accept rootless runtime statuses for a workspace.
+- Existing status label tests and typecheck pass.
+
+### Completed Slice: App Runtime Label Workspace Memo Guard
+
+- Rooted the toolbar smart-mode runtime label.
+- Added workspace root to App runtime label memo dependencies.
+- Preserved existing no-workspace, basic, smart-index, untrusted, plan-ready, and setup-needed labels.
+
+### Verification: App Runtime Label Workspace Memo Guard
+
+- PASS: `npm run check`
+- PASS: `npm test -- src/components/StatusBar.test.tsx src/domain/languageServerRuntime.test.ts`
+- PASS: `git diff --check`
+
+### Commit Status: App Runtime Label Workspace Memo Guard
+
+- Pending commit.
+- Included files:
+  - `src/App.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

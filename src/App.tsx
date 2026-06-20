@@ -315,6 +315,7 @@ function App() {
     workbench.intelligenceMode,
     workbench.languageServerPlan,
     workbench.languageServerRuntimeStatus,
+    workbench.workspaceRoot,
   ]);
   const javaScriptTypeScriptLanguageServerLabel = useMemo(() => {
     const runtimeLabel = languageServerStatusLabel(
@@ -336,7 +337,10 @@ function App() {
     }
 
     return runtimeLabel;
-  }, [workbench.javaScriptTypeScriptLanguageServerRuntimeStatus]);
+  }, [
+    workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+    workbench.workspaceRoot,
+  ]);
   const combinedLanguageServerLabel = useMemo(
     () =>
       [languageServerLabel, javaScriptTypeScriptLanguageServerLabel]
@@ -615,7 +619,7 @@ function App() {
           </button>
           <span className="toolbar-status">
             {smartModeSummary(
-              Boolean(workbench.workspaceRoot),
+              workbench.workspaceRoot,
               workbench.intelligenceMode,
               workbench.languageServerRuntimeStatus,
               workbench.languageServerPlan,
@@ -895,13 +899,13 @@ function maxBottomPanelHeight(viewportHeight: number): number {
 }
 
 function smartModeSummary(
-  hasWorkspace: boolean,
+  workspaceRoot: string | null,
   mode: IntelligenceMode,
   runtimeStatus: LanguageServerRuntimeStatus | null,
   plan: LanguageServerPlan | null,
   trusted: boolean,
 ): string {
-  if (!hasWorkspace) {
+  if (!workspaceRoot) {
     return "No workspace";
   }
 
@@ -917,7 +921,9 @@ function smartModeSummary(
     return "Untrusted";
   }
 
-  const runtimeLabel = languageServerStatusLabel(runtimeStatus);
+  const runtimeLabel = languageServerStatusLabel(runtimeStatus, "PHPactor", {
+    workspaceRoot,
+  });
 
   if (runtimeLabel) {
     return runtimeLabel;
