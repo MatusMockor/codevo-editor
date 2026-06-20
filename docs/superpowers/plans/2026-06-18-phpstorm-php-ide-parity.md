@@ -683,3 +683,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Nullsafe Member Diagnostic Reconciliation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ecee72e Update PHP parity plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let PHPactor unresolved member-method and member-property diagnostics reconcile for nullsafe `?->` access when Codevo has already confirmed the receiver context.
+
+### Implementation Choice
+
+- Reuse the shared PHP member-access regex fragments so diagnostic context extraction matches the nullsafe grammar already used by completions, signature help, and semantic parsing.
+- Keep suppression guarded by existing contextual method/property keys, so unknown nullsafe members remain visible.
+
+### Acceptance Criteria
+
+- `$query?->withRelations()` can be suppressed when semantic context confirms `withRelations`.
+- `$comment?->content` can be suppressed when semantic context confirms `content`.
+- Unknown nullsafe method/property diagnostics remain visible.
+- Diagnostic filter tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Member-method diagnostic context extraction now accepts `?->` in both chain segments and the final method operator.
+- Member-property diagnostic context extraction now accepts `?->` in both chain segments and the final property operator.
+- Added filter coverage for confirmed nullsafe method/property diagnostics and unknown nullsafe controls.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts -t "nullsafe member"`
+- PASS: `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

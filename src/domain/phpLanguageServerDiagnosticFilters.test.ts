@@ -159,6 +159,43 @@ $album = Album::query()->missingMagic()->first();
     ).toEqual([unknown]);
   });
 
+  it("suppresses confirmed unresolved nullsafe member method diagnostics", () => {
+    const source = `<?php
+
+$album = Album::query()?->withRelations()?->first();
+$album = Album::query()?->missingMagic()?->first();
+`;
+    const confirmed = diagnostic({
+      character: 27,
+      line: 2,
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+    });
+    const unknown = diagnostic({
+      character: 27,
+      line: 3,
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::missingMagic() does not exist",
+    });
+
+    expect(
+      phpUnresolvedMemberMethodDiagnosticContext(source, confirmed),
+    ).toEqual({
+      methodName: "withRelations",
+      receiverExpression: "Album::query()",
+    });
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
+    ).toEqual([confirmed, unknown]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        contextualMemberMethods: new Set([
+          phpMemberMethodDiagnosticKey("Album::query()", "withRelations"),
+        ]),
+      }),
+    ).toEqual([unknown]);
+  });
+
   it("suppresses global Laravel builder member method diagnostics through the framework provider", () => {
     const source = `<?php
 namespace App\\Models;
@@ -249,6 +286,55 @@ $comment->missing();
         'Property "$missing" does not exist on class "App\\Models\\Comment"',
     });
 
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
+    ).toEqual([confirmed, unknown]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        contextualMemberProperties: new Set([
+          phpMemberPropertyDiagnosticKey("$comment", "content"),
+        ]),
+      }),
+    ).toEqual([unknown]);
+    expect(
+      phpUnresolvedMemberPropertyDiagnosticContext(
+        source,
+        diagnostic({
+          character: 11,
+          line: 4,
+          message:
+            'Property "$missing" does not exist on class "App\\Models\\Comment"',
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("suppresses confirmed unresolved nullsafe member property diagnostics", () => {
+    const source = `<?php
+
+$comment?->content;
+$comment?->missing;
+$comment?->missing();
+`;
+    const confirmed = diagnostic({
+      character: 11,
+      line: 2,
+      message:
+        'Property "$content" does not exist on class "App\\Models\\Comment"',
+    });
+    const unknown = diagnostic({
+      character: 11,
+      line: 3,
+      message:
+        'Property "$missing" does not exist on class "App\\Models\\Comment"',
+    });
+
+    expect(
+      phpUnresolvedMemberPropertyDiagnosticContext(source, confirmed),
+    ).toEqual({
+      propertyName: "content",
+      receiverExpression: "$comment",
+    });
     expect(
       filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
     ).toEqual([confirmed, unknown]);

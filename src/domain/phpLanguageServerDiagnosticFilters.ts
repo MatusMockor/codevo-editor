@@ -7,6 +7,8 @@ import {
 } from "./phpFrameworkProviders";
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
+  PHP_MEMBER_ACCESS_PATTERN,
+  PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
   phpNormalizeReceiverExpression,
   phpStatementPrefixRangeBeforeOffset,
 } from "./phpReceiverExpressions";
@@ -50,13 +52,21 @@ const staticMethodCallPattern =
 const memberMethodCallPattern = new RegExp(
   String.raw`(` +
     PHP_EXPRESSION_RECEIVER_PATTERN +
-    String.raw`(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*?)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(`,
+    String.raw`(?:` +
+    PHP_MEMBER_CHAIN_SEGMENT_PATTERN +
+    String.raw`)*?)` +
+    PHP_MEMBER_ACCESS_PATTERN +
+    String.raw`([A-Za-z_][A-Za-z0-9_]*)\s*\(`,
   "g",
 );
 const memberPropertyAccessPattern = new RegExp(
   String.raw`(` +
     PHP_EXPRESSION_RECEIVER_PATTERN +
-    String.raw`(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*?)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()`,
+    String.raw`(?:` +
+    PHP_MEMBER_CHAIN_SEGMENT_PATTERN +
+    String.raw`)*?)` +
+    PHP_MEMBER_ACCESS_PATTERN +
+    String.raw`([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()`,
   "g",
 );
 
