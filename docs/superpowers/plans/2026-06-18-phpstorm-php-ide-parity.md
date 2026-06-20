@@ -1771,4 +1771,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `8847fad1 Preserve Laravel collection lazy loaders`.
