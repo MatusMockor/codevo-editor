@@ -514,7 +514,8 @@ export function phpLaravelRepositoryMethodModelReturnTypeFromSource(
 
   return returnTypes
     .map((returnType) => phpLaravelModelTypeFromReturnType(source, returnType))
-    .find((returnType): returnType is string => Boolean(returnType)) ?? null;
+    .find((returnType): returnType is string => Boolean(returnType)) ??
+    phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType);
 }
 
 export function phpLaravelMethodCallReturnTypeFromSource(
@@ -2013,6 +2014,58 @@ function phpLaravelModelTypeFromReturnType(
   return isLaravelModelType(resolvedClassName) ? resolvedClassName : null;
 }
 
+function phpLaravelRepositoryConventionModelTypeFromReceiver(
+  source: string,
+  receiverType: string | null,
+): string | null {
+  const resolvedReceiverType =
+    phpLaravelResolvedClassName(source, receiverType ?? "") ??
+    receiverType?.trim().replace(/^\\+/, "");
+
+  if (!isLaravelRepositoryType(resolvedReceiverType ?? null)) {
+    return null;
+  }
+
+  const repositoryShortName = resolvedReceiverType?.split("\\").pop() ?? "";
+  const modelShortName = repositoryShortName
+    .replace(/RepositoryInterface$/i, "")
+    .replace(/Repository$/i, "");
+
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(modelShortName)) {
+    return null;
+  }
+
+  const explicitlyImportedModel = phpLaravelResolvedClassName(
+    source,
+    modelShortName,
+  );
+
+  if (explicitlyImportedModel && isLaravelModelType(explicitlyImportedModel)) {
+    return explicitlyImportedModel;
+  }
+
+  const receiverParts = (resolvedReceiverType ?? "")
+    .split("\\")
+    .filter(Boolean);
+  const conventionSegmentIndex = receiverParts.findIndex((part) =>
+    /^(?:repositories|repository|interfaces|contracts)$/i.test(part),
+  );
+
+  if (conventionSegmentIndex < 0) {
+    return null;
+  }
+
+  const modelNamespace = receiverParts.slice(0, conventionSegmentIndex);
+
+  if (!modelNamespace.length) {
+    return null;
+  }
+
+  const modelClassName = [...modelNamespace, "Models", modelShortName].join("\\");
+
+  return isLaravelModelType(modelClassName) ? modelClassName : null;
+}
+
 function phpLaravelResolvedClassName(
   source: string,
   className: string,
@@ -2031,7 +2084,7 @@ function phpLaravelResolvedClassName(
 }
 
 function isLaravelRepositoryType(className: string | null): boolean {
-  return Boolean(className && /repository\b/i.test(className));
+  return Boolean(className && /repository(?:interface)?\b/i.test(className));
 }
 
 function isLaravelModelType(className: string): boolean {

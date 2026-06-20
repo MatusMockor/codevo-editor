@@ -348,6 +348,75 @@ class AlbumRepository
     ).toBe("App\\Models\\Album");
   });
 
+  it("resolves Laravel repository finder assignments from injected repository conventions", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\AlbumRepositoryInterface;
+
+class AlbumController
+{
+    public function __construct(private AlbumRepositoryInterface $albums)
+    {
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->albums->findOrFail($id);
+
+        $album->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+      ),
+    ).toBeNull();
+  });
+
+  it("resolves Laravel repository convention models in package namespaces", () => {
+    const source = `<?php
+namespace Kontentino\\Communication\\Http\\Controllers;
+
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(private CommentRepositoryInterface $comments)
+    {
+    }
+
+    public function getOne(int $id): void
+    {
+        $comment = $this->comments->findOrFail($id);
+
+        $comment->loa
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$comment->loa"),
+        "comment",
+        laravelOptions,
+      ),
+    ).toBe("Kontentino\\Communication\\Models\\Comment");
+  });
+
   it("resolves Laravel repository creation-helper assignments from declared interface return types", () => {
     const source = `<?php
 namespace App\\Repositories;

@@ -4852,6 +4852,23 @@ export function useWorkbenchController(
     [isKnownPhpNamespaceRootClassName, resolvePhpClassReference],
   );
 
+  const resolvePhpFrameworkReturnTypeReference = useCallback(
+    (source: string, typeName: string | null): string | null => {
+      const candidate = typeName ? phpDeclaredTypeCandidate(typeName) : null;
+
+      if (!candidate) {
+        return null;
+      }
+
+      if (candidate.includes("\\")) {
+        return typeName;
+      }
+
+      return resolvePhpSemanticTypeReference(source, candidate);
+    },
+    [resolvePhpSemanticTypeReference],
+  );
+
   const resolvePhpDeclaredType = useCallback(
     (source: string, typeName: string | null): string | null => {
       const rawTypeName = typeName?.trim() ?? "";
@@ -7149,17 +7166,6 @@ export function useWorkbenchController(
         return null;
       }
 
-      const directType = phpReceiverExpressionTypeInSource(
-        source,
-        position,
-        expression,
-        { frameworkProviders: activePhpFrameworkProviders },
-      );
-
-      if (directType) {
-        return resolvePhpSemanticTypeReference(source, directType);
-      }
-
       const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
         expression.trim(),
       );
@@ -7170,6 +7176,48 @@ export function useWorkbenchController(
             variableMatch[1],
           )
         : null;
+
+      if (
+        assignmentExpression &&
+        variableMatch?.[1] &&
+        !phpDocRawTypeForVariableBefore(source, position, variableMatch[1])
+      ) {
+        const frameworkAssignmentType = resolvePhpFrameworkReturnTypeReference(
+          source,
+          phpReceiverExpressionTypeInSource(
+            source,
+            position,
+            assignmentExpression,
+            { frameworkProviders: activePhpFrameworkProviders },
+          ),
+        );
+
+        if (frameworkAssignmentType) {
+          return frameworkAssignmentType;
+        }
+
+        const assignmentType = await resolvePhpExpressionType(
+          source,
+          position,
+          assignmentExpression,
+          depth + 1,
+        );
+
+        if (assignmentType) {
+          return assignmentType;
+        }
+      }
+
+      const directType = phpReceiverExpressionTypeInSource(
+        source,
+        position,
+        expression,
+        { frameworkProviders: activePhpFrameworkProviders },
+      );
+
+      if (directType) {
+        return resolvePhpSemanticTypeReference(source, directType);
+      }
 
       if (assignmentExpression) {
         const assignmentType = await resolvePhpExpressionType(

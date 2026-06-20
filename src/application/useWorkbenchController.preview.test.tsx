@@ -6289,24 +6289,24 @@ class Comment
     });
   });
 
-  it("does not cache missing Laravel container bindings during warm-up", async () => {
+  it("keeps Laravel repository completions stable during container binding warm-up", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const providerPath = "/workspace/app/Providers/AppServiceProvider.php";
     const repositoryInterfacePath =
-      "/workspace/app/Contracts/CommentRepositoryInterface.php";
+      "/workspace/app/Contracts/CommentLookupInterface.php";
     const repositoryPath =
       "/workspace/app/Repositories/EloquentCommentRepository.php";
     const commentPath = "/workspace/app/Models/Comment.php";
     const controllerSource = `<?php
 namespace App\\Http\\Controllers;
 
-use App\\Contracts\\CommentRepositoryInterface;
+use App\\Contracts\\CommentLookupInterface;
 use App\\Http\\Requests\\GetOneCommentRequest;
 
 class CommentController
 {
     public function __construct(
-        protected readonly CommentRepositoryInterface $commentRepository,
+        protected readonly CommentLookupInterface $commentRepository,
     ) {}
 
     public function getOne(GetOneCommentRequest $request): void
@@ -6316,7 +6316,6 @@ class CommentController
     }
 }
 `;
-    let bindingSearchAttempts = 0;
     const { getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -6331,14 +6330,14 @@ class CommentController
           return `<?php
 namespace App\\Providers;
 
-use App\\Contracts\\CommentRepositoryInterface;
+use App\\Contracts\\CommentLookupInterface;
 use App\\Repositories\\EloquentCommentRepository;
 
 class AppServiceProvider
 {
     public function register(): void
     {
-        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
+        $this->app->bind(CommentLookupInterface::class, EloquentCommentRepository::class);
     }
 }
 `;
@@ -6348,7 +6347,7 @@ class AppServiceProvider
           return `<?php
 namespace App\\Contracts;
 
-interface CommentRepositoryInterface
+interface CommentLookupInterface
 {
 }
 `;
@@ -6358,10 +6357,10 @@ interface CommentRepositoryInterface
           return `<?php
 namespace App\\Repositories;
 
-use App\\Contracts\\CommentRepositoryInterface;
+use App\\Contracts\\CommentLookupInterface;
 use App\\Models\\Comment;
 
-class EloquentCommentRepository implements CommentRepositoryInterface
+class EloquentCommentRepository implements CommentLookupInterface
 {
     public function findOrFail(int $id): Comment
     {
@@ -6386,13 +6385,7 @@ class Comment
         return `<?php\n// ${path}\n`;
       }),
       searchText: vi.fn(async (_root, query) => {
-        if (query !== "CommentRepositoryInterface::class") {
-          return [];
-        }
-
-        bindingSearchAttempts += 1;
-
-        if (bindingSearchAttempts === 1) {
+        if (query !== "CommentLookupInterface::class") {
           return [];
         }
 
@@ -6401,7 +6394,7 @@ class Comment
             column: 26,
             lineNumber: 11,
             lineText:
-              "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
+              "        $this->app->bind(CommentLookupInterface::class, EloquentCommentRepository::class);",
             path: providerPath,
             relativePath: "app/Providers/AppServiceProvider.php",
           },
@@ -6425,7 +6418,14 @@ class Comment
         controllerSource,
         positionAfter(controllerSource, "$comment->force"),
       ),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "forceDelete",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
 
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -10901,6 +10901,90 @@ class Comment
       "CommentRepositoryInterface.php",
       40,
     );
+    expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
+  });
+
+  it("suggests model methods from repository interface naming when return types are unavailable", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath =
+      "/workspace/app/Kontentino/src/Communication/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\communication;
+
+use App\\Http\\Requests\\GetOneCommentRequest;
+use Kontentino\\Communication\\Interfaces\\CommentRepositoryInterface;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->get
+    }
+}
+`;
+    const searchFiles = vi.fn(
+      async (_root: string, query: string): Promise<FileSearchResult[]> =>
+        query === "Comment.php"
+          ? [
+              {
+                name: "Comment.php",
+                path: commentPath,
+                relativePath:
+                  "app/Kontentino/src/Communication/Models/Comment.php",
+              },
+            ]
+          : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace Kontentino\\Communication\\Models;
+
+class Comment
+{
+    public function getContent(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchFiles,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Kontentino\\Communication\\Models\\Comment",
+        name: "getContent",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
     expect(searchFiles).toHaveBeenCalledWith("/workspace", "Comment.php", 40);
   });
 
