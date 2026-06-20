@@ -111,3 +111,19 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Final Bounded Scan: JS/TS Isolation
+
+- Checked the TypeScript Monaco provider registrations against stale-switch regression coverage.
+- Re-read the provider path for hover, completions, signature help, definitions, references, rename, code actions, CodeLens, formatting, inlay hints, document symbols, links, folding ranges, selection ranges, linked editing, semantic tokens, and workspace symbols.
+- Confirmed the frontend provider pattern consistently:
+  - captures the active workspace before async work,
+  - flushes pending document changes only for the still-active root,
+  - re-checks the stored workspace root before returning data, applying edits, resolving lazy payloads, or reporting errors.
+- Checked backend JS/TS LSP response filters for location, workspace symbol, workspace edit, hierarchy, completion, code action, CodeLens, document link, and command payload paths.
+- No further small, high-confidence code slice was identified in this scan.
+- Remaining useful validation is runtime GUI QA across two real JS/TS projects, plus unblocking the repo-wide `npm run check` failure in the existing PHP/Laravel WIP when that work is in scope.
+
+## Commit Status: Final Checkpoint
+
+- This section records the final doc-only checkpoint for the current pass.
