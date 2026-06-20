@@ -501,21 +501,109 @@ export function phpClassStringCallExpression(
 export function phpMethodCallExpression(
   expression: string,
 ): PhpMethodCallExpression | null {
-  const match =
-    new RegExp(
-      `^(${PHP_EXPRESSION_RECEIVER_PATTERN}(?:${PHP_MEMBER_CHAIN_SEGMENT_PATTERN})*)${PHP_MEMBER_ACCESS_PATTERN}([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
-    ).exec(
-      expression.trim(),
-    );
+  const normalized = expression.trim();
+  const methodCall = phpLastTopLevelMethodCall(normalized);
 
-  if (!match?.[1] || !match[2]) {
+  if (!methodCall) {
     return null;
   }
 
   return {
-    methodName: match[2],
-    receiverExpression: phpNormalizeReceiverExpression(match[1]),
+    methodName: methodCall.methodName,
+    receiverExpression: phpNormalizeReceiverExpression(
+      normalized.slice(0, methodCall.operatorStart),
+    ),
   };
+}
+
+function phpLastTopLevelMethodCall(
+  expression: string,
+): { methodName: string; operatorStart: number } | null {
+  let lastCall: { methodName: string; operatorStart: number } | null = null;
+  let quote: string | null = null;
+
+  for (let index = 0; index < expression.length; index += 1) {
+    const character = expression[index] ?? "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      const close =
+        character === "(" ? ")" : character === "[" ? "]" : "}";
+      const closeOffset = matchingPairOffset(expression, index, character, close);
+
+      if (closeOffset === null) {
+        break;
+      }
+
+      index = closeOffset;
+      continue;
+    }
+
+    const operatorLength = expression.startsWith("?->", index)
+      ? 3
+      : expression.startsWith("->", index)
+        ? 2
+        : 0;
+
+    if (operatorLength === 0) {
+      continue;
+    }
+
+    let methodStart = index + operatorLength;
+
+    while (/\s/.test(expression[methodStart] ?? "")) {
+      methodStart += 1;
+    }
+
+    const methodMatch = /^[A-Za-z_][A-Za-z0-9_]*/.exec(
+      expression.slice(methodStart),
+    );
+
+    if (!methodMatch?.[0]) {
+      continue;
+    }
+
+    let openOffset = methodStart + methodMatch[0].length;
+
+    while (/\s/.test(expression[openOffset] ?? "")) {
+      openOffset += 1;
+    }
+
+    if (expression[openOffset] !== "(") {
+      continue;
+    }
+
+    const closeOffset = matchingPairOffset(expression, openOffset, "(", ")");
+
+    if (closeOffset === null) {
+      break;
+    }
+
+    lastCall = {
+      methodName: methodMatch[0],
+      operatorStart: index,
+    };
+    index = closeOffset;
+  }
+
+  return lastCall;
 }
 
 export function phpPropertyAccessExpression(

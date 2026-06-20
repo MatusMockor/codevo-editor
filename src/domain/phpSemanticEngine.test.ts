@@ -545,7 +545,7 @@ class AlbumController
             ->whereHasMorph('commentable', [Post::class])
             ->first();
         $withWhereHasAlbum = Album::query()
-            ->withWhereHas('tracks', $visibleTracks)
+            ->withWhereHas('tracks', fn ($trackQuery) => $trackQuery->where('visible', true))
             ->first();
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
@@ -1148,6 +1148,15 @@ class Controller
     ).toEqual({
       methodName: "first",
       receiverExpression: "Album::query()->whereNull('parent_id')",
+    });
+    expect(
+      phpMethodCallExpression(
+        "Album::query()->withWhereHas('tracks', fn ($trackQuery) => $trackQuery->where('visible', true))->first()",
+      ),
+    ).toEqual({
+      methodName: "first",
+      receiverExpression:
+        "Album::query()->withWhereHas('tracks', fn ($trackQuery) => $trackQuery->where('visible', true))",
     });
     expect(phpMethodCallExpression("$user?->profile?->getName()")).toEqual({
       methodName: "getName",

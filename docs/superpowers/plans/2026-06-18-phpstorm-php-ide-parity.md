@@ -1589,3 +1589,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `307d6a8f Preserve Laravel withWhereHas builder chains`.
+
+## Slice: Balanced PHP Method Chain Calls - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `978a624e Record Laravel withWhereHas commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let PHP assignment and receiver inference keep walking fluent method chains when an earlier call contains nested parentheses, such as Laravel callbacks inside `withWhereHas(...)`.
+
+### Implementation Choice
+
+- Replace the regex-only `phpMethodCallExpression` extraction with a small balanced scanner for top-level member method calls.
+- Reuse the existing `matchingPairOffset` helper for parentheses, arrays, and blocks.
+- Keep property access parsing unchanged for this slice.
+
+### Acceptance Criteria
+
+- `phpMethodCallExpression` identifies the final method call after a callback argument containing nested method calls.
+- `Album::query()->withWhereHas(...callback...)->first()` infers `Album` instead of stopping at `Builder<Album>`.
+- Existing method-call expression cases remain unchanged.
+- Focused semantic tests, full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Replaced regex-only method call extraction with a balanced top-level method chain scanner.
+- Preserved existing method-call expression behavior while supporting callback arguments with nested method calls.
+- Restored real callback-chain coverage for `withWhereHas(... fn ($query) => $query->where(...))->first()` inference.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "detects method and static call expressions|resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "detects member access completion after multiline fluent calls|detects multiline fluent method signature contexts"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts src/domain/phpMethodCompletions.test.ts src/domain/phpNavigation.test.ts src/domain/phpLanguageServerDiagnosticFilters.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
