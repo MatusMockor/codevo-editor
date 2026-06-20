@@ -2416,7 +2416,7 @@ function toMonacoCompletionItem(
       ? { commitCharacters: item.commitCharacters }
       : {}),
     detail: item.detail || undefined,
-    documentation: item.documentation || undefined,
+    documentation: toMonacoCompletionDocumentation(item),
     filterText: item.filterText || undefined,
     insertText: insert.insertText,
     ...(item.command
@@ -2474,6 +2474,20 @@ function completionLabel(
   };
 }
 
+function toMonacoCompletionDocumentation(
+  item: LanguageServerCompletionItem,
+): string | Monaco.IMarkdownString | undefined {
+  if (!item.documentation) {
+    return undefined;
+  }
+
+  if (item.documentationKind === "markdown") {
+    return { value: item.documentation };
+  }
+
+  return item.documentation;
+}
+
 function toMonacoCompletionRange(
   monaco: MonacoApi,
   edit: LanguageServerCompletionTextEdit,
@@ -2499,6 +2513,7 @@ function completionInsert(
     detail: string | null;
     insertText: string | null;
     insertTextFormat?: number | null;
+    insertTextMode?: number | null;
     kind: number | null;
     label: string;
     labelDetails?: {
@@ -2506,6 +2521,7 @@ function completionInsert(
       detail?: string | null;
     } | null;
     textEdit?: LanguageServerCompletionTextEdit | null;
+    textEditText?: string | null;
   },
   kind: Monaco.languages.CompletionItemKind,
 ): {
@@ -2513,13 +2529,19 @@ function completionInsert(
   insertText: string;
   insertTextRules?: Monaco.languages.CompletionItemInsertTextRule;
 } {
-  const insertText = item.textEdit?.newText || item.insertText || item.label;
+  const insertText =
+    item.textEdit?.newText || item.textEditText || item.insertText || item.label;
+  const keepWhitespaceRule =
+    item.insertTextMode === 1
+      ? monaco.languages.CompletionItemInsertTextRule.KeepWhitespace
+      : 0;
 
   if (item.insertTextFormat === 2 || /\$(?:\d+|\{)/.test(insertText)) {
     return {
       insertText,
       insertTextRules:
-        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet |
+        keepWhitespaceRule,
     };
   }
 
@@ -2527,13 +2549,19 @@ function completionInsert(
     kind !== monaco.languages.CompletionItemKind.Method &&
     kind !== monaco.languages.CompletionItemKind.Function
   ) {
-    return { insertText };
+    return {
+      insertText,
+      ...(keepWhitespaceRule ? { insertTextRules: keepWhitespaceRule } : {}),
+    };
   }
 
   const name = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(insertText.trim())?.[0];
 
   if (!name) {
-    return { insertText };
+    return {
+      insertText,
+      ...(keepWhitespaceRule ? { insertTextRules: keepWhitespaceRule } : {}),
+    };
   }
 
   const hasKnownParameters = [item.detail, item.labelDetails?.detail].some((detail) =>
@@ -2549,7 +2577,8 @@ function completionInsert(
       : undefined,
     insertText: hasKnownParameters ? `${name}($0)` : `${name}()$0`,
     insertTextRules:
-      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet |
+      keepWhitespaceRule,
   };
 }
 

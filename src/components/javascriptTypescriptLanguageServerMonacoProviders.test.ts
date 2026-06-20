@@ -1395,6 +1395,62 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(result.incomplete).toBeUndefined();
   });
 
+  it("maps TypeScript completion markup documentation and insert text mode", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "const",
+            documentation: "**Loads** a user.",
+            documentationKind: "markdown",
+            insertText: "loadUser",
+            insertTextMode: 1,
+            kind: 6,
+            label: "loadUser",
+          },
+          {
+            detail: "const",
+            documentation: "Plain docs.",
+            documentationKind: "plaintext",
+            insertText: "plainUser",
+            kind: 6,
+            label: "plainUser",
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+
+    const result = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        documentation: { value: "**Loads** a user." },
+        insertText: "loadUser",
+        insertTextRules:
+          monaco.languages.CompletionItemInsertTextRule.KeepWhitespace,
+      }),
+    );
+    expect(result.suggestions[1]).toEqual(
+      expect.objectContaining({
+        documentation: "Plain docs.",
+        insertText: "plainUser",
+      }),
+    );
+    expect(result.suggestions[1]).not.toHaveProperty("insertTextRules");
+  });
+
   it("keeps TypeScript method and property completion kinds distinct", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
@@ -2618,7 +2674,7 @@ function createMonaco() {
     },
     languages: {
       CodeActionTriggerType: { Invoke: 1 },
-      CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
+      CompletionItemInsertTextRule: { InsertAsSnippet: 4, KeepWhitespace: 1 },
       CompletionItemKind: {
         Class: 7,
         Constant: 21,

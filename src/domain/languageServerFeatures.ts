@@ -43,15 +43,18 @@ export interface LanguageServerCompletionItem {
   label: string;
   detail: string | null;
   documentation: string | null;
+  documentationKind?: "markdown" | "plaintext" | string | null;
   filterText?: string | null;
   insertText: string | null;
   insertTextFormat?: number | null;
+  insertTextMode?: number | null;
   kind: number | null;
   labelDetails?: LanguageServerCompletionItemLabelDetails | null;
   preselect?: boolean;
   sortText?: string | null;
   tags?: number[];
   textEdit?: LanguageServerCompletionTextEdit | null;
+  textEditText?: string | null;
 }
 
 export interface LanguageServerCompletionList {

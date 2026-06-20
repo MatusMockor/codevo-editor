@@ -79,6 +79,22 @@ pub struct LanguageServerCompletionItemLabelDetails {
     pub description: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+struct LanguageServerCompletionItemDefaults {
+    commit_characters: Option<Vec<String>>,
+    data: Option<Value>,
+    edit_range: Option<LanguageServerCompletionEditRange>,
+    insert_text_format: Option<u32>,
+    insert_text_mode: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct LanguageServerCompletionEditRange {
+    range: Option<LanguageServerRange>,
+    insert: Option<LanguageServerRange>,
+    replace: Option<LanguageServerRange>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerWorkspaceEdit {
@@ -324,9 +340,11 @@ pub struct LanguageServerCompletionItem {
     pub label: String,
     pub detail: Option<String>,
     pub documentation: Option<String>,
+    pub documentation_kind: Option<String>,
     pub filter_text: Option<String>,
     pub insert_text: Option<String>,
     pub insert_text_format: Option<u32>,
+    pub insert_text_mode: Option<u32>,
     pub kind: Option<u32>,
     pub label_details: Option<LanguageServerCompletionItemLabelDetails>,
     #[serde(default)]
@@ -335,6 +353,7 @@ pub struct LanguageServerCompletionItem {
     #[serde(default)]
     pub tags: Vec<u32>,
     pub text_edit: Option<LanguageServerCompletionTextEdit>,
+    pub text_edit_text: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -945,7 +964,7 @@ pub fn parse_completion_result(value: &Value) -> Result<LanguageServerCompletion
     if let Some(items) = value.as_array() {
         return Ok(LanguageServerCompletionList {
             is_incomplete: false,
-            items: parse_completion_items(items),
+            items: parse_completion_items(items, None),
         });
     }
 
@@ -958,7 +977,13 @@ pub fn parse_completion_result(value: &Value) -> Result<LanguageServerCompletion
             .get("isIncomplete")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        items: parse_completion_items(items),
+        items: parse_completion_items(
+            items,
+            value
+                .get("itemDefaults")
+                .and_then(parse_completion_item_defaults)
+                .as_ref(),
+        ),
     })
 }
 
@@ -1382,28 +1407,36 @@ fn markup_to_string(value: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn parse_completion_items(items: &[Value]) -> Vec<LanguageServerCompletionItem> {
-    items.iter().filter_map(parse_completion_item).collect()
+fn parse_completion_items(
+    items: &[Value],
+    defaults: Option<&LanguageServerCompletionItemDefaults>,
+) -> Vec<LanguageServerCompletionItem> {
+    items
+        .iter()
+        .filter_map(|item| parse_completion_item(item, defaults))
+        .collect()
 }
 
-fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> {
+fn parse_completion_item(
+    value: &Value,
+    defaults: Option<&LanguageServerCompletionItemDefaults>,
+) -> Option<LanguageServerCompletionItem> {
     let label = value.get("label").and_then(Value::as_str)?.to_string();
     let additional_text_edits = value
         .get("additionalTextEdits")
         .and_then(Value::as_array)
         .map(|items| parse_text_edits(items).unwrap_or_default())
         .unwrap_or_default();
-    let commit_characters = value
-        .get("commitCharacters")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
+    let commit_characters = if value.get("commitCharacters").is_some() {
+        value
+            .get("commitCharacters")
+            .and_then(parse_string_array)
+            .unwrap_or_default()
+    } else {
+        defaults
+            .and_then(|defaults| defaults.commit_characters.clone())
+            .unwrap_or_default()
+    };
     let tags = value
         .get("tags")
         .and_then(Value::as_array)
@@ -1415,12 +1448,32 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
                 .collect()
         })
         .unwrap_or_default();
+    let insert_text = optional_string(value.get("insertText"));
+    let text_edit_text = optional_string(value.get("textEditText"));
+    let text_edit = if value.get("textEdit").is_some() {
+        value.get("textEdit").and_then(parse_completion_text_edit)
+    } else {
+        defaults
+            .and_then(|defaults| defaults.edit_range.as_ref())
+            .and_then(|edit_range| {
+                completion_text_edit_from_default_edit_range(
+                    edit_range,
+                    text_edit_text
+                        .clone()
+                        .or_else(|| insert_text.clone())
+                        .unwrap_or_else(|| label.clone()),
+                )
+            })
+    };
 
     Some(LanguageServerCompletionItem {
         additional_text_edits,
         commit_characters,
         command: parse_code_action_command(value),
-        data: value.get("data").cloned(),
+        data: value
+            .get("data")
+            .cloned()
+            .or_else(|| defaults.and_then(|defaults| defaults.data.clone())),
         deprecated: value
             .get("deprecated")
             .and_then(Value::as_bool)
@@ -1428,12 +1481,15 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
         label,
         detail: optional_string(value.get("detail")),
         documentation: value.get("documentation").and_then(markup_to_string),
+        documentation_kind: value
+            .get("documentation")
+            .and_then(completion_documentation_kind),
         filter_text: optional_string(value.get("filterText")),
-        insert_text: optional_string(value.get("insertText")),
-        insert_text_format: value
-            .get("insertTextFormat")
-            .and_then(Value::as_u64)
-            .map(|format| format as u32),
+        insert_text,
+        insert_text_format: completion_u32_property(value, "insertTextFormat")
+            .or_else(|| defaults.and_then(|defaults| defaults.insert_text_format)),
+        insert_text_mode: completion_u32_property(value, "insertTextMode")
+            .or_else(|| defaults.and_then(|defaults| defaults.insert_text_mode)),
         kind: value
             .get("kind")
             .and_then(Value::as_u64)
@@ -1447,8 +1503,91 @@ fn parse_completion_item(value: &Value) -> Option<LanguageServerCompletionItem> 
             .unwrap_or(false),
         sort_text: optional_string(value.get("sortText")),
         tags,
-        text_edit: value.get("textEdit").and_then(parse_completion_text_edit),
+        text_edit,
+        text_edit_text,
     })
+}
+
+fn parse_completion_item_defaults(value: &Value) -> Option<LanguageServerCompletionItemDefaults> {
+    if !value.is_object() {
+        return None;
+    }
+
+    Some(LanguageServerCompletionItemDefaults {
+        commit_characters: value.get("commitCharacters").and_then(parse_string_array),
+        data: value.get("data").cloned(),
+        edit_range: value.get("editRange").and_then(parse_completion_edit_range),
+        insert_text_format: completion_u32_property(value, "insertTextFormat"),
+        insert_text_mode: completion_u32_property(value, "insertTextMode"),
+    })
+}
+
+fn parse_completion_edit_range(value: &Value) -> Option<LanguageServerCompletionEditRange> {
+    if let Ok(range) = serde_json::from_value::<LanguageServerRange>(value.clone()) {
+        return Some(LanguageServerCompletionEditRange {
+            range: Some(range),
+            insert: None,
+            replace: None,
+        });
+    }
+
+    let insert = value
+        .get("insert")
+        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
+    let replace = value
+        .get("replace")
+        .and_then(|range| serde_json::from_value::<LanguageServerRange>(range.clone()).ok());
+
+    if insert.is_none() || replace.is_none() {
+        return None;
+    }
+
+    Some(LanguageServerCompletionEditRange {
+        range: None,
+        insert,
+        replace,
+    })
+}
+
+fn completion_text_edit_from_default_edit_range(
+    edit_range: &LanguageServerCompletionEditRange,
+    new_text: String,
+) -> Option<LanguageServerCompletionTextEdit> {
+    if edit_range.range.is_none() && (edit_range.insert.is_none() || edit_range.replace.is_none()) {
+        return None;
+    }
+
+    Some(LanguageServerCompletionTextEdit {
+        range: edit_range.range.clone(),
+        insert: edit_range.insert.clone(),
+        replace: edit_range.replace.clone(),
+        new_text,
+    })
+}
+
+fn completion_documentation_kind(value: &Value) -> Option<String> {
+    value
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn parse_string_array(value: &Value) -> Option<Vec<String>> {
+    Some(
+        value
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .map(ToString::to_string)
+            .collect(),
+    )
+}
+
+fn completion_u32_property(value: &Value, property: &str) -> Option<u32> {
+    value
+        .get(property)
+        .and_then(Value::as_u64)
+        .map(|value| value as u32)
 }
 
 fn parse_completion_label_details(
@@ -2540,9 +2679,11 @@ mod tests {
                     label: "User".to_string(),
                     detail: Some("class".to_string()),
                     documentation: Some("A user".to_string()),
+                    documentation_kind: Some("markdown".to_string()),
                     filter_text: Some("User".to_string()),
                     insert_text: Some("User".to_string()),
                     insert_text_format: Some(2),
+                    insert_text_mode: None,
                     kind: Some(7),
                     label_details: Some(LanguageServerCompletionItemLabelDetails {
                         detail: Some("(id: string)".to_string()),
@@ -2566,6 +2707,7 @@ mod tests {
                         replace: None,
                         new_text: "User".to_string(),
                     }),
+                    text_edit_text: None,
                 }],
             }
         );
@@ -2590,9 +2732,11 @@ mod tests {
             label: "User".to_string(),
             detail: None,
             documentation: None,
+            documentation_kind: None,
             filter_text: None,
             insert_text: Some("User".to_string()),
             insert_text_format: None,
+            insert_text_mode: None,
             kind: Some(7),
             label_details: Some(LanguageServerCompletionItemLabelDetails {
                 detail: Some("(id: string)".to_string()),
@@ -2602,6 +2746,7 @@ mod tests {
             sort_text: None,
             tags: Vec::new(),
             text_edit: None,
+            text_edit_text: None,
         };
         let request = factory.resolve_completion_item(&item);
 
@@ -2658,6 +2803,96 @@ mod tests {
                     },
                 }),
                 new_text: "loadUser".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn applies_completion_item_defaults_without_overwriting_item_metadata() {
+        let completion = parse_completion_result(&json!({
+            "itemDefaults": {
+                "commitCharacters": [".", ";"],
+                "data": { "source": "defaults" },
+                "editRange": {
+                    "insert": {
+                        "start": { "line": 4, "character": 10 },
+                        "end": { "line": 4, "character": 14 }
+                    },
+                    "replace": {
+                        "start": { "line": 4, "character": 10 },
+                        "end": { "line": 4, "character": 18 }
+                    }
+                },
+                "insertTextFormat": 2,
+                "insertTextMode": 1
+            },
+            "items": [
+                {
+                    "label": "loadUser",
+                    "documentation": {
+                        "kind": "plaintext",
+                        "value": "Loads a user."
+                    },
+                    "textEditText": "loadUser(${1:id})"
+                },
+                {
+                    "label": "explicitUser",
+                    "commitCharacters": ["("],
+                    "data": { "source": "item" },
+                    "insertTextFormat": 1,
+                    "insertTextMode": 2,
+                    "textEdit": {
+                        "range": {
+                            "start": { "line": 7, "character": 2 },
+                            "end": { "line": 7, "character": 6 }
+                        },
+                        "newText": "explicitUser"
+                    }
+                }
+            ]
+        }))
+        .expect("completion");
+
+        assert_eq!(completion.items[0].commit_characters, vec![".", ";"]);
+        assert_eq!(
+            completion.items[0].documentation,
+            Some("Loads a user.".to_string())
+        );
+        assert_eq!(
+            completion.items[0].documentation_kind,
+            Some("plaintext".to_string())
+        );
+        assert_eq!(
+            completion.items[0].data,
+            Some(json!({ "source": "defaults" }))
+        );
+        assert_eq!(completion.items[0].insert_text_format, Some(2));
+        assert_eq!(completion.items[0].insert_text_mode, Some(1));
+        assert_eq!(
+            completion.items[0].text_edit_text.as_deref(),
+            Some("loadUser(${1:id})")
+        );
+        assert_eq!(
+            completion.items[0].text_edit,
+            Some(LanguageServerCompletionTextEdit {
+                range: None,
+                insert: Some(range(4, 10, 4, 14)),
+                replace: Some(range(4, 10, 4, 18)),
+                new_text: "loadUser(${1:id})".to_string(),
+            })
+        );
+
+        assert_eq!(completion.items[1].commit_characters, vec!["("]);
+        assert_eq!(completion.items[1].data, Some(json!({ "source": "item" })));
+        assert_eq!(completion.items[1].insert_text_format, Some(1));
+        assert_eq!(completion.items[1].insert_text_mode, Some(2));
+        assert_eq!(
+            completion.items[1].text_edit,
+            Some(LanguageServerCompletionTextEdit {
+                range: Some(range(7, 2, 7, 6)),
+                insert: None,
+                replace: None,
+                new_text: "explicitUser".to_string(),
             })
         );
     }
