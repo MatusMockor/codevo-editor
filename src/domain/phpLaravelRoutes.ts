@@ -140,11 +140,25 @@ export function phpLaravelNamedRouteDefinitions(
       }
 
       const routeNamePrefix = routeNamePrefixAtOffset(routeGroups, routeStart);
+      const chainStart = closeParen === null ? null : closeParen + 1;
+      const chainEnd =
+        chainStart === null ? null : phpStatementEndOffset(source, chainStart);
+      const routeNameOverrides =
+        chainStart === null || chainEnd === null
+          ? new Map<string, PhpStringLiteral>()
+          : laravelResourceRouteNameOverrides(source, chainStart, chainEnd);
+      const defaultPosition = editorPositionAtOffset(source, literal.quoteStart + 1);
 
       for (const action of resourceActions) {
+        const override = routeNameOverrides.get(action);
+
         definitions.push({
-          name: `${routeNamePrefix}${literal.value}.${action}`,
-          position: editorPositionAtOffset(source, literal.quoteStart + 1),
+          name: `${routeNamePrefix}${
+            override ? override.value : `${literal.value}.${action}`
+          }`,
+          position: override
+            ? editorPositionAtOffset(source, override.quoteStart + 1)
+            : defaultPosition,
         });
       }
 
@@ -316,6 +330,56 @@ function laravelRouteActionsWithOnlyExcept(
   return filteredActions;
 }
 
+function laravelResourceRouteNameOverrides(
+  source: string,
+  chainStart: number,
+  chainEnd: number,
+): Map<string, PhpStringLiteral> {
+  const overrides = new Map<string, PhpStringLiteral>();
+  const chainSource = source.slice(chainStart, chainEnd);
+  const namesPattern = /->\s*names\s*\(/gi;
+
+  for (const match of chainSource.matchAll(namesPattern)) {
+    const namesOpenParen =
+      chainStart + (match.index ?? 0) + match[0].lastIndexOf("(");
+
+    if (!isPhpCodeOffset(source, namesOpenParen)) {
+      continue;
+    }
+
+    for (const entry of laravelRouteStringMapAtOpenParen(source, namesOpenParen)) {
+      overrides.set(entry.key.value, entry.value);
+    }
+  }
+
+  return overrides;
+}
+
+function laravelRouteStringMapAtOpenParen(
+  source: string,
+  openParen: number,
+): Array<{ key: PhpStringLiteral; value: PhpStringLiteral }> {
+  const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+  if (closeParen === null) {
+    return [];
+  }
+
+  const argumentStart = skipWhitespace(source, openParen + 1);
+
+  if (source[argumentStart] !== "[") {
+    return [];
+  }
+
+  const arrayClose = matchingBracketOffset(source, argumentStart, "[", "]");
+
+  if (arrayClose === null || arrayClose > closeParen) {
+    return [];
+  }
+
+  return topLevelArrayStringEntries(source, argumentStart, arrayClose);
+}
+
 function laravelRouteActionNamesAtOpenParen(
   source: string,
   openParen: number,
@@ -399,6 +463,30 @@ function topLevelArrayStringValues(
   return topLevelStringLiterals(source, arrayOpen, arrayClose, {
     include: "values",
   }).map((literal) => literal.value);
+}
+
+function topLevelArrayStringEntries(
+  source: string,
+  arrayOpen: number,
+  arrayClose: number,
+): Array<{ key: PhpStringLiteral; value: PhpStringLiteral }> {
+  const entries: Array<{ key: PhpStringLiteral; value: PhpStringLiteral }> = [];
+  const keys = topLevelArrayStringKeys(source, arrayOpen, arrayClose);
+
+  for (const key of keys) {
+    const arrowStart = skipWhitespace(source, key.quoteEnd + 1);
+    const valueStart = skipWhitespace(source, arrowStart + 2);
+    const value = stringLiteralStartingAt(source, valueStart);
+
+    if (
+      value?.closed &&
+      !(value.quote === "\"" && hasPhpVariableInterpolation(value.value))
+    ) {
+      entries.push({ key, value });
+    }
+  }
+
+  return entries;
 }
 
 function topLevelStringLiterals(

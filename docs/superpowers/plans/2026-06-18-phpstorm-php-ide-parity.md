@@ -1408,3 +1408,48 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `9aae14f5 Filter Laravel partial resource routes`.
+
+## Slice: Laravel Resource Route Name Overrides - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6bf57531 Record Laravel partial resource route commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Use Laravel `->names([...])` resource route overrides in named route completion/navigation instead of always suggesting default `resource.action` names.
+
+### Implementation Choice
+
+- Parse literal string-to-string entries from resource `names([...])` chain calls.
+- Preserve default route names for actions without an override.
+- Keep override positions on the override value literal so Cmd+B opens the custom name source.
+
+### Acceptance Criteria
+
+- `Route::resource(...)->names(['create' => 'photos.build'])` contributes `photos.build` instead of `photos.create`.
+- `names([...])` works after `only([...])`, ignoring overrides for filtered-out actions.
+- Group-prefixed singleton resource name overrides keep the group prefix.
+- Focused route tests, full route tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added literal `names([...])` override parsing for resource route extraction.
+- Used override route name literals and positions per action while preserving defaults for non-overridden actions.
+- Added route extractor coverage for resource overrides, filtered API resource overrides, and group-prefixed singleton overrides.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "uses literal Laravel resource route name overrides"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
