@@ -407,6 +407,32 @@ mod tests {
     }
 
     #[test]
+    fn watch_registry_stop_then_start_replaces_requested_root_only() {
+        let registry = JavaScriptTypeScriptWorkspaceWatchRegistry::new();
+        let watcher = RecordingWatcher::default();
+        let root_a = temp_workspace("watch-stop-restart-a");
+        let root_b = temp_workspace("watch-stop-restart-b");
+
+        start_with_watcher(&registry, &root_a, &watcher);
+        start_with_watcher(&registry, &root_b, &watcher);
+
+        registry.stop(&path_string(&root_a));
+        start_with_watcher(&registry, &root_a, &watcher);
+
+        assert_eq!(
+            watcher.started_roots(),
+            vec![root_a.clone(), root_b.clone(), root_a.clone()]
+        );
+        assert_eq!(watcher.stopped_roots(), vec![root_a.clone()]);
+
+        registry.stop_all();
+
+        let stopped = watcher.stopped_roots();
+        assert_eq!(stopped.iter().filter(|root| *root == &root_a).count(), 2);
+        assert_eq!(stopped.iter().filter(|root| *root == &root_b).count(), 1);
+    }
+
+    #[test]
     fn watch_registry_stop_all_is_idempotent() {
         let registry = JavaScriptTypeScriptWorkspaceWatchRegistry::new();
         let watcher = RecordingWatcher::default();

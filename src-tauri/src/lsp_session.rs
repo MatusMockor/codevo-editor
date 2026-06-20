@@ -2106,6 +2106,64 @@ mod tests {
     }
 
     #[test]
+    fn registry_routes_watched_file_changes_to_the_requested_workspace_only() {
+        let registry = LanguageServerRegistry::new_with_label("TypeScript language server");
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let capture_a = Arc::clone(&spawner_a.stdin_capture);
+        let capture_b = Arc::clone(&spawner_b.stdin_capture);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command_for_root("/tmp/workspace-a"),
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/workspace-b",
+                &command_for_root("/tmp/workspace-b"),
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        registry
+            .send_notification(
+                "/tmp/workspace-b",
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                    params: json!({
+                        "changes": [
+                            {
+                                "uri": "file:///tmp/workspace-b/src/App.ts",
+                                "type": 2,
+                            },
+                        ],
+                    }),
+                },
+            )
+            .expect("send workspace b file-change notification");
+
+        assert!(!captured_messages(&capture_a)
+            .iter()
+            .any(|message| message["method"] == "workspace/didChangeWatchedFiles"));
+        assert!(captured_messages(&capture_b).iter().any(|message| {
+            message["method"] == "workspace/didChangeWatchedFiles"
+                && message["params"]["changes"][0]["uri"] == "file:///tmp/workspace-b/src/App.ts"
+        }));
+    }
+
+    #[test]
     fn registry_routes_requests_to_the_requested_workspace_only() {
         let registry = Arc::new(LanguageServerRegistry::new_with_label("Test server"));
         let spawner_a = FakeSpawner::new(ready_script(), true);
@@ -2171,6 +2229,207 @@ mod tests {
         let result = request.join().expect("request thread");
 
         assert_eq!(result["contents"], "workspace b hover");
+    }
+
+    #[test]
+    fn registry_keeps_server_configuration_and_workspace_folders_isolated() {
+        let registry = LanguageServerRegistry::new_with_label("TypeScript language server");
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let capture_a = Arc::clone(&spawner_a.stdin_capture);
+        let capture_b = Arc::clone(&spawner_b.stdin_capture);
+        let held_a = Arc::clone(&spawner_a.held_writer);
+        let held_b = Arc::clone(&spawner_b.held_writer);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command_for_root("/tmp/workspace-a"),
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/workspace-b",
+                &command_for_root("/tmp/workspace-b"),
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        registry
+            .update_server_configuration(
+                "/tmp/workspace-b",
+                json!({
+                    "suggest": {
+                        "autoImports": false,
+                        "completeFunctionCalls": true,
+                    },
+                    "validate": {
+                        "enable": false,
+                    },
+                }),
+            )
+            .expect("update workspace b configuration");
+
+        write_held_message(
+            &held_a,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 51,
+                "method": "workspace/configuration",
+                "params": {
+                    "items": [
+                        { "section": "typescript.suggest" },
+                        { "section": "typescript.validate" }
+                    ]
+                }
+            }),
+        );
+        write_held_message(
+            &held_b,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 52,
+                "method": "workspace/configuration",
+                "params": {
+                    "items": [
+                        { "section": "typescript.suggest" },
+                        { "section": "typescript.validate" }
+                    ]
+                }
+            }),
+        );
+
+        let response_a = wait_for_captured_response(&capture_a, 51);
+        let response_b = wait_for_captured_response(&capture_b, 52);
+
+        assert_eq!(response_a["result"][0]["autoImports"], true);
+        assert_eq!(response_a["result"][0]["completeFunctionCalls"], true);
+        assert_eq!(response_a["result"][1]["enable"], true);
+        assert_eq!(response_b["result"][0]["autoImports"], false);
+        assert_eq!(response_b["result"][0]["completeFunctionCalls"], true);
+        assert_eq!(response_b["result"][1]["enable"], false);
+
+        write_held_message(
+            &held_a,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 61,
+                "method": "workspace/workspaceFolders",
+                "params": null
+            }),
+        );
+        write_held_message(
+            &held_b,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 62,
+                "method": "workspace/workspaceFolders",
+                "params": null
+            }),
+        );
+
+        let folders_a = wait_for_captured_response(&capture_a, 61);
+        let folders_b = wait_for_captured_response(&capture_b, 62);
+
+        assert_eq!(folders_a["result"][0]["uri"], "file:///tmp/workspace-a");
+        assert_eq!(folders_a["result"][0]["name"], "workspace-a");
+        assert_eq!(folders_b["result"][0]["uri"], "file:///tmp/workspace-b");
+        assert_eq!(folders_b["result"][0]["name"], "workspace-b");
+    }
+
+    #[test]
+    fn registry_stop_releases_requested_workspace_without_stopping_other_workspace() {
+        let registry = LanguageServerRegistry::new_with_label("TypeScript language server");
+        let spawner_a = FakeSpawner::new(ready_script(), true);
+        let spawner_b = FakeSpawner::new(ready_script(), true);
+        let capture_a = Arc::clone(&spawner_a.stdin_capture);
+        let capture_b = Arc::clone(&spawner_b.stdin_capture);
+        let held_a = Arc::clone(&spawner_a.held_writer);
+        let held_b = Arc::clone(&spawner_b.held_writer);
+        let (sink_a, _rx_a) = ChannelSink::new();
+        let (sink_b, _rx_b) = ChannelSink::new();
+
+        registry
+            .start(
+                "/tmp/workspace-a",
+                &command_for_root("/tmp/workspace-a"),
+                &initialize_request(),
+                &spawner_a,
+                sink_a,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace a");
+        registry
+            .start(
+                "/tmp/workspace-b",
+                &command_for_root("/tmp/workspace-b"),
+                &initialize_request(),
+                &spawner_b,
+                sink_b,
+                noop_diagnostics_sink(),
+            )
+            .expect("start workspace b");
+
+        assert!(held_a.lock().expect("workspace a writer").is_some());
+        assert!(held_b.lock().expect("workspace b writer").is_some());
+
+        assert_eq!(
+            registry.stop("/tmp/workspace-a"),
+            LanguageServerRuntimeStatus::Stopped
+        );
+
+        assert!(held_a.lock().expect("workspace a writer").is_none());
+        assert!(held_b.lock().expect("workspace b writer").is_some());
+        assert!(matches!(
+            registry.status("/tmp/workspace-b"),
+            LanguageServerRuntimeStatus::Running { .. }
+        ));
+
+        registry
+            .send_notification(
+                "/tmp/workspace-a",
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "textDocument/didSave".to_string(),
+                    params: json!({
+                        "textDocument": {
+                            "uri": "file:///tmp/workspace-a/src/App.ts",
+                        },
+                    }),
+                },
+            )
+            .expect("stopped workspace notification is ignored");
+        registry
+            .send_notification(
+                "/tmp/workspace-b",
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "textDocument/didSave".to_string(),
+                    params: json!({
+                        "textDocument": {
+                            "uri": "file:///tmp/workspace-b/src/App.ts",
+                        },
+                    }),
+                },
+            )
+            .expect("send workspace b notification");
+
+        assert!(!captured_messages(&capture_a)
+            .iter()
+            .any(|message| message["method"] == "textDocument/didSave"));
+        assert!(captured_messages(&capture_b).iter().any(|message| {
+            message["method"] == "textDocument/didSave"
+                && message["params"]["textDocument"]["uri"] == "file:///tmp/workspace-b/src/App.ts"
+        }));
     }
 
     #[test]
@@ -3099,6 +3358,14 @@ mod tests {
             executable: "phpactor".to_string(),
             args: vec!["language-server".to_string()],
             working_directory: ".".to_string(),
+        }
+    }
+
+    fn command_for_root(root_path: &str) -> LanguageServerCommand {
+        LanguageServerCommand {
+            executable: "typescript-language-server".to_string(),
+            args: vec!["--stdio".to_string()],
+            working_directory: root_path.to_string(),
         }
     }
 
