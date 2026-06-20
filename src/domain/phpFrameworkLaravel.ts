@@ -1646,6 +1646,28 @@ function phpLaravelRepositoryMethodCollectionReturnTypeFromSource(
     return phpLaravelEloquentBuilderCollectionType(genericModelType, "get");
   }
 
+  const expressionCollectionType = phpLaravelRepositoryMethodReturnExpressions(
+    source,
+    methodName,
+    receiverClassName,
+  )
+    .map((expression) =>
+      phpLaravelEloquentBuilderCollectionTypeFromExpression(source, expression),
+    )
+    .find(
+      (
+        collectionType,
+      ): collectionType is PhpLaravelBuilderCollectionExpressionType =>
+        Boolean(collectionType),
+    );
+
+  if (expressionCollectionType) {
+    return phpLaravelEloquentBuilderCollectionType(
+      expressionCollectionType.modelType,
+      expressionCollectionType.collectionMethodName,
+    );
+  }
+
   const conventionModelType = returnTypes.some((returnType) =>
     phpLaravelGenericCarrierMatches(source, returnType, [
       "collection",
@@ -2043,7 +2065,12 @@ interface PhpLaravelStaticCallChain {
   methodNames: string[];
 }
 
-function phpLaravelEloquentBuilderModelTypeFromExpression(
+interface PhpLaravelBuilderCollectionExpressionType {
+  collectionMethodName: string;
+  modelType: string;
+}
+
+export function phpLaravelEloquentBuilderModelTypeFromExpression(
   source: string,
   expression: string,
 ): string | null {
@@ -2059,7 +2086,7 @@ function phpLaravelEloquentBuilderModelTypeFromExpression(
 
   for (const methodName of chain.methodNames) {
     if (
-      !phpLaravelEloquentBuilderCallPreservesBuilder(
+      !phpLaravelEloquentBuilderExpressionCallPreservesBuilder(
         source,
         modelType,
         methodName,
@@ -2070,6 +2097,93 @@ function phpLaravelEloquentBuilderModelTypeFromExpression(
   }
 
   return modelType;
+}
+
+export function phpLaravelEloquentBuilderCollectionModelTypeFromExpression(
+  source: string,
+  expression: string,
+): string | null {
+  return (
+    phpLaravelEloquentBuilderCollectionTypeFromExpression(source, expression)
+      ?.modelType ?? null
+  );
+}
+
+function phpLaravelEloquentBuilderCollectionTypeFromExpression(
+  source: string,
+  expression: string,
+): PhpLaravelBuilderCollectionExpressionType | null {
+  const chain = phpLaravelStaticCallChain(expression);
+  const modelType = phpLaravelResolvedModelTypeCandidate(
+    source,
+    chain?.className ?? null,
+  );
+
+  if (!chain || !modelType) {
+    return null;
+  }
+
+  let collectionMethodName: string | null = null;
+
+  for (const methodName of chain.methodNames) {
+    if (collectionMethodName) {
+      if (isLaravelCollectionFluentMethod(methodName)) {
+        continue;
+      }
+
+      return null;
+    }
+
+    if (isLaravelEloquentBuilderCollectionMethod(methodName)) {
+      collectionMethodName = methodName;
+      continue;
+    }
+
+    if (
+      phpLaravelEloquentBuilderExpressionCallPreservesBuilder(
+        source,
+        modelType,
+        methodName,
+      )
+    ) {
+      continue;
+    }
+
+    return null;
+  }
+
+  return collectionMethodName
+    ? {
+        collectionMethodName,
+        modelType,
+      }
+    : null;
+}
+
+function phpLaravelEloquentBuilderExpressionCallPreservesBuilder(
+  source: string,
+  modelType: string,
+  methodName: string,
+): boolean {
+  return (
+    phpLaravelEloquentBuilderCallPreservesBuilder(
+      source,
+      modelType,
+      methodName,
+    ) || phpLaravelEloquentBuilderExpressionCallMayBeScopeOrMacro(methodName)
+  );
+}
+
+function phpLaravelEloquentBuilderExpressionCallMayBeScopeOrMacro(
+  methodName: string,
+): boolean {
+  const normalizedMethodName = methodName.toLowerCase();
+
+  return (
+    !laravelEloquentBuilderTerminalModelMethods.has(normalizedMethodName) &&
+    !laravelEloquentBuilderCollectionMethods.has(normalizedMethodName) &&
+    !laravelEloquentBuilderNonModelTerminalMethods.has(normalizedMethodName)
+  );
 }
 
 function phpLaravelStaticCallChain(

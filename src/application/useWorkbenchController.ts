@@ -175,7 +175,9 @@ import {
   phpLaravelCollectionModelTypeCandidate,
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
+  phpLaravelEloquentBuilderCollectionModelTypeFromExpression,
   phpLaravelEloquentBuilderModelTypeCandidate,
+  phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
   phpLaravelRelationPropertyCompletionsFromSource,
@@ -213,6 +215,7 @@ import {
 import {
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerExpressionClassName,
+  phpFrameworkMethodCallReturnTypeFromSource,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
   phpFrameworkProvidersForProject,
@@ -6600,19 +6603,6 @@ export function useWorkbenchController(
         const methodCall = phpMethodCallExpression(expression);
 
         if (methodCall) {
-          if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
-            const builderModelType =
-              await resolvePhpEloquentBuilderModelTypeRef.current(
-                ownerSource,
-                { column: 1, lineNumber: 1 },
-                methodCall.receiverExpression,
-              );
-
-            if (builderModelType) {
-              return builderModelType;
-            }
-          }
-
           const directReceiverType = phpReceiverExpressionTypeInSource(
             ownerSource,
             { column: 1, lineNumber: 1 },
@@ -6629,6 +6619,38 @@ export function useWorkbenchController(
           const resolvedReceiverType = constructedReceiverType
             ? resolvePhpClassReference(ownerSource, constructedReceiverType)
             : null;
+          const frameworkReturnType =
+            phpFrameworkMethodCallReturnTypeFromSource(
+              ownerSource,
+              methodCall.methodName,
+              resolvedReceiverType,
+              methodCall.receiverExpression,
+              activePhpFrameworkProviders,
+              expression,
+            );
+          const resolvedFrameworkReturnType = frameworkReturnType
+            ? resolvePhpFrameworkReturnTypeReference(
+                ownerSource,
+                frameworkReturnType,
+              )
+            : null;
+
+          if (resolvedFrameworkReturnType) {
+            return resolvedFrameworkReturnType;
+          }
+
+          if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
+            const builderModelType =
+              await resolvePhpEloquentBuilderModelTypeRef.current(
+                ownerSource,
+                { column: 1, lineNumber: 1 },
+                methodCall.receiverExpression,
+              );
+
+            if (builderModelType) {
+              return builderModelType;
+            }
+          }
 
           return resolvedReceiverType
             ? resolvePhpMethodReturnType(
@@ -6789,6 +6811,7 @@ export function useWorkbenchController(
       readPhpClassMembersFromPath,
       resolvePhpFrameworkBoundConcrete,
       resolvePhpClassReference,
+      resolvePhpFrameworkReturnTypeReference,
       resolvePhpMethodDeclaredReturnType,
       resolvePhpClassSourcePaths,
       resolvePhpGenericTemplateTypesForInheritedClass,
@@ -6841,6 +6864,29 @@ export function useWorkbenchController(
 
           if (modelType) {
             return modelType;
+          }
+
+          if (method) {
+            const expressionModelType = phpMethodReturnExpressions(
+              content,
+              method.name,
+            )
+              .map((expression) =>
+                carrierKind === "builder"
+                  ? phpLaravelEloquentBuilderModelTypeFromExpression(
+                      content,
+                      expression,
+                    )
+                  : phpLaravelEloquentBuilderCollectionModelTypeFromExpression(
+                      content,
+                      expression,
+                    ),
+              )
+              .find((candidate): candidate is string => Boolean(candidate));
+
+            if (expressionModelType) {
+              return expressionModelType;
+            }
           }
 
           const conventionModelType =
@@ -8047,6 +8093,21 @@ export function useWorkbenchController(
           methodCall.receiverExpression,
           depth + 1,
         );
+        const frameworkReturnType = phpFrameworkMethodCallReturnTypeFromSource(
+          source,
+          methodCall.methodName,
+          receiverType,
+          methodCall.receiverExpression,
+          activePhpFrameworkProviders,
+          expression,
+        );
+        const resolvedFrameworkReturnType = frameworkReturnType
+          ? resolvePhpFrameworkReturnTypeReference(source, frameworkReturnType)
+          : null;
+
+        if (resolvedFrameworkReturnType) {
+          return resolvedFrameworkReturnType;
+        }
 
         if (
           isLaravelFrameworkActive &&
@@ -8128,6 +8189,7 @@ export function useWorkbenchController(
       phpClassHasLaravelLocalScope,
       phpClassHasLaravelDynamicWhere,
       isLaravelFrameworkActive,
+      resolvePhpFrameworkReturnTypeReference,
       resolvePhpMethodReturnType,
     ],
   );

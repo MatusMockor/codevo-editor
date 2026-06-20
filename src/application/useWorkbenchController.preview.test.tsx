@@ -10347,6 +10347,12 @@ class AlbumController
         $repositoryCollectionAlbum = $albums->matching()->first();
         $repositoryCollectionAlbum->get
 
+        $repositoryBodyQuery = $albums->queryFromBody();
+        $repositoryBodyQuery->published()->ord
+
+        $repositoryBodyCollectionAlbum = $albums->matchingFromBody()->first();
+        $repositoryBodyCollectionAlbum->get
+
         /** @var Result<Album> $result */
         $resultAlbum = $result->first();
         $resultAlbum->get
@@ -10423,6 +10429,16 @@ class AlbumRepository
     public function query(): Builder {}
 
     public function matching(): Collection {}
+
+    public function queryFromBody()
+    {
+        return Album::query()->published();
+    }
+
+    public function matchingFromBody()
+    {
+        return Album::query()->published()->get()->filter();
+    }
 }
 `;
         }
@@ -10530,6 +10546,32 @@ class Builder
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$repositoryCollectionAlbum->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$repositoryBodyQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$repositoryBodyCollectionAlbum->get"),
       ),
     ).resolves.toEqual([
       {
