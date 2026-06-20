@@ -1756,6 +1756,103 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("passes TypeScript signature help trigger context to the language server", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      signatureHelp: {
+        activeParameter: 1,
+        activeSignature: 0,
+        signatures: [
+          {
+            documentation: "Loads a user.",
+            label: "loadUser(id: string, options?: Options): Promise<User>",
+            parameters: [
+              {
+                documentation: "User id",
+                label: "id: string",
+              },
+              {
+                documentation: null,
+                label: "options?: Options",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ featuresGateway: gateway }),
+    );
+    const signatureProvider = (monaco.languages.registerSignatureHelpProvider as any)
+      .mock.calls[0][1];
+
+    await signatureProvider.provideSignatureHelp(
+      textModel(),
+      { column: 5, lineNumber: 1 },
+      {},
+      {
+        activeSignatureHelp: {
+          activeParameter: 0,
+          activeSignature: 0,
+          signatures: [
+            {
+              documentation: { value: "Previous overload." },
+              label: "loadUser(id: string, options?: Options): Promise<User>",
+              parameters: [
+                {
+                  documentation: "User id",
+                  label: [9, 19],
+                },
+                {
+                  documentation: undefined,
+                  label: "options?: Options",
+                },
+              ],
+            },
+          ],
+        },
+        isRetrigger: true,
+        triggerCharacter: ",",
+        triggerKind: 2,
+      },
+    );
+
+    expect(gateway.signatureHelp).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 4,
+        line: 0,
+        path: "/project/src/user.ts",
+      },
+      {
+        activeSignatureHelp: {
+          activeParameter: 0,
+          activeSignature: 0,
+          signatures: [
+            {
+              documentation: "Previous overload.",
+              label: "loadUser(id: string, options?: Options): Promise<User>",
+              parameters: [
+                {
+                  documentation: "User id",
+                  label: "id: string",
+                },
+                {
+                  documentation: null,
+                  label: "options?: Options",
+                },
+              ],
+            },
+          ],
+        },
+        isRetrigger: true,
+        triggerCharacter: ",",
+        triggerKind: 2,
+      },
+    );
+  });
+
   it("preserves VS Code-like TypeScript completion metadata", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({

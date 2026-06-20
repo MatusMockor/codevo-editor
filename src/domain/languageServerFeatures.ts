@@ -203,6 +203,15 @@ export interface LanguageServerSignatureHelp {
   signatures: LanguageServerSignature[];
 }
 
+export type LanguageServerSignatureHelpTriggerKind = 1 | 2 | 3;
+
+export interface LanguageServerSignatureHelpContext {
+  activeSignatureHelp?: LanguageServerSignatureHelp | null;
+  isRetrigger: boolean;
+  triggerCharacter?: string | null;
+  triggerKind: LanguageServerSignatureHelpTriggerKind;
+}
+
 export interface LanguageServerWorkspaceEdit {
   changes: Record<string, LanguageServerTextEdit[]>;
   fileOperations?: LanguageServerWorkspaceFileOperation[];
@@ -413,6 +422,7 @@ export interface LanguageServerFeaturesGateway {
   signatureHelp(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
+    context?: LanguageServerSignatureHelpContext,
   ): Promise<LanguageServerSignatureHelp | null>;
   prepareRename(
     rootPath: string,

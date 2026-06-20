@@ -794,3 +794,82 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Signature Help Context
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6bae152 Log JS TS server message requests`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation
+
+- Frontend explorer Locke completed a read-only scan and recommended bridging Monaco signature-help context to the TypeScript language server.
+- Backend explorer Hypatia completed a read-only scan and queued `workspace/didChangeConfiguration` shape normalization as the next backend slice.
+- Main agent owns integration because the selected signature-help slice crosses frontend, gateway, Tauri command, Rust request factory, and initialize capability wiring; splitting code edits now would create overlapping API contracts across layers.
+
+### Why This Slice
+
+- Monaco supplies signature-help trigger context, including trigger kind, trigger character, retrigger state, and active signature help.
+- TypeScript-language-server uses this context to choose trigger reasons and preserve active overloads across retriggers.
+- The editor already registers trigger/retrigger characters, but currently drops the context before calling the server, so comma/paren retriggers are less VS Code-like.
+
+### Implementation Choice
+
+- Add a small domain/Rust `LanguageServerSignatureHelpContext` model that mirrors safe LSP fields.
+- Pass context only when Monaco provides useful trigger/retrigger metadata.
+- Preserve a minimal active-signature-help payload from Monaco's previous result.
+- Advertise `textDocument.signatureHelp.contextSupport` in JS/TS initialize capabilities.
+
+### Acceptance Criteria
+
+- JS/TS initialize capabilities advertise signature-help context support.
+- Provider forwards trigger and retrigger signature-help context to the gateway.
+- Tauri gateway and commands forward the optional context to Rust.
+- Rust request factory serializes optional LSP signature-help context.
+- Focused Rust, gateway, and provider tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: JS/TS Signature Help Context
+
+- JS/TS initialize capabilities now advertise `textDocument.signatureHelp.contextSupport`.
+- Monaco signature-help provider now forwards trigger kind, trigger character, retrigger state, and minimal active signature help to the gateway.
+- Frontend feature types and Tauri gateway now carry optional signature-help context.
+- Tauri JS/TS command accepts optional context and Rust request factory serializes it into `textDocument/signatureHelp`.
+- PHP signature-help command remains context-free and unchanged in behavior.
+
+### Verification: JS/TS Signature Help Context
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "signature help"`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml signature_help --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: JS/TS Signature Help Context
+
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/lsp.rs`
+  - `src-tauri/src/lsp_features.rs`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `src/domain/languageServerFeatures.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Candidate Slice: JS/TS DidChangeConfiguration Shape
+
+- Backend explorer Hypatia identified that flat JS/TS settings should remain in the session cache for `workspace/configuration`, while `workspace/didChangeConfiguration` notifications should be sent with VS Code-like nested `typescript` and `javascript` settings.
+- This is the next queued backend parity slice after the signature-help context commit.

@@ -73,14 +73,14 @@ use lsp_features::{
     LanguageServerIncomingCall, LanguageServerInlayHint, LanguageServerLinkedEditingRanges,
     LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerPosition,
     LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
-    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerTextEdit,
-    LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
+    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerSignatureHelpContext,
+    LanguageServerTextEdit, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
     LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
     LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
     TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
     TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
     TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
-    WorkspaceFileChange, WorkspaceFileRename,
+    TextDocumentSignatureHelp, WorkspaceFileChange, WorkspaceFileRename,
 };
 use lsp_session::{
     AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
@@ -3037,7 +3037,10 @@ fn text_document_signature_help(
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.signature_help(&position);
+    let request = factory.signature_help(&TextDocumentSignatureHelp {
+        position,
+        context: None,
+    });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(None);
     };
@@ -3049,12 +3052,13 @@ fn text_document_signature_help(
 fn javascript_typescript_text_document_signature_help(
     root_path: String,
     position: TextDocumentPosition,
+    context: Option<LanguageServerSignatureHelpContext>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerSignatureHelp>, String> {
     ensure_lsp_position_in_workspace(&root_path, &position)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.signature_help(&position);
+    let request = factory.signature_help(&TextDocumentSignatureHelp { position, context });
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(None);
     };

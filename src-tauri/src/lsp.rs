@@ -385,6 +385,9 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "contextSupport": true,
                             "dynamicRegistration": false
                         },
+                        "signatureHelp": {
+                            "contextSupport": true
+                        },
                         "codeAction": {
                             "codeActionLiteralSupport": {
                                 "codeActionKind": {
@@ -853,6 +856,10 @@ mod tests {
         assert_eq!(
             request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
                 ["commitCharactersSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["signatureHelp"]["contextSupport"],
             true
         );
         assert_eq!(

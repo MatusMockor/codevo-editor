@@ -28,6 +28,7 @@ import {
   type LanguageServerSelectionRange,
   type LanguageServerSemanticTokens,
   type LanguageServerSignatureHelp,
+  type LanguageServerSignatureHelpContext,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
   type LanguageServerTypeHierarchyItem,
@@ -382,10 +383,15 @@ export class TauriLanguageServerFeaturesGateway
   signatureHelp(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
+    context?: LanguageServerSignatureHelpContext,
   ): Promise<LanguageServerSignatureHelp | null> {
     return this.invokeWhenAvailable(
       this.commands.signatureHelp,
-      { position, rootPath },
+      {
+        ...(context ? { context } : {}),
+        position,
+        rootPath,
+      },
       null,
     );
   }

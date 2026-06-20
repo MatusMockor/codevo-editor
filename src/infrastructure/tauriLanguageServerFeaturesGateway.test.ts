@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { TauriLanguageServerFeaturesGateway } from "./tauriLanguageServerFeaturesGateway";
-import type { LanguageServerTextDocumentPosition } from "../domain/languageServerFeatures";
+import type {
+  LanguageServerSignatureHelpContext,
+  LanguageServerTextDocumentPosition,
+} from "../domain/languageServerFeatures";
 
 type FeaturesGatewayConstructor = ConstructorParameters<
   typeof TauriLanguageServerFeaturesGateway
@@ -676,6 +679,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.signatureHelp("/project", requestPosition),
     ).resolves.toEqual(signatureHelp);
+    const signatureContext: LanguageServerSignatureHelpContext = {
+      activeSignatureHelp: signatureHelp,
+      isRetrigger: true,
+      triggerCharacter: ",",
+      triggerKind: 2,
+    };
+    await expect(
+      gateway.signatureHelp("/project", requestPosition, signatureContext),
+    ).resolves.toEqual(signatureHelp);
     await expect(
       gateway.prepareRename("/project", requestPosition),
     ).resolves.toEqual(prepareRename);
@@ -895,6 +907,11 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       },
     );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_signature_help", {
+      position: requestPosition,
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_signature_help", {
+      context: signatureContext,
       position: requestPosition,
       rootPath: "/project",
     });

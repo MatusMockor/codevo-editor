@@ -26,6 +26,24 @@ pub struct TextDocumentCompletion {
     pub context: Option<LanguageServerCompletionContext>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageServerSignatureHelpContext {
+    pub trigger_kind: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_character: Option<String>,
+    pub is_retrigger: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_signature_help: Option<LanguageServerSignatureHelp>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextDocumentSignatureHelp {
+    pub position: TextDocumentPosition,
+    pub context: Option<LanguageServerSignatureHelpContext>,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct LanguageServerFeatureRequest {
     pub method: String,
@@ -465,7 +483,7 @@ pub struct LanguageServerWorkspaceSymbol {
     pub name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerSignatureHelp {
     pub active_parameter: u32,
@@ -473,7 +491,7 @@ pub struct LanguageServerSignatureHelp {
     pub signatures: Vec<LanguageServerSignature>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerSignature {
     pub documentation: Option<String>,
@@ -481,7 +499,7 @@ pub struct LanguageServerSignature {
     pub parameters: Vec<LanguageServerSignatureParameter>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerSignatureParameter {
     pub documentation: Option<String>,
@@ -522,7 +540,10 @@ pub trait TextDocumentFeatureRequestFactory {
         position: &TextDocumentPosition,
     ) -> LanguageServerFeatureRequest;
     fn semantic_tokens(&self, path: &str) -> LanguageServerFeatureRequest;
-    fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
+    fn signature_help(
+        &self,
+        signature_help: &TextDocumentSignatureHelp,
+    ) -> LanguageServerFeatureRequest;
     fn prepare_rename(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest;
     fn rename(&self, rename: &TextDocumentRename) -> LanguageServerFeatureRequest;
     fn code_actions(
@@ -714,8 +735,17 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         }
     }
 
-    fn signature_help(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
-        request("textDocument/signatureHelp", position)
+    fn signature_help(
+        &self,
+        signature_help: &TextDocumentSignatureHelp,
+    ) -> LanguageServerFeatureRequest {
+        let mut request = request("textDocument/signatureHelp", &signature_help.position);
+
+        if let Some(context) = &signature_help.context {
+            request.params["context"] = json!(context);
+        }
+
+        request
     }
 
     fn prepare_rename(&self, position: &TextDocumentPosition) -> LanguageServerFeatureRequest {
@@ -2064,13 +2094,15 @@ mod tests {
         LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInlayHint,
         LanguageServerInlayHintLabel, LanguageServerInlayHintLabelPart, LanguageServerLocation,
-        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
-        LanguageServerTypeHierarchyItem, LanguageServerWorkspaceFileOperation,
-        LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
-        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
-        TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
-        TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
-        WorkspaceFileChange, WorkspaceFileChangeType, WorkspaceFileRename,
+        LanguageServerPosition, LanguageServerRange, LanguageServerSignature,
+        LanguageServerSignatureHelp, LanguageServerSignatureHelpContext,
+        LanguageServerSignatureParameter, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
+        LanguageServerWorkspaceFileOperation, LspTextDocumentFeatureRequestFactory,
+        TextDocumentCompletion, TextDocumentFeatureRequestFactory, TextDocumentFormatting,
+        TextDocumentInlayHintRange, TextDocumentOnTypeFormatting, TextDocumentPosition,
+        TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
+        TextDocumentSelectionRange, TextDocumentSignatureHelp, WorkspaceFileChange,
+        WorkspaceFileChangeType, WorkspaceFileRename,
     };
     use serde_json::json;
 
@@ -2277,7 +2309,10 @@ mod tests {
     #[test]
     fn signature_help_request_contains_document_uri_and_position() {
         let factory = LspTextDocumentFeatureRequestFactory;
-        let request = factory.signature_help(&position());
+        let request = factory.signature_help(&TextDocumentSignatureHelp {
+            position: position(),
+            context: None,
+        });
 
         assert_eq!(request.method, "textDocument/signatureHelp");
         assert!(request.params["textDocument"]["uri"]
@@ -2286,6 +2321,68 @@ mod tests {
             .starts_with("file://"));
         assert_eq!(request.params["position"]["line"], 10);
         assert_eq!(request.params["position"]["character"], 4);
+        assert!(request.params.get("context").is_none());
+    }
+
+    #[test]
+    fn signature_help_request_can_include_trigger_context() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let request = factory.signature_help(&TextDocumentSignatureHelp {
+            position: position(),
+            context: Some(LanguageServerSignatureHelpContext {
+                active_signature_help: Some(LanguageServerSignatureHelp {
+                    active_parameter: 1,
+                    active_signature: 0,
+                    signatures: vec![LanguageServerSignature {
+                        documentation: Some("Loads a user.".to_string()),
+                        label: "loadUser(id: string, options?: Options)".to_string(),
+                        parameters: vec![
+                            LanguageServerSignatureParameter {
+                                documentation: Some("User id".to_string()),
+                                label: "id: string".to_string(),
+                            },
+                            LanguageServerSignatureParameter {
+                                documentation: None,
+                                label: "options?: Options".to_string(),
+                            },
+                        ],
+                    }],
+                }),
+                is_retrigger: true,
+                trigger_character: Some(",".to_string()),
+                trigger_kind: 2,
+            }),
+        });
+
+        assert_eq!(request.method, "textDocument/signatureHelp");
+        assert_eq!(
+            request.params["context"],
+            json!({
+                "triggerKind": 2,
+                "triggerCharacter": ",",
+                "isRetrigger": true,
+                "activeSignatureHelp": {
+                    "activeParameter": 1,
+                    "activeSignature": 0,
+                    "signatures": [
+                        {
+                            "documentation": "Loads a user.",
+                            "label": "loadUser(id: string, options?: Options)",
+                            "parameters": [
+                                {
+                                    "documentation": "User id",
+                                    "label": "id: string"
+                                },
+                                {
+                                    "documentation": null,
+                                    "label": "options?: Options"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            })
+        );
     }
 
     #[test]

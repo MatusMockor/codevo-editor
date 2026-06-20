@@ -27,6 +27,7 @@ import {
   type LanguageServerSemanticTokens,
   type LanguageServerSignature,
   type LanguageServerSignatureHelp,
+  type LanguageServerSignatureHelpContext,
   type LanguageServerSignatureParameter,
   type LanguageServerTextEdit,
   type LanguageServerWorkspaceEdit,
@@ -390,8 +391,14 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerSignatureHelpProvider(language, {
           signatureHelpRetriggerCharacters: [",", ")"],
           signatureHelpTriggerCharacters: ["(", ",", "<"],
-          provideSignatureHelp: (model, position) =>
-            provideSignatureHelp(monaco, context, model, position),
+          provideSignatureHelp: (model, position, _token, signatureContext) =>
+            provideSignatureHelp(
+              monaco,
+              context,
+              model,
+              position,
+              signatureContext,
+            ),
         }),
       );
     }
@@ -868,6 +875,7 @@ async function provideSignatureHelp(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  signatureContext?: Monaco.languages.SignatureHelpContext,
 ): Promise<Monaco.languages.SignatureHelpResult | null> {
   const request = featureRequestContext(context, model, position, "signatureHelp");
 
@@ -880,10 +888,18 @@ async function provideSignatureHelp(
       return null;
     }
 
-    const signatureHelp = await context.featuresGateway.signatureHelp(
-      request.rootPath,
-      request.position,
-    );
+    const languageServerSignatureContext =
+      toLanguageServerSignatureHelpContext(signatureContext);
+    const signatureHelp = languageServerSignatureContext
+      ? await context.featuresGateway.signatureHelp(
+          request.rootPath,
+          request.position,
+          languageServerSignatureContext,
+        )
+      : await context.featuresGateway.signatureHelp(
+          request.rootPath,
+          request.position,
+        );
 
     if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
       return null;
@@ -894,6 +910,84 @@ async function provideSignatureHelp(
     reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
   }
+}
+
+function toLanguageServerSignatureHelpContext(
+  context: Monaco.languages.SignatureHelpContext | undefined,
+): LanguageServerSignatureHelpContext | undefined {
+  if (!context) {
+    return undefined;
+  }
+
+  return {
+    ...(context.activeSignatureHelp
+      ? {
+          activeSignatureHelp: toLanguageServerSignatureHelp(
+            context.activeSignatureHelp,
+          ),
+        }
+      : {}),
+    isRetrigger: context.isRetrigger,
+    ...(context.triggerCharacter
+      ? { triggerCharacter: context.triggerCharacter }
+      : {}),
+    triggerKind:
+      context.triggerKind as LanguageServerSignatureHelpContext["triggerKind"],
+  };
+}
+
+function toLanguageServerSignatureHelp(
+  signatureHelp: Monaco.languages.SignatureHelp,
+): LanguageServerSignatureHelp {
+  return {
+    activeParameter: signatureHelp.activeParameter,
+    activeSignature: signatureHelp.activeSignature,
+    signatures: signatureHelp.signatures.map(toLanguageServerSignature),
+  };
+}
+
+function toLanguageServerSignature(
+  signature: Monaco.languages.SignatureInformation,
+): LanguageServerSignature {
+  return {
+    documentation: markdownStringValue(signature.documentation),
+    label: signature.label,
+    parameters: signature.parameters.map((parameter) =>
+      toLanguageServerSignatureParameter(signature.label, parameter),
+    ),
+  };
+}
+
+function toLanguageServerSignatureParameter(
+  signatureLabel: string,
+  parameter: Monaco.languages.ParameterInformation,
+): LanguageServerSignatureParameter {
+  return {
+    documentation: markdownStringValue(parameter.documentation),
+    label: signatureParameterLabel(signatureLabel, parameter.label),
+  };
+}
+
+function signatureParameterLabel(
+  signatureLabel: string,
+  label: string | [number, number],
+): string {
+  if (typeof label === "string") {
+    return label;
+  }
+
+  const [start, end] = label;
+  return signatureLabel.slice(start, end);
+}
+
+function markdownStringValue(
+  value: Monaco.IMarkdownString | string | undefined,
+): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return typeof value === "string" ? value : value.value;
 }
 
 async function provideReferences(
