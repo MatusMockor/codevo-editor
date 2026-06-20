@@ -2499,6 +2499,111 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("retries restored PHP IDE service autostart when startup rejects once", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 89,
+    };
+    const start = vi.fn<LanguageServerRuntimeGateway["start"]>(
+      async () => runningStatus,
+    );
+    start.mockRejectedValueOnce(new Error("PHPactor boot race"));
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start,
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerPlan: phpactorLanguageServerPlan(),
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(36);
+
+    expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledTimes(
+      2,
+    );
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 89,
+      }),
+    );
+  });
+
+  it("retries restored PHP IDE service autostart when startup crashes once", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 90,
+    };
+    const start = vi
+      .fn<LanguageServerRuntimeGateway["start"]>(async () => runningStatus)
+      .mockResolvedValueOnce({
+        kind: "crashed" as const,
+        message: "PHPactor startup race",
+        rootPath: "/workspace",
+      });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start,
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerPlan: phpactorLanguageServerPlan(),
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(36);
+
+    expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledTimes(
+      2,
+    );
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 90,
+      }),
+    );
+  });
+
   it("auto-starts PHP IDE services while initial runtime status is still unknown", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {

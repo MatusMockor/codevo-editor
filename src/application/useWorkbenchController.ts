@@ -125,7 +125,10 @@ import {
   removeCachedLanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntimeStatusCache";
 import { isJavaScriptTypeScriptWatchedPath } from "../domain/javascriptTypeScriptWatchedFiles";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  normalizedWorkspaceRootKey,
+  workspaceRootKeysEqual,
+} from "../domain/workspaceRootKey";
 import { createPhpactorSetupGuide } from "../domain/languageServerSetup";
 import {
   createNavigationHistory,
@@ -327,6 +330,7 @@ interface CachedWorkspaceWorkbenchState {
 }
 
 const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
+const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
 
 export type SidebarView = "files" | "git" | "php";
 
@@ -524,6 +528,10 @@ export function useWorkbenchController(
     useState<PhpFileStructureScope>("current");
   const [intelligenceMode, setIntelligenceMode] =
     useState<IntelligenceMode>("basic");
+  const [
+    phpLanguageServerAutostartRetryVersion,
+    setPhpLanguageServerAutostartRetryVersion,
+  ] = useState(0);
   const hasRestoredRef = useRef(false);
   const appSettingsRef = useRef<AppSettings>(defaultAppSettings());
   const workspaceSettingsRef = useRef<WorkspaceSettings>(
@@ -538,6 +546,9 @@ export function useWorkbenchController(
   const activeIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
   const autoStartedLanguageServerRootRef = useRef<string | null>(null);
+  const phpLanguageServerAutostartAttemptsByRootRef = useRef<
+    Record<string, number>
+  >({});
   const autoStartedJavaScriptTypeScriptLanguageServerRootRef = useRef<
     string | null
   >(null);
@@ -2511,6 +2522,7 @@ export function useWorkbenchController(
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
       autoStartedLanguageServerRootRef.current = null;
+      phpLanguageServerAutostartAttemptsByRootRef.current = {};
       autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
 
       try {
@@ -4523,12 +4535,15 @@ export function useWorkbenchController(
         const state = await smartModeGateway.setMode(mode);
         const nextMode = state.mode;
 
-        if (shouldStartLanguageServer(nextMode)) {
-          autoStartedLanguageServerRootRef.current = null;
-        }
-
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
           await stopLanguageServerRuntime();
+        }
+
+        if (!shouldStartLanguageServer(previousMode) && shouldStartLanguageServer(nextMode)) {
+          autoStartedLanguageServerRootRef.current = null;
+          delete phpLanguageServerAutostartAttemptsByRootRef.current[
+            normalizedWorkspaceRootKey(workspaceRoot)
+          ];
         }
 
         intelligenceModeRef.current = nextMode;
@@ -10318,6 +10333,13 @@ export function useWorkbenchController(
           await stopLanguageServerRuntime();
         }
 
+        if (!shouldStartLanguageServer(previousMode) && shouldStartLanguageServer(nextMode)) {
+          autoStartedLanguageServerRootRef.current = null;
+          delete phpLanguageServerAutostartAttemptsByRootRef.current[
+            normalizedWorkspaceRootKey(workspaceRoot)
+          ];
+        }
+
         intelligenceModeRef.current = nextMode;
         await persistWorkspaceSettings(workspaceRoot, resolvedWorkspaceSettings);
         setIntelligenceMode(nextMode);
@@ -11202,7 +11224,16 @@ export function useWorkbenchController(
       return;
     }
 
-    if (languageServerRuntimeStatus?.kind === "crashed") {
+    const autostartRootKey = normalizedWorkspaceRootKey(workspaceRoot);
+    const autostartAttempts =
+      phpLanguageServerAutostartAttemptsByRootRef.current[autostartRootKey] ??
+      0;
+
+    if (languageServerRuntimeStatus?.kind === "crashed" && autostartAttempts === 0) {
+      return;
+    }
+
+    if (autostartAttempts >= PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS) {
       return;
     }
 
@@ -11211,10 +11242,48 @@ export function useWorkbenchController(
     }
 
     autoStartedLanguageServerRootRef.current = workspaceRoot;
+    phpLanguageServerAutostartAttemptsByRootRef.current[autostartRootKey] =
+      autostartAttempts + 1;
     languageServerRuntimeGateway
       .start(workspaceRoot)
-      .then(handleLanguageServerRuntimeStatus)
-      .catch(reportLanguageServerError);
+      .then((status) => {
+        handleLanguageServerRuntimeStatus(status);
+
+        if (status.kind === "running") {
+          delete phpLanguageServerAutostartAttemptsByRootRef.current[
+            autostartRootKey
+          ];
+          return;
+        }
+
+        if (!languageServerCrashMessage(status)) {
+          return;
+        }
+
+        if (
+          workspaceRootKeysEqual(
+            autoStartedLanguageServerRootRef.current,
+            workspaceRoot,
+          )
+        ) {
+          autoStartedLanguageServerRootRef.current = null;
+        }
+
+        setPhpLanguageServerAutostartRetryVersion((current) => current + 1);
+      })
+      .catch((error) => {
+        if (
+          workspaceRootKeysEqual(
+            autoStartedLanguageServerRootRef.current,
+            workspaceRoot,
+          )
+        ) {
+          autoStartedLanguageServerRootRef.current = null;
+        }
+
+        reportLanguageServerError(error);
+        setPhpLanguageServerAutostartRetryVersion((current) => current + 1);
+      });
   }, [
     handleLanguageServerRuntimeStatus,
     intelligenceMode,
@@ -11222,6 +11291,7 @@ export function useWorkbenchController(
     languageServerRuntimeGateway,
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
+    phpLanguageServerAutostartRetryVersion,
     reportLanguageServerError,
     workspaceRoot,
     workspaceTrust,
