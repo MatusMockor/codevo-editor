@@ -564,6 +564,16 @@ class AlbumController
             ->first();
         $foundOrNew = Album::query()
             ->findOrNew(1);
+        $foundSole = Album::query()
+            ->findSole(1);
+        $fromCreateOrFirst = Album::query()
+            ->createOrFirst(['title' => 'Blue']);
+        $fromIncrementOrCreate = Album::query()
+            ->incrementOrCreate(['title' => 'Blue']);
+        $fromGetModel = Album::query()
+            ->getModel();
+        $fromNewModelInstance = Album::query()
+            ->newModelInstance(['title' => 'Blue']);
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
         $afterValueTerminal = Album::query()
@@ -606,6 +616,11 @@ class AlbumController
         $foundOr->tit
         $fromFindMany->tit
         $foundOrNew->tit
+        $foundSole->tit
+        $fromCreateOrFirst->tit
+        $fromIncrementOrCreate->tit
+        $fromGetModel->tit
+        $fromNewModelInstance->tit
         $query->whe
         $latest->tit
         $afterValueTerminal->tit
@@ -691,6 +706,46 @@ class AlbumController
         source,
         positionAfter(source, "$foundOrNew->tit"),
         "foundOrNew",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$foundSole->tit"),
+        "foundSole",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromCreateOrFirst->tit"),
+        "fromCreateOrFirst",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromIncrementOrCreate->tit"),
+        "fromIncrementOrCreate",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromGetModel->tit"),
+        "fromGetModel",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromNewModelInstance->tit"),
+        "fromNewModelInstance",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");

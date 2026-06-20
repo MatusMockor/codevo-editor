@@ -48,14 +48,44 @@ function positionAfter(source: string, needle: string) {
 
 describe("phpMethodCompletions", () => {
   it("treats common Eloquent finder methods as terminal model methods", () => {
+    expect(isLaravelEloquentBuilderTerminalModelMethod("createOrFirst")).toBe(
+      true,
+    );
+    expect(isLaravelEloquentBuilderTerminalModelMethod("createQuietly")).toBe(
+      true,
+    );
     expect(isLaravelEloquentBuilderTerminalModelMethod("findOr")).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("findOrNew")).toBe(true);
+    expect(isLaravelEloquentBuilderTerminalModelMethod("findSole")).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("firstWhere")).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("firstOrNew")).toBe(true);
+    expect(isLaravelEloquentBuilderTerminalModelMethod("forceCreate")).toBe(
+      true,
+    );
+    expect(isLaravelEloquentBuilderTerminalModelMethod("forceCreateQuietly")).toBe(
+      true,
+    );
+    expect(isLaravelEloquentBuilderTerminalModelMethod("getModel")).toBe(true);
+    expect(isLaravelEloquentBuilderTerminalModelMethod("incrementOrCreate")).toBe(
+      true,
+    );
+    expect(isLaravelEloquentBuilderTerminalModelMethod("make")).toBe(true);
+    expect(isLaravelEloquentBuilderTerminalModelMethod("newModelInstance")).toBe(
+      true,
+    );
+    expect(isLaravelEloquentBuilderMethodName("createOrFirst")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("createQuietly")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("findOr")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("findOrNew")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("findSole")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("firstWhere")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("firstOrNew")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("forceCreate")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("forceCreateQuietly")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("getModel")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("incrementOrCreate")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("make")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("newModelInstance")).toBe(true);
   });
 
   it("treats local scopes as model-specific Laravel magic, not global builder methods", () => {
@@ -266,6 +296,26 @@ class Album extends Model
         "Album::findOrNew(1)",
       ),
     ).toBe("App\\Models\\Album");
+    for (const methodName of [
+      "createOrFirst",
+      "createQuietly",
+      "findSole",
+      "forceCreate",
+      "forceCreateQuietly",
+      "getModel",
+      "incrementOrCreate",
+      "make",
+      "newModelInstance",
+    ]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+          null,
+        ),
+      ).toBe("App\\Models\\Album");
+    }
     for (const methodName of [
       "loadAggregate",
       "loadAvg",
