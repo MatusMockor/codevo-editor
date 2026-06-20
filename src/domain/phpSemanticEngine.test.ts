@@ -687,11 +687,13 @@ class Album extends Model
         $fromDirectCollection = Album::query()->get()->first();
         $fromStaticCollection = Album::all()->first();
         $fromCursor = Album::cursor()->first();
+        $fromLazyById = Album::query()->lazyById()->first();
 
         $fromAssignedCollection->tit
         $fromDirectCollection->tit
         $fromStaticCollection->tit
         $fromCursor->tit
+        $fromLazyById->tit
     }
 }
 `;
@@ -733,6 +735,14 @@ class Album extends Model
         source,
         positionAfter(source, "$fromCursor->tit"),
         "fromCursor",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromLazyById->tit"),
+        "fromLazyById",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");

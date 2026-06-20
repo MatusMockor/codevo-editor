@@ -1910,3 +1910,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `7f5c9899 Infer Laravel findOrNew model results`.
+
+## Slice: Laravel Lazy Builder Collection Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `97729317 Record Laravel findOrNew commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Laravel builder lazy retrieval methods as `LazyCollection<int, Model>` producers.
+
+### Implementation Choice
+
+- Add `lazy`, `lazyById`, `lazyByIdDesc`, and `orderedLazyById` to Eloquent builder collection-returning methods.
+- Split lazy collection return-type formatting from regular Eloquent Collection return-type formatting.
+- Add semantic-chain coverage for `lazyById()->first()`.
+
+### Acceptance Criteria
+
+- Builder lazy retrieval methods infer `Illuminate\Support\LazyCollection<int, Model>`.
+- `Album::query()->lazyById()->first()` infers `Album`.
+- Existing `cursor()` lazy collection behavior remains unchanged.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added Laravel builder lazy retrieval methods to collection-returning method recognition.
+- Split lazy collection return formatting from regular Eloquent collection formatting.
+- Added return-type coverage for lazy builder methods and semantic-chain coverage for `lazyById()->first()`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent collection chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

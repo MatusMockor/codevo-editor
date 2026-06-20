@@ -216,6 +216,18 @@ const laravelEloquentBuilderCollectionMethods = new Set([
   "cursor",
   "findmany",
   "get",
+  "lazy",
+  "lazybyid",
+  "lazybyiddesc",
+  "orderedlazybyid",
+]);
+
+const laravelEloquentBuilderLazyCollectionMethods = new Set([
+  "cursor",
+  "lazy",
+  "lazybyid",
+  "lazybyiddesc",
+  "orderedlazybyid",
 ]);
 
 const laravelEloquentBuilderNonModelTerminalMethods = new Set([
@@ -2435,7 +2447,7 @@ function phpLaravelEloquentBuilderCollectionType(
   modelType: string,
   methodName: string,
 ): string {
-  return methodName.toLowerCase() === "cursor"
+  return laravelEloquentBuilderLazyCollectionMethods.has(methodName.toLowerCase())
     ? `Illuminate\\Support\\LazyCollection<int, ${modelType}>`
     : `Illuminate\\Database\\Eloquent\\Collection<int, ${modelType}>`;
 }

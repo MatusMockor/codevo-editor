@@ -148,6 +148,21 @@ class Album extends Model
         "Album::cursor()",
       ),
     ).toBe("Illuminate\\Support\\LazyCollection<int, App\\Models\\Album>");
+    for (const methodName of [
+      "lazy",
+      "lazyById",
+      "lazyByIdDesc",
+      "orderedLazyById",
+    ]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+          null,
+        ),
+      ).toBe("Illuminate\\Support\\LazyCollection<int, App\\Models\\Album>");
+    }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
