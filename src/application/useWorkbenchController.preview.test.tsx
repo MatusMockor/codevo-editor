@@ -5492,6 +5492,83 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).toBe("JavaScript/TypeScript service restarted.");
   });
 
+  it("does not attach the workspace root to a rootless JavaScript and TypeScript restart response", async () => {
+    const rootedRunningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 18,
+    };
+    const rootlessRestartStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 19,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => rootedRunningStatus),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => rootlessRestartStatus),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan:
+        readyJavaScriptTypeScriptPlan("/workspace"),
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptAutoImports: false,
+        javaScriptTypeScriptInlayHints: false,
+        javaScriptTypeScriptVersion: "workspace",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 18,
+      }),
+    );
+
+    await act(async () => {
+      await getWorkbench().restartJavaScriptTypeScriptService();
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace", {
+      autoImportsEnabled: false,
+      codeLensEnabled: false,
+      inlayHintsEnabled: false,
+      typeScriptVersionPreference: "workspace",
+      validationEnabled: true,
+    });
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({ kind: "stopped", rootPath: "/workspace" }),
+    );
+  });
+
   it("opens JavaScript and TypeScript language service log for the active workspace", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -17108,10 +17185,14 @@ function createControllerDependencies({
     },
     languageServerRuntimeGateway:
       languageServerRuntimeGateway ?? {
-        getStatus: vi.fn(async () => runtimeStatus),
+        getStatus: vi.fn(async (rootPath) =>
+          runtimeStatusWithRootForTest(runtimeStatus, rootPath),
+        ),
         openLog: vi.fn(async () => null),
-        start: vi.fn(async () => runtimeStatus),
-        stop: vi.fn(async () => ({ kind: "stopped" as const })),
+        start: vi.fn(async (rootPath) =>
+          runtimeStatusWithRootForTest(runtimeStatus, rootPath),
+        ),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
         subscribeStatus: vi.fn(async () => () => undefined),
       },
     javaScriptTypeScriptLanguageServerDiagnosticsGateway:
@@ -17123,10 +17204,20 @@ function createControllerDependencies({
       javaScriptTypeScriptLanguageServerFeaturesGateway ?? featuresGateway(),
     javaScriptTypeScriptLanguageServerRuntimeGateway:
       javaScriptTypeScriptLanguageServerRuntimeGateway ?? {
-        getStatus: vi.fn(async () => javaScriptTypeScriptInitialRuntimeStatus),
+        getStatus: vi.fn(async (rootPath) =>
+          runtimeStatusWithRootForTest(
+            javaScriptTypeScriptInitialRuntimeStatus,
+            rootPath,
+          ),
+        ),
         openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
-        start: vi.fn(async () => javaScriptTypeScriptRuntimeStatus),
-        stop: vi.fn(async () => ({ kind: "stopped" as const })),
+        start: vi.fn(async (rootPath) =>
+          runtimeStatusWithRootForTest(
+            javaScriptTypeScriptRuntimeStatus,
+            rootPath,
+          ),
+        ),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
         subscribeStatus: vi.fn(async () => () => undefined),
       },
     phpFileOutlineGateway: {
@@ -17255,6 +17346,13 @@ function readyJavaScriptTypeScriptPlan(rootPath: string): LanguageServerPlan {
     provider: "typeScriptLanguageServer",
     status: "ready",
   };
+}
+
+function runtimeStatusWithRootForTest(
+  status: LanguageServerRuntimeStatus,
+  rootPath: string,
+): LanguageServerRuntimeStatus {
+  return status.rootPath ? status : { ...status, rootPath };
 }
 
 function createDeferred<T>(): Deferred<T> {

@@ -3662,3 +3662,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS Autostart Probe Root Guard
 
 - Committed as `62705f69 Guard JS TS autostart probe roots`.
+
+## Next Slice: Controller Direct Runtime Status Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `76eac183 Record JS TS autostart probe root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The runtime gateway rejects unsafe direct runtime responses, and JS/TS autostart now treats rootless probes as rootless.
+- The workbench controller still accepted a fallback workspace root in direct status handlers, which meant a future gateway or test double could return a rootless `running` or `crashed` status and have it cached as active for the requested workspace.
+- The initial runtime status effects also rooted direct `getStatus()` snapshots locally instead of routing them through the same root guard.
+
+### Implementation Choice
+
+- Derive a fallback root only for rootless `stopped` statuses.
+- Require `starting`, `running`, and `crashed` statuses to carry an explicit `rootPath` before the controller caches or displays them.
+- Route initial PHP and JS/TS direct `getStatus()` snapshots through the guarded handlers.
+- Update default preview test gateways to model the direct gateway contract by returning rooted statuses, while keeping custom rootless gateways for regression coverage.
+
+### Acceptance Criteria
+
+- Rootless JS/TS direct `start()` responses do not become active statuses for the current workspace.
+- Rootless direct `getStatus()` snapshots are guarded by the same handler path.
+- Safe `stopped` fallbacks still root stop/status cleanup results for the requested workspace.
+- Focused preview tests, full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: Controller Direct Runtime Status Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rootless JavaScript and TypeScript restart response"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rootless JavaScript and TypeScript status probe|rootless JavaScript and TypeScript restart response"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
