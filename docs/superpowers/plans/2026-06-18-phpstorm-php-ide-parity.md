@@ -1066,4 +1066,8 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `3939269 Infer PHPDoc interface property types`.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
