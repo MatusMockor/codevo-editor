@@ -1588,4 +1588,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `307d6a8f Preserve Laravel withWhereHas builder chains`.
