@@ -386,13 +386,19 @@ export function EditorSurface({
         return;
       }
 
-      const indent = smartBlankLineIndent(model, position.lineNumber);
+      const targetLineNumber = insertedNewLine
+        ? smartBlankLineIndentTargetLineNumber(
+            event.changes,
+            position.lineNumber,
+          )
+        : position.lineNumber;
+      const indent = smartBlankLineIndent(model, targetLineNumber);
 
       if (indent === null) {
         return;
       }
 
-      const line = model.getLineContent(position.lineNumber);
+      const line = model.getLineContent(targetLineNumber);
       const currentIndent = leadingWhitespace(line);
 
       if (currentIndent === indent) {
@@ -407,9 +413,9 @@ export function EditorSurface({
         {
           forceMoveMarkers: true,
           range: new monacoApi.Range(
-            position.lineNumber,
+            targetLineNumber,
             1,
-            position.lineNumber,
+            targetLineNumber,
             currentIndent.length + 1,
           ),
           text: indent,
@@ -417,7 +423,7 @@ export function EditorSurface({
       ]);
       editorApi.setPosition({
         column: indent.length + 1,
-        lineNumber: position.lineNumber,
+        lineNumber: targetLineNumber,
       });
     });
 
@@ -1060,6 +1066,17 @@ function smartBlankLineIndent(
     return null;
   }
 
+  const previousLine = lineNumber > 1 ? model.getLineContent(lineNumber - 1) : "";
+  const previousLineIndent = leadingWhitespace(previousLine);
+
+  if (
+    previousLine.length > 0 &&
+    previousLine.trim().length === 0 &&
+    previousLineIndent.length > 0
+  ) {
+    return previousLineIndent;
+  }
+
   const previous = nearestNonEmptyLine(model, lineNumber, -1);
 
   if (!previous) {
@@ -1073,6 +1090,32 @@ function smartBlankLineIndent(
   }
 
   return previousIndent;
+}
+
+function smartBlankLineIndentTargetLineNumber(
+  changes: readonly SmartIndentContentChange[],
+  fallbackLineNumber: number,
+): number {
+  const newLineChange = changes.find((change) => change.text.includes("\n"));
+
+  if (!newLineChange?.range) {
+    return fallbackLineNumber;
+  }
+
+  return (
+    newLineChange.range.startLineNumber + countOccurrences(newLineChange.text, "\n")
+  );
+}
+
+interface SmartIndentContentChange {
+  range?: {
+    startLineNumber: number;
+  };
+  text: string;
+}
+
+function countOccurrences(value: string, needle: string): number {
+  return value.split(needle).length - 1;
 }
 
 function nearestNonEmptyLine(

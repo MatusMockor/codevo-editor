@@ -32,7 +32,16 @@ interface FakeEditor {
   getTopForLineNumber: ReturnType<typeof vi.fn>;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
   modelContentChangeHandler:
-    | ((event: { changes: Array<{ text: string }> }) => void)
+    | ((
+        event: {
+          changes: Array<{
+            range?: {
+              startLineNumber: number;
+            };
+            text: string;
+          }>;
+        },
+      ) => void)
     | null;
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
   onDidChangeModelContent: ReturnType<typeof vi.fn>;
@@ -1075,6 +1084,112 @@ interface ParserFactory
     expect(editor.setPosition).toHaveBeenCalledWith({
       column: 9,
       lineNumber: 7,
+    });
+  });
+
+  it("keeps Enter from an indented blank PHP line aligned even before Monaco moves the cursor", async () => {
+    const lines = [
+      "<?php",
+      "class CommentController",
+      "{",
+      "    public function getOne(): JsonResponse",
+      "    {",
+      "        $comment = $this->commentRepository->findOrFail($id);",
+      "        ",
+      "",
+      "        return new CommentResource($comment);",
+      "    }",
+      "}",
+    ];
+    const activeDocument: EditorDocument = {
+      content: lines.join("\n"),
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/app/CommentController.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineCount: vi.fn(() => lines.length),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({
+      column: 9,
+      lineNumber: 7,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.modelContentChangeHandler?.({
+        changes: [
+          {
+            range: {
+              startLineNumber: 7,
+            },
+            text: "\n",
+          },
+        ],
+      });
+    });
+
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "mockor.smartBlankLineIndent",
+      [
+        {
+          forceMoveMarkers: true,
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 8,
+            startColumn: 1,
+            startLineNumber: 8,
+          }),
+          text: "        ",
+        },
+      ],
+    );
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      column: 9,
+      lineNumber: 8,
     });
   });
 
