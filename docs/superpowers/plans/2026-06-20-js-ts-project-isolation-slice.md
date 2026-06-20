@@ -3620,4 +3620,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Runtime Gateway Direct Root Strictness
 
-- PENDING.
+- Committed as `9e0742a0 Reject rootless direct runtime statuses`.
