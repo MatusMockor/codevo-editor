@@ -1340,7 +1340,7 @@ function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
   }
 
   const receiverClassName = phpLaravelResolvedClassName(source, receiverType ?? "");
-  const genericModelType = [
+  const returnTypes = [
     ...phpLaravelRepositoryDeclaredMethodReturnTypes(
       source,
       methodName,
@@ -1351,7 +1351,8 @@ function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
       methodName,
       receiverClassName,
     ),
-  ]
+  ];
+  const genericModelType = returnTypes
     .map((returnType) =>
       phpLaravelResolvedModelTypeCandidate(
         source,
@@ -1374,8 +1375,21 @@ function phpLaravelRepositoryMethodBuilderReturnTypeFromSource(
     )
     .find((modelType): modelType is string => Boolean(modelType));
 
-  return expressionModelType
-    ? phpLaravelEloquentBuilderType(expressionModelType)
+  if (expressionModelType) {
+    return phpLaravelEloquentBuilderType(expressionModelType);
+  }
+
+  const conventionModelType = returnTypes.some((returnType) =>
+    phpLaravelGenericCarrierMatches(source, returnType, [
+      "builder",
+      "illuminate\\database\\eloquent\\builder",
+    ]),
+  )
+    ? phpLaravelRepositoryConventionModelTypeFromReceiver(source, receiverType)
+    : null;
+
+  return conventionModelType
+    ? phpLaravelEloquentBuilderType(conventionModelType)
     : null;
 }
 

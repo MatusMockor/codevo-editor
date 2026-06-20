@@ -2378,6 +2378,102 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     expect(unsubscribe).toHaveBeenCalled();
   });
+
+  it("drops server-initiated workspace edits from stale TypeScript sessions", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const workspaceEditGateway = {
+      subscribeWorkspaceEdits: vi.fn(async (listener) => {
+        listener({
+          edit: workspaceEdit("file:///project/src/user.ts", "Stale"),
+          label: "Old session",
+          rootPath: "/project",
+          sessionId: 1,
+        });
+        listener({
+          edit: workspaceEdit("file:///project/src/user.ts", "Current"),
+          label: "Current session",
+          rootPath: "/project",
+          sessionId: 2,
+        });
+
+        return () => undefined;
+      }),
+    };
+    monaco.editor.getModels.mockReturnValue([model]);
+
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          rootPath: "/project",
+          sessionId: 2,
+        }),
+        workspaceEditGateway,
+      }),
+    );
+    await Promise.resolve();
+
+    expect(model.pushEditOperations).toHaveBeenCalledTimes(1);
+    expect(model.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 6,
+            endLineNumber: 1,
+            startColumn: 2,
+            startLineNumber: 1,
+          }),
+          text: "Current",
+        },
+      ],
+      expect.any(Function),
+    );
+    expect(applyWorkspaceEdit).toHaveBeenCalledTimes(1);
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      workspaceEdit("file:///project/src/user.ts", "Current"),
+      {
+        editedOpenPaths: ["/project/src/user.ts"],
+        rootPath: "/project",
+      },
+    );
+  });
+
+  it("drops server-initiated workspace edits while no project tab is active", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const workspaceEditGateway = {
+      subscribeWorkspaceEdits: vi.fn(async (listener) => {
+        listener({
+          edit: workspaceEdit("file:///project/src/user.ts", "Ignored"),
+          label: "Closing project",
+          rootPath: "/project",
+          sessionId: 1,
+        });
+
+        return () => undefined;
+      }),
+    };
+    monaco.editor.getModels.mockReturnValue([model]);
+
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        getWorkspaceRoot: () => null,
+        workspaceEditGateway,
+      }),
+    );
+    await Promise.resolve();
+
+    expect(model.pushEditOperations).not.toHaveBeenCalled();
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
+  });
 });
 
 function providerContext(

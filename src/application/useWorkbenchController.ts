@@ -570,6 +570,10 @@ export function useWorkbenchController(
   const javaScriptTypeScriptRuntimeStatusByRootRef = useRef<
     Record<string, LanguageServerRuntimeStatus>
   >({});
+  const javaScriptTypeScriptLanguageServerRuntimeStatusRef =
+    useRef<LanguageServerRuntimeStatus | null>(null);
+  const javaScriptTypeScriptLanguageServerRuntimeStatusRootRef =
+    useRef<string | null>(null);
   const phpClassSourcePathCacheRef = useRef<Record<string, string[]>>({});
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
@@ -707,6 +711,16 @@ export function useWorkbenchController(
   useEffect(() => {
     previewPathRef.current = previewPath;
   }, [previewPath]);
+
+  useEffect(() => {
+    javaScriptTypeScriptLanguageServerRuntimeStatusRef.current =
+      javaScriptTypeScriptLanguageServerRuntimeStatus;
+    javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current =
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot;
+  }, [
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+  ]);
 
   useEffect(() => {
     intelligenceModeRef.current = intelligenceMode;
@@ -1236,6 +1250,9 @@ export function useWorkbenchController(
         return;
       }
 
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef.current = rootedStatus;
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current =
+        statusRootPath ?? null;
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
         statusRootPath ?? null,
@@ -10568,6 +10585,7 @@ export function useWorkbenchController(
     }
 
     if (
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot &&
       !workspaceRootKeysEqual(
         javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
         workspaceRoot,
@@ -10594,30 +10612,111 @@ export function useWorkbenchController(
     }
 
     const requestedRoot = workspaceRoot;
-    autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = requestedRoot;
-    javaScriptTypeScriptLanguageServerRuntimeGateway
-      .start(requestedRoot, {
-        autoImportsEnabled: workspaceSettings.javaScriptTypeScriptAutoImports,
-        codeLensEnabled: workspaceSettings.javaScriptTypeScriptCodeLens,
-        inlayHintsEnabled: workspaceSettings.javaScriptTypeScriptInlayHints,
-        typeScriptVersionPreference:
-          workspaceSettings.javaScriptTypeScriptVersion,
-        validationEnabled: workspaceSettings.javaScriptTypeScriptValidation,
-      })
-      .then((status) => {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+    let cancelled = false;
+
+    void (async () => {
+      if (cancelled) {
+        return;
+      }
+
+      let latestStatus =
+        javaScriptTypeScriptLanguageServerRuntimeStatusRef.current;
+      let latestStatusRoot =
+        javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current;
+
+      if (!latestStatus && !latestStatusRoot) {
+        const probedStatus = await Promise.race([
+          javaScriptTypeScriptLanguageServerRuntimeGateway
+            .getStatus(requestedRoot)
+            .catch(() => null),
+          (async () => {
+            for (let attempt = 0; attempt < 4; attempt += 1) {
+              await Promise.resolve();
+            }
+
+            return null;
+          })(),
+        ]);
+
+        if (cancelled) {
           return;
         }
 
-        handleJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
-      })
-      .catch((error) =>
-        reportErrorForActiveWorkspaceRoot(
+        if (probedStatus) {
+          latestStatus = probedStatus;
+          latestStatusRoot = probedStatus.rootPath ?? requestedRoot;
+        }
+      }
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      if (
+        workspaceSettingsRef.current.javaScriptTypeScriptService !== "auto" ||
+        !shouldAutoStartJavaScriptTypeScriptLanguageServer
+      ) {
+        return;
+      }
+
+      if (
+        latestStatusRoot &&
+        !workspaceRootKeysEqual(latestStatusRoot, requestedRoot)
+      ) {
+        return;
+      }
+
+      if (isLanguageServerActive(latestStatus)) {
+        return;
+      }
+
+      if (latestStatus?.kind === "crashed") {
+        return;
+      }
+
+      if (
+        workspaceRootKeysEqual(
+          autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
           requestedRoot,
-          "JavaScript/TypeScript",
-          error,
-        ),
-      );
+        )
+      ) {
+        return;
+      }
+
+      autoStartedJavaScriptTypeScriptLanguageServerRootRef.current =
+        requestedRoot;
+      javaScriptTypeScriptLanguageServerRuntimeGateway
+        .start(requestedRoot, {
+          autoImportsEnabled: workspaceSettingsRef.current
+            .javaScriptTypeScriptAutoImports,
+          codeLensEnabled: workspaceSettingsRef.current
+            .javaScriptTypeScriptCodeLens,
+          inlayHintsEnabled: workspaceSettingsRef.current
+            .javaScriptTypeScriptInlayHints,
+          typeScriptVersionPreference:
+            workspaceSettingsRef.current.javaScriptTypeScriptVersion,
+          validationEnabled: workspaceSettingsRef.current
+            .javaScriptTypeScriptValidation,
+        })
+        .then((status) => {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
+
+          handleJavaScriptTypeScriptLanguageServerRuntimeStatus(status);
+        })
+        .catch((error) =>
+          reportErrorForActiveWorkspaceRoot(
+            requestedRoot,
+            "JavaScript/TypeScript",
+            error,
+          ),
+        );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerPlan,
@@ -10631,6 +10730,7 @@ export function useWorkbenchController(
     workspaceSettings.javaScriptTypeScriptInlayHints,
     workspaceSettings.javaScriptTypeScriptService,
     workspaceSettings.javaScriptTypeScriptVersion,
+    workspaceSettings.javaScriptTypeScriptValidation,
     workspaceRoot,
   ]);
 

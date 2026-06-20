@@ -1555,7 +1555,7 @@ function isStoredWorkspaceRootActive(
 ): boolean {
   const activeRootPath = context.getWorkspaceRoot?.() ?? null;
 
-  return !activeRootPath || workspaceRootKeysEqual(activeRootPath, rootPath);
+  return Boolean(activeRootPath && workspaceRootKeysEqual(activeRootPath, rootPath));
 }
 
 function reportErrorForActiveRoot(
@@ -2290,13 +2290,7 @@ async function applyWorkspaceEditEvent(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   event: LanguageServerWorkspaceEditEvent,
 ): Promise<void> {
-  const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
-
-  if (
-    event.rootPath &&
-    workspaceRoot &&
-    !workspaceRootKeysEqual(event.rootPath, workspaceRoot)
-  ) {
+  if (!isWorkspaceEditEventActive(context, event)) {
     return;
   }
 
@@ -2305,6 +2299,29 @@ async function applyWorkspaceEditEvent(
     context,
     event.edit,
     event.rootPath ?? undefined,
+  );
+}
+
+function isWorkspaceEditEventActive(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  event: LanguageServerWorkspaceEditEvent,
+): boolean {
+  const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
+
+  if (!workspaceRoot) {
+    return false;
+  }
+
+  if (event.rootPath && !workspaceRootKeysEqual(event.rootPath, workspaceRoot)) {
+    return false;
+  }
+
+  const status = context.getRuntimeStatus();
+
+  return (
+    status?.kind === "running" &&
+    status.sessionId === event.sessionId &&
+    (!status.rootPath || workspaceRootKeysEqual(status.rootPath, workspaceRoot))
   );
 }
 

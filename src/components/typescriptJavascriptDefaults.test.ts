@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
 
 describe("configureTypescriptJavascriptDefaults", () => {
-  it("enables eager model sync and diagnostics for TypeScript and JavaScript", () => {
+  it("configures compiler options, eager sync, and diagnostics for TypeScript and JavaScript", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();
     const monaco = {
@@ -35,10 +35,20 @@ describe("configureTypescriptJavascriptDefaults", () => {
         rename: true,
       }),
     );
+    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowNonTsExtensions: true,
+        allowSyntheticDefaultImports: true,
+        resolveJsonModule: true,
+      }),
+    );
     expect(javascriptDefaults.setCompilerOptions).toHaveBeenCalledWith(
       expect.objectContaining({
         allowJs: true,
+        allowNonTsExtensions: true,
+        allowSyntheticDefaultImports: true,
         checkJs: false,
+        resolveJsonModule: true,
       }),
     );
   });

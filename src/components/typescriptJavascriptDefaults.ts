@@ -23,10 +23,12 @@ export function configureTypescriptJavascriptDefaults(
     validationEnabled && builtInProvidersEnabled;
 
   const sharedCompilerOptions: Monaco.languages.typescript.CompilerOptions = {
+    allowSyntheticDefaultImports: true,
     allowNonTsExtensions: true,
     jsx: typescript.JsxEmit.ReactJSX,
     module: typescript.ModuleKind.ESNext,
     moduleResolution: typescript.ModuleResolutionKind.NodeJs,
+    resolveJsonModule: true,
     target: typescript.ScriptTarget.ESNext,
   };
 

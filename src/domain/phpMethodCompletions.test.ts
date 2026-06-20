@@ -174,6 +174,30 @@ class Album extends Model
     ).toBeNull();
   });
 
+  it("infers Laravel repository builder generics from repository naming conventions", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class AlbumRepository
+{
+    public function query(): Builder
+    {
+    }
+}
+`;
+
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "query",
+        "AlbumRepository",
+        "$this->query()",
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+  });
+
   it("infers Laravel relation factory and relation chain return types", () => {
     const source = `<?php
 namespace App\\Models;
