@@ -1024,3 +1024,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: PHPDoc Interface Property Type Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `14e881f Update PHP parity plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Infer chained property types from PHPDoc `@property` declarations inherited through implemented interfaces.
+
+### Implementation Choice
+
+- Reuse `phpSuperTypeReferences` in `resolvePhpClassPropertyOrRelationType`, matching property diagnostics, property navigation, and method return inference.
+- Preserve relation-method, trait, mixin, and collection-property handling.
+
+### Acceptance Criteria
+
+- `$comment->publisher->pub` suggests `publishNow()` when `publisher` is declared as interface PHPDoc `@property-read CommentPublisher $publisher`.
+- Existing interface PHPDoc property diagnostics/navigation behavior remains intact.
+- Relevant preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Property/relation type inference now walks parsed supertypes, so implemented-interface PHPDoc properties can drive chained completions.
+- Existing relation-method, trait, mixin, and collection-property handling remains intact.
+- Added preview coverage for chaining from an interface PHPDoc property type into the returned class.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "interface PHPDoc property types|interface PHPDoc method returns|PHPDoc magic property definitions"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
