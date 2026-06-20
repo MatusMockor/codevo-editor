@@ -8181,6 +8181,156 @@ interface CommentRepositoryInterface
     ]);
   });
 
+  it("suppresses implemented interface PHPDoc method diagnostics on inferred receivers", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const interfacePath = "/workspace/app/Contracts/PublishesComments.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->publish();
+        $comment->missingPublish();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 27,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const methodDiagnosticPosition = (methodName: string) => {
+      const position = positionAfter(controllerSource, `$comment->${methodName}`);
+
+      return {
+        character: position.column - methodName.length - 1,
+        line: position.lineNumber - 1,
+      };
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 7,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\PublishesComments",
+          kind: "interface",
+          lineNumber: 7,
+          name: "PublishesComments",
+          path: interfacePath,
+          relativePath: "app/Contracts/PublishesComments.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use App\\Contracts\\PublishesComments;
+
+class Comment implements PublishesComments
+{
+}
+`;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+/**
+ * @method void publish()
+ */
+interface PublishesComments
+{
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    const publishPosition = methodDiagnosticPosition("publish");
+    const missingPosition = methodDiagnosticPosition("missingPublish");
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            ...publishPosition,
+            message:
+              "Method App\\Models\\Comment::publish() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...missingPosition,
+            message:
+              "Method App\\Models\\Comment::missingPublish() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        ...missingPosition,
+        message:
+          "Method App\\Models\\Comment::missingPublish() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("suppresses existing static-method diagnostics without hiding instance-only methods", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)

@@ -833,3 +833,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: PHPDoc Instance Method Diagnostic Reconciliation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2a77d90 Update JS TS isolation plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let phpactor unresolved instance-method diagnostics reconcile when the receiver type exposes a PHPDoc `@method` through its class, parent, interface, trait, or mixin hierarchy.
+
+### Implementation Choice
+
+- Reuse the cached PHP class-member reader used by completions and static-method reconciliation instead of adding a second PHPDoc parser path.
+- Keep suppression case-insensitive and scoped to the already resolved receiver class hierarchy.
+
+### Acceptance Criteria
+
+- `$comment->publish()` is suppressed when an implemented interface declares `@method void publish()`.
+- Unknown instance methods remain visible.
+- Existing PHP mixin diagnostics still pass.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Instance method hierarchy checks now reuse cached PHP class members, so PHPDoc `@method` declarations participate in diagnostic reconciliation.
+- Suppression remains scoped to non-static method members and excludes PHPDoc properties.
+- Added preview coverage for implemented-interface PHPDoc instance methods while keeping unknown method diagnostics visible.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc method diagnostics|PHPDoc mixin member-method|existing static-method diagnostics"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

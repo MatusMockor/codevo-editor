@@ -5936,9 +5936,15 @@ export function useWorkbenchController(
       }
 
       const normalizedClassName = className.trim().replace(/^\\+/, "");
+      const normalizedMethodName = methodName.trim();
+      const methodLookup = normalizedMethodName.toLowerCase();
       const visitedKey = normalizedClassName.toLowerCase();
 
-      if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+      if (
+        !normalizedClassName ||
+        !normalizedMethodName ||
+        visitedClassNames.has(visitedKey)
+      ) {
         return false;
       }
 
@@ -5946,9 +5952,20 @@ export function useWorkbenchController(
 
       for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
         try {
-          const content = await readNavigationFileContent(path);
+          const { content, members } = await readPhpClassMembersFromPath(
+            path,
+            normalizedClassName,
+          );
 
-          if (phpMethodPositionOrNull(content, methodName)) {
+          if (
+            phpMethodPositionOrNull(content, normalizedMethodName) ||
+            members.some(
+              (member) =>
+                member.kind !== "property" &&
+                !member.isStatic &&
+                member.name.toLowerCase() === methodLookup,
+            )
+          ) {
             return true;
           }
 
@@ -5962,7 +5979,7 @@ export function useWorkbenchController(
               resolvedTraitName &&
               (await phpClassHierarchyHasMethod(
                 resolvedTraitName,
-                methodName,
+                normalizedMethodName,
                 visitedClassNames,
               ))
             ) {
@@ -5980,7 +5997,7 @@ export function useWorkbenchController(
               resolvedMixinName &&
               (await phpClassHierarchyHasMethod(
                 resolvedMixinName,
-                methodName,
+                normalizedMethodName,
                 visitedClassNames,
               ))
             ) {
@@ -5998,7 +6015,7 @@ export function useWorkbenchController(
               resolvedSuperTypeName &&
               (await phpClassHierarchyHasMethod(
                 resolvedSuperTypeName,
-                methodName,
+                normalizedMethodName,
                 visitedClassNames,
               ))
             ) {
@@ -6013,7 +6030,7 @@ export function useWorkbenchController(
       return false;
     },
     [
-      readNavigationFileContent,
+      readPhpClassMembersFromPath,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
