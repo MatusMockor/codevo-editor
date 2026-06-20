@@ -71,7 +71,9 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ## Commit Status
 
-- Pending commit/push for:
+- Committed and pushed:
+  - `a2f4cd1 Filter JS TS response payloads by workspace`
+- Included files:
   - `src-tauri/src/lib.rs`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
@@ -104,6 +106,8 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ## Commit Status: Stopped-Session Reader Guard
 
-- Pending commit/push for:
+- Committed and pushed:
+  - `9d853d1 Ignore stopped JS TS LSP session messages`
+- Included files:
   - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
