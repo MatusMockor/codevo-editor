@@ -738,3 +738,59 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Server Show Message Requests Runtime Log
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b9b1a8d Capture JS TS server window messages`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- LSP servers can send `window/showMessageRequest` prompts, which VS Code surfaces to the user with actions.
+- The editor currently replies with the default `null` result for unknown requests, which is acceptable as "no action selected", but the prompt itself is invisible.
+- Logging these prompts preserves the diagnostic value without adding a new UI decision surface.
+
+### Implementation Choice
+
+- Extend the existing server-window-message runtime-log path to include `window/showMessageRequest`.
+- Continue routing request messages after logging so the existing JSON-RPC response path still acknowledges the request.
+- Make the `window/showMessageRequest` null response explicit in the request handler.
+
+### Acceptance Criteria
+
+- Runtime log includes `window/showMessageRequest` messages with severity.
+- `window/showMessageRequest` still receives a JSON-RPC response.
+- Existing `window/logMessage` and `window/showMessage` notification behavior remains unchanged.
+- Focused Rust test passes.
+- `git diff --check` passes.
+
+### Completed Slice: Server Show Message Requests Runtime Log
+
+- Runtime log now captures `window/showMessageRequest` prompt messages with severity.
+- Request messages continue through the normal server-request path after logging, so the language server still receives a JSON-RPC response.
+- The request handler now explicitly treats `window/showMessageRequest` as a no-selection `null` result.
+- Existing notification logging for `window/logMessage` and `window/showMessage` remains unchanged.
+
+### Verification: Server Show Message Requests Runtime Log
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml captures_language_server_show_message_requests_in_runtime_log_and_responds --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_session --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: Server Show Message Requests Runtime Log
+
+- Included files:
+  - `src-tauri/src/lsp_session.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

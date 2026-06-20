@@ -40,6 +40,11 @@ type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
 type RuntimeLog = Arc<Mutex<String>>;
 const RUNTIME_LOG_MAX_BYTES: usize = 128 * 1024;
 
+struct ServerWindowMessage {
+    chunk: String,
+    requires_response: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LanguageServerRuntimeStatus {
@@ -1515,8 +1520,11 @@ fn spawn_reader(
                     };
 
                     if let Some(message) = server_window_message(&value, server_label) {
-                        append_runtime_log(&runtime_log, &message);
-                        continue;
+                        append_runtime_log(&runtime_log, &message.chunk);
+
+                        if !message.requires_response {
+                            continue;
+                        }
                     }
 
                     if handshake_done {
@@ -1608,11 +1616,12 @@ fn spawn_reader(
     })
 }
 
-fn server_window_message(value: &Value, server_label: &str) -> Option<String> {
+fn server_window_message(value: &Value, server_label: &str) -> Option<ServerWindowMessage> {
     let method = value.get("method").and_then(Value::as_str)?;
-    let method_label = match method {
-        "window/logMessage" => "logMessage",
-        "window/showMessage" => "showMessage",
+    let (method_label, requires_response) = match method {
+        "window/logMessage" => ("logMessage", false),
+        "window/showMessage" => ("showMessage", false),
+        "window/showMessageRequest" => ("showMessageRequest", true),
         _ => return None,
     };
     let params = value.get("params")?;
@@ -1623,9 +1632,10 @@ fn server_window_message(value: &Value, server_label: &str) -> Option<String> {
     }
 
     let severity = language_server_message_type_label(params.get("type").and_then(Value::as_u64));
-    Some(format!(
-        "[{server_label} {method_label} {severity}] {message}\n"
-    ))
+    Some(ServerWindowMessage {
+        chunk: format!("[{server_label} {method_label} {severity}] {message}\n"),
+        requires_response,
+    })
 }
 
 fn language_server_message_type_label(message_type: Option<u64>) -> &'static str {
@@ -1715,7 +1725,9 @@ fn server_request_result(
             });
             Value::Null
         }
-        "client/registerCapability" | "client/unregisterCapability" => Value::Null,
+        "client/registerCapability"
+        | "client/unregisterCapability"
+        | "window/showMessageRequest" => Value::Null,
         _ => Value::Null,
     }
 }
@@ -2253,6 +2265,46 @@ mod tests {
             &supervisor,
             "[TypeScript language server showMessage error] tsconfig.json contains an unsupported option",
         );
+    }
+
+    #[test]
+    fn captures_language_server_show_message_requests_in_runtime_log_and_responds() {
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new_with_label("TypeScript language server");
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 42,
+                "method": "window/showMessageRequest",
+                "params": {
+                    "type": 3,
+                    "message": "Install missing @types/node declarations?",
+                    "actions": [{ "title": "Install" }],
+                },
+            }),
+        );
+
+        wait_for_log(
+            &supervisor,
+            "[TypeScript language server showMessageRequest info] Install missing @types/node declarations?",
+        );
+        let response = wait_for_captured_response(&capture, 42);
+
+        assert_eq!(response["result"], Value::Null);
     }
 
     #[test]
