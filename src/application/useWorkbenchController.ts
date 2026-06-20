@@ -6889,10 +6889,17 @@ export function useWorkbenchController(
                   depth + 1,
                 )
               : null;
-          const callbackRelationModelType =
-            callbackHostModelType && callbackContext.relationName
-              ? await resolvePhpClassPropertyOrRelationType(
+          const callbackRelationOwnerType =
+            callbackHostModelType && callbackContext.previousRelationNames?.length
+              ? await resolvePhpLaravelRelationPathOwnerType(
                   callbackHostModelType,
+                  callbackContext.previousRelationNames,
+                )
+              : callbackHostModelType;
+          const callbackRelationModelType =
+            callbackRelationOwnerType && callbackContext.relationName
+              ? await resolvePhpClassPropertyOrRelationType(
+                  callbackRelationOwnerType,
                   callbackContext.relationName,
                   true,
                 )
@@ -7076,6 +7083,7 @@ export function useWorkbenchController(
       isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
+      resolvePhpLaravelRelationPathOwnerType,
       resolvePhpLaravelMethodGenericModelType,
       resolvePhpMethodReturnType,
     ],

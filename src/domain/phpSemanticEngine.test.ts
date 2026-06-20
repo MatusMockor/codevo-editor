@@ -1400,8 +1400,9 @@ Album::with(relations: ['tracks' => function ($namedEagerQuery): void {
     ).toEqual({
       methodName: "with",
       modelClassName: null,
+      previousRelationNames: ["tracks"],
       receiverExpression: "Album::query()",
-      relationName: "tracks",
+      relationName: "artist",
     });
     expect(
       phpLaravelQueryCallbackContextForVariable(

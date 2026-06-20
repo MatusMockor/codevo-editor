@@ -10338,6 +10338,7 @@ class Builder
   it("infers Laravel relation query callback builders", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumPath = "/workspace/app/Models/Album.php";
+    const artistPath = "/workspace/app/Models/Artist.php";
     const postPath = "/workspace/app/Models/Post.php";
     const trackPath = "/workspace/app/Models/Track.php";
     const builderPath =
@@ -10360,6 +10361,13 @@ class AlbumController
         });
 
         Album::query()->whereHas('tracks', fn ($arrowQuery) => $arrowQuery->pub);
+
+        Album::query()->with(['tracks.artist' => function ($artistQuery): void {
+            $artistQuery->pub
+            $artistQuery->published()->ord
+            $artist = $artistQuery->first();
+            $artist->get
+        }]);
 
         Album::query()->whereHasMorph('commentable', [Post::class], function ($morphQuery): void {
             $morphQuery->pub
@@ -10406,6 +10414,16 @@ class AlbumController
           name: "Album",
           path: albumPath,
           relativePath: "app/Models/Album.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Artist",
+          kind: "class",
+          lineNumber: 7,
+          name: "Artist",
+          path: artistPath,
+          relativePath: "app/Models/Artist.php",
         },
         {
           column: 7,
@@ -10461,6 +10479,21 @@ class Album
 `;
         }
 
+        if (path === artistPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Artist
+{
+    public function getTitle(): string {}
+
+    public function scopePublished(Builder $query): Builder {}
+}
+`;
+        }
+
         if (path === postPath) {
           return `<?php
 namespace App\\Models;
@@ -10481,12 +10514,18 @@ class Post
 namespace App\\Models;
 
 use Illuminate\\Database\\Eloquent\\Builder;
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
 
 class Track
 {
     public function getTitle(): string {}
 
     public function scopePublished(Builder $query): Builder {}
+
+    public function artist(): BelongsTo
+    {
+        return $this->belongsTo(Artist::class);
+    }
 }
 `;
         }
@@ -10582,6 +10621,45 @@ class Builder
         name: "published",
         parameters: "",
         returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$artistQuery->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Artist",
+        name: "published",
+        parameters: "",
+        returnType: "Builder",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$artistQuery->published()->ord"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        name: "orderBy",
+        parameters: "$column, $direction = 'asc'",
+        returnType: "static",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$artist->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Artist",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
       },
     ]);
     await expect(

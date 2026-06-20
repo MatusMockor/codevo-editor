@@ -77,6 +77,7 @@ export interface PhpLaravelQueryCallbackContext {
   methodName: string;
   modelClassName: string | null;
   morphTypeClassNames?: string[];
+  previousRelationNames?: string[];
   receiverExpression: string | null;
   relationName: string | null;
 }
@@ -282,6 +283,9 @@ export function phpLaravelQueryCallbackContextForVariable(
       ...(methodCallContext.morphTypeClassNames
         ? { morphTypeClassNames: methodCallContext.morphTypeClassNames }
         : {}),
+      ...(methodCallContext.previousRelationNames?.length
+        ? { previousRelationNames: methodCallContext.previousRelationNames }
+        : {}),
     };
   }
 
@@ -297,6 +301,9 @@ export function phpLaravelQueryCallbackContextForVariable(
       modelClassName: staticCallContext.receiverOrClassName.replace(/^\\+/, ""),
       ...(staticCallContext.morphTypeClassNames
         ? { morphTypeClassNames: staticCallContext.morphTypeClassNames }
+        : {}),
+      ...(staticCallContext.previousRelationNames?.length
+        ? { previousRelationNames: staticCallContext.previousRelationNames }
         : {}),
       receiverExpression: null,
       relationName: staticCallContext.relationName,
@@ -902,12 +909,14 @@ function phpCallbackMethodCallContext(
 ): {
   methodName: string;
   morphTypeClassNames?: string[];
+  previousRelationNames?: string[];
   receiverOrClassName: string;
   relationName: string | null;
 } | null {
   let context: {
     methodName: string;
     morphTypeClassNames?: string[];
+    previousRelationNames?: string[];
     receiverOrClassName: string;
     relationName: string | null;
     startOffset: number;
@@ -962,21 +971,25 @@ function phpCallbackMethodCallContext(
       closeOffset,
       callbackStartOffset,
     );
+    const relationPath = laravelCurrentBuilderCallbackMethods.has(
+      methodName.toLowerCase(),
+    )
+      ? null
+      : phpRelationPathBeforeCallbackArgument(
+          source,
+          openOffset + 1,
+          closeOffset,
+          callbackStartOffset,
+        );
 
     context = {
       methodName,
       ...(morphTypeClassNames ? { morphTypeClassNames } : {}),
+      ...(relationPath && relationPath.length > 1
+        ? { previousRelationNames: relationPath.slice(0, -1) }
+        : {}),
       receiverOrClassName,
-      relationName: laravelCurrentBuilderCallbackMethods.has(
-        methodName.toLowerCase(),
-      )
-        ? null
-        : phpRelationNameBeforeCallbackArgument(
-            source,
-            openOffset + 1,
-            closeOffset,
-            callbackStartOffset,
-          ),
+      relationName: relationPath?.[relationPath.length - 1] ?? null,
       startOffset,
     };
   }
@@ -986,6 +999,9 @@ function phpCallbackMethodCallContext(
         methodName: context.methodName,
         ...(context.morphTypeClassNames
           ? { morphTypeClassNames: context.morphTypeClassNames }
+          : {}),
+        ...(context.previousRelationNames?.length
+          ? { previousRelationNames: context.previousRelationNames }
           : {}),
         receiverOrClassName: context.receiverOrClassName,
         relationName: context.relationName,
@@ -1134,12 +1150,12 @@ function phpClassConstantClassName(expression: string): string | null {
   return match?.[1]?.replace(/^\\+/, "") ?? null;
 }
 
-function phpRelationNameBeforeCallbackArgument(
+function phpRelationPathBeforeCallbackArgument(
   source: string,
   argumentsStartOffset: number,
   argumentsEndOffset: number,
   callbackStartOffset: number,
-): string | null {
+): string[] | null {
   const argumentsSource = source.slice(argumentsStartOffset, argumentsEndOffset);
   const callbackRelativeOffset = callbackStartOffset - argumentsStartOffset;
   const argumentsList = splitPhpArgumentsWithOffsets(argumentsSource);
@@ -1155,7 +1171,7 @@ function phpRelationNameBeforeCallbackArgument(
 
   const callbackArgument = argumentsList[callbackArgumentIndex];
   const relationNameFromArrayKey = callbackArgument
-    ? phpRelationNameFromArrayArgumentKey(
+    ? phpRelationPathFromArrayArgumentKey(
         argumentsSource.slice(callbackArgument.start, callbackArgument.end),
         callbackRelativeOffset - callbackArgument.start,
       )
@@ -1170,17 +1186,17 @@ function phpRelationNameBeforeCallbackArgument(
     const relationName = phpStringLiteralValue(value);
 
     if (relationName) {
-      return relationName.split(".")[0]?.trim() || null;
+      return phpRelationPathSegments(relationName);
     }
   }
 
   return null;
 }
 
-function phpRelationNameFromArrayArgumentKey(
+function phpRelationPathFromArrayArgumentKey(
   argumentSource: string,
   callbackOffset: number,
-): string | null {
+): string[] | null {
   const arrayRange = phpTopLevelArrayRangeContainingOffset(
     argumentSource,
     callbackOffset,
@@ -1215,7 +1231,16 @@ function phpRelationNameFromArrayArgumentKey(
 
   const relationName = phpStringLiteralValue(entrySource.slice(0, separatorIndex));
 
-  return relationName?.split(".")[0]?.trim() || null;
+  return relationName ? phpRelationPathSegments(relationName) : null;
+}
+
+function phpRelationPathSegments(relationName: string): string[] | null {
+  const segments = relationName
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  return segments.length > 0 ? segments : null;
 }
 
 function phpTopLevelArrayRangeContainingOffset(
