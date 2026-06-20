@@ -1,6 +1,8 @@
 use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
 use crate::lsp_diagnostics::{parse_publish_diagnostics, LanguageServerDiagnosticEvent};
-use crate::lsp_features::{parse_workspace_edit_result, LanguageServerWorkspaceEdit};
+use crate::lsp_features::{
+    parse_workspace_edit_result, LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
+};
 use crate::lsp_transport::{read_message, write_message};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -1524,7 +1526,7 @@ fn server_request_result(
         "workspace/configuration" => workspace_configuration_result(params, server_configuration),
         "workspace/workspaceFolders" => workspace_folders_result(workspace_root),
         "workspace/applyEdit" => {
-            workspace_apply_edit_result(params, workspace_edit_sink, session_id)
+            workspace_apply_edit_result(params, workspace_edit_sink, session_id, workspace_root)
         }
         "client/registerCapability" | "client/unregisterCapability" => Value::Null,
         _ => Value::Null,
@@ -1692,6 +1694,7 @@ fn workspace_apply_edit_result(
     params: Option<&Value>,
     workspace_edit_sink: &dyn WorkspaceEditSink,
     session_id: u64,
+    workspace_root: &str,
 ) -> Value {
     let Some(params) = params else {
         return workspace_apply_edit_failure("Missing workspace edit parameters.");
@@ -1709,6 +1712,10 @@ fn workspace_apply_edit_result(
         Ok(None) => return workspace_apply_edit_failure("Workspace edit payload was empty."),
         Err(error) => return workspace_apply_edit_failure(&error),
     };
+    if let Err(error) = ensure_workspace_edit_paths_in_workspace(workspace_root, &edit) {
+        return workspace_apply_edit_failure(&error);
+    }
+
     let applied = workspace_edit_sink.emit_workspace_edit(LanguageServerWorkspaceEditEvent {
         session_id,
         label,
@@ -1727,6 +1734,100 @@ fn workspace_apply_edit_failure(reason: &str) -> Value {
         "applied": false,
         "failureReason": reason,
     })
+}
+
+fn ensure_workspace_edit_paths_in_workspace(
+    workspace_root: &str,
+    edit: &LanguageServerWorkspaceEdit,
+) -> Result<(), String> {
+    for uri in edit.changes.keys() {
+        ensure_workspace_edit_uri_in_workspace(workspace_root, uri)?;
+    }
+
+    for operation in &edit.file_operations {
+        for uri in workspace_file_operation_uris(operation) {
+            ensure_workspace_edit_uri_in_workspace(workspace_root, uri)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn workspace_file_operation_uris(operation: &LanguageServerWorkspaceFileOperation) -> Vec<&str> {
+    match operation {
+        LanguageServerWorkspaceFileOperation::Create { uri, .. }
+        | LanguageServerWorkspaceFileOperation::Delete { uri, .. } => vec![uri.as_str()],
+        LanguageServerWorkspaceFileOperation::Rename {
+            old_uri, new_uri, ..
+        } => vec![old_uri.as_str(), new_uri.as_str()],
+    }
+}
+
+fn ensure_workspace_edit_uri_in_workspace(workspace_root: &str, uri: &str) -> Result<(), String> {
+    if !uri.starts_with("file://") {
+        return Ok(());
+    }
+
+    let Some(path) = path_from_file_uri(uri) else {
+        return Err("Workspace edit contains an invalid file URI.".to_string());
+    };
+    let root = workspace_guard_path(workspace_root)?;
+    let Some(path) = resolve_existing_or_parent_path(Path::new(&path)) else {
+        return Err("Workspace edit path could not be resolved.".to_string());
+    };
+
+    if path.starts_with(&root) {
+        return Ok(());
+    }
+
+    Err("Workspace edit path is outside the workspace root.".to_string())
+}
+
+fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
+    resolve_existing_or_parent_path(Path::new(workspace_root))
+        .ok_or_else(|| "Workspace root could not be resolved.".to_string())
+}
+
+fn path_from_file_uri(uri: &str) -> Option<String> {
+    let path = uri.strip_prefix("file://")?;
+    let path = path.strip_prefix("localhost").unwrap_or(path);
+    let path = percent_decode(path)?;
+
+    if path.is_empty() || !path.starts_with('/') {
+        return None;
+    }
+
+    Some(path)
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            decoded.push(bytes[index]);
+            index += 1;
+            continue;
+        }
+
+        let high = *bytes.get(index + 1)?;
+        let low = *bytes.get(index + 2)?;
+        decoded.push(hex_value(high)? * 16 + hex_value(low)?);
+        index += 3;
+    }
+
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, String> {
@@ -1807,7 +1908,7 @@ mod tests {
         LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
         ProcessKiller, ServerProcessSpawner, SpawnedServer, StatusSink, WorkspaceEditSink,
     };
-    use crate::lsp::{JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
+    use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
     use crate::lsp_transport::{read_message, write_message};
     use serde_json::{json, Value};
@@ -2754,6 +2855,8 @@ mod tests {
 
     #[test]
     fn workspace_apply_edit_requests_emit_workspace_edit_and_acknowledge_success() {
+        let root = test_workspace_root("apply-edit-success");
+        let changed_uri = file_uri(&root.join("User.ts"));
         let spawner = FakeSpawner::new(ready_script(), true);
         let held = Arc::clone(&spawner.held_writer);
         let capture = Arc::clone(&spawner.stdin_capture);
@@ -2763,7 +2866,7 @@ mod tests {
 
         supervisor
             .start_with_workspace_edit_sink(
-                &command(),
+                &command_for_root(path_string(&root).as_str()),
                 &initialize_request(),
                 &spawner,
                 sink,
@@ -2783,7 +2886,7 @@ mod tests {
                     "label": "Organize imports",
                     "edit": {
                         "changes": {
-                            "file:///tmp/User.ts": [
+                            changed_uri.clone(): [
                                 {
                                     "range": {
                                         "start": { "line": 0, "character": 0 },
@@ -2805,17 +2908,72 @@ mod tests {
         assert_eq!(event.session_id, 1);
         assert_eq!(event.label.as_deref(), Some("Organize imports"));
         assert_eq!(
-            event
-                .edit
-                .changes
-                .get("file:///tmp/User.ts")
-                .expect("changed file")[0]
-                .new_text,
+            event.edit.changes.get(&changed_uri).expect("changed file")[0].new_text,
             "type"
         );
 
         let response = wait_for_captured_response(&capture, 42);
         assert_eq!(response["result"]["applied"], true);
+    }
+
+    #[test]
+    fn workspace_apply_edit_requests_reject_paths_outside_workspace() {
+        let root = test_workspace_root("apply-edit-root");
+        let outside_root = test_workspace_root("apply-edit-outside");
+        let outside_uri = file_uri(&outside_root.join("Secret.ts"));
+        let spawner = FakeSpawner::new(ready_script(), true);
+        let held = Arc::clone(&spawner.held_writer);
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let (sink, status_rx) = ChannelSink::new();
+        let (workspace_edit_sink, workspace_edit_rx) = ChannelWorkspaceEditSink::new();
+        let supervisor = LanguageServerSupervisor::new();
+
+        supervisor
+            .start_with_workspace_edit_sink(
+                &command_for_root(path_string(&root).as_str()),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+                workspace_edit_sink,
+            )
+            .expect("start");
+        wait_for(&status_rx, &running_status());
+
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 43,
+                "method": "workspace/applyEdit",
+                "params": {
+                    "label": "Move secret",
+                    "edit": {
+                        "changes": {
+                            outside_uri: [
+                                {
+                                    "range": {
+                                        "start": { "line": 0, "character": 0 },
+                                        "end": { "line": 0, "character": 0 }
+                                    },
+                                    "newText": "secret"
+                                }
+                            ]
+                        }
+                    }
+                }
+            }),
+        );
+
+        let response = wait_for_captured_response(&capture, 43);
+        assert_eq!(response["result"]["applied"], false);
+        assert!(response["result"]["failureReason"]
+            .as_str()
+            .expect("failure reason")
+            .contains("outside the workspace root"));
+        assert!(workspace_edit_rx
+            .recv_timeout(Duration::from_millis(200))
+            .is_err());
     }
 
     #[test]
@@ -3367,6 +3525,16 @@ mod tests {
             args: vec!["--stdio".to_string()],
             working_directory: root_path.to_string(),
         }
+    }
+
+    fn test_workspace_root(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("codevo-{label}-{unique}"));
+        fs::create_dir_all(&root).expect("workspace root");
+        root
     }
 
     fn ready_script() -> Vec<u8> {
