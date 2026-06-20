@@ -2398,7 +2398,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS File Operation Notification Same-Root Session Guard
 
-- Pending commit and push.
+- Committed and pushed as `d71efb6b Guard JS TS file notifications by session`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
