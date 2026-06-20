@@ -178,9 +178,58 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
+- Committed and pushed as `4478be7 Avoid single-target morphTo inference for unions`.
+- Included files:
+  - `src/domain/phpTypeAnalysis.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: First-Generic Through Relation Return Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `4478be7 Avoid single-target morphTo inference for unions`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Infer PhpStorm-style Laravel relation properties from documented through-relation return types with declaring or intermediate generics, such as `HasManyThrough<Post, User>`.
+
+### Implementation Choice
+
+- Keep the conservative multi-target behavior for `morphTo()` and union first generics.
+- For non-`morphTo` Laravel relations, use the first generic argument as the related model when the full generic list contains additional declaring, through, or pivot model parameters.
+- Reuse the existing generic argument parser instead of adding a second PHP type parser.
+
+### Acceptance Criteria
+
+- `HasManyThrough<Post, User>` exposes `Post` as the relation property target even when factory arguments cannot be resolved.
+- `HasOneThrough<Post|Video, User>` remains `mixed` instead of selecting only `Post`.
+- Focused PHP domain tests pass.
+- `npm run check` and `git diff --check` pass.
+
+### Completed
+
+- Added relation-type normalization for reusable Laravel relation checks.
+- Added first-generic target selection for non-`morphTo` Laravel relation return types with multiple generic model candidates.
+- Added regression coverage for through relations where unresolved factory variables force inference to come from PHPDoc generics.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "extracts Laravel relation methods as magic properties"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
 - Pending commit.
 - Intended included files:
-  - `src/domain/phpTypeAnalysis.ts`
   - `src/domain/phpFrameworkLaravel.ts`
   - `src/domain/phpMethodCompletions.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`

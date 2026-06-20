@@ -337,6 +337,19 @@ const laravelEloquentSingularRelationTypes = new Set([
   "morphto",
 ]);
 
+const laravelEloquentFirstGenericRelationTypes = new Set([
+  "belongsto",
+  "belongstomany",
+  "hasmany",
+  "hasmanythrough",
+  "hasone",
+  "hasonethrough",
+  "morphmany",
+  "morphone",
+  "morphedbymany",
+  "morphtomany",
+]);
+
 const laravelEloquentRelationFactoryClassNames = new Map([
   ["belongsto", "BelongsTo"],
   ["belongstomany", "BelongsToMany"],
@@ -4074,7 +4087,21 @@ function phpLaravelRelationModelTypeFromReturnType(
 ): string | null {
   const modelTypes = phpLaravelRelationModelTypesFromReturnType(returnType);
 
-  return modelTypes.length === 1 ? modelTypes[0] ?? null : null;
+  if (modelTypes.length === 1) {
+    return modelTypes[0] ?? null;
+  }
+
+  if (
+    modelTypes.length > 1 &&
+    phpLaravelRelationUsesFirstGenericModel(returnType)
+  ) {
+    const firstModelTypes =
+      phpLaravelFirstGenericRelationModelTypes(returnType);
+
+    return firstModelTypes.length === 1 ? firstModelTypes[0] ?? null : null;
+  }
+
+  return null;
 }
 
 function phpLaravelRelationModelTypesFromReturnType(
@@ -4087,6 +4114,30 @@ function phpLaravelRelationModelTypesFromReturnType(
   return phpDeclaredGenericTypeCandidates(returnType ?? "").filter(
     (candidate) => !isGenericLaravelRelationPlaceholder(candidate),
   );
+}
+
+function phpLaravelRelationUsesFirstGenericModel(
+  returnType: string | null,
+): boolean {
+  const relationTypeName = phpLaravelEloquentRelationTypeName(returnType);
+
+  return relationTypeName
+    ? laravelEloquentFirstGenericRelationTypes.has(relationTypeName)
+    : false;
+}
+
+function phpLaravelFirstGenericRelationModelTypes(
+  returnType: string | null,
+): string[] {
+  const firstGenericArgument = firstPhpGenericTypeArgument(returnType ?? "");
+
+  if (!firstGenericArgument) {
+    return [];
+  }
+
+  return phpDeclaredGenericTypeCandidates(
+    `Relation<${firstGenericArgument}>`,
+  ).filter((candidate) => !isGenericLaravelRelationPlaceholder(candidate));
 }
 
 function phpLaravelGenericCarrierMatches(
@@ -4152,6 +4203,20 @@ function isLaravelEloquentRelationReturnType(
   returnType: string | null,
   includeCollectionRelations: boolean,
 ): boolean {
+  const shortTypeName = phpLaravelEloquentRelationTypeName(returnType);
+
+  if (!shortTypeName) {
+    return false;
+  }
+
+  return includeCollectionRelations
+    ? laravelEloquentRelationTypes.has(shortTypeName)
+    : laravelEloquentSingularRelationTypes.has(shortTypeName);
+}
+
+function phpLaravelEloquentRelationTypeName(
+  returnType: string | null,
+): string | null {
   const typeName = phpDeclaredTypeCandidate(returnType ?? "");
   const normalizedTypeName = (typeName ?? returnType ?? "")
     .trim()
@@ -4161,18 +4226,14 @@ function isLaravelEloquentRelationReturnType(
     ?.toLowerCase();
 
   if (!normalizedTypeName) {
-    return false;
+    return null;
   }
 
-  const shortTypeName = normalizedTypeName.startsWith(
+  return normalizedTypeName.startsWith(
     "illuminate\\database\\eloquent\\relations\\",
   )
     ? normalizedTypeName.split("\\").pop() ?? normalizedTypeName
     : normalizedTypeName;
-
-  return includeCollectionRelations
-    ? laravelEloquentRelationTypes.has(shortTypeName)
-    : laravelEloquentSingularRelationTypes.has(shortTypeName);
 }
 
 function isGenericLaravelRelationPlaceholder(typeName: string): boolean {

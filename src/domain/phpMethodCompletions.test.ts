@@ -1131,9 +1131,12 @@ class Comment
         `<?php
 use App\\Models\\Attachment;
 use App\\Models\\Post;
+use App\\Models\\User;
 use App\\Models\\Video;
 use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+use Illuminate\\Database\\Eloquent\\Relations\\HasManyThrough;
+use Illuminate\\Database\\Eloquent\\Relations\\HasOneThrough;
 use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
 
 class Comment
@@ -1146,6 +1149,18 @@ class Comment
     public function attachments(): HasMany
     {
         return $this->hasMany(Attachment::class);
+    }
+
+    /** @return HasManyThrough<Post, User> */
+    public function distantPosts(): HasManyThrough
+    {
+        return $this->hasManyThrough($related, $through);
+    }
+
+    /** @return HasOneThrough<Post|Video, User> */
+    public function ambiguousMedia(): HasOneThrough
+    {
+        return $this->hasOneThrough($related, $through);
     }
 
     public function siblings(): HasMany
@@ -1189,6 +1204,18 @@ class Comment
       },
       {
         declaringClassName: "Comment",
+        name: "distantPosts",
+        parameters: "",
+        returnType: "HasManyThrough<Post, User>",
+      },
+      {
+        declaringClassName: "Comment",
+        name: "ambiguousMedia",
+        parameters: "",
+        returnType: "HasOneThrough<Post|Video, User>",
+      },
+      {
+        declaringClassName: "Comment",
         name: "siblings",
         parameters: "",
         returnType: "HasMany",
@@ -1224,6 +1251,20 @@ class Comment
         name: "attachments",
         parameters: "",
         returnType: "Attachment",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "distantPosts",
+        parameters: "",
+        returnType: "Post",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "ambiguousMedia",
+        parameters: "",
+        returnType: "mixed",
       },
       {
         declaringClassName: "Comment",
