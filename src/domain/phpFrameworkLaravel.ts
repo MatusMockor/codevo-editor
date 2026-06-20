@@ -2293,6 +2293,19 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
     return relationFactoryReturnType;
   }
 
+  const fluentThroughReturnType =
+    phpLaravelFluentThroughMethodCallReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+      receiverExpression,
+      callExpression,
+    );
+
+  if (fluentThroughReturnType) {
+    return fluentThroughReturnType;
+  }
+
   const relationModelType = phpLaravelEloquentRelationModelTypeFromReceiverType(
     source,
     receiverType,
@@ -2456,6 +2469,126 @@ function phpLaravelRelationFactoryCallReturnTypeFromSource(
 
   return relatedModelType
     ? `Illuminate\\Database\\Eloquent\\Relations\\${relationClassName}<${relatedModelType}>`
+    : null;
+}
+
+function phpLaravelFluentThroughMethodCallReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+  receiverExpression: string | null,
+  callExpression: string | null,
+): string | null {
+  const expression = callExpression ?? receiverExpression ?? "";
+
+  if (!phpLaravelFluentThroughRelationPathFromExpression(expression)) {
+    return null;
+  }
+
+  const declaringModelType =
+    phpLaravelStaticModelReceiverType(source, receiverType) ??
+    phpLaravelThisExpressionDeclaringModelType(source, expression);
+
+  if (!declaringModelType) {
+    return null;
+  }
+
+  const declaringSource =
+    phpClassSourceForClassName(source, declaringModelType) ?? source;
+  const targetClassName =
+    phpLaravelFluentThroughRelationTargetClassNameFromExpression(
+      declaringSource,
+      source,
+      declaringModelType,
+      expression,
+      new Set<string>(),
+    );
+  const relatedModelType = phpLaravelResolvedModelTypeCandidate(
+    source,
+    phpLaravelRelationTypeForDeclaringClass(
+      targetClassName,
+      declaringModelType,
+      declaringSource,
+    ),
+  );
+
+  if (!relatedModelType) {
+    return null;
+  }
+
+  if (
+    isLaravelEloquentBuilderTerminalModelMethod(methodName) ||
+    isLaravelCollectionTerminalModelMethod(methodName)
+  ) {
+    return relatedModelType;
+  }
+
+  if (isLaravelEloquentBuilderCollectionMethod(methodName)) {
+    return phpLaravelEloquentBuilderCollectionType(relatedModelType, methodName);
+  }
+
+  if (
+    methodName.toLowerCase() !== "has" &&
+    phpLaravelEloquentBuilderCallPreservesBuilder(
+      source,
+      relatedModelType,
+      methodName,
+    )
+  ) {
+    return phpLaravelEloquentBuilderType(relatedModelType);
+  }
+
+  return null;
+}
+
+function phpLaravelThisExpressionDeclaringModelType(
+  source: string,
+  expression: string,
+): string | null {
+  if (!/^\s*\$this\b/.test(expression)) {
+    return null;
+  }
+
+  const className = phpLaravelClassNameContainingExpression(source, expression);
+
+  return className && isLaravelModelType(className) ? className : null;
+}
+
+function phpLaravelClassNameContainingExpression(
+  source: string,
+  expression: string,
+): string | null {
+  const needle = expression.trim();
+  const expressionOffset = needle ? source.indexOf(needle) : -1;
+
+  if (expressionOffset < 0) {
+    return null;
+  }
+
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /\b(?:abstract\s+|final\s+)?(?:class|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\{/g;
+  let containingClassName: string | null = null;
+
+  for (const match of masked.matchAll(pattern)) {
+    const shortName = match[1];
+    const bodyStart = (match.index ?? 0) + match[0].lastIndexOf("{");
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (
+      !shortName ||
+      bodyEnd === null ||
+      expressionOffset < (match.index ?? 0) ||
+      expressionOffset > bodyEnd
+    ) {
+      continue;
+    }
+
+    containingClassName = shortName;
+  }
+
+  return containingClassName
+    ? (resolvePhpClassName(source, containingClassName) ?? containingClassName)
     : null;
 }
 

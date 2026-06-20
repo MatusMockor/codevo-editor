@@ -2553,3 +2553,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `de8f5872 Support Laravel fluent through named arguments`.
+
+## Slice: Laravel Semantic Fluent Through Named Arguments - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a98f9563 Record direct LSP status root response commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree had one in-progress regression test in `src/domain/phpSemanticEngine.test.ts` at resume.
+
+### Goal
+
+- Infer assigned model types from Laravel fluent-through chains that use named relation arguments and terminal methods such as `first()`.
+
+### Implementation Choice
+
+- Keep the fluent-through path parser as the single source of truth for positional and named relation arguments.
+- Add semantic return inference for complete fluent-through call expressions after relation factory inference and before normal relation/builder fallback.
+- Resolve `$this` fluent-through expressions from the class containing the expression so relation property lookup can walk through intermediate relation methods.
+
+### Acceptance Criteria
+
+- `$this->through(relationship: 'playlists')->has(relation: 'tracks')->first()` infers `App\Models\Track`.
+- Existing explicit relation factory chain inference remains green.
+- Focused and full PHP semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- PENDING.

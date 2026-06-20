@@ -1083,6 +1083,10 @@ class Comment extends Model
         $throughTrack = $this->hasManyThrough(self::TRACK_MODEL, Playlist::class)
             ->whereNull('archived_at')
             ->first();
+        $namedThroughTrack = $this
+            ->through(relationship: 'playlists')
+            ->has(relation: 'tracks')
+            ->first();
         $tag = $this->belongsToMany(Tag::class)
             ->as('subscription')
             ->withPivot('active')
@@ -1100,8 +1104,14 @@ class Comment extends Model
         $selfComment->bod
         $constantPost->tit
         $throughTrack->dur
+        $namedThroughTrack->dur
         $tag->nam
         $latestPost->tit
+    }
+
+    public function playlists()
+    {
+        return $this->hasMany(Playlist::class);
     }
 }
 
@@ -1111,6 +1121,10 @@ class Post extends Model
 
 class Playlist extends Model
 {
+    public function tracks()
+    {
+        return $this->hasMany(Track::class);
+    }
 }
 
 class Track extends Model
@@ -1193,6 +1207,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$throughTrack->dur"),
         "throughTrack",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Track");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$namedThroughTrack->dur"),
+        "namedThroughTrack",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Track");
