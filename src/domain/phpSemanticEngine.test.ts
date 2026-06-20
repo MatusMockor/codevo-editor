@@ -1319,9 +1319,11 @@ class Comment extends Model
     {
         $fromProperty = $comment->commentable;
         $fromTerminal = $this->morphTo()->first();
+        $fromRelationMethod = $this->commentable()->first();
 
         $fromProperty->tit
         $fromTerminal->tit
+        $fromRelationMethod->tit
         $comment->commentable->tit
     }
 }
@@ -1350,6 +1352,14 @@ class Post extends Model
     expect(
       phpVariableTypeInSource(
         source,
+        positionAfter(source, "$fromRelationMethod->tit"),
+        "fromRelationMethod",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
         positionAfter(source, "$fromTerminal->tit"),
         "fromTerminal",
         laravelOptions,
@@ -1360,6 +1370,48 @@ class Post extends Model
         source,
         positionAfter(source, "$comment->commentable->tit"),
         "$comment->commentable",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps multi-target Laravel morphTo relation method chains ambiguous", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+
+class Comment extends Model
+{
+    /** @return MorphTo<Post|Video, self> */
+    public function attachable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+
+    public function preview(): void
+    {
+        $fromAmbiguousRelationMethod = $this->attachable()->first();
+
+        $fromAmbiguousRelationMethod->tit
+    }
+}
+
+class Post extends Model
+{
+}
+
+class Video extends Model
+{
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromAmbiguousRelationMethod->tit"),
+        "fromAmbiguousRelationMethod",
+        laravelOptions,
       ),
     ).toBeNull();
   });

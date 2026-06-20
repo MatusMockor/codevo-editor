@@ -2670,3 +2670,40 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `f09adc3c Infer Laravel relation method chains`.
+
+## Slice: Laravel MorphTo Relation Method Chain Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a6d5dc63 Record Laravel relation method chains commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Guard the new relation-method semantic fallback against Laravel `morphTo()` edge cases.
+
+### Implementation Choice
+
+- Add semantic coverage for a documented single-target `morphTo` relation method chain.
+- Add semantic coverage proving a documented multi-target `MorphTo<Post|Video, self>` relation method chain remains ambiguous instead of selecting the first model.
+
+### Acceptance Criteria
+
+- `$this->commentable()->first()` infers `Post` when the relation method documents `MorphTo<Post, self>`.
+- `$this->attachable()->first()` remains unknown when the relation method documents `MorphTo<Post|Video, self>`.
+- Focused and full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morphTo"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- PENDING.
