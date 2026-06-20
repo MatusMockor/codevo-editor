@@ -264,12 +264,14 @@ fn configure_typescript_server_path(request: &mut JsonRpcRequest, path: &str) {
         return;
     };
 
-    initialization_options.insert(
-        "tsserver".to_string(),
-        json!({
-            "path": path,
-        }),
-    );
+    let tsserver = initialization_options
+        .entry("tsserver")
+        .or_insert_with(|| json!({}));
+    let Some(tsserver) = tsserver.as_object_mut() else {
+        return;
+    };
+
+    tsserver.insert("path".to_string(), Value::String(path.to_string()));
 }
 
 fn configure_typescript_inlay_hints(request: &mut JsonRpcRequest, enabled: bool) {
@@ -499,6 +501,10 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         "codeLens": { "refreshSupport": true },
                         "configuration": true,
                         "didChangeConfiguration": { "dynamicRegistration": false },
+                        "didChangeWatchedFiles": {
+                            "dynamicRegistration": true,
+                            "relativePatternSupport": true
+                        },
                         "symbol": { "dynamicRegistration": false },
                         "workspaceEdit": {
                             "documentChanges": true
@@ -513,6 +519,9 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                 },
                 "initializationOptions": {
                     "hostInfo": "Mockor Editor",
+                    "tsserver": {
+                        "useClientFileWatcher": true
+                    },
                     "preferences": {
                         "allowIncompleteCompletions": true,
                         "allowRenameOfImportPath": true,
@@ -737,6 +746,10 @@ mod tests {
             .expect("tsserver path")
             .ends_with("node_modules/typescript/lib/tsserver.js"));
         assert_eq!(
+            request.params["initializationOptions"]["tsserver"]["useClientFileWatcher"],
+            true
+        );
+        assert_eq!(
             request.params["initializationOptions"]["preferences"]
                 ["includeInlayParameterNameHints"],
             "literals"
@@ -852,6 +865,16 @@ mod tests {
         );
         assert_eq!(
             request.params["capabilities"]["workspace"]["codeLens"]["refreshSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["didChangeWatchedFiles"]
+                ["dynamicRegistration"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["didChangeWatchedFiles"]
+                ["relativePatternSupport"],
             true
         );
         assert_eq!(

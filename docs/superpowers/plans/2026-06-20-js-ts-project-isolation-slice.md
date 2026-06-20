@@ -248,3 +248,61 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: TypeScript Client File Watcher Mode
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e8b1115 Use JS TS semantic token legend from runtime`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Why This Slice
+
+- The editor already starts a per-workspace JS/TS filesystem watcher and sends `workspace/didChangeWatchedFiles` to the selected TypeScript language-server session.
+- TypeScript-language-server only routes those watch events into tsserver watch management when:
+  - `initializationOptions.tsserver.useClientFileWatcher` is enabled,
+  - the client advertises `workspace.didChangeWatchedFiles.dynamicRegistration`,
+  - the client advertises `workspace.didChangeWatchedFiles.relativePatternSupport`.
+- Without this, external/editor file changes can be sent but mostly ignored by the TypeScript server's project graph.
+
+### Implementation Choice
+
+- This slice is backend-contained in `src-tauri/src/lsp.rs`.
+- A backend explorer already identified the gap. Main agent implements this one directly because it is a one-file initialize-payload change with an existing nearby test, so an extra worker would add delay without reducing conflict risk.
+
+### Acceptance Criteria
+
+- JS/TS initialize payload enables `initializationOptions.tsserver.useClientFileWatcher`.
+- JS/TS initialize capabilities advertise `workspace.didChangeWatchedFiles.dynamicRegistration` and `relativePatternSupport`.
+- Existing `workspace/didChangeWatchedFiles` session routing remains unchanged.
+- Focused Rust plan test passes.
+- `git diff --check` passes.
+
+### Completed Slice: TypeScript Client File Watcher Mode
+
+- JS/TS initialize payload now sets `initializationOptions.tsserver.useClientFileWatcher` to `true`.
+- JS/TS initialize capabilities now advertise:
+  - `workspace.didChangeWatchedFiles.dynamicRegistration`
+  - `workspace.didChangeWatchedFiles.relativePatternSupport`
+- `configure_typescript_server_path` now merges the workspace/bundled tsserver path into existing `tsserver` options instead of replacing them, so the watcher flag survives TypeScript-version configuration.
+- Existing per-workspace `workspace/didChangeWatchedFiles` routing remains unchanged.
+
+### Verification: TypeScript Client File Watcher Mode
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml registry_routes_watched_file_changes_to_the_requested_workspace_only --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: TypeScript Client File Watcher Mode
+
+- Included files:
+  - `src-tauri/src/lsp.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
