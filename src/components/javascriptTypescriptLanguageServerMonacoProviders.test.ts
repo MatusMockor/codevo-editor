@@ -279,6 +279,65 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.completion).not.toHaveBeenCalled();
   });
 
+  it("drops in-flight TypeScript code actions after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const codeActions =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.codeActions).mockImplementationOnce(
+      async () => codeActions.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const codeActionProvider = (
+      monaco.languages.registerCodeActionProvider as any
+    ).mock.calls[0][1];
+    const actionsPromise = codeActionProvider.provideCodeActions(
+      textModel(),
+      new monaco.Range(1, 1, 1, 5),
+      {
+        markers: [],
+        only: "quickfix",
+      },
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    codeActions.resolve([
+      {
+        command: null,
+        data: null,
+        edit: workspaceEdit("file:///project/src/user.ts", "Stale"),
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Update imports",
+      },
+    ]);
+
+    await expect(actionsPromise).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+    expect(gateway.codeActions).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      range(0, 0, 0, 4),
+      {
+        diagnostics: [],
+        only: ["quickfix"],
+        triggerKind: null,
+      },
+    );
+  });
+
   it("maps TypeScript document links and lazy resolution", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({

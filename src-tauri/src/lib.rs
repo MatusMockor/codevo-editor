@@ -546,6 +546,138 @@ fn filter_lsp_workspace_symbols_to_workspace(
         .collect())
 }
 
+fn filter_lsp_completion_list_to_workspace(
+    root_path: &str,
+    completion: LanguageServerCompletionList,
+) -> Result<LanguageServerCompletionList, String> {
+    Ok(LanguageServerCompletionList {
+        is_incomplete: completion.is_incomplete,
+        items: completion
+            .items
+            .into_iter()
+            .map(|item| filter_lsp_completion_item_to_workspace(root_path, item))
+            .collect(),
+    })
+}
+
+fn filter_lsp_completion_item_to_workspace(
+    root_path: &str,
+    mut item: LanguageServerCompletionItem,
+) -> LanguageServerCompletionItem {
+    if item.command.as_ref().is_some_and(|command| {
+        ensure_lsp_command_payload_paths_in_workspace(root_path, command).is_err()
+    }) {
+        item.command = None;
+    }
+
+    if item.data.as_ref().is_some_and(|data| {
+        ensure_lsp_json_payload_paths_in_workspace(root_path, Some(data)).is_err()
+    }) {
+        item.data = None;
+    }
+
+    item
+}
+
+fn filter_lsp_code_actions_to_workspace(
+    root_path: &str,
+    actions: Vec<LanguageServerCodeAction>,
+) -> Result<Vec<LanguageServerCodeAction>, String> {
+    actions
+        .into_iter()
+        .map(|action| filter_lsp_code_action_to_workspace(root_path, action))
+        .collect::<Result<Vec<_>, _>>()
+        .map(|actions| actions.into_iter().flatten().collect())
+}
+
+fn filter_lsp_code_action_to_workspace(
+    root_path: &str,
+    mut action: LanguageServerCodeAction,
+) -> Result<Option<LanguageServerCodeAction>, String> {
+    if let Some(edit) = action.edit.take() {
+        action.edit = filter_lsp_workspace_edit_to_workspace(root_path, edit)?;
+    }
+
+    if action.command.as_ref().is_some_and(|command| {
+        ensure_lsp_command_payload_paths_in_workspace(root_path, command).is_err()
+    }) {
+        action.command = None;
+    }
+
+    if action.data.as_ref().is_some_and(|data| {
+        ensure_lsp_json_payload_paths_in_workspace(root_path, Some(data)).is_err()
+    }) {
+        action.data = None;
+    }
+
+    Ok(has_action_payload(&action).then_some(action))
+}
+
+fn has_action_payload(action: &LanguageServerCodeAction) -> bool {
+    action.edit.is_some()
+        || action.command.is_some()
+        || action.data.is_some()
+        || action.disabled.is_some()
+}
+
+fn filter_lsp_code_lenses_to_workspace(
+    root_path: &str,
+    lenses: Vec<LanguageServerCodeLens>,
+) -> Result<Vec<LanguageServerCodeLens>, String> {
+    Ok(lenses
+        .into_iter()
+        .filter_map(|lens| filter_lsp_code_lens_to_workspace(root_path, lens))
+        .collect())
+}
+
+fn filter_lsp_code_lens_to_workspace(
+    root_path: &str,
+    mut lens: LanguageServerCodeLens,
+) -> Option<LanguageServerCodeLens> {
+    if lens.command.as_ref().is_some_and(|command| {
+        ensure_lsp_command_payload_paths_in_workspace(root_path, command).is_err()
+    }) {
+        lens.command = None;
+    }
+
+    if lens.data.as_ref().is_some_and(|data| {
+        ensure_lsp_json_payload_paths_in_workspace(root_path, Some(data)).is_err()
+    }) {
+        lens.data = None;
+    }
+
+    (lens.command.is_some() || lens.data.is_some()).then_some(lens)
+}
+
+fn filter_lsp_document_links_to_workspace(
+    root_path: &str,
+    links: Vec<LanguageServerDocumentLink>,
+) -> Result<Vec<LanguageServerDocumentLink>, String> {
+    Ok(links
+        .into_iter()
+        .filter_map(|link| filter_lsp_document_link_to_workspace(root_path, link))
+        .collect())
+}
+
+fn filter_lsp_document_link_to_workspace(
+    root_path: &str,
+    mut link: LanguageServerDocumentLink,
+) -> Option<LanguageServerDocumentLink> {
+    if link.target.as_ref().is_some_and(|target| {
+        ensure_lsp_payload_string_in_workspace(root_path, target, true).is_err()
+    }) {
+        link.target = None;
+    }
+
+    if link.data.as_ref().is_some_and(|data| {
+        ensure_lsp_json_payload_paths_in_workspace(root_path, Some(data)).is_err()
+    }) {
+        link.data = None;
+    }
+
+    (link.target.is_some() || link.data.is_some()).then_some(link)
+}
+
 fn filter_lsp_call_hierarchy_items_to_workspace(
     root_path: &str,
     items: Vec<LanguageServerCallHierarchyItem>,
@@ -1613,7 +1745,7 @@ fn javascript_typescript_text_document_completion(
         });
     };
 
-    parse_completion_result(&result)
+    filter_lsp_completion_list_to_workspace(&root_path, parse_completion_result(&result)?)
 }
 
 #[tauri::command]
@@ -1649,6 +1781,7 @@ fn javascript_typescript_text_document_completion_resolve(
     };
 
     serde_json::from_value::<LanguageServerCompletionItem>(result)
+        .map(|item| filter_lsp_completion_item_to_workspace(&root_path, item))
         .map_err(|error| format!("Language server returned a malformed completion item: {error}"))
 }
 
@@ -1908,7 +2041,7 @@ fn javascript_typescript_text_document_code_actions(
         return Ok(Vec::new());
     };
 
-    parse_code_action_result(&result)
+    filter_lsp_code_actions_to_workspace(&root_path, parse_code_action_result(&result)?)
 }
 
 #[tauri::command]
@@ -1943,8 +2076,10 @@ fn javascript_typescript_text_document_code_action_resolve(
         return Ok(action);
     };
 
-    serde_json::from_value::<LanguageServerCodeAction>(result)
-        .map_err(|error| format!("Language server returned a malformed code action: {error}"))
+    let resolved = serde_json::from_value::<LanguageServerCodeAction>(result)
+        .map_err(|error| format!("Language server returned a malformed code action: {error}"))?;
+
+    Ok(filter_lsp_code_action_to_workspace(&root_path, resolved)?.unwrap_or(action))
 }
 
 #[tauri::command]
@@ -1979,8 +2114,10 @@ fn javascript_typescript_text_document_code_lenses(
         return Ok(Vec::new());
     };
 
-    serde_json::from_value::<Vec<LanguageServerCodeLens>>(result)
-        .map_err(|error| format!("Language server returned malformed code lenses: {error}"))
+    let lenses = serde_json::from_value::<Vec<LanguageServerCodeLens>>(result)
+        .map_err(|error| format!("Language server returned malformed code lenses: {error}"))?;
+
+    filter_lsp_code_lenses_to_workspace(&root_path, lenses)
 }
 
 #[tauri::command]
@@ -2015,8 +2152,10 @@ fn javascript_typescript_text_document_code_lens_resolve(
         return Ok(lens);
     };
 
-    serde_json::from_value::<LanguageServerCodeLens>(result)
-        .map_err(|error| format!("Language server returned a malformed code lens: {error}"))
+    let resolved = serde_json::from_value::<LanguageServerCodeLens>(result)
+        .map_err(|error| format!("Language server returned a malformed code lens: {error}"))?;
+
+    Ok(filter_lsp_code_lens_to_workspace(&root_path, resolved).unwrap_or(lens))
 }
 
 #[tauri::command]
@@ -2631,7 +2770,7 @@ fn javascript_typescript_text_document_document_links(
         return Ok(Vec::new());
     };
 
-    parse_document_links_result(&result)
+    filter_lsp_document_links_to_workspace(&root_path, parse_document_links_result(&result)?)
 }
 
 #[tauri::command]
@@ -2666,8 +2805,10 @@ fn javascript_typescript_text_document_document_link_resolve(
         return Ok(link);
     };
 
-    serde_json::from_value::<LanguageServerDocumentLink>(result)
-        .map_err(|error| format!("Language server returned a malformed document link: {error}"))
+    let resolved = serde_json::from_value::<LanguageServerDocumentLink>(result)
+        .map_err(|error| format!("Language server returned a malformed document link: {error}"))?;
+
+    Ok(filter_lsp_document_link_to_workspace(&root_path, resolved).unwrap_or(link))
 }
 
 #[tauri::command]
@@ -3132,7 +3273,9 @@ mod tests {
         ensure_lsp_position_in_workspace, ensure_lsp_text_document_content_in_workspace,
         ensure_lsp_text_document_path_in_workspace, ensure_lsp_type_hierarchy_item_in_workspace,
         ensure_lsp_workspace_edit_paths_in_workspace, ensure_path_in_workspace,
-        filter_lsp_call_hierarchy_items_to_workspace, filter_lsp_incoming_calls_to_workspace,
+        filter_lsp_call_hierarchy_items_to_workspace, filter_lsp_code_actions_to_workspace,
+        filter_lsp_code_lenses_to_workspace, filter_lsp_completion_list_to_workspace,
+        filter_lsp_document_links_to_workspace, filter_lsp_incoming_calls_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
         filter_lsp_workspace_symbols_to_workspace, normalize_path, path_from_file_uri,
@@ -3141,13 +3284,13 @@ mod tests {
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
-        LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeLens,
-        LanguageServerCompletionItem, LanguageServerDocumentLink, LanguageServerIncomingCall,
-        LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerPosition,
-        LanguageServerRange, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
-        LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
-        LanguageServerWorkspaceFileOperationOptions, LanguageServerWorkspaceSymbol,
-        TextDocumentPosition,
+        LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+        LanguageServerCodeLens, LanguageServerCompletionItem, LanguageServerCompletionList,
+        LanguageServerDocumentLink, LanguageServerIncomingCall, LanguageServerLocation,
+        LanguageServerOutgoingCall, LanguageServerPosition, LanguageServerRange,
+        LanguageServerTextEdit, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
+        LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
+        LanguageServerWorkspaceSymbol, TextDocumentPosition,
     };
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
@@ -3576,6 +3719,152 @@ mod tests {
     }
 
     #[test]
+    fn lsp_response_completion_filter_strips_outside_resolve_payloads() {
+        let root = temp_workspace("completion-response-filter-root");
+        let outside = temp_workspace("completion-response-filter-outside");
+        let root_path = path_string(&root);
+        let safe_item = completion_item(json!({
+            "file": path_string(&root.join("src/App.ts")),
+        }));
+        let mut unsafe_item = completion_item(json!({
+            "file": path_string(&outside.join("Secret.ts")),
+        }));
+        unsafe_item.command = Some(command_with_argument(file_uri(&outside.join("Secret.ts"))));
+
+        let filtered = filter_lsp_completion_list_to_workspace(
+            &root_path,
+            LanguageServerCompletionList {
+                is_incomplete: true,
+                items: vec![safe_item.clone(), unsafe_item],
+            },
+        )
+        .expect("filtered completion list");
+
+        assert!(filtered.is_incomplete);
+        assert_eq!(filtered.items.len(), 2);
+        assert_eq!(filtered.items[0].data, safe_item.data);
+        assert!(filtered.items[1].data.is_none());
+        assert!(filtered.items[1].command.is_none());
+    }
+
+    #[test]
+    fn lsp_response_code_action_filter_keeps_inside_edits_and_drops_unsafe_payloads() {
+        let root = temp_workspace("code-action-response-filter-root");
+        let sibling = sibling_prefix_workspace(&root, "sibling");
+        let outside = temp_workspace("code-action-response-filter-outside");
+        let root_path = path_string(&root);
+        let inside_uri = file_uri(&root.join("src/App.ts"));
+        let sibling_uri = file_uri(&sibling.join("src/App.ts"));
+        let outside_uri = file_uri(&outside.join("Secret.ts"));
+        let action = code_action(json!({
+            "edit": {
+                "changes": {
+                    inside_uri.clone(): [json_text_edit("inside")],
+                    sibling_uri: [json_text_edit("sibling")],
+                    outside_uri: [json_text_edit("outside")],
+                }
+            },
+            "command": {
+                "title": "Unsafe command",
+                "command": "_typescript.applyFix",
+                "arguments": [file_uri(&outside.join("Secret.ts"))],
+            },
+            "data": {
+                "file": path_string(&outside.join("Secret.ts")),
+            },
+        }));
+        let inert_action = code_action(json!({
+            "command": {
+                "title": "Only unsafe command",
+                "command": "_typescript.applyFix",
+                "arguments": [file_uri(&outside.join("OnlyUnsafe.ts"))],
+            },
+        }));
+
+        let filtered = filter_lsp_code_actions_to_workspace(&root_path, vec![action, inert_action])
+            .expect("filtered code actions");
+
+        assert_eq!(filtered.len(), 1);
+        assert!(filtered[0].command.is_none());
+        assert!(filtered[0].data.is_none());
+        assert_eq!(
+            filtered[0]
+                .edit
+                .as_ref()
+                .expect("inside edit")
+                .changes
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![inside_uri]
+        );
+    }
+
+    #[test]
+    fn lsp_response_code_lens_filter_drops_unsafe_commands_and_data() {
+        let root = temp_workspace("code-lens-response-filter-root");
+        let outside = temp_workspace("code-lens-response-filter-outside");
+        let root_path = path_string(&root);
+        let safe_lens = code_lens(json!({
+            "command": {
+                "title": "Show references",
+                "command": "editor.action.showReferences",
+                "arguments": [file_uri(&root.join("src/App.ts"))],
+            },
+        }));
+        let unsafe_lens = code_lens(json!({
+            "command": {
+                "title": "Show references",
+                "command": "editor.action.showReferences",
+                "arguments": [file_uri(&outside.join("Secret.ts"))],
+            },
+            "data": {
+                "file": path_string(&outside.join("Secret.ts")),
+            },
+        }));
+
+        let filtered =
+            filter_lsp_code_lenses_to_workspace(&root_path, vec![safe_lens.clone(), unsafe_lens])
+                .expect("filtered code lenses");
+
+        assert_eq!(filtered, vec![safe_lens]);
+    }
+
+    #[test]
+    fn lsp_response_document_link_filter_keeps_safe_targets_and_drops_unsafe_paths() {
+        let root = temp_workspace("document-link-response-filter-root");
+        let outside = temp_workspace("document-link-response-filter-outside");
+        let root_path = path_string(&root);
+        let safe_file_link = document_link(json!({
+            "target": file_uri(&root.join("README.md")),
+        }));
+        let safe_web_link = document_link(json!({
+            "target": "https://example.test/docs",
+        }));
+        let unsafe_target_link = document_link(json!({
+            "target": file_uri(&outside.join("Secret.md")),
+        }));
+        let unsafe_data_link = document_link(json!({
+            "data": {
+                "file": path_string(&outside.join("Secret.md")),
+            },
+        }));
+
+        let filtered = filter_lsp_document_links_to_workspace(
+            &root_path,
+            vec![
+                safe_file_link.clone(),
+                safe_web_link.clone(),
+                unsafe_target_link,
+                unsafe_data_link,
+            ],
+        )
+        .expect("filtered document links");
+
+        assert_eq!(filtered, vec![safe_file_link, safe_web_link]);
+    }
+
+    #[test]
     fn lsp_hierarchy_follow_up_guards_reject_outside_item_uris() {
         let root = temp_workspace("hierarchy-root");
         let outside = temp_workspace("hierarchy-outside");
@@ -3917,6 +4206,22 @@ mod tests {
             range: lsp_range(),
             new_text: new_text.to_string(),
         }
+    }
+
+    fn json_text_edit(new_text: &str) -> Value {
+        json!({
+            "range": lsp_range(),
+            "newText": new_text,
+        })
+    }
+
+    fn command_with_argument(argument: String) -> LanguageServerCodeActionCommand {
+        serde_json::from_value(json!({
+            "title": "Apply edit",
+            "command": "_typescript.applyEdit",
+            "arguments": [argument],
+        }))
+        .expect("code action command")
     }
 
     fn merge_object(value: &mut Value, payload: Value) {
