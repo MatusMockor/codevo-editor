@@ -3367,3 +3367,58 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/domain/languageServerRuntime.ts`
   - `src/domain/languageServerRuntime.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Controller Runtime Workspace Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `024a9097 Record runtime status label root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens the controller-side runtime workspace helper and PHP document sync effect.
+- Main agent implemented directly because the helper and sync effect are both in `src/application/useWorkbenchController.ts`.
+
+### Why This Slice
+
+- `isLanguageServerStatusForWorkspace` still treated a status with no `rootPath` and no tracked `statusRoot` as matching the active workspace.
+- PHP document sync only checked `kind === "running"`, unlike the JS/TS sync path that already used the workspace-aware runtime helper.
+- A rootless runtime state should not unlock document sync for the active workspace.
+
+### Implementation Choice
+
+- Require either `status.rootPath` or tracked `statusRoot` before a runtime status can belong to a workspace.
+- Route PHP document sync through `isRunningLanguageServerForWorkspace`.
+- Keep rooted direct statuses and rooted subscription statuses working unchanged.
+
+### Acceptance Criteria
+
+- Rootless runtime state without tracked root no longer belongs to the active workspace.
+- PHP document sync only runs for a rooted running status matching the active workspace.
+- Existing PHP/JS rootless runtime regressions keep passing.
+- Full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: Controller Runtime Workspace Root Guard
+
+- Tightened controller runtime workspace matching to require an explicit root source.
+- Reused the workspace-aware running-status helper for PHP document sync.
+- Preserved rooted runtime startup, autostart, and subscription behavior.
+
+### Verification: Controller Runtime Workspace Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP runtime status events without an explicit workspace root|runtime status events without an explicit workspace root|syncs preview documents with the language server|auto-starts PHP IDE services while initial runtime status is still unknown"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: Controller Runtime Workspace Root Guard
+
+- Pending commit.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

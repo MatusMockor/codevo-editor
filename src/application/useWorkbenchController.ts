@@ -13284,7 +13284,13 @@ export function useWorkbenchController(
   ]);
 
   useEffect(() => {
-    if (languageServerRuntimeStatus?.kind !== "running") {
+    if (
+      !isRunningLanguageServerForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       resetLanguageServerDocuments();
       return;
     }
@@ -13307,9 +13313,11 @@ export function useWorkbenchController(
     activeDocument,
     documents,
     languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
     openDocumentPaths,
     resetLanguageServerDocuments,
     syncOpenDocument,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -14983,5 +14991,7 @@ function isLanguageServerStatusForWorkspace(
 
   const rootedStatus = status.rootPath ?? statusRoot;
 
-  return !rootedStatus || workspaceRootKeysEqual(rootedStatus, workspaceRoot);
+  return (
+    Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
+  );
 }
