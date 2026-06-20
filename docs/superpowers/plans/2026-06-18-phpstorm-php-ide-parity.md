@@ -536,3 +536,52 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/domain/phpFrameworkLaravel.ts`
   - `src/domain/phpMethodCompletions.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Static Method Diagnostic Reconciliation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `7d3285d Update PHP parity plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Suppress PHPactor unresolved static-method false positives when Codevo can prove the static method exists through the same member parser used for completions.
+
+### Implementation Choice
+
+- Add a separate static-only hierarchy proof instead of reusing the instance method helper, so `Class::instanceMethod()` diagnostics remain visible.
+- Use cached `phpMethodCompletionsFromSource` members because they already expose declared static methods and PHPDoc `@method static` helpers.
+- Walk traits, mixins, parents, and implemented interfaces through the existing hierarchy references.
+
+### Acceptance Criteria
+
+- Diagnostics for proven `public static function` and PHPDoc `@method static` calls are suppressed.
+- Diagnostics for instance-only methods called statically remain visible.
+- Unknown static methods remain visible.
+- Full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added `phpClassHierarchyHasStaticMethod` for static-only diagnostic proof.
+- Wired static diagnostics through the new helper alongside Laravel local-scope and dynamic-where reconciliation.
+- Added preview coverage for declared static, PHPDoc static, instance-only, and unknown static calls.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "suppresses existing static-method diagnostics without hiding instance-only methods"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Intended included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`

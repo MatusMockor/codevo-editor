@@ -8181,6 +8181,160 @@ interface CommentRepositoryInterface
     ]);
   });
 
+  it("suppresses existing static-method diagnostics without hiding instance-only methods", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const factoryPath = "/workspace/app/Factories/CommentFactory.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Factories\\CommentFactory;
+
+class CommentController
+{
+    public function store(): void
+    {
+        CommentFactory::make();
+        CommentFactory::fromNamed('draft');
+        CommentFactory::makeInstance();
+        CommentFactory::missingStatic();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 25,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const methodDiagnosticPosition = (methodName: string) => {
+      const position = positionAfter(controllerSource, `CommentFactory::${methodName}`);
+
+      return {
+        character: position.column - methodName.length - 1,
+        line: position.lineNumber - 1,
+      };
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Factories\\CommentFactory",
+          kind: "class",
+          lineNumber: 8,
+          name: "CommentFactory",
+          path: factoryPath,
+          relativePath: "app/Factories/CommentFactory.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === factoryPath) {
+          return `<?php
+namespace App\\Factories;
+
+/**
+ * @method static object fromNamed(string $name)
+ */
+class CommentFactory
+{
+    public static function make(): object {}
+    public function makeInstance(): object {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    const makePosition = methodDiagnosticPosition("make");
+    const fromNamedPosition = methodDiagnosticPosition("fromNamed");
+    const makeInstancePosition = methodDiagnosticPosition("makeInstance");
+    const missingPosition = methodDiagnosticPosition("missingStatic");
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            ...makePosition,
+            message:
+              "Method App\\Factories\\CommentFactory::make() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...fromNamedPosition,
+            message:
+              "Method App\\Factories\\CommentFactory::fromNamed() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...makeInstancePosition,
+            message:
+              "Method App\\Factories\\CommentFactory::makeInstance() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...missingPosition,
+            message:
+              "Method App\\Factories\\CommentFactory::missingStatic() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        ...makeInstancePosition,
+        message:
+          "Method App\\Factories\\CommentFactory::makeInstance() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+      {
+        ...missingPosition,
+        message:
+          "Method App\\Factories\\CommentFactory::missingStatic() does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("infers Laravel relation model completions from property and relation chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

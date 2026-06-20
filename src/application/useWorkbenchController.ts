@@ -6019,6 +6019,116 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpClassHierarchyHasStaticMethod = useCallback(
+    async (
+      className: string,
+      methodName: string,
+      visitedClassNames = new Set<string>(),
+    ): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+      const normalizedMethodName = methodName.trim().toLowerCase();
+      const visitedKey = normalizedClassName.toLowerCase();
+
+      if (
+        !normalizedClassName ||
+        !normalizedMethodName ||
+        visitedClassNames.has(visitedKey)
+      ) {
+        return false;
+      }
+
+      visitedClassNames.add(visitedKey);
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        try {
+          const { content, members } = await readPhpClassMembersFromPath(
+            path,
+            normalizedClassName,
+          );
+
+          if (
+            members.some(
+              (member) =>
+                member.isStatic &&
+                member.name.toLowerCase() === normalizedMethodName,
+            )
+          ) {
+            return true;
+          }
+
+          for (const traitName of phpTraitClassNames(content)) {
+            const resolvedTraitName = resolvePhpClassReference(
+              content,
+              traitName,
+            );
+
+            if (
+              resolvedTraitName &&
+              (await phpClassHierarchyHasStaticMethod(
+                resolvedTraitName,
+                methodName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+
+          for (const mixinName of phpMixinClassNames(content)) {
+            const resolvedMixinName = resolvePhpClassReference(
+              content,
+              mixinName,
+            );
+
+            if (
+              resolvedMixinName &&
+              (await phpClassHierarchyHasStaticMethod(
+                resolvedMixinName,
+                methodName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+
+          for (const superTypeName of phpSuperTypeReferences(content)) {
+            const resolvedSuperTypeName = resolvePhpClassReference(
+              content,
+              superTypeName,
+            );
+
+            if (
+              resolvedSuperTypeName &&
+              (await phpClassHierarchyHasStaticMethod(
+                resolvedSuperTypeName,
+                methodName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      readPhpClassMembersFromPath,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const phpClassHierarchyHasProperty = useCallback(
     async (
       className: string,
@@ -6581,8 +6691,18 @@ export function useWorkbenchController(
                   staticMethodContext.methodName,
                 )
               : false;
+          const hasContextualExistingStaticMethod = resolvedClassName
+            ? await phpClassHierarchyHasStaticMethod(
+                resolvedClassName,
+                staticMethodContext.methodName,
+              )
+            : false;
 
-          if (hasContextualScopeMethod || hasContextualDynamicWhereMethod) {
+          if (
+            hasContextualScopeMethod ||
+            hasContextualDynamicWhereMethod ||
+            hasContextualExistingStaticMethod
+          ) {
             contextualExistingMethods.add(
               phpMethodDiagnosticKey(
                 staticMethodContext.className,
@@ -6770,6 +6890,7 @@ export function useWorkbenchController(
       activePhpFrameworkProviders,
       isLaravelFrameworkActive,
       phpClassHierarchyHasMethod,
+      phpClassHierarchyHasStaticMethod,
       phpClassHierarchyHasProperty,
       phpTraitHostMethodExists,
       phpTraitHostPropertyExists,
