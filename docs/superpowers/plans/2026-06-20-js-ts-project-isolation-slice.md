@@ -2237,3 +2237,51 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Rename Edit Same-Root Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a8c9440b Record JS TS file structure session guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- JS/TS navigation, hierarchy, and file-structure flows now drop stale same-root TypeScript session responses.
+- File rename still awaited `willRenameFiles` with only root checks before applying import-update workspace edits.
+- A same-root TypeScript runtime restart during `willRenameFiles` could allow stale import edits from the old session to touch files before the user's rename continued.
+
+### Implementation Choice
+
+- Capture the running JS/TS `sessionId` before calling `willRenameFiles`.
+- Reuse the shared root + session guard before applying returned workspace edits, before reporting `willRenameFiles` errors, and before showing import-update messages.
+- Keep the user's actual same-root file rename moving after a stale `willRenameFiles` response; only the stale import edit is dropped.
+- Add regression coverage for stale same-root `willRenameFiles` responses.
+
+### Acceptance Criteria
+
+- Same-root TypeScript session restarts drop stale `willRenameFiles` workspace edits.
+- The requested file rename still proceeds in the same active workspace.
+- The post-rename `didRenameFiles` notification can still go to the current JS/TS service.
+- Focused rename tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Rename Edit Same-Root Session Guard
+
+- Added same-root JS/TS session checks around `willRenameFiles` import-edit application.
+- Preserved physical file rename behavior after stale same-root import edits.
+- Added regression coverage for stale rename edits after same-root TypeScript session restart.
+
+### Verification: JS/TS Rename Edit Same-Root Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rename edits|asks the JavaScript TypeScript service for import edits|same-root session restart"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Rename Edit Same-Root Session Guard
+
+- Pending commit and push.

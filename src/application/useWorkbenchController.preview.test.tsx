@@ -3887,6 +3887,111 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
   });
 
+  it("drops stale JavaScript TypeScript rename edits after same-root session restart", async () => {
+    const oldPath = "/workspace/src/User.ts";
+    const newPath = "/workspace/src/Account.ts";
+    const consumerPath = "/workspace/src/Consumer.ts";
+    const renameEdit = createDeferred<LanguageServerWorkspaceEdit | null>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(26)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(26)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).mockImplementationOnce(async () => renameEdit.promise);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(26),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(26),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+      ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(27));
+    });
+    await flushAsyncTurns();
+
+    renameEdit.resolve({
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    });
+    await act(async () => {
+      await renamePromise;
+    });
+
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+    ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
+  });
+
   it("notifies the JavaScript TypeScript service when a JS TS file is created", async () => {
     const newPath = "/workspace/src/NewWidget.ts";
     const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();

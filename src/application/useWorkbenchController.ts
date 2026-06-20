@@ -4534,6 +4534,13 @@ export function useWorkbenchController(
       }
 
       const requestedRoot = workspaceRoot;
+      const requestedSessionId =
+        javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const isRequestedJavaScriptTypeScriptSessionActive = () =>
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          requestedRoot,
+          requestedSessionId,
+        );
 
       try {
         const edit =
@@ -4543,7 +4550,7 @@ export function useWorkbenchController(
             newPath,
           );
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return;
         }
 
@@ -4563,7 +4570,7 @@ export function useWorkbenchController(
           openDocumentPaths,
         );
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return;
         }
 
@@ -4573,7 +4580,7 @@ export function useWorkbenchController(
           setMessage(`Updated ${changedFiles} import path${changedFiles === 1 ? "" : "s"}.`);
         }
       } catch (error) {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return;
         }
 
@@ -4582,6 +4589,7 @@ export function useWorkbenchController(
     },
     [
       applyWorkspaceEditToOpenDocuments,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
