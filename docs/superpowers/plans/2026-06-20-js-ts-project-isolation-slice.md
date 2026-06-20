@@ -2575,3 +2575,60 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Provider Event Explicit Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `65cb6f8a Record JS TS diagnostics root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice is provider-local and limited to Monaco JS/TS event routing.
+- Main agent implemented directly because the affected provider guard and tests are in one file pair.
+
+### Why This Slice
+
+- Backend JS/TS workspace-edit and refresh events normally include `rootPath`, but the frontend event types allowed it to be missing.
+- Missing-root provider events were previously accepted when the session id matched, which is too permissive for project-tab isolation.
+- Server-initiated edits and refreshes should only affect the active project when the event explicitly names that project root.
+
+### Implementation Choice
+
+- Require `event.rootPath` in JS/TS server-initiated workspace edit activation.
+- Require `event.rootPath` in JS/TS provider refresh event activation.
+- Extend existing provider tests with rootless events that would have been accepted before the guard.
+
+### Acceptance Criteria
+
+- Rooted active workspace-edit events still apply.
+- Rootless workspace-edit events are ignored.
+- Rooted active refresh events still notify CodeLens, inlay hints, and semantic tokens.
+- Rootless refresh events are ignored.
+- Focused provider tests, full provider tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Provider Event Explicit Root Guard
+
+- Tightened JS/TS workspace-edit event routing to require an explicit workspace root.
+- Tightened JS/TS refresh event routing to require an explicit workspace root.
+- Added regression coverage for rootless server-initiated workspace edit and refresh events.
+
+### Verification: JS/TS Provider Event Explicit Root Guard
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "server-initiated workspace edits|refreshes CodeLens"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Provider Event Explicit Root Guard
+
+- Pending commit and push.
+- Included files:
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

@@ -3238,7 +3238,7 @@ function isWorkspaceEditEventActive(
     return false;
   }
 
-  if (event.rootPath && !workspaceRootKeysEqual(event.rootPath, workspaceRoot)) {
+  if (!event.rootPath || !workspaceRootKeysEqual(event.rootPath, workspaceRoot)) {
     return false;
   }
 
@@ -3287,7 +3287,7 @@ function isRefreshEventActive(
     return false;
   }
 
-  if (event.rootPath && !workspaceRootKeysEqual(event.rootPath, workspaceRoot)) {
+  if (!event.rootPath || !workspaceRootKeysEqual(event.rootPath, workspaceRoot)) {
     return false;
   }
 
