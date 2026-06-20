@@ -647,7 +647,7 @@ async function provideDefinition(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations, request.rootPath);
+    return toMonacoLocations(monaco, locations);
   } catch (error) {
     reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
@@ -685,7 +685,7 @@ async function provideImplementation(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations, request.rootPath);
+    return toMonacoLocations(monaco, locations);
   } catch (error) {
     reportErrorForActiveRoot(context, request.rootPath, error);
     return null;
@@ -718,7 +718,7 @@ async function provideTypeDefinition(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations, request.rootPath);
+    return toMonacoLocations(monaco, locations);
   } catch (error) {
     reportErrorForActiveRoot(context, request.rootPath, error);
     return null;

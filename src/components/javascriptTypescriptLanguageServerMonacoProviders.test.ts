@@ -380,7 +380,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
-  it("maps TypeScript type definitions through the language server", async () => {
+  it("maps TypeScript type definitions through the language server including external targets", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
       typeDefinition: [
@@ -417,6 +417,123 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           startLineNumber: 5,
         }),
         uri: { fsPath: "/project/src/types.ts", path: "/project/src/types.ts" },
+      },
+      {
+        range: expect.objectContaining({
+          endColumn: 6,
+          endLineNumber: 2,
+          startColumn: 1,
+          startLineNumber: 2,
+        }),
+        uri: { fsPath: "/other/src/types.ts", path: "/other/src/types.ts" },
+      },
+    ]);
+  });
+
+  it("maps TypeScript definitions and implementations to external read-only targets", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      definition: [
+        {
+          range: range(12, 8, 12, 15),
+          uri: "file:///project/node_modules/@types/react/index.d.ts",
+        },
+        {
+          range: range(40, 1, 40, 7),
+          uri: "file:///Applications/Mockor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
+        },
+      ],
+      implementation: [
+        {
+          range: range(2, 0, 8, 1),
+          uri: "file:///project/node_modules/pkg/dist/component.d.ts",
+        },
+        {
+          range: range(4, 2, 9, 3),
+          uri: "file:///tmp/js-ts-cache/pkg/component.ts",
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+    const model = textModel();
+    const position = { column: 4, lineNumber: 2 };
+
+    const definitionProvider = (
+      monaco.languages.registerDefinitionProvider as any
+    ).mock.calls[0][1];
+    const definitions = await definitionProvider.provideDefinition(model, position);
+
+    expect(gateway.definition).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+    expect(definitions).toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 16,
+          endLineNumber: 13,
+          startColumn: 9,
+          startLineNumber: 13,
+        }),
+        uri: {
+          fsPath: "/project/node_modules/@types/react/index.d.ts",
+          path: "/project/node_modules/@types/react/index.d.ts",
+        },
+      },
+      {
+        range: expect.objectContaining({
+          endColumn: 8,
+          endLineNumber: 41,
+          startColumn: 2,
+          startLineNumber: 41,
+        }),
+        uri: {
+          fsPath:
+            "/Applications/Mockor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
+          path: "/Applications/Mockor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
+        },
+      },
+    ]);
+
+    const implementationProvider = (
+      monaco.languages.registerImplementationProvider as any
+    ).mock.calls[0][1];
+    const implementations = await implementationProvider.provideImplementation(
+      model,
+      position,
+    );
+
+    expect(gateway.implementation).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+    expect(implementations).toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 2,
+          endLineNumber: 9,
+          startColumn: 1,
+          startLineNumber: 3,
+        }),
+        uri: {
+          fsPath: "/project/node_modules/pkg/dist/component.d.ts",
+          path: "/project/node_modules/pkg/dist/component.d.ts",
+        },
+      },
+      {
+        range: expect.objectContaining({
+          endColumn: 4,
+          endLineNumber: 10,
+          startColumn: 3,
+          startLineNumber: 5,
+        }),
+        uri: {
+          fsPath: "/tmp/js-ts-cache/pkg/component.ts",
+          path: "/tmp/js-ts-cache/pkg/component.ts",
+        },
       },
     ]);
   });
@@ -2497,6 +2614,7 @@ function featuresGateway(
     codeActions: Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>;
     codeLenses: Awaited<ReturnType<LanguageServerFeaturesGateway["codeLenses"]>>;
     completion: Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>;
+    definition: Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>;
     documentHighlights: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentHighlights"]>
     >;
@@ -2510,6 +2628,9 @@ function featuresGateway(
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     foldingRanges: Awaited<
       ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>
+    >;
+    implementation: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["implementation"]>
     >;
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
     linkedEditingRanges: Awaited<
@@ -2565,7 +2686,7 @@ function featuresGateway(
           items: [],
         },
     ),
-    definition: vi.fn(async () => []),
+    definition: vi.fn(async () => responses.definition ?? []),
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
@@ -2579,7 +2700,7 @@ function featuresGateway(
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => null),
     incomingCalls: vi.fn(async () => []),
-    implementation: vi.fn(async () => []),
+    implementation: vi.fn(async () => responses.implementation ?? []),
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     linkedEditingRanges: vi.fn(
       async () => responses.linkedEditingRanges ?? null,

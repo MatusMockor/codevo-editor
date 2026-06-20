@@ -4575,6 +4575,212 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("opens JavaScript and TypeScript definitions through workbench commands", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/src/user.ts";
+    const source = "import { User } from './user';\nconst user = new User();\n";
+    const target = "export class User {\n  name = '';\n}\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 31,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    ).mockResolvedValue([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === targetPath) {
+          return target;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    ).toHaveBeenCalledWith("/workspace", {
+      character: cursorPosition.column - 1,
+      line: cursorPosition.lineNumber - 1,
+      path: sourcePath,
+    });
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: targetPath,
+      position: {
+        column: 14,
+        lineNumber: 1,
+      },
+    });
+  });
+
+  it("shows a JavaScript and TypeScript implementation chooser through workbench commands", async () => {
+    const interfacePath = "/workspace/src/PlatformAdapter.ts";
+    const baseAdapterPath = "/workspace/src/BaseAdapter.ts";
+    const facebookAdapterPath = "/workspace/src/FacebookAdapterService.ts";
+    const interfaceSource = `export interface PlatformAdapter {
+  getPlatform(): string;
+}
+`;
+    const baseAdapterSource = `import type { PlatformAdapter } from './PlatformAdapter';
+
+export abstract class BaseAdapter implements PlatformAdapter {
+  getPlatform(): string {
+    return 'base';
+  }
+}
+`;
+    const facebookAdapterSource = `import { BaseAdapter } from './BaseAdapter';
+
+export class FacebookAdapterService extends BaseAdapter {
+  getPlatform(): string {
+    return 'facebook';
+  }
+}
+`;
+    const cursorPosition = positionAfter(interfaceSource, "getPlatform");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        implementation: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 32,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.implementation,
+    ).mockResolvedValue([
+      {
+        range: range(3, 2, 5, 3),
+        uri: fileUriFromPath(baseAdapterPath),
+      },
+      {
+        range: range(3, 2, 5, 3),
+        uri: fileUriFromPath(facebookAdapterPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === interfacePath) {
+          return interfaceSource;
+        }
+
+        if (requestedPath === baseAdapterPath) {
+          return baseAdapterSource;
+        }
+
+        if (requestedPath === facebookAdapterPath) {
+          return facebookAdapterSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(interfacePath, "PlatformAdapter.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToImplementation",
+    );
+
+    expect(
+      command?.isEnabled({
+        activeDocumentDirty: false,
+        hasActiveDocument: true,
+        hasWorkspace: true,
+      }),
+    ).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.implementation,
+    ).toHaveBeenCalledWith("/workspace", {
+      character: cursorPosition.column - 1,
+      line: cursorPosition.lineNumber - 1,
+      path: interfacePath,
+    });
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().implementationChooser?.title).toBe(
+      "Choose implementation of getPlatform",
+    );
+    expect(
+      getWorkbench().implementationChooser?.targets.map((target) => ({
+        detail: target.detail,
+        label: target.label,
+        path: target.path,
+      })),
+    ).toEqual([
+      {
+        detail: "BaseAdapter.ts",
+        label: "BaseAdapter",
+        path: baseAdapterPath,
+      },
+      {
+        detail: "FacebookAdapterService.ts",
+        label: "FacebookAdapterService",
+        path: facebookAdapterPath,
+      },
+    ]);
+  });
+
   it("shows interfaces in Cmd+O class search results", async () => {
     const projectSymbols: ProjectSymbolSearchResult[] = [
       {

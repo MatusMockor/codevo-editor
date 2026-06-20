@@ -8967,6 +8967,162 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const goToJavaScriptTypeScriptLanguageServerLocation = useCallback(async (
+    feature: Extract<LanguageServerFeature, "definition" | "implementation">,
+    label: string,
+    requestedPosition?: EditorPosition,
+  ): Promise<boolean> => {
+    const document = activeDocument;
+    const requestedRoot = workspaceRoot;
+    const runtimeStatus = javaScriptTypeScriptLanguageServerRuntimeStatus;
+    const runtimeStatusRoot = javaScriptTypeScriptLanguageServerRuntimeStatusRoot;
+
+    if (
+      !document ||
+      !requestedRoot ||
+      !isJavaScriptTypeScriptLanguageServerDocument(document)
+    ) {
+      return false;
+    }
+
+    if (runtimeStatus?.kind !== "running") {
+      return false;
+    }
+
+    if (
+      runtimeStatus.rootPath &&
+      !workspaceRootKeysEqual(runtimeStatus.rootPath, requestedRoot)
+    ) {
+      return false;
+    }
+
+    if (
+      runtimeStatusRoot &&
+      !workspaceRootKeysEqual(runtimeStatusRoot, requestedRoot)
+    ) {
+      return false;
+    }
+
+    if (!canUseLanguageServerFeature(runtimeStatus.capabilities, feature)) {
+      return false;
+    }
+
+    const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
+
+    if (!editorPosition) {
+      return false;
+    }
+
+    const requestedPath = document.path;
+
+    if (feature === "implementation") {
+      setImplementationChooser(null);
+    }
+
+    try {
+      await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return false;
+      }
+
+      if (activeDocumentRef.current?.path !== requestedPath) {
+        return false;
+      }
+
+      const locations =
+        await javaScriptTypeScriptLanguageServerFeaturesGateway[feature](
+          requestedRoot,
+          toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
+        );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return false;
+      }
+
+      const symbolName = identifierAtEditorPosition(
+        document.content,
+        editorPosition,
+      );
+
+      if (feature === "implementation" && locations.length > 1) {
+        const targets = await implementationTargetsFromLocations(locations);
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return false;
+        }
+
+        if (targets.length > 1) {
+          setImplementationChooser({
+            targets,
+            title: implementationChooserTitle(symbolName),
+          });
+          return true;
+        }
+
+        const [onlyTarget] = targets;
+
+        if (onlyTarget) {
+          await openImplementationTarget(onlyTarget);
+          return true;
+        }
+      }
+
+      const [target] = locations;
+
+      if (!target) {
+        return false;
+      }
+
+      const targetPath = pathFromLanguageServerUri(target.uri);
+
+      if (!targetPath) {
+        setMessage(`Could not open ${label} target.`);
+        return false;
+      }
+
+      recordCurrentNavigationLocation();
+      const opened = await openPathForNavigation(targetPath);
+
+      if (!opened) {
+        return false;
+      }
+
+      const targetPosition = toEditorPosition(target.range.start);
+      setEditorRevealTarget({
+        path: targetPath,
+        position: targetPosition,
+      });
+      setMessage(
+        `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
+      );
+      return true;
+    } catch (error) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return false;
+      }
+
+      reportErrorForActiveWorkspaceRoot(
+        requestedRoot,
+        "JavaScript/TypeScript",
+        error,
+      );
+      return false;
+    }
+  }, [
+    activeDocument,
+    flushPendingJavaScriptTypeScriptDocumentChange,
+    implementationTargetsFromLocations,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    openImplementationTarget,
+    openPathForNavigation,
+    recordCurrentNavigationLocation,
+    reportErrorForActiveWorkspaceRoot,
+    workspaceRoot,
+  ]);
+
   const goToIndexedSymbolDefinition = useCallback(async (): Promise<boolean> => {
     if (!activeDocument) {
       return false;
@@ -9117,6 +9273,16 @@ export function useWorkbenchController(
   ]);
 
   const goToDefinition = useCallback(async () => {
+    const openedJavaScriptTypeScriptTarget =
+      await goToJavaScriptTypeScriptLanguageServerLocation(
+        "definition",
+        "definition",
+      );
+
+    if (openedJavaScriptTypeScriptTarget) {
+      return;
+    }
+
     const openedContextualPhpTarget = await goToContextualPhpDefinition();
 
     if (openedContextualPhpTarget) {
@@ -9136,10 +9302,21 @@ export function useWorkbenchController(
   }, [
     goToContextualPhpDefinition,
     goToIndexedSymbolDefinition,
+    goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
   ]);
 
   const goToImplementation = useCallback(async () => {
+    const openedJavaScriptTypeScriptTarget =
+      await goToJavaScriptTypeScriptLanguageServerLocation(
+        "implementation",
+        "implementation",
+      );
+
+    if (openedJavaScriptTypeScriptTarget) {
+      return;
+    }
+
     const openedLanguageServerTarget = await goToLanguageServerLocation(
       "implementation",
       "implementation",
@@ -9150,9 +9327,24 @@ export function useWorkbenchController(
     }
 
     await goToIndexedPhpImplementation();
-  }, [goToIndexedPhpImplementation, goToLanguageServerLocation]);
+  }, [
+    goToIndexedPhpImplementation,
+    goToJavaScriptTypeScriptLanguageServerLocation,
+    goToLanguageServerLocation,
+  ]);
 
   const goToImplementationAt = useCallback(async (position: EditorPosition) => {
+    const openedJavaScriptTypeScriptTarget =
+      await goToJavaScriptTypeScriptLanguageServerLocation(
+        "implementation",
+        "implementation",
+        position,
+      );
+
+    if (openedJavaScriptTypeScriptTarget) {
+      return;
+    }
+
     const openedLanguageServerTarget = await goToLanguageServerLocation(
       "implementation",
       "implementation",
@@ -9164,7 +9356,11 @@ export function useWorkbenchController(
     }
 
     await goToIndexedPhpImplementation(position);
-  }, [goToIndexedPhpImplementation, goToLanguageServerLocation]);
+  }, [
+    goToIndexedPhpImplementation,
+    goToJavaScriptTypeScriptLanguageServerLocation,
+    goToLanguageServerLocation,
+  ]);
 
   const openCallHierarchyRow = useCallback(
     async (row: CallHierarchyRow) => {
@@ -10254,13 +10450,29 @@ export function useWorkbenchController(
       title: "Go to Implementation",
       category: "Editor",
       shortcut: shortcut("editor.goToImplementation"),
-      isEnabled: () =>
-        Boolean(activeDocument) &&
-        languageServerRuntimeStatus?.kind === "running" &&
-        canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "implementation",
-        ),
+      isEnabled: () => {
+        if (!activeDocument) {
+          return false;
+        }
+
+        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+          return (
+            javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running" &&
+            canUseLanguageServerFeature(
+              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+              "implementation",
+            )
+          );
+        }
+
+        return (
+          languageServerRuntimeStatus?.kind === "running" &&
+          canUseLanguageServerFeature(
+            languageServerRuntimeStatus.capabilities,
+            "implementation",
+          )
+        );
+      },
       run: goToImplementation,
     });
 

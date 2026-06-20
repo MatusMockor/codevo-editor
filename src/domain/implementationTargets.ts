@@ -29,7 +29,7 @@ export function implementationTargetFromLocation(
 
   const position = toEditorPosition(location.range.start);
   const namespaceName = source ? phpNamespaceName(source) : null;
-  const typeName = source ? nearestPhpTypeName(source, position) : null;
+  const typeName = source ? nearestTypeName(source, position) : null;
   const label = typeName ?? getFileName(path);
 
   return {
@@ -89,6 +89,16 @@ function phpNamespaceName(source: string): string | null {
   return match[1].trim().replace(/^\\+/, "");
 }
 
+function nearestTypeName(
+  source: string,
+  position: EditorPosition,
+): string | null {
+  return (
+    nearestPhpTypeName(source, position) ??
+    nearestJavaScriptTypeScriptTypeName(source, position)
+  );
+}
+
 function nearestPhpTypeName(
   source: string,
   position: EditorPosition,
@@ -98,6 +108,26 @@ function nearestPhpTypeName(
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const match =
       /\b(?:abstract\s+|final\s+)?(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
+        lines[index] ?? "",
+      );
+
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+function nearestJavaScriptTypeScriptTypeName(
+  source: string,
+  position: EditorPosition,
+): string | null {
+  const lines = source.split(/\r?\n/).slice(0, position.lineNumber);
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match =
+      /\b(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:class|interface|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b/.exec(
         lines[index] ?? "",
       );
 
