@@ -1316,4 +1316,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `b1f7b415 Expand Laravel singleton route modifiers`.
