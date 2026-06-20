@@ -1618,7 +1618,8 @@ function phpLaravelDynamicRelationPropertyCompletionsFromSource(
     if (
       !isPhpAttributeName(relationName) ||
       !callbackExpression ||
-      !phpLaravelHasRelationFactoryCallInExpression(callbackExpression, true)
+      (!phpLaravelHasRelationFactoryCallInExpression(callbackExpression, true) &&
+        !phpLaravelFluentThroughRelationPathFromExpression(callbackExpression))
     ) {
       continue;
     }
@@ -1634,6 +1635,13 @@ function phpLaravelDynamicRelationPropertyCompletionsFromSource(
             expression,
             declaringClassName,
           ),
+      ) ??
+      phpLaravelFluentThroughRelationTargetClassNameFromExpression(
+        declaringClassSource,
+        source,
+        declaringClassName,
+        callbackExpression,
+        new Set<string>(),
       ) ??
       phpLaravelMorphToTargetClassNameFromContext(
         source,

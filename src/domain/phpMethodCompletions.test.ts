@@ -1668,6 +1668,86 @@ Comment::resolveRelationUsing('notRelation', fn () => 'not a relation');
     ]);
   });
 
+  it("extracts Laravel fluent through targets from resolveRelationUsing callbacks", () => {
+    const source = `<?php
+use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class Comment
+{
+    public function cars(): HasMany
+    {
+        return $this->hasMany(Car::class);
+    }
+}
+
+class Car
+{
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(Owner::class);
+    }
+
+    public function mechanics(): HasMany
+    {
+        return $this->hasMany(Mechanic::class);
+    }
+}
+
+class Owner
+{
+}
+
+class Mechanic
+{
+}
+
+Comment::resolveRelationUsing(
+    'carOwner',
+    fn (Comment $comment) => $comment->through('cars')->has('owner'),
+);
+
+Comment::resolveRelationUsing(
+    'carMechanics',
+    fn (Comment $comment) => $comment->throughCars()->hasMechanics(),
+);
+`;
+    const commentSource = source.slice(
+      source.indexOf("class Comment"),
+      source.indexOf("class Car"),
+    );
+
+    expect(
+      phpLaravelRelationPropertyCompletionsFromSource(
+        commentSource,
+        "Comment",
+        source,
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "cars",
+        parameters: "",
+        returnType: "Car",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "carOwner",
+        parameters: "",
+        returnType: "Owner",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "carMechanics",
+        parameters: "",
+        returnType: "Mechanic",
+      },
+    ]);
+  });
+
   it("extracts Laravel fluent through relation targets from relation strings and dynamic names", () => {
     const source = `<?php
 use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;

@@ -431,8 +431,58 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
-- Intended included files:
+- Committed and pushed as `b26c6dd Reconcile interface member diagnostics`.
+- Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Dynamic Fluent Through ResolveRelationUsing Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b26c6dd Reconcile interface member diagnostics`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Infer relation property targets from `Model::resolveRelationUsing(...)` callbacks that return Laravel fluent-through relations.
+
+### Implementation Choice
+
+- Reuse the fluent-through resolver added for normal relation methods.
+- Treat fluent-through callbacks as valid relation callbacks alongside direct relation factory calls.
+- Cover both literal `through('cars')->has('owner')` and dynamic `throughCars()->hasOwner()` callback forms.
+
+### Acceptance Criteria
+
+- `resolveRelationUsing('carOwner', fn (...) => $model->through('cars')->has('owner'))` exposes `carOwner` as the owner model.
+- `resolveRelationUsing('carMechanics', fn (...) => $model->throughCars()->hasMechanics())` exposes the distant collection target.
+- Existing dynamic relation callback tests remain green.
+- Focused PHP domain tests pass.
+- `npm run check` and `git diff --check` pass.
+
+### Completed
+
+- Dynamic relation callbacks now accept fluent-through expressions as relation factories.
+- Dynamic callback target inference now calls the shared fluent-through target resolver.
+- Added regression coverage for literal and dynamic fluent-through `resolveRelationUsing` callbacks.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "extracts Laravel fluent through targets from resolveRelationUsing callbacks"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Intended included files:
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
