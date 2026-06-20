@@ -26,6 +26,11 @@ export interface PhpMemberMethodDiagnosticContext {
   receiverExpression: string;
 }
 
+export interface PhpMemberPropertyDiagnosticContext {
+  propertyName: string;
+  receiverExpression: string;
+}
+
 export interface PhpStaticMethodDiagnosticContext {
   className: string;
   methodName: string;
@@ -38,12 +43,20 @@ const ignoredPhpactorDocblockDiagnosticCodes = new Set([
 
 const unresolvedMethodDiagnosticPattern =
   /\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b.*\bmethod\b|\bmethod\b.*\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b/i;
+const unresolvedPropertyDiagnosticPattern =
+  /\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b.*\bproperty\b|\bproperty\b.*\b(could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\b/i;
 const staticMethodCallPattern =
   /\b((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*|self|static|parent)::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 const memberMethodCallPattern = new RegExp(
   String.raw`(` +
     PHP_EXPRESSION_RECEIVER_PATTERN +
     String.raw`(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*?)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(`,
+  "g",
+);
+const memberPropertyAccessPattern = new RegExp(
+  String.raw`(` +
+    PHP_EXPRESSION_RECEIVER_PATTERN +
+    String.raw`(?:\s*->\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*?)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()`,
   "g",
 );
 
@@ -54,6 +67,7 @@ export function filterPhpLanguageServerDiagnostics(
     allowDependencyTraitFallback?: boolean;
     contextualExistingMethods?: ReadonlySet<string>;
     contextualMemberMethods?: ReadonlySet<string>;
+    contextualMemberProperties?: ReadonlySet<string>;
     contextualTraitHostMethods?: ReadonlySet<string>;
     contextualTraitHostProperties?: ReadonlySet<string>;
     frameworkProviders?: readonly PhpFrameworkProvider[];
@@ -74,6 +88,11 @@ export function filterPhpLanguageServerDiagnostics(
         source,
         diagnostic,
         options.contextualMemberMethods,
+      ) &&
+      !isContextualExistingMemberPropertyDiagnostic(
+        source,
+        diagnostic,
+        options.contextualMemberProperties,
       ) &&
       !isKnownPhpFrameworkMemberMethodDiagnostic(
         source,
@@ -169,6 +188,32 @@ function isContextualExistingMemberMethodDiagnostic(
 
   return contextualMemberMethods.has(
     phpMemberMethodDiagnosticKey(context.receiverExpression, context.methodName),
+  );
+}
+
+function isContextualExistingMemberPropertyDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  contextualMemberProperties: ReadonlySet<string> | undefined,
+): boolean {
+  if (!contextualMemberProperties?.size) {
+    return false;
+  }
+
+  const context = phpUnresolvedMemberPropertyDiagnosticContext(
+    source,
+    diagnostic,
+  );
+
+  if (!context) {
+    return false;
+  }
+
+  return contextualMemberProperties.has(
+    phpMemberPropertyDiagnosticKey(
+      context.receiverExpression,
+      context.propertyName,
+    ),
   );
 }
 
@@ -453,6 +498,51 @@ export function phpUnresolvedMemberMethodDiagnosticContext(
   return null;
 }
 
+export function phpUnresolvedMemberPropertyDiagnosticContext(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): PhpMemberPropertyDiagnosticContext | null {
+  if (!unresolvedPropertyDiagnosticPattern.test(diagnostic.message)) {
+    return null;
+  }
+
+  const context = statementContextForDiagnostic(source, diagnostic);
+
+  if (!context) {
+    return null;
+  }
+
+  for (const access of context.text.matchAll(memberPropertyAccessPattern)) {
+    const receiverExpression = access[1] ?? "";
+    const propertyName = access[2] ?? "";
+
+    if (!receiverExpression || !propertyName) {
+      continue;
+    }
+
+    const accessStart = access.index ?? 0;
+    const propertyStart = accessStart + access[0].lastIndexOf(propertyName);
+    const propertyEnd = propertyStart + propertyName.length;
+
+    if (
+      diagnosticTouchesMember(
+        diagnostic,
+        propertyName,
+        context.diagnosticOffset,
+        context.startOffset + propertyStart,
+        context.startOffset + propertyEnd,
+      )
+    ) {
+      return {
+        propertyName,
+        receiverExpression: phpNormalizeReceiverExpression(receiverExpression),
+      };
+    }
+  }
+
+  return null;
+}
+
 export function phpUnresolvedStaticMethodDiagnosticContext(
   source: string,
   diagnostic: LanguageServerDiagnostic,
@@ -535,6 +625,16 @@ export function phpMemberMethodDiagnosticKey(
     .toLowerCase()}`;
 }
 
+export function phpMemberPropertyDiagnosticKey(
+  receiverExpression: string,
+  propertyName: string,
+): string {
+  return `${phpNormalizeReceiverExpression(receiverExpression).toLowerCase()}#$${propertyName
+    .trim()
+    .replace(/^\$+/, "")
+    .toLowerCase()}`;
+}
+
 function isDependencyPath(path: string | null | undefined): boolean {
   return Boolean(
     path && /(?:^|[/\\])(?:vendor|node_modules)(?:[/\\]|$)/.test(path),
@@ -548,13 +648,29 @@ function diagnosticTouchesMethod(
   absoluteMethodStart: number,
   absoluteMethodEnd: number,
 ): boolean {
-  if (diagnostic.message.toLowerCase().includes(method.toLowerCase())) {
+  return diagnosticTouchesMember(
+    diagnostic,
+    method,
+    diagnosticOffset,
+    absoluteMethodStart,
+    absoluteMethodEnd,
+  );
+}
+
+function diagnosticTouchesMember(
+  diagnostic: LanguageServerDiagnostic,
+  member: string,
+  diagnosticOffset: number,
+  absoluteMemberStart: number,
+  absoluteMemberEnd: number,
+): boolean {
+  if (diagnostic.message.toLowerCase().includes(member.toLowerCase())) {
     return true;
   }
 
   return (
-    diagnosticOffset >= absoluteMethodStart - 2 &&
-    diagnosticOffset <= absoluteMethodEnd + 2
+    diagnosticOffset >= absoluteMemberStart - 2 &&
+    diagnosticOffset <= absoluteMemberEnd + 2
   );
 }
 

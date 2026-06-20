@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   filterPhpLanguageServerDiagnostics,
   phpMemberMethodDiagnosticKey,
+  phpMemberPropertyDiagnosticKey,
   phpMethodDiagnosticKey,
   phpTraitHostMethodDiagnosticKey,
   phpTraitHostPropertyDiagnosticContext,
   phpTraitHostPropertyDiagnosticKey,
   phpUnresolvedMemberMethodDiagnosticContext,
+  phpUnresolvedMemberPropertyDiagnosticContext,
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "./phpLanguageServerDiagnosticFilters";
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
@@ -225,6 +227,49 @@ $album = Album::query()
         ]),
       }),
     ).toEqual([unknown]);
+  });
+
+  it("suppresses confirmed unresolved member property diagnostics", () => {
+    const source = `<?php
+
+$comment->content;
+$comment->missing;
+$comment->missing();
+`;
+    const confirmed = diagnostic({
+      character: 11,
+      line: 2,
+      message:
+        'Property "$content" does not exist on class "App\\Models\\Comment"',
+    });
+    const unknown = diagnostic({
+      character: 11,
+      line: 3,
+      message:
+        'Property "$missing" does not exist on class "App\\Models\\Comment"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
+    ).toEqual([confirmed, unknown]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        contextualMemberProperties: new Set([
+          phpMemberPropertyDiagnosticKey("$comment", "content"),
+        ]),
+      }),
+    ).toEqual([unknown]);
+    expect(
+      phpUnresolvedMemberPropertyDiagnosticContext(
+        source,
+        diagnostic({
+          character: 11,
+          line: 4,
+          message:
+            'Property "$missing" does not exist on class "App\\Models\\Comment"',
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("extracts member method diagnostic contexts from unresolved PHPactor messages", () => {

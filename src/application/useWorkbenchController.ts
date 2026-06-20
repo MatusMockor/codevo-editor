@@ -61,6 +61,8 @@ import {
   phpTraitHostPropertyDiagnosticContext,
   phpTraitHostPropertyDiagnosticKey,
   phpUnresolvedMemberMethodDiagnosticContext,
+  phpMemberPropertyDiagnosticKey,
+  phpUnresolvedMemberPropertyDiagnosticContext,
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "../domain/phpLanguageServerDiagnosticFilters";
 import {
@@ -618,6 +620,13 @@ export function useWorkbenchController(
     ): Promise<LanguageServerDiagnostic[]> => diagnostics,
   );
   const resolvePhpEloquentBuilderModelTypeRef = useRef(
+    async (
+      _source: string,
+      _position: EditorPosition,
+      _expression: string,
+    ): Promise<string | null> => null,
+  );
+  const resolvePhpExpressionTypeRef = useRef(
     async (
       _source: string,
       _position: EditorPosition,
@@ -6449,6 +6458,7 @@ export function useWorkbenchController(
       const contextualTraitHostProperties = new Set<string>();
       const contextualExistingMethods = new Set<string>();
       const contextualMemberMethods = new Set<string>();
+      const contextualMemberProperties = new Set<string>();
 
       for (const diagnostic of diagnostics) {
         const staticMethodContext = phpUnresolvedStaticMethodDiagnosticContext(
@@ -6523,6 +6533,36 @@ export function useWorkbenchController(
               phpMemberMethodDiagnosticKey(
                 memberMethodContext.receiverExpression,
                 memberMethodContext.methodName,
+              ),
+            );
+          }
+        }
+
+        const memberPropertyContext =
+          phpUnresolvedMemberPropertyDiagnosticContext(source, diagnostic);
+
+        if (memberPropertyContext) {
+          const diagnosticPosition = {
+            column: diagnostic.character + 1,
+            lineNumber: diagnostic.line + 1,
+          };
+          const receiverType = await resolvePhpExpressionTypeRef.current(
+            source,
+            diagnosticPosition,
+            memberPropertyContext.receiverExpression,
+          );
+          const hasContextualProperty = receiverType
+            ? await phpClassHierarchyHasProperty(
+                receiverType,
+                memberPropertyContext.propertyName,
+              )
+            : false;
+
+          if (hasContextualProperty) {
+            contextualMemberProperties.add(
+              phpMemberPropertyDiagnosticKey(
+                memberPropertyContext.receiverExpression,
+                memberPropertyContext.propertyName,
               ),
             );
           }
@@ -6606,6 +6646,7 @@ export function useWorkbenchController(
       return filterPhpLanguageServerDiagnostics(source, diagnostics, {
         contextualExistingMethods,
         contextualMemberMethods,
+        contextualMemberProperties,
         contextualTraitHostMethods,
         contextualTraitHostProperties,
         frameworkProviders: activePhpFrameworkProviders,
@@ -6617,6 +6658,7 @@ export function useWorkbenchController(
       phpClassHasLaravelDynamicWhere,
       activePhpFrameworkProviders,
       isLaravelFrameworkActive,
+      phpClassHierarchyHasProperty,
       phpTraitHostMethodExists,
       phpTraitHostPropertyExists,
       readNavigationFileContent,
@@ -8292,6 +8334,10 @@ export function useWorkbenchController(
       resolvePhpMethodReturnType,
     ],
   );
+
+  useEffect(() => {
+    resolvePhpExpressionTypeRef.current = resolvePhpExpressionType;
+  }, [resolvePhpExpressionType]);
 
   const resolvePhpReceiverMethodCompletions = useCallback(
     async (

@@ -9137,6 +9137,110 @@ class Comment extends Model
     ).toEqual([missingDiagnostic]);
   });
 
+  it("suppresses Laravel model attribute property diagnostics only when the property exists", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): void
+    {
+        $comment = Comment::query()->first();
+        echo $comment->content;
+        echo $comment->missing;
+    }
+}
+`;
+    const missingDiagnostic = {
+      character: 23,
+      line: lineNumberOf(controllerSource, "$comment->missing") - 1,
+      message: 'Property "$missing" does not exist on class "App\\Models\\Comment"',
+      severity: "error" as const,
+      source: "phpactor",
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 28,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Comment extends Model
+{
+    protected $fillable = [
+        'content',
+    ];
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 23,
+            line: lineNumberOf(controllerSource, "$comment->content") - 1,
+            message:
+              'Property "$content" does not exist on class "App\\Models\\Comment"',
+            severity: "error",
+            source: "phpactor",
+          },
+          missingDiagnostic,
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[controllerPath],
+    ).toEqual([missingDiagnostic]);
+  });
+
   it("suppresses static trait host-property diagnostics when the host declares the property", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
