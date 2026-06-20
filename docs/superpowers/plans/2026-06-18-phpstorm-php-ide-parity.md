@@ -2368,4 +2368,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending.
+- Committed and pushed as `3e537fd6 Stop Laravel fill insert builder leaks`.
