@@ -114,9 +114,19 @@ export type LanguageServerWorkspaceFileOperation =
       uri: string;
     };
 
+export interface LanguageServerInlayHintLabelPart {
+  label: string;
+  location?: LanguageServerLocation | null;
+  tooltip?: string | null;
+}
+
+export type LanguageServerInlayHintLabel =
+  | string
+  | LanguageServerInlayHintLabelPart[];
+
 export interface LanguageServerInlayHint {
   kind: number | null;
-  label: string;
+  label: LanguageServerInlayHintLabel;
   paddingLeft: boolean;
   paddingRight: boolean;
   position: LanguageServerPosition;

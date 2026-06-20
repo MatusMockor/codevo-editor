@@ -422,3 +422,61 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Rich Inlay Hint Label Parts
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0d73ddc Advertise TypeScript source action kinds`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Why This Slice
+
+- TypeScript can return inlay hint labels as structured label parts, not just strings.
+- Monaco supports `InlayHintLabelPart[]`, including per-part tooltip and location metadata.
+- Our parser currently flattens label parts into a string, dropping richer VS Code-like hover/click context.
+
+### Implementation Choice
+
+- Preserve `label`, `tooltip`, and `location` for label parts.
+- Do not wire label-part commands in this slice, because that would add a new command execution surface needing separate root/path guard design.
+- Files are limited to shared feature types, Rust parser, JS/TS Monaco mapping, and focused tests.
+
+### Acceptance Criteria
+
+- Rust parser preserves inlay hint string labels and structured label parts.
+- Frontend domain type models inlay hint label as string or label parts.
+- JS/TS Monaco provider maps label parts to Monaco `InlayHintLabelPart[]` with tooltip/location.
+- Focused Rust and provider tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: Rich Inlay Hint Label Parts
+
+- Rust inlay hint parsing now preserves both plain string labels and structured label parts.
+- Structured parts keep `label`, `tooltip`, and `location` metadata for Monaco.
+- Frontend domain types now model inlay hints as `string | LanguageServerInlayHintLabelPart[]`.
+- JS/TS Monaco provider maps label parts into Monaco `InlayHintLabelPart[]` while leaving label-part commands unwired for a separate guarded design.
+
+### Verification: Rich Inlay Hint Label Parts
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml parses_inlay_hints_with_string_and_part_labels --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "maps references, rename edits"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: Rich Inlay Hint Label Parts
+
+- Included files:
+  - `src-tauri/src/lsp_features.rs`
+  - `src/domain/languageServerFeatures.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

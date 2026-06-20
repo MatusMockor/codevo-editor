@@ -1268,6 +1268,29 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           },
           tooltip: "Inferred type",
         },
+        {
+          kind: 2,
+          label: [
+            {
+              label: "user",
+              location: {
+                range: range(2, 4, 2, 8),
+                uri: "file:///project/src/user.ts",
+              },
+              tooltip: "User symbol",
+            },
+            {
+              label: ":",
+            },
+          ],
+          paddingLeft: false,
+          paddingRight: true,
+          position: {
+            character: 5,
+            line: 1,
+          },
+          tooltip: null,
+        },
       ],
       prepareRename: {
         defaultBehavior: false,
@@ -1629,6 +1652,36 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
             lineNumber: 1,
           },
           tooltip: "Inferred type",
+        },
+        {
+          kind: monaco.languages.InlayHintKind.Parameter,
+          label: [
+            {
+              label: "user",
+              location: {
+                range: expect.objectContaining({
+                  endColumn: 9,
+                  endLineNumber: 3,
+                  startColumn: 5,
+                  startLineNumber: 3,
+                }),
+                uri: {
+                  fsPath: "/project/src/user.ts",
+                  path: "/project/src/user.ts",
+                },
+              },
+              tooltip: "User symbol",
+            },
+            {
+              label: ":",
+            },
+          ],
+          paddingLeft: false,
+          paddingRight: true,
+          position: {
+            column: 6,
+            lineNumber: 2,
+          },
         },
       ],
     });

@@ -2453,7 +2453,7 @@ function toMonacoInlayHint(
 ): Monaco.languages.InlayHint {
   return {
     kind: monacoInlayHintKindFromLspKind(monaco, hint.kind),
-    label: hint.label,
+    label: toMonacoInlayHintLabel(monaco, hint.label),
     paddingLeft: hint.paddingLeft,
     paddingRight: hint.paddingRight,
     position: {
@@ -2462,6 +2462,27 @@ function toMonacoInlayHint(
     },
     tooltip: hint.tooltip || undefined,
   };
+}
+
+function toMonacoInlayHintLabel(
+  monaco: MonacoApi,
+  label: LanguageServerInlayHint["label"],
+): Monaco.languages.InlayHint["label"] {
+  if (typeof label === "string") {
+    return label;
+  }
+
+  return label.map((part) => {
+    const [location] = part.location
+      ? toMonacoLocations(monaco, [part.location])
+      : [];
+
+    return {
+      label: part.label,
+      ...(location ? { location } : {}),
+      ...(part.tooltip ? { tooltip: part.tooltip } : {}),
+    };
+  });
 }
 
 function monacoInlayHintKindFromLspKind(
