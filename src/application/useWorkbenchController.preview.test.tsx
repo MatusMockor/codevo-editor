@@ -877,6 +877,92 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
   });
 
+  it("shows JavaScript and TypeScript diagnostics in Problems and opens the diagnostic range", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 52,
+    };
+    const path = "/workspace/src/App.ts";
+    const uri = fileUriFromPath(path);
+    const readTextFile = vi.fn(async (requestedPath: string) =>
+      requestedPath === path ? "const count: string = 1;\n" : "",
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 6,
+            endCharacter: 11,
+            endLine: 0,
+            line: 0,
+            message: "Type 'number' is not assignable to type 'string'.",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 52,
+        uri,
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    const notice = getWorkbench().notices.find(
+      (candidate) => candidate.source === "tsserver",
+    );
+    expect(notice).toEqual(
+      expect.objectContaining({
+        message: `${uri} 1:7 Type 'number' is not assignable to type 'string'.`,
+        navigationTarget: {
+          path,
+          range: {
+            end: { column: 12, lineNumber: 1 },
+            start: { column: 7, lineNumber: 1 },
+          },
+        },
+        severity: "error",
+        source: "tsserver",
+      }),
+    );
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+
+    await act(async () => {
+      await getWorkbench().openProblemNotice(notice!);
+    });
+
+    expect(readTextFile).toHaveBeenCalledWith(path);
+    expect(getWorkbench().activePath).toBe(path);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path,
+      position: { column: 7, lineNumber: 1 },
+    });
+  });
+
   it("clears only the closed project's JavaScript and TypeScript runtime state", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)

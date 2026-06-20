@@ -1950,13 +1950,27 @@ button {
 
 .problem-row {
   display: grid;
+  width: 100%;
   min-height: 34px;
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   color: var(--color-text);
   padding: 4px 6px;
+  text-align: left;
+}
+
+button.problem-row {
+  cursor: pointer;
+}
+
+button.problem-row:hover,
+button.problem-row:focus-visible {
+  background: var(--color-control);
+  outline: none;
 }
 
 .problem-row.error {

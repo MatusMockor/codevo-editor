@@ -8,6 +8,7 @@ import {
   createWorkbenchNotice,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
+  type WorkbenchNoticeNavigationTarget,
 } from "./workbenchNotice";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { CallHierarchyRow, CallHierarchyView } from "../domain/callHierarchy";
@@ -961,6 +962,7 @@ export function useWorkbenchController(
             diagnostic.source || "Language Server",
             languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
             groupKey,
+            diagnosticNoticeNavigationTarget(event.uri, diagnostic),
           ),
         );
 
@@ -1041,6 +1043,7 @@ export function useWorkbenchController(
           diagnostic.source || "TypeScript",
           languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
           groupKey,
+          diagnosticNoticeNavigationTarget(event.uri, diagnostic),
         ),
       );
 
@@ -4867,6 +4870,23 @@ export function useWorkbenchController(
       return true;
     },
     [openPathForNavigation, recordCurrentNavigationLocation],
+  );
+
+  const openProblemNotice = useCallback(
+    async (notice: WorkbenchNotice) => {
+      const target = notice.navigationTarget;
+
+      if (!target) {
+        return false;
+      }
+
+      return openNavigationTarget(
+        target.path,
+        target.range.start,
+        "problem",
+      );
+    },
+    [openNavigationTarget],
   );
 
   const readNavigationFileContent = useCallback(
@@ -12038,6 +12058,7 @@ export function useWorkbenchController(
     openGitChange,
     openFileStructure,
     openImplementationTarget,
+    openProblemNotice,
     openPhpFileOutlineNode,
     openClassSearchResult,
     openPinnedFile,
@@ -12321,6 +12342,31 @@ function uniqueProjectSymbols(
 
 function javaScriptTypeScriptDiagnosticNoticeGroup(uri: string): string {
   return `javascript-typescript-diagnostics:${uri}`;
+}
+
+function diagnosticNoticeNavigationTarget(
+  uri: string,
+  diagnostic: LanguageServerDiagnostic,
+): WorkbenchNoticeNavigationTarget | undefined {
+  const path = pathFromLanguageServerUri(uri);
+
+  if (!path) {
+    return undefined;
+  }
+
+  return {
+    path,
+    range: {
+      end: {
+        column: (diagnostic.endCharacter ?? diagnostic.character) + 1,
+        lineNumber: (diagnostic.endLine ?? diagnostic.line) + 1,
+      },
+      start: {
+        column: diagnostic.character + 1,
+        lineNumber: diagnostic.line + 1,
+      },
+    },
+  };
 }
 
 function identifierAtEditorPosition(

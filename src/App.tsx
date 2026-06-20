@@ -721,6 +721,7 @@ function App() {
             onClearProblems={workbench.clearNotices}
             onClose={workbench.hideBottomPanel}
             onHardReindex={workbench.startHardReindex}
+            onOpenProblem={workbench.openProblemNotice}
             onPhpReindex={workbench.startPhpReindex}
             onResizeStart={startBottomPanelResize}
             onSelectView={workbench.showBottomPanelView}

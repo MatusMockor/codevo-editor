@@ -23,6 +23,7 @@ interface BottomPanelProps {
   onClearProblems(): void;
   onClose(): void;
   onHardReindex(): void;
+  onOpenProblem(notice: WorkbenchNotice): void;
   onPhpReindex(): void;
   onResizeStart(event: PointerEvent<HTMLDivElement>): void;
   onSelectView(view: BottomPanelView): void;
@@ -49,6 +50,7 @@ export function BottomPanel({
   onClearProblems,
   onClose,
   onHardReindex,
+  onOpenProblem,
   onPhpReindex,
   onResizeStart,
   onSelectView,
@@ -120,6 +122,7 @@ export function BottomPanel({
     indexProgress,
     notices,
     onHardReindex,
+    onOpenProblem,
     onPhpReindex,
     onSoftReindex,
     workspaceRoot,
@@ -234,6 +237,7 @@ interface RenderActivePanelOptions {
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
   onHardReindex(): void;
+  onOpenProblem(notice: WorkbenchNotice): void;
   onPhpReindex(): void;
   onSoftReindex(): void;
   workspaceRoot: string | null;
@@ -245,12 +249,19 @@ function renderActivePanel({
   indexProgress,
   notices,
   onHardReindex,
+  onOpenProblem,
   onPhpReindex,
   onSoftReindex,
   workspaceRoot,
 }: RenderActivePanelOptions) {
   if (activeView === "problems") {
-    return <ProblemsPanel isActive notices={notices} />;
+    return (
+      <ProblemsPanel
+        isActive
+        notices={notices}
+        onOpenNotice={onOpenProblem}
+      />
+    );
   }
 
   if (activeView === "index") {
