@@ -820,7 +820,7 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
-  it("clears JavaScript and TypeScript diagnostics when switching project tabs", async () => {
+  it("restores cached JavaScript and TypeScript diagnostics when switching project tabs", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)
       | null = null;
@@ -875,6 +875,97 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns(24);
 
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+  });
+
+  it("caches JavaScript and TypeScript diagnostics for background project tabs", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 301)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async (rootPath) => runningStatus(rootPath, 303)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const workspaceAPath = "/workspace-a/src/App.ts";
+    const workspaceBPath = "/workspace-b/src/App.ts";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-b", 302));
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Workspace B type mismatch",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace-b",
+        sessionId: 302,
+        uri: fileUriFromPath(workspaceBPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceAPath],
+    ).toBeUndefined();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceBPath],
+    ).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceBPath],
+    ).toHaveLength(1);
   });
 
   it("shows JavaScript and TypeScript diagnostics in Problems and opens the diagnostic range", async () => {

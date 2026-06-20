@@ -589,6 +589,9 @@ export function useWorkbenchController(
   const javaScriptTypeScriptRuntimeStatusByRootRef = useRef<
     Record<string, LanguageServerRuntimeStatus>
   >({});
+  const javaScriptTypeScriptDiagnosticsByRootRef = useRef<
+    Record<string, Record<string, LanguageServerDiagnostic[]>>
+  >({});
   const javaScriptTypeScriptLanguageServerRuntimeStatusRef =
     useRef<LanguageServerRuntimeStatus | null>(null);
   const javaScriptTypeScriptLanguageServerRuntimeStatusRootRef =
@@ -911,6 +914,62 @@ export function useWorkbenchController(
     );
   }, []);
 
+  const restoreJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
+    (rootPath: string | null | undefined) => {
+      const rootKey = normalizedWorkspaceRootKey(rootPath);
+      const cachedDiagnostics = rootKey
+        ? javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey] ?? {}
+        : {};
+      setJavaScriptTypeScriptDiagnosticsByPath({ ...cachedDiagnostics });
+    },
+    [],
+  );
+
+  const updateJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
+    (
+      rootPath: string,
+      diagnosticPath: string,
+      diagnostics: LanguageServerDiagnostic[],
+    ) => {
+      const rootKey = normalizedWorkspaceRootKey(rootPath);
+      const currentByPath =
+        javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey] ?? {};
+      const nextByPath = { ...currentByPath };
+
+      if (diagnostics.length > 0) {
+        nextByPath[diagnosticPath] = diagnostics;
+      } else {
+        delete nextByPath[diagnosticPath];
+      }
+
+      if (Object.keys(nextByPath).length > 0) {
+        javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey] = nextByPath;
+      } else {
+        delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
+      }
+
+      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        setJavaScriptTypeScriptDiagnosticsByPath(nextByPath);
+      }
+    },
+    [],
+  );
+
+  const clearJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
+    (rootPath: string | null | undefined) => {
+      const rootKey = normalizedWorkspaceRootKey(rootPath);
+
+      if (rootKey) {
+        delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
+      }
+
+      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        clearJavaScriptTypeScriptLanguageServerDiagnostics();
+      }
+    },
+    [clearJavaScriptTypeScriptLanguageServerDiagnostics],
+  );
+
   const applyLanguageServerDiagnostics = useCallback(
     (event: LanguageServerDiagnosticEvent) => {
       if (
@@ -1000,25 +1059,33 @@ export function useWorkbenchController(
 
   const applyJavaScriptTypeScriptLanguageServerDiagnostics = useCallback(
     (event: LanguageServerDiagnosticEvent) => {
+      const diagnosticsRootPath =
+        event.rootPath ?? currentWorkspaceRootRef.current;
+
+      if (!diagnosticsRootPath) {
+        return;
+      }
+
       if (
-        event.rootPath &&
-        currentWorkspaceRootRef.current &&
-        !workspaceRootKeysEqual(event.rootPath, currentWorkspaceRootRef.current)
+        !workspaceRootKeysEqual(diagnosticsRootPath, currentWorkspaceRootRef.current) &&
+        !appSettingsRef.current.workspaceTabs.some((tabPath) =>
+          workspaceRootKeysEqual(tabPath, diagnosticsRootPath),
+        )
       ) {
         return;
       }
 
+      const runtimeStatus = cachedLanguageServerRuntimeStatusForRoot(
+        javaScriptTypeScriptRuntimeStatusByRootRef.current,
+        diagnosticsRootPath,
+      );
       const currentSessionId =
-        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running"
-          ? javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId
-          : null;
+        runtimeStatus?.kind === "running" ? runtimeStatus.sessionId : null;
 
       if (event.sessionId !== currentSessionId) {
         return;
       }
 
-      const diagnosticsRootPath =
-        event.rootPath ?? currentWorkspaceRootRef.current;
       const currentVersion = diagnosticsRootPath
         ? javaScriptTypeScriptDocumentVersionsByUriRef.current[
             languageServerUriSyncKey(diagnosticsRootPath, event.uri)
@@ -1037,18 +1104,24 @@ export function useWorkbenchController(
 
       const groupKey = javaScriptTypeScriptDiagnosticNoticeGroup(event.uri);
       const diagnosticPath = pathFromLanguageServerUri(event.uri);
+      const isActiveRoot = workspaceRootKeysEqual(
+        currentWorkspaceRootRef.current,
+        diagnosticsRootPath,
+      );
 
       if (!workspaceSettingsRef.current.javaScriptTypeScriptValidation) {
-        setNotices((current) =>
-          replaceWorkbenchNoticeGroup(current, groupKey, []),
-        );
+        if (isActiveRoot) {
+          setNotices((current) =>
+            replaceWorkbenchNoticeGroup(current, groupKey, []),
+          );
+        }
 
         if (diagnosticPath) {
-          setJavaScriptTypeScriptDiagnosticsByPath((current) => {
-            const next = { ...current };
-            delete next[diagnosticPath];
-            return next;
-          });
+          updateJavaScriptTypeScriptDiagnosticsForRoot(
+            diagnosticsRootPath,
+            diagnosticPath,
+            [],
+          );
         }
 
         return;
@@ -1064,18 +1137,21 @@ export function useWorkbenchController(
         ),
       );
 
-      setNotices((current) =>
-        replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
-      );
+      if (isActiveRoot) {
+        setNotices((current) =>
+          replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+        );
+      }
 
       if (diagnosticPath) {
-        setJavaScriptTypeScriptDiagnosticsByPath((current) => ({
-          ...current,
-          [diagnosticPath]: event.diagnostics,
-        }));
+        updateJavaScriptTypeScriptDiagnosticsForRoot(
+          diagnosticsRootPath,
+          diagnosticPath,
+          event.diagnostics,
+        );
       }
     },
-    [javaScriptTypeScriptLanguageServerRuntimeStatus],
+    [updateJavaScriptTypeScriptDiagnosticsForRoot],
   );
 
   const refreshLanguageServerPlan = useCallback(
@@ -1268,6 +1344,10 @@ export function useWorkbenchController(
         currentWorkspaceRootRef.current &&
         !workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)
       ) {
+        if (status.kind !== "running") {
+          clearJavaScriptTypeScriptDiagnosticsForRoot(statusRootPath);
+        }
+
         return;
       }
 
@@ -1280,7 +1360,7 @@ export function useWorkbenchController(
       );
 
       if (status.kind !== "running") {
-        clearJavaScriptTypeScriptLanguageServerDiagnostics();
+        clearJavaScriptTypeScriptDiagnosticsForRoot(statusRootPath);
       }
 
       if (!crash) {
@@ -1291,7 +1371,7 @@ export function useWorkbenchController(
     },
     [
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
-      clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      clearJavaScriptTypeScriptDiagnosticsForRoot,
       cleanupCrashedJavaScriptTypeScriptLanguageServerRuntime,
       isOpenWorkspaceRuntimeRoot,
       reportError,
@@ -1587,11 +1667,11 @@ export function useWorkbenchController(
           targetRootPath,
           status,
         );
+      clearJavaScriptTypeScriptDiagnosticsForRoot(targetRootPath);
 
       if (workspaceRootKeysEqual(targetRootPath, currentWorkspaceRootRef.current)) {
         setJavaScriptTypeScriptLanguageServerRuntimeStatus(rootedStatus);
         setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(targetRootPath);
-        clearJavaScriptTypeScriptLanguageServerDiagnostics();
         resetJavaScriptTypeScriptLanguageServerDocuments();
       }
 
@@ -1606,7 +1686,7 @@ export function useWorkbenchController(
     }
   }, [
     cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
-    clearJavaScriptTypeScriptLanguageServerDiagnostics,
+    clearJavaScriptTypeScriptDiagnosticsForRoot,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     reportErrorForActiveWorkspaceRoot,
     resetJavaScriptTypeScriptLanguageServerDocuments,
@@ -1641,6 +1721,7 @@ export function useWorkbenchController(
         targetRootPath,
         stoppedStatus,
       );
+      clearJavaScriptTypeScriptDiagnosticsForRoot(targetRootPath);
 
       if (!workspaceRootKeysEqual(targetRootPath, currentWorkspaceRootRef.current)) {
         return;
@@ -1652,14 +1733,13 @@ export function useWorkbenchController(
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(targetRootPath);
       lastLanguageServerCrashRef.current = null;
       clearLanguageServerDiagnostics();
-      clearJavaScriptTypeScriptLanguageServerDiagnostics();
       resetLanguageServerDocuments();
       resetJavaScriptTypeScriptLanguageServerDocuments();
     },
     [
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
       cachePhpLanguageServerRuntimeStatus,
-      clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      clearJavaScriptTypeScriptDiagnosticsForRoot,
       clearLanguageServerDiagnostics,
       reportError,
       resetJavaScriptTypeScriptLanguageServerDocuments,
@@ -1803,6 +1883,7 @@ export function useWorkbenchController(
     workspaceStateCacheRef.current = {};
     languageServerRuntimeStatusByRootRef.current = {};
     javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
+    javaScriptTypeScriptDiagnosticsByRootRef.current = {};
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -2455,6 +2536,7 @@ export function useWorkbenchController(
 
       setWorkspaceRoot(path);
       currentWorkspaceRootRef.current = path;
+      restoreJavaScriptTypeScriptDiagnosticsForRoot(path);
 
       if (cachedWorkspaceState) {
         restoreCachedWorkspaceState(cachedWorkspaceState);
@@ -2651,6 +2733,7 @@ export function useWorkbenchController(
       refreshLanguageServerPlan,
       reportError,
       restoreCachedWorkspaceState,
+      restoreJavaScriptTypeScriptDiagnosticsForRoot,
       restoreWorkspaceSession,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
@@ -11483,10 +11566,10 @@ export function useWorkbenchController(
       return;
     }
 
-    clearJavaScriptTypeScriptLanguageServerDiagnostics();
+    clearJavaScriptTypeScriptDiagnosticsForRoot(workspaceRoot);
     resetJavaScriptTypeScriptLanguageServerDocuments();
   }, [
-    clearJavaScriptTypeScriptLanguageServerDiagnostics,
+    clearJavaScriptTypeScriptDiagnosticsForRoot,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     resetJavaScriptTypeScriptLanguageServerDocuments,
     stopJavaScriptTypeScriptLanguageServerRuntime,
@@ -11499,10 +11582,11 @@ export function useWorkbenchController(
       return;
     }
 
-    clearJavaScriptTypeScriptLanguageServerDiagnostics();
+    clearJavaScriptTypeScriptDiagnosticsForRoot(workspaceRoot);
   }, [
-    clearJavaScriptTypeScriptLanguageServerDiagnostics,
+    clearJavaScriptTypeScriptDiagnosticsForRoot,
     workspaceSettings.javaScriptTypeScriptValidation,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
