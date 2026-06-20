@@ -2460,4 +2460,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending.
+- Committed and pushed as `3089a697 Infer Laravel soft delete create restore models`.
