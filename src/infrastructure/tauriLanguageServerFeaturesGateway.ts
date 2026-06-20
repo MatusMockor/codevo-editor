@@ -65,6 +65,7 @@ const DEFAULT_FEATURE_COMMANDS = {
   hover: "text_document_hover",
   incomingCalls: "text_document_incoming_calls",
   implementation: "text_document_implementation",
+  inlayHintResolve: "text_document_inlay_hint_resolve",
   inlayHints: "text_document_inlay_hints",
   linkedEditingRanges: "text_document_linked_editing_ranges",
   onTypeFormatting: "text_document_on_type_formatting",
@@ -108,6 +109,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   hover: "javascript_typescript_text_document_hover",
   incomingCalls: "javascript_typescript_text_document_incoming_calls",
   implementation: "javascript_typescript_text_document_implementation",
+  inlayHintResolve: "javascript_typescript_text_document_inlay_hint_resolve",
   inlayHints: "javascript_typescript_text_document_inlay_hints",
   linkedEditingRanges:
     "javascript_typescript_text_document_linked_editing_ranges",
@@ -154,6 +156,7 @@ export interface TauriLanguageServerFeatureCommands {
   hover: string;
   incomingCalls: string;
   implementation: string;
+  inlayHintResolve: string;
   inlayHints: string;
   linkedEditingRanges: string;
   onTypeFormatting: string;
@@ -251,6 +254,17 @@ export class TauriLanguageServerFeaturesGateway
       this.commands.inlayHints,
       { path, range, rootPath },
       [],
+    );
+  }
+
+  resolveInlayHint(
+    rootPath: string,
+    hint: LanguageServerInlayHint,
+  ): Promise<LanguageServerInlayHint> {
+    return this.invokeWhenAvailable(
+      this.commands.inlayHintResolve,
+      { hint, rootPath },
+      hint,
     );
   }
 

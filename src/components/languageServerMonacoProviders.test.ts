@@ -2020,6 +2020,7 @@ function featuresGateway(
     incomingCalls: vi.fn(async () => []),
     implementation: vi.fn(async () => []),
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
+    resolveInlayHint: vi.fn(async (_rootPath, hint) => hint),
     linkedEditingRanges: vi.fn(async () => null),
     onTypeFormatting: vi.fn(async () => []),
     outgoingCalls: vi.fn(async () => []),

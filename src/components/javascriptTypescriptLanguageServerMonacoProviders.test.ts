@@ -1260,6 +1260,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       ],
       inlayHints: [
         {
+          data: { hintId: 1 },
           kind: 1,
           label: ": Account",
           paddingLeft: true,
@@ -1294,6 +1295,18 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           tooltip: null,
         },
       ],
+      resolvedInlayHint: {
+        data: { hintId: 1 },
+        kind: 1,
+        label: ": Account",
+        paddingLeft: true,
+        paddingRight: false,
+        position: {
+          character: 10,
+          line: 0,
+        },
+        tooltip: "Resolved inferred type",
+      },
       prepareRename: {
         defaultBehavior: false,
         placeholder: "user",
@@ -1687,6 +1700,21 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
       ],
     });
+    const resolvedHint = await inlayHintsProvider.resolveInlayHint(hints.hints[0]);
+
+    expect(gateway.resolveInlayHint).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({
+        data: { hintId: 1 },
+        label: ": Account",
+      }),
+    );
+    expect(resolvedHint).toEqual(
+      expect.objectContaining({
+        label: ": Account",
+        tooltip: "Resolved inferred type",
+      }),
+    );
 
     const signatureProvider = (monaco.languages.registerSignatureHelpProvider as any)
       .mock.calls[0][1];
@@ -2739,6 +2767,20 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           tooltip: "Open user module",
         },
       ],
+      inlayHints: [
+        {
+          data: { hintId: 1 },
+          kind: 1,
+          label: ": Account",
+          paddingLeft: true,
+          paddingRight: false,
+          position: {
+            character: 10,
+            line: 0,
+          },
+          tooltip: "Inferred type",
+        },
+      ],
     });
     const context = providerContext({
       featuresGateway: gateway,
@@ -2757,6 +2799,9 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ).mock.calls[0][1];
     const codeLensProvider = (monaco.languages.registerCodeLensProvider as any)
       .mock.calls[0][1];
+    const inlayHintsProvider = (
+      monaco.languages.registerInlayHintsProvider as any
+    ).mock.calls[0][1];
     const completion = await completionProvider.provideCompletionItems(
       model,
       position,
@@ -2771,6 +2816,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       },
     );
     const lenses = await codeLensProvider.provideCodeLenses(model);
+    const hints = await inlayHintsProvider.provideInlayHints(
+      model,
+      new monaco.Range(1, 1, 1, 20),
+    );
 
     activeRoot = "/other";
 
@@ -2778,6 +2827,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     await linkProvider.resolveLink(links.links[0]);
     await codeActionProvider.resolveCodeAction(actions.actions[0]);
     await codeLensProvider.resolveCodeLens(model, lenses.lenses[0]);
+    await inlayHintsProvider.resolveInlayHint(hints.hints[0]);
     const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
     await commandDescriptor.run(null, actions.actions[0].command.arguments[0]);
 
@@ -2785,6 +2835,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.resolveDocumentLink).not.toHaveBeenCalled();
     expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
     expect(gateway.resolveCodeLens).not.toHaveBeenCalled();
+    expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
     expect(gateway.executeCommand).not.toHaveBeenCalled();
   });
 
@@ -3158,6 +3209,9 @@ function featuresGateway(
     resolvedDocumentLink: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveDocumentLink"]>
     >;
+    resolvedInlayHint: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["resolveInlayHint"]>
+    >;
   }> = {},
 ): LanguageServerFeaturesGateway {
   return {
@@ -3216,6 +3270,9 @@ function featuresGateway(
     ),
     resolveDocumentLink: vi.fn(
       async (_rootPath, link) => responses.resolvedDocumentLink ?? link,
+    ),
+    resolveInlayHint: vi.fn(
+      async (_rootPath, hint) => responses.resolvedInlayHint ?? hint,
     ),
   };
 }

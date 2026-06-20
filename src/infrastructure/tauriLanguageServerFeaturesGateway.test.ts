@@ -50,6 +50,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       gateway.inlayHints("/project", "/project/src/User.php", range()),
     ).resolves.toEqual([]);
     await expect(
+      gateway.resolveInlayHint("/project", inlayHint()),
+    ).resolves.toEqual(inlayHint());
+    await expect(
       gateway.signatureHelp("/project", position()),
     ).resolves.toBeNull();
     await expect(
@@ -456,6 +459,13 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         return inlayHints;
       }
 
+      if (command === "text_document_inlay_hint_resolve") {
+        return {
+          ...inlayHints[0],
+          tooltip: "Resolved inferred type",
+        };
+      }
+
       if (command === "text_document_document_symbols") {
         return documentSymbols;
       }
@@ -657,6 +667,12 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.inlayHints("/project", "/project/src/User.php", range()),
     ).resolves.toEqual(inlayHints);
+    await expect(
+      gateway.resolveInlayHint("/project", inlayHints[0]),
+    ).resolves.toEqual({
+      ...inlayHints[0],
+      tooltip: "Resolved inferred type",
+    });
     await expect(
       gateway.signatureHelp("/project", requestPosition),
     ).resolves.toEqual(signatureHelp);
@@ -871,6 +887,13 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       range: range(),
       rootPath: "/project",
     });
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "text_document_inlay_hint_resolve",
+      {
+        hint: inlayHints[0],
+        rootPath: "/project",
+      },
+    );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_signature_help", {
       position: requestPosition,
       rootPath: "/project",
@@ -921,6 +944,18 @@ function codeLens() {
     command: null,
     data: { kind: "references" },
     range: range(),
+  };
+}
+
+function inlayHint() {
+  return {
+    data: { hintId: 1 },
+    kind: 1,
+    label: ": User",
+    paddingLeft: true,
+    paddingRight: false,
+    position: { character: 8, line: 10 },
+    tooltip: "Inferred type",
   };
 }
 

@@ -106,6 +106,11 @@ interface LanguageServerBackedLink extends Monaco.languages.ILink {
   __workspaceRoot?: string;
 }
 
+interface LanguageServerBackedInlayHint extends Monaco.languages.InlayHint {
+  __languageServerInlayHint?: LanguageServerInlayHint;
+  __workspaceRoot?: string;
+}
+
 interface ExecuteCommandPayload {
   command?: LanguageServerCodeActionCommand | null;
   edit?: LanguageServerWorkspaceEdit | null;
@@ -526,6 +531,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           onDidChangeInlayHints: inlayHintRefreshEmitter.event,
           provideInlayHints: (model, range) =>
             provideInlayHints(monaco, context, model, range),
+          resolveInlayHint: (hint) => resolveInlayHint(monaco, context, hint),
         }),
       );
     }
@@ -1631,12 +1637,46 @@ async function provideInlayHints(
     }
 
     return {
-      hints: hints.map((hint) => toMonacoInlayHint(monaco, hint)),
+      hints: hints.map((hint) =>
+        toMonacoInlayHint(monaco, hint, request.rootPath),
+      ),
       dispose: () => undefined,
     };
   } catch (error) {
     reportErrorForActiveRoot(context, request.rootPath, error);
     return emptyInlayHintList();
+  }
+}
+
+async function resolveInlayHint(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  hint: Monaco.languages.InlayHint,
+): Promise<Monaco.languages.InlayHint> {
+  const backedHint = hint as LanguageServerBackedInlayHint;
+
+  if (
+    !backedHint.__languageServerInlayHint ||
+    !backedHint.__workspaceRoot ||
+    !isStoredWorkspaceRootActive(context, backedHint.__workspaceRoot)
+  ) {
+    return hint;
+  }
+
+  try {
+    const resolvedHint = await context.featuresGateway.resolveInlayHint(
+      backedHint.__workspaceRoot,
+      backedHint.__languageServerInlayHint,
+    );
+
+    if (!isStoredWorkspaceRootActive(context, backedHint.__workspaceRoot)) {
+      return hint;
+    }
+
+    return toMonacoInlayHint(monaco, resolvedHint, backedHint.__workspaceRoot);
+  } catch (error) {
+    reportErrorForActiveRoot(context, backedHint.__workspaceRoot, error);
+    return hint;
   }
 }
 
@@ -2540,8 +2580,9 @@ function toMonacoParameterInformation(
 function toMonacoInlayHint(
   monaco: MonacoApi,
   hint: LanguageServerInlayHint,
+  rootPath: string,
 ): Monaco.languages.InlayHint {
-  return {
+  const monacoHint: Monaco.languages.InlayHint = {
     kind: monacoInlayHintKindFromLspKind(monaco, hint.kind),
     label: toMonacoInlayHintLabel(monaco, hint.label),
     paddingLeft: hint.paddingLeft,
@@ -2552,6 +2593,17 @@ function toMonacoInlayHint(
     },
     tooltip: hint.tooltip || undefined,
   };
+
+  Object.defineProperties(monacoHint, {
+    __languageServerInlayHint: {
+      value: hint,
+    },
+    __workspaceRoot: {
+      value: rootPath,
+    },
+  });
+
+  return monacoHint;
 }
 
 function toMonacoInlayHintLabel(

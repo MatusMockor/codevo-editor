@@ -609,3 +609,76 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `src/domain/languageServerFeatures.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Inlay Hint Resolve
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3a113dc Refresh JS TS semantic tokens on server request`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Why This Slice
+
+- Monaco supports `resolveInlayHint`.
+- TypeScript can use LSP `inlayHint/resolve` to lazily provide tooltip and label-part metadata.
+- We now preserve structured inlay label parts, so resolving hints closes another VS Code-like fidelity gap.
+
+### Implementation Choice
+
+- Preserve LSP inlay hint `data` payload so resolve requests can round-trip server-owned metadata.
+- Advertise only the resolve properties we map safely: `tooltip`, `label.tooltip`, and `label.location`.
+- Do not expose label-part commands or inlay text edits in this slice.
+- Keep provider resolve guarded by active workspace/session root, matching CodeLens resolve behavior.
+
+### Acceptance Criteria
+
+- JS/TS initialize capabilities advertise inlay hint resolve support properties.
+- Rust can serialize `inlayHint/resolve` and parse the resolved hint.
+- Tauri feature gateway exposes `resolveInlayHint`.
+- JS/TS Monaco provider resolves backed inlay hints and ignores stale workspace hints.
+- Focused Rust, gateway, and provider tests pass.
+
+### Completed Slice: JS/TS Inlay Hint Resolve
+
+- JS/TS initialize capabilities now advertise safe inlay hint resolve properties:
+  - `tooltip`
+  - `label.tooltip`
+  - `label.location`
+- Rust now preserves inlay hint `data`, serializes `inlayHint/resolve`, converts app label parts back to LSP `value` parts, and parses resolved hints.
+- Tauri feature gateway now exposes `resolveInlayHint` for PHP and JS/TS command sets.
+- JS/TS Monaco inlay provider now implements `resolveInlayHint` with active workspace guards and non-enumerable backing metadata.
+- Label-part commands and inlay text edits remain intentionally unwired for a separate guarded design.
+
+### Verification: JS/TS Inlay Hint Resolve
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml inlay_hint_resolve_request_serializes_hint_data --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml parses_inlay_hints_with_string_and_part_labels --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "maps references, rename edits"`
+- PASS: `npm test -- src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts src/components/languageServerMonacoProviders.test.ts src/components/EditorSurface.test.tsx`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: JS/TS Inlay Hint Resolve
+
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/lsp.rs`
+  - `src-tauri/src/lsp_features.rs`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `src/domain/languageServerFeatures.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.ts`
+  - `src/infrastructure/tauriLanguageServerFeaturesGateway.test.ts`
+  - `src/components/languageServerMonacoProviders.test.ts`
+  - `src/components/EditorSurface.test.tsx`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

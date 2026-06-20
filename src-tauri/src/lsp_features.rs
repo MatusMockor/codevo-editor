@@ -363,9 +363,11 @@ pub struct LanguageServerCompletionList {
     pub items: Vec<LanguageServerCompletionItem>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerInlayHint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
     pub kind: Option<u32>,
     pub label: LanguageServerInlayHintLabel,
     pub padding_left: bool,
@@ -374,14 +376,14 @@ pub struct LanguageServerInlayHint {
     pub tooltip: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum LanguageServerInlayHintLabel {
     Text(String),
     Parts(Vec<LanguageServerInlayHintLabelPart>),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerInlayHintLabelPart {
     pub label: String,
@@ -538,6 +540,7 @@ pub trait TextDocumentFeatureRequestFactory {
         formatting: &TextDocumentRangeFormatting,
     ) -> LanguageServerFeatureRequest;
     fn inlay_hints(&self, range: &TextDocumentInlayHintRange) -> LanguageServerFeatureRequest;
+    fn resolve_inlay_hint(&self, hint: &LanguageServerInlayHint) -> LanguageServerFeatureRequest;
     fn resolve_code_action(
         &self,
         action: &LanguageServerCodeAction,
@@ -807,6 +810,13 @@ impl TextDocumentFeatureRequestFactory for LspTextDocumentFeatureRequestFactory 
         }
     }
 
+    fn resolve_inlay_hint(&self, hint: &LanguageServerInlayHint) -> LanguageServerFeatureRequest {
+        LanguageServerFeatureRequest {
+            method: "inlayHint/resolve".to_string(),
+            params: inlay_hint_to_lsp_value(hint),
+        }
+    }
+
     fn resolve_code_action(
         &self,
         action: &LanguageServerCodeAction,
@@ -1026,6 +1036,10 @@ pub fn parse_inlay_hints_result(value: &Value) -> Result<Vec<LanguageServerInlay
     };
 
     items.iter().map(parse_inlay_hint_item).collect()
+}
+
+pub fn parse_inlay_hint_result(value: &Value) -> Result<LanguageServerInlayHint, String> {
+    parse_inlay_hint_item(value)
 }
 
 pub fn parse_document_symbols_result(
@@ -1677,6 +1691,7 @@ fn parse_inlay_hint_item(value: &Value) -> Result<LanguageServerInlayHint, Strin
         .ok_or_else(|| "Language server returned a malformed inlay hint label.".to_string())?;
 
     Ok(LanguageServerInlayHint {
+        data: value.get("data").cloned(),
         kind: value
             .get("kind")
             .and_then(Value::as_u64)
@@ -1721,6 +1736,25 @@ fn parse_inlay_hint_label_part(value: &Value) -> Option<LanguageServerInlayHintL
             .get("location")
             .and_then(|location| serde_json::from_value(location.clone()).ok()),
     })
+}
+
+fn inlay_hint_to_lsp_value(hint: &LanguageServerInlayHint) -> Value {
+    let mut value = serde_json::to_value(hint).unwrap_or(Value::Null);
+
+    if let Some(parts) = value.get_mut("label").and_then(Value::as_array_mut) {
+        for part in parts {
+            let Some(part_object) = part.as_object_mut() else {
+                continue;
+            };
+            let Some(label) = part_object.remove("label") else {
+                continue;
+            };
+
+            part_object.insert("value".to_string(), label);
+        }
+    }
+
+    value
 }
 
 fn parse_document_symbol_item(value: &Value) -> Option<LanguageServerDocumentSymbol> {
@@ -2017,25 +2051,26 @@ mod tests {
         parse_call_hierarchy_items_result, parse_code_action_result, parse_completion_result,
         parse_definition_result, parse_document_highlights_result, parse_document_links_result,
         parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
-        parse_hover_result, parse_incoming_calls_result, parse_inlay_hints_result,
-        parse_optional_workspace_edit_result, parse_outgoing_calls_result,
-        parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
-        parse_signature_help_result, parse_type_hierarchy_items_result,
-        parse_workspace_edit_result, parse_workspace_symbols_result,
-        LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
-        LanguageServerCodeActionContext, LanguageServerCodeActionDiagnostic,
-        LanguageServerCodeLens, LanguageServerCompletionContext, LanguageServerCompletionItem,
+        parse_hover_result, parse_incoming_calls_result, parse_inlay_hint_result,
+        parse_inlay_hints_result, parse_optional_workspace_edit_result,
+        parse_outgoing_calls_result, parse_prepare_rename_result, parse_selection_ranges_result,
+        parse_semantic_tokens_result, parse_signature_help_result,
+        parse_type_hierarchy_items_result, parse_workspace_edit_result,
+        parse_workspace_symbols_result, LanguageServerCallHierarchyItem, LanguageServerCodeAction,
+        LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
+        LanguageServerCodeActionDiagnostic, LanguageServerCodeLens,
+        LanguageServerCompletionContext, LanguageServerCompletionItem,
         LanguageServerCompletionItemLabelDetails, LanguageServerCompletionList,
         LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
-        LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInlayHintLabel,
-        LanguageServerInlayHintLabelPart, LanguageServerLocation, LanguageServerPosition,
-        LanguageServerRange, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
-        LanguageServerWorkspaceFileOperation, LspTextDocumentFeatureRequestFactory,
-        TextDocumentCompletion, TextDocumentFeatureRequestFactory, TextDocumentFormatting,
-        TextDocumentInlayHintRange, TextDocumentOnTypeFormatting, TextDocumentPosition,
-        TextDocumentRange, TextDocumentRangeFormatting, TextDocumentRename,
-        TextDocumentSelectionRange, WorkspaceFileChange, WorkspaceFileChangeType,
-        WorkspaceFileRename,
+        LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInlayHint,
+        LanguageServerInlayHintLabel, LanguageServerInlayHintLabelPart, LanguageServerLocation,
+        LanguageServerPosition, LanguageServerRange, LanguageServerTextEdit,
+        LanguageServerTypeHierarchyItem, LanguageServerWorkspaceFileOperation,
+        LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
+        TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
+        TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
+        TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
+        WorkspaceFileChange, WorkspaceFileChangeType, WorkspaceFileRename,
     };
     use serde_json::json;
 
@@ -2409,6 +2444,35 @@ mod tests {
             .expect("uri")
             .starts_with("file://"));
         assert_eq!(request.params["range"], json!(range));
+    }
+
+    #[test]
+    fn inlay_hint_resolve_request_serializes_hint_data() {
+        let factory = LspTextDocumentFeatureRequestFactory;
+        let hint = LanguageServerInlayHint {
+            data: Some(json!({ "hintId": 7 })),
+            kind: Some(1),
+            label: LanguageServerInlayHintLabel::Parts(vec![LanguageServerInlayHintLabelPart {
+                label: "user".to_string(),
+                tooltip: Some("User symbol".to_string()),
+                location: None,
+            }]),
+            padding_left: true,
+            padding_right: false,
+            position: LanguageServerPosition {
+                line: 2,
+                character: 4,
+            },
+            tooltip: None,
+        };
+        let request = factory.resolve_inlay_hint(&hint);
+
+        assert_eq!(request.method, "inlayHint/resolve");
+        assert_eq!(request.params["data"], json!({ "hintId": 7 }));
+        assert_eq!(request.params["label"][0]["value"], "user");
+        assert_eq!(request.params["label"][0]["tooltip"], "User symbol");
+        assert!(request.params["label"][0].get("label").is_none());
+        assert_eq!(request.params["position"]["line"], 2);
     }
 
     #[test]
@@ -3270,6 +3334,7 @@ mod tests {
                 "position": { "line": 2, "character": 10 },
                 "label": ": User",
                 "kind": 1,
+                "data": { "hintId": 1 },
                 "paddingLeft": true,
                 "tooltip": { "kind": "markdown", "value": "Inferred type" }
             },
@@ -3300,6 +3365,7 @@ mod tests {
             hints[0].label,
             LanguageServerInlayHintLabel::Text(": User".to_string())
         );
+        assert_eq!(hints[0].data, Some(json!({ "hintId": 1 })));
         assert_eq!(hints[0].kind, Some(1));
         assert!(hints[0].padding_left);
         assert_eq!(hints[0].tooltip.as_deref(), Some("Inferred type"));
@@ -3333,6 +3399,16 @@ mod tests {
         assert_eq!(hints[1].kind, Some(2));
         assert!(hints[1].padding_right);
         assert_eq!(parse_inlay_hints_result(&json!(null)).expect("null"), []);
+        assert_eq!(
+            parse_inlay_hint_result(&json!({
+                "position": { "line": 1, "character": 10 },
+                "label": ": Resolved",
+                "data": { "hintId": 2 }
+            }))
+            .expect("resolved")
+            .data,
+            Some(json!({ "hintId": 2 }))
+        );
     }
 
     #[test]

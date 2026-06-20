@@ -14095,6 +14095,7 @@ function featuresGateway(): LanguageServerFeaturesGateway {
     incomingCalls: vi.fn(async () => []),
     implementation: vi.fn(async () => []),
     inlayHints: vi.fn(async () => []),
+    resolveInlayHint: vi.fn(async (_rootPath, hint) => hint),
     linkedEditingRanges: vi.fn(async () => null),
     onTypeFormatting: vi.fn(async () => []),
     outgoingCalls: vi.fn(async () => []),

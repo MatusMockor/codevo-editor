@@ -125,6 +125,7 @@ export type LanguageServerInlayHintLabel =
   | LanguageServerInlayHintLabelPart[];
 
 export interface LanguageServerInlayHint {
+  data?: unknown;
   kind: number | null;
   label: LanguageServerInlayHintLabel;
   paddingLeft: boolean;
@@ -364,6 +365,10 @@ export interface LanguageServerFeaturesGateway {
     path: string,
     range: LanguageServerRange,
   ): Promise<LanguageServerInlayHint[]>;
+  resolveInlayHint(
+    rootPath: string,
+    hint: LanguageServerInlayHint,
+  ): Promise<LanguageServerInlayHint>;
   documentSymbols(
     rootPath: string,
     path: string,

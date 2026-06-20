@@ -430,6 +430,16 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "dynamicRegistration": false
                         },
                         "implementation": { "dynamicRegistration": false },
+                        "inlayHint": {
+                            "dynamicRegistration": false,
+                            "resolveSupport": {
+                                "properties": [
+                                    "tooltip",
+                                    "label.tooltip",
+                                    "label.location"
+                                ]
+                            }
+                        },
                         "linkedEditingRange": { "dynamicRegistration": false },
                         "onTypeFormatting": { "dynamicRegistration": false },
                         "rangeFormatting": { "dynamicRegistration": false },
@@ -853,6 +863,11 @@ mod tests {
         assert_eq!(
             request.params["capabilities"]["textDocument"]["documentLink"]["tooltipSupport"],
             true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["inlayHint"]["resolveSupport"]
+                ["properties"],
+            json!(["tooltip", "label.tooltip", "label.location"])
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["selectionRange"]["dynamicRegistration"],
