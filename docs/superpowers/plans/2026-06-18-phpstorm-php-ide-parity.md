@@ -1542,4 +1542,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed and pushed as `f7d94887 Detect array Laravel route name groups`.
