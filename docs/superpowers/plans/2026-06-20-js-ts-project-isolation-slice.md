@@ -2794,7 +2794,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Diagnostics Root Contract
 
-- Commit pending.
+- Committed and pushed as `362d79e2 Require roots in JS TS diagnostic events`.
 - Included files:
   - `src/domain/languageServerDiagnostics.ts`
   - `src/domain/languageServerDiagnostics.test.ts`
