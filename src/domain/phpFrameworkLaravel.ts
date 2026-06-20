@@ -1476,6 +1476,15 @@ function phpLaravelFluentThroughRelationPathFromExpression(
   expression: string,
 ): { throughRelationName: string; distantRelationName: string } | null {
   const normalizedExpression = expression.trim();
+  const dynamicPath =
+    phpLaravelDynamicFluentThroughRelationPathFromExpression(
+      normalizedExpression,
+    );
+
+  if (dynamicPath) {
+    return dynamicPath;
+  }
+
   const throughPattern = /\bthrough\s*\(/g;
 
   for (const match of normalizedExpression.matchAll(throughPattern)) {
@@ -1534,6 +1543,34 @@ function phpLaravelFluentThroughRelationPathFromExpression(
   }
 
   return null;
+}
+
+function phpLaravelDynamicFluentThroughRelationPathFromExpression(
+  expression: string,
+): { throughRelationName: string; distantRelationName: string } | null {
+  const pattern =
+    /\bthrough([A-Z][A-Za-z0-9_]*)\s*\(\s*\)\s*(?:->|\?->)\s*has([A-Z][A-Za-z0-9_]*)\s*\(/g;
+
+  for (const match of expression.matchAll(pattern)) {
+    const throughRelationName = phpLaravelStudlyRelationName(match[1] ?? "");
+    const distantRelationName = phpLaravelStudlyRelationName(match[2] ?? "");
+
+    if (throughRelationName && distantRelationName) {
+      return { distantRelationName, throughRelationName };
+    }
+  }
+
+  return null;
+}
+
+function phpLaravelStudlyRelationName(value: string): string | null {
+  if (!/^[A-Z][A-Za-z0-9_]*$/.test(value)) {
+    return null;
+  }
+
+  const relationName = `${value.charAt(0).toLowerCase()}${value.slice(1)}`;
+
+  return isPhpAttributeName(relationName) ? relationName : null;
 }
 
 function phpLaravelDynamicRelationPropertyCompletionsFromSource(

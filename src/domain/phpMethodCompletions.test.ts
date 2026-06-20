@@ -1668,7 +1668,7 @@ Comment::resolveRelationUsing('notRelation', fn () => 'not a relation');
     ]);
   });
 
-  it("extracts Laravel fluent through relation targets from relation strings", () => {
+  it("extracts Laravel fluent through relation targets from relation strings and dynamic names", () => {
     const source = `<?php
 use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
@@ -1692,6 +1692,18 @@ class Comment
         return $this
             ->through("cars")
             ->has("mechanics");
+    }
+
+    public function dynamicCarOwner(): HasOneThrough
+    {
+        return $this->throughCars()->hasOwner();
+    }
+
+    public function dynamicCarMechanics(): HasManyThrough
+    {
+        return $this
+            ->throughCars()
+            ->hasMechanics();
     }
 
     public function unknownThrough(): HasOneThrough
@@ -1751,6 +1763,20 @@ class Mechanic
         declaringClassName: "Comment",
         kind: "property",
         name: "carMechanics",
+        parameters: "",
+        returnType: "Mechanic",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "dynamicCarOwner",
+        parameters: "",
+        returnType: "Owner",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "dynamicCarMechanics",
         parameters: "",
         returnType: "Mechanic",
       },

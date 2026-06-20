@@ -332,8 +332,60 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
-- Intended included files:
+- Committed and pushed as `ea51b39 Reconcile mixin member diagnostics`.
+- Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Dynamic Fluent Through Relation Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ea51b39 Reconcile mixin member diagnostics`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Extend fluent-through relation inference from literal string syntax to Laravel's dynamic syntax, such as `$this->throughCars()->hasOwner()`.
+
+### Implementation Choice
+
+- Reuse the existing fluent-through relation path resolver.
+- Parse only documented dynamic method pairs with Studly suffixes:
+  - `throughCars()` -> `cars`
+  - `hasOwner()` -> `owner`
+- Keep non-literal `through($cars)->has(...)` conservative.
+
+### Acceptance Criteria
+
+- `throughCars()->hasOwner()` resolves through `cars` and exposes the distant `owner` model.
+- Multiline `throughCars()->hasMechanics()` resolves the distant collection relation target.
+- Existing string-based fluent-through tests remain green.
+- Focused PHP domain tests pass.
+- `npm run check` and `git diff --check` pass.
+
+### Completed
+
+- Added dynamic fluent-through path parsing for `throughStudly()->hasStudly()`.
+- Added conservative Studly-to-camel relation name normalization.
+- Expanded the fluent-through regression to cover dynamic one-to-through and many-through syntax.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "extracts Laravel fluent through relation targets from relation strings and dynamic names"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Intended included files:
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
