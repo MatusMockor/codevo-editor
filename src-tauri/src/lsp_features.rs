@@ -1198,6 +1198,20 @@ pub fn parse_selection_ranges_result(
     items.iter().map(parse_selection_range_item).collect()
 }
 
+pub fn parse_linked_editing_ranges_result(
+    value: &Value,
+) -> Result<Option<LanguageServerLinkedEditingRanges>, String> {
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    serde_json::from_value::<LanguageServerLinkedEditingRanges>(value.clone())
+        .map(Some)
+        .map_err(|error| {
+            format!("Language server returned malformed linked editing ranges: {error}")
+        })
+}
+
 pub fn parse_semantic_tokens_result(
     value: &Value,
 ) -> Result<Option<LanguageServerSemanticTokens>, String> {
@@ -2120,14 +2134,14 @@ mod tests {
         parse_definition_result, parse_document_highlights_result, parse_document_links_result,
         parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
         parse_hover_result, parse_incoming_calls_result, parse_inlay_hint_result,
-        parse_inlay_hints_result, parse_optional_workspace_edit_result,
-        parse_outgoing_calls_result, parse_prepare_rename_result, parse_selection_ranges_result,
-        parse_semantic_tokens_result, parse_signature_help_result,
-        parse_type_hierarchy_items_result, parse_workspace_edit_result,
-        parse_workspace_symbols_result, LanguageServerCallHierarchyItem, LanguageServerCodeAction,
-        LanguageServerCodeActionCommand, LanguageServerCodeActionContext,
-        LanguageServerCodeActionDiagnostic, LanguageServerCodeLens,
-        LanguageServerCompletionContext, LanguageServerCompletionItem,
+        parse_inlay_hints_result, parse_linked_editing_ranges_result,
+        parse_optional_workspace_edit_result, parse_outgoing_calls_result,
+        parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
+        parse_signature_help_result, parse_type_hierarchy_items_result,
+        parse_workspace_edit_result, parse_workspace_symbols_result,
+        LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+        LanguageServerCodeActionContext, LanguageServerCodeActionDiagnostic,
+        LanguageServerCodeLens, LanguageServerCompletionContext, LanguageServerCompletionItem,
         LanguageServerCompletionItemLabelDetails, LanguageServerCompletionList,
         LanguageServerCompletionTextEdit, LanguageServerDocumentLink,
         LanguageServerFormattingOptions, LanguageServerHover, LanguageServerInlayHint,
@@ -3237,6 +3251,35 @@ mod tests {
             parse_definition_result(&json!(null)).expect("definition"),
             []
         );
+    }
+
+    #[test]
+    fn parses_linked_editing_ranges_and_null_results() {
+        let parsed = parse_linked_editing_ranges_result(&json!({
+            "ranges": [
+                {
+                    "start": { "line": 2, "character": 8 },
+                    "end": { "line": 2, "character": 12 }
+                },
+                {
+                    "start": { "line": 4, "character": 9 },
+                    "end": { "line": 4, "character": 13 }
+                }
+            ],
+            "wordPattern": "[A-Za-z]+"
+        }))
+        .expect("linked editing ranges")
+        .expect("linked editing result");
+
+        assert_eq!(parsed.ranges.len(), 2);
+        assert_eq!(parsed.ranges[0].start.line, 2);
+        assert_eq!(parsed.ranges[1].end.character, 13);
+        assert_eq!(parsed.word_pattern.as_deref(), Some("[A-Za-z]+"));
+        assert_eq!(
+            parse_linked_editing_ranges_result(&json!(null)).expect("null"),
+            None
+        );
+        assert!(parse_linked_editing_ranges_result(&json!({ "ranges": "bad" })).is_err());
     }
 
     #[test]

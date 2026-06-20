@@ -62,22 +62,22 @@ use lsp_features::{
     parse_definition_result, parse_document_highlights_result, parse_document_links_result,
     parse_document_symbols_result, parse_folding_ranges_result, parse_formatting_result,
     parse_hover_result, parse_incoming_calls_result, parse_inlay_hint_result,
-    parse_inlay_hints_result, parse_optional_workspace_edit_result, parse_outgoing_calls_result,
-    parse_prepare_rename_result, parse_selection_ranges_result, parse_semantic_tokens_result,
-    parse_signature_help_result, parse_type_hierarchy_items_result, parse_workspace_edit_result,
-    parse_workspace_symbols_result, LanguageServerCallHierarchyItem, LanguageServerCodeAction,
-    LanguageServerCodeActionCommand, LanguageServerCodeActionContext, LanguageServerCodeLens,
-    LanguageServerCompletionContext, LanguageServerCompletionItem, LanguageServerCompletionList,
-    LanguageServerDocumentHighlight, LanguageServerDocumentLink, LanguageServerDocumentSymbol,
-    LanguageServerFoldingRange, LanguageServerFormattingOptions, LanguageServerHover,
-    LanguageServerIncomingCall, LanguageServerInlayHint, LanguageServerInlayHintLabel,
-    LanguageServerLinkedEditingRanges, LanguageServerLocation, LanguageServerOutgoingCall,
-    LanguageServerPosition, LanguageServerPrepareRenameResult, LanguageServerRange,
-    LanguageServerSelectionRange, LanguageServerSemanticTokens, LanguageServerSignatureHelp,
-    LanguageServerSignatureHelpContext, LanguageServerTextEdit, LanguageServerTypeHierarchyItem,
-    LanguageServerWorkspaceEdit, LanguageServerWorkspaceFileOperation,
-    LanguageServerWorkspaceFileOperationOptions, LanguageServerWorkspaceSymbol,
-    LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
+    parse_inlay_hints_result, parse_linked_editing_ranges_result,
+    parse_optional_workspace_edit_result, parse_outgoing_calls_result, parse_prepare_rename_result,
+    parse_selection_ranges_result, parse_semantic_tokens_result, parse_signature_help_result,
+    parse_type_hierarchy_items_result, parse_workspace_edit_result, parse_workspace_symbols_result,
+    LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
+    LanguageServerCodeActionContext, LanguageServerCodeLens, LanguageServerCompletionContext,
+    LanguageServerCompletionItem, LanguageServerCompletionList, LanguageServerDocumentHighlight,
+    LanguageServerDocumentLink, LanguageServerDocumentSymbol, LanguageServerFoldingRange,
+    LanguageServerFormattingOptions, LanguageServerHover, LanguageServerIncomingCall,
+    LanguageServerInlayHint, LanguageServerInlayHintLabel, LanguageServerLinkedEditingRanges,
+    LanguageServerLocation, LanguageServerOutgoingCall, LanguageServerPosition,
+    LanguageServerPrepareRenameResult, LanguageServerRange, LanguageServerSelectionRange,
+    LanguageServerSemanticTokens, LanguageServerSignatureHelp, LanguageServerSignatureHelpContext,
+    LanguageServerTextEdit, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
+    LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
+    LanguageServerWorkspaceSymbol, LspTextDocumentFeatureRequestFactory, TextDocumentCompletion,
     TextDocumentFeatureRequestFactory, TextDocumentFormatting, TextDocumentInlayHintRange,
     TextDocumentOnTypeFormatting, TextDocumentPosition, TextDocumentRange,
     TextDocumentRangeFormatting, TextDocumentRename, TextDocumentSelectionRange,
@@ -3133,11 +3133,7 @@ fn text_document_linked_editing_ranges(
         return Ok(None);
     };
 
-    serde_json::from_value::<LanguageServerLinkedEditingRanges>(result)
-        .map(Some)
-        .map_err(|error| {
-            format!("Language server returned malformed linked editing ranges: {error}")
-        })
+    parse_linked_editing_ranges_result(&result)
 }
 
 #[tauri::command]
@@ -3154,11 +3150,7 @@ fn javascript_typescript_text_document_linked_editing_ranges(
         return Ok(None);
     };
 
-    serde_json::from_value::<LanguageServerLinkedEditingRanges>(result)
-        .map(Some)
-        .map_err(|error| {
-            format!("Language server returned malformed linked editing ranges: {error}")
-        })
+    parse_linked_editing_ranges_result(&result)
 }
 
 #[tauri::command]

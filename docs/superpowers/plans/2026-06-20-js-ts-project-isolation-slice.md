@@ -1390,3 +1390,54 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Linked Editing Null Results
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `cce3973 Update PHP parity plan status`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- LSP `textDocument/linkedEditingRange` may return `null` when the cursor is not on a linked-editable token.
+- The backend commands parsed linked editing responses directly as an object, so a valid `null` result became a user-visible error.
+- JS/TS light mode should match VS Code behavior here: no linked ranges should simply mean no edit session.
+
+### Implementation Choice
+
+- Add a shared linked-editing response parser in `src-tauri/src/lsp_features.rs`.
+- Return `None` for `null`, preserve valid linked ranges, and keep malformed-object errors explicit.
+- Reuse the parser from both PHP and JS/TS Tauri commands so the shared LSP surface stays consistent.
+
+### Acceptance Criteria
+
+- `null` linked-editing responses no longer report an error.
+- Valid linked-editing ranges still parse with `wordPattern`.
+- Malformed linked-editing responses still fail loudly.
+- Focused Rust parser test, serial Rust lib tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Linked Editing Null Results
+
+- Added `parse_linked_editing_ranges_result` with explicit `null -> None` handling.
+- Wired PHP and JS/TS linked-editing commands through the shared parser.
+- Added regression coverage for valid ranges, `null`, and malformed payloads.
+
+### Verification: JS/TS Linked Editing Null Results
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml parses_linked_editing_ranges_and_null_results --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Linked Editing Null Results
+
+- Pending commit.
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/lsp_features.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
