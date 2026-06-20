@@ -351,6 +351,26 @@ const laravelEloquentRelationFactoryClassNames = new Map([
   ["morphtomany", "MorphToMany"],
 ]);
 
+const laravelEloquentRelationFluentMethods = new Set([
+  "as",
+  "chaperone",
+  "latestofmany",
+  "ofmany",
+  "oldestofmany",
+  "orderbypivot",
+  "using",
+  "wherepivot",
+  "wherepivotbetween",
+  "wherepivotin",
+  "wherepivotnotbetween",
+  "wherepivotnotin",
+  "wherepivotnotnull",
+  "wherepivotnull",
+  "withpivot",
+  "withpivotvalue",
+  "withtimestamps",
+]);
+
 export interface PhpLaravelDynamicWhereAttributeTarget {
   attributeName: string;
   position: EditorPosition;
@@ -359,6 +379,10 @@ export interface PhpLaravelDynamicWhereAttributeTarget {
 export interface PhpLaravelContainerBinding {
   abstractClassName: string;
   concreteClassName: string;
+}
+
+interface PhpLaravelContainerBindingMatch extends PhpLaravelContainerBinding {
+  offset: number;
 }
 
 export interface PhpLaravelMorphMapEntry {
@@ -406,6 +430,12 @@ export function isLaravelEloquentModelBuilderFactoryMethod(
 
 export function isLaravelEloquentModelFluentMethod(methodName: string): boolean {
   return laravelEloquentModelFluentMethods.has(methodName.toLowerCase());
+}
+
+export function isLaravelEloquentRelationFluentMethod(
+  methodName: string,
+): boolean {
+  return laravelEloquentRelationFluentMethods.has(methodName.toLowerCase());
 }
 
 export function isLaravelDatabaseQueryBuilderFactoryMethod(
@@ -595,7 +625,28 @@ export function phpLaravelContainerExpressionClassName(
 export function phpLaravelContainerBindingsFromSource(
   source: string,
 ): PhpLaravelContainerBinding[] {
-  const bindings: PhpLaravelContainerBinding[] = [];
+  const bindings: PhpLaravelContainerBindingMatch[] = [];
+  const pushBinding = (
+    abstractClassName: string | null,
+    concreteClassName: string | null,
+    offset: number,
+  ) => {
+    if (!abstractClassName || !concreteClassName) {
+      return;
+    }
+
+    if (
+      bindings.some(
+        (binding) =>
+          binding.abstractClassName === abstractClassName &&
+          binding.concreteClassName === concreteClassName,
+      )
+    ) {
+      return;
+    }
+
+    bindings.push({ abstractClassName, concreteClassName, offset });
+  };
   const directBindingPattern = new RegExp(
     `(?:->|::)(?:bind|singleton|scoped)\\s*\\(\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\s*,\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class`,
     "g",
@@ -609,21 +660,161 @@ export function phpLaravelContainerBindingsFromSource(
     const abstractClassName = match[1]?.replace(/^\\+/, "");
     const concreteClassName = match[2]?.replace(/^\\+/, "");
 
-    if (abstractClassName && concreteClassName) {
-      bindings.push({ abstractClassName, concreteClassName });
-    }
+    pushBinding(abstractClassName, concreteClassName, match.index ?? 0);
   }
 
   for (const match of source.matchAll(contextualBindingPattern)) {
     const abstractClassName = match[1]?.replace(/^\\+/, "");
     const concreteClassName = match[2]?.replace(/^\\+/, "");
 
+    pushBinding(abstractClassName, concreteClassName, match.index ?? 0);
+  }
+
+  for (const binding of phpLaravelContainerFactoryBindingsFromSource(source)) {
+    pushBinding(
+      binding.abstractClassName,
+      binding.concreteClassName,
+      binding.offset,
+    );
+  }
+
+  for (const binding of phpLaravelContextualFactoryBindingsFromSource(source)) {
+    pushBinding(
+      binding.abstractClassName,
+      binding.concreteClassName,
+      binding.offset,
+    );
+  }
+
+  return bindings
+    .sort((left, right) => left.offset - right.offset)
+    .map(({ abstractClassName, concreteClassName }) => ({
+      abstractClassName,
+      concreteClassName,
+    }));
+}
+
+function phpLaravelContainerFactoryBindingsFromSource(
+  source: string,
+): PhpLaravelContainerBindingMatch[] {
+  const bindings: PhpLaravelContainerBindingMatch[] = [];
+  const masked = maskPhpStringsAndComments(source);
+  const pattern = /(?:->|::)(?:bind|singleton|scoped)\s*\(/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const openOffset = masked.indexOf("(", match.index);
+
+    if (openOffset < 0) {
+      continue;
+    }
+
+    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+
+    if (closeOffset === null) {
+      continue;
+    }
+
+    const [abstractArgument, concreteArgument] = splitPhpParameterList(
+      source.slice(openOffset + 1, closeOffset),
+    );
+    const abstractClassName = phpLaravelClassNameLiteral(abstractArgument ?? "");
+    const concreteClassName = phpLaravelFactoryConcreteClassName(
+      concreteArgument ?? "",
+    );
+
     if (abstractClassName && concreteClassName) {
-      bindings.push({ abstractClassName, concreteClassName });
+      bindings.push({
+        abstractClassName,
+        concreteClassName,
+        offset: match.index ?? 0,
+      });
     }
   }
 
   return bindings;
+}
+
+function phpLaravelContextualFactoryBindingsFromSource(
+  source: string,
+): PhpLaravelContainerBindingMatch[] {
+  const bindings: PhpLaravelContainerBindingMatch[] = [];
+  const masked = maskPhpStringsAndComments(source);
+  const needsPattern = /->\s*needs\s*\(/g;
+
+  for (const match of masked.matchAll(needsPattern)) {
+    const needsOpenOffset = masked.indexOf("(", match.index);
+
+    if (needsOpenOffset < 0) {
+      continue;
+    }
+
+    const needsCloseOffset = matchingPairOffset(
+      source,
+      needsOpenOffset,
+      "(",
+      ")",
+    );
+
+    if (needsCloseOffset === null) {
+      continue;
+    }
+
+    const abstractClassName = phpLaravelClassNameLiteral(
+      source.slice(needsOpenOffset + 1, needsCloseOffset),
+    );
+
+    if (!abstractClassName) {
+      continue;
+    }
+
+    const giveMatch = /^\s*->\s*give\s*\(/.exec(
+      masked.slice(needsCloseOffset + 1),
+    );
+
+    if (!giveMatch) {
+      continue;
+    }
+
+    const giveOpenOffset =
+      needsCloseOffset + 1 + giveMatch[0].lastIndexOf("(");
+    const giveCloseOffset = matchingPairOffset(source, giveOpenOffset, "(", ")");
+
+    if (giveCloseOffset === null) {
+      continue;
+    }
+
+    const concreteClassName = phpLaravelFactoryConcreteClassName(
+      source.slice(giveOpenOffset + 1, giveCloseOffset),
+    );
+
+    if (concreteClassName) {
+      bindings.push({
+        abstractClassName,
+        concreteClassName,
+        offset: match.index ?? 0,
+      });
+    }
+  }
+
+  return bindings;
+}
+
+function phpLaravelClassNameLiteral(expression: string): string | null {
+  const match = new RegExp(
+    `^\\s*${PHP_CLASS_NAME_CAPTURE_PATTERN}::class\\b`,
+  ).exec(expression);
+
+  return match?.[1]?.replace(/^\\+/, "") ?? null;
+}
+
+function phpLaravelFactoryConcreteClassName(expression: string): string | null {
+  return (
+    phpLaravelClassNameLiteral(expression) ??
+    new RegExp(`\\bnew\\s+${PHP_CLASS_NAME_CAPTURE_PATTERN}\\b`).exec(
+      expression,
+    )?.[1]?.replace(/^\\+/, "") ??
+    null
+  );
 }
 
 export function phpLaravelMorphMapEntriesFromSource(
@@ -1510,6 +1701,10 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
   );
 
   if (relationModelType) {
+    if (isLaravelEloquentRelationFluentMethod(methodName)) {
+      return receiverType;
+    }
+
     return phpLaravelEloquentBuilderCallReturnType(
       source,
       relationModelType,

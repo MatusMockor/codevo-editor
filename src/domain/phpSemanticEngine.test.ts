@@ -674,6 +674,14 @@ class Comment extends Model
         $throughTrack = $this->hasManyThrough(self::TRACK_MODEL, Playlist::class)
             ->whereNull('archived_at')
             ->first();
+        $tag = $this->belongsToMany(Tag::class)
+            ->as('subscription')
+            ->withPivot('active')
+            ->wherePivot('active', true)
+            ->first();
+        $latestPost = $this->hasOne(Post::class)
+            ->latestOfMany()
+            ->first();
 
         $direct->tit
         $parent->tit
@@ -681,6 +689,8 @@ class Comment extends Model
         $selfComment->bod
         $constantPost->tit
         $throughTrack->dur
+        $tag->nam
+        $latestPost->tit
     }
 }
 
@@ -693,6 +703,10 @@ class Playlist extends Model
 }
 
 class Track extends Model
+{
+}
+
+class Tag extends Model
 {
 }
 `;
@@ -755,6 +769,22 @@ class Track extends Model
         laravelOptions,
       ),
     ).toBe("App\\Models\\Track");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$tag->nam"),
+        "tag",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Tag");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$latestPost->tit"),
+        "latestPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
     expect(
       phpVariableTypeInSource(
         source,
@@ -1400,6 +1430,12 @@ use App\\Contracts\\ReportRepositoryInterface;
 use App\\Repositories\\CachedReportRepository;
 use App\\Contracts\\WebhookRepositoryInterface;
 use App\\Repositories\\DatabaseWebhookRepository;
+use App\\Contracts\\NotificationRepositoryInterface;
+use App\\Repositories\\EloquentNotificationRepository;
+use App\\Contracts\\AuditRepositoryInterface;
+use App\\Repositories\\DatabaseAuditRepository;
+use App\\Contracts\\InvoiceRepositoryInterface;
+use App\\Repositories\\DatabaseInvoiceRepository;
 
 class AppServiceProvider
 {
@@ -1408,9 +1444,16 @@ class AppServiceProvider
         $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
         $this->app->singleton(StatusRepositoryInterface::class, DatabaseStatusRepository::class);
         app()->scoped(ReportRepositoryInterface::class, CachedReportRepository::class);
+        $this->app->bind(NotificationRepositoryInterface::class, fn () => new EloquentNotificationRepository());
+        $this->app->singleton(AuditRepositoryInterface::class, function () {
+            return new DatabaseAuditRepository();
+        });
         $this->app->when(SendWebhookJob::class)
             ->needs(WebhookRepositoryInterface::class)
             ->give(DatabaseWebhookRepository::class);
+        $this->app->when(SendInvoiceJob::class)
+            ->needs(InvoiceRepositoryInterface::class)
+            ->give(fn () => new DatabaseInvoiceRepository());
     }
 }
 `),
@@ -1428,8 +1471,20 @@ class AppServiceProvider
         concreteClassName: "CachedReportRepository",
       },
       {
+        abstractClassName: "NotificationRepositoryInterface",
+        concreteClassName: "EloquentNotificationRepository",
+      },
+      {
+        abstractClassName: "AuditRepositoryInterface",
+        concreteClassName: "DatabaseAuditRepository",
+      },
+      {
         abstractClassName: "WebhookRepositoryInterface",
         concreteClassName: "DatabaseWebhookRepository",
+      },
+      {
+        abstractClassName: "InvoiceRepositoryInterface",
+        concreteClassName: "DatabaseInvoiceRepository",
       },
     ]);
   });
