@@ -531,8 +531,8 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
-- Intended included files:
+- Committed and pushed as `daf7f56 Infer morph map dynamic morphTo callbacks`.
+- Included files:
   - `src/domain/phpFrameworkLaravel.ts`
   - `src/domain/phpMethodCompletions.test.ts`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
