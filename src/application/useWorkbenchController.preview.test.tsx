@@ -8335,6 +8335,156 @@ class CommentFactory
     ]);
   });
 
+  it("suppresses implemented interface PHPDoc property diagnostics on inferred receivers", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const interfacePath = "/workspace/app/Contracts/HasExternalId.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->externalId;
+        $comment->missingProperty;
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 26,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const propertyDiagnosticPosition = (propertyName: string) => {
+      const position = positionAfter(controllerSource, `$comment->${propertyName}`);
+
+      return {
+        character: position.column - propertyName.length - 1,
+        line: position.lineNumber - 1,
+      };
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 6,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\HasExternalId",
+          kind: "interface",
+          lineNumber: 6,
+          name: "HasExternalId",
+          path: interfacePath,
+          relativePath: "app/Contracts/HasExternalId.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use App\\Contracts\\HasExternalId;
+
+class Comment implements HasExternalId
+{
+}
+`;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+/**
+ * @property-read string $externalId
+ */
+interface HasExternalId
+{
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    const externalIdPosition = propertyDiagnosticPosition("externalId");
+    const missingPosition = propertyDiagnosticPosition("missingProperty");
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            ...externalIdPosition,
+            message:
+              "Property App\\Models\\Comment::$externalId does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...missingPosition,
+            message:
+              "Property App\\Models\\Comment::$missingProperty does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
+      {
+        ...missingPosition,
+        message:
+          "Property App\\Models\\Comment::$missingProperty does not exist",
+        severity: "error",
+        source: "phpactor",
+      },
+    ]);
+  });
+
   it("infers Laravel relation model completions from property and relation chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

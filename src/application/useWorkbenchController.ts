@@ -6208,20 +6208,22 @@ export function useWorkbenchController(
             }
           }
 
-          const parentClassName = phpExtendsClassName(content);
-          const resolvedParentClassName = parentClassName
-            ? resolvePhpClassReference(content, parentClassName)
-            : null;
+          for (const superTypeName of phpSuperTypeReferences(content)) {
+            const resolvedSuperTypeName = resolvePhpClassReference(
+              content,
+              superTypeName,
+            );
 
-          if (
-            resolvedParentClassName &&
-            (await phpClassHierarchyHasProperty(
-              resolvedParentClassName,
-              normalizedPropertyName,
-              visitedClassNames,
-            ))
-          ) {
-            return true;
+            if (
+              resolvedSuperTypeName &&
+              (await phpClassHierarchyHasProperty(
+                resolvedSuperTypeName,
+                normalizedPropertyName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
           }
         } catch {
           continue;

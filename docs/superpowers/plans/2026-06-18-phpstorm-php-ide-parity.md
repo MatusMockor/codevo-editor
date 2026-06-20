@@ -580,6 +580,53 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
+- Committed and pushed as `def2ffc Reconcile static method diagnostics`.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Implemented Interface PHPDoc Property Diagnostic Reconciliation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `def2ffc Reconcile static method diagnostics`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Suppress PHPactor unresolved property false positives when a concrete receiver implements an interface that documents a magic property with PHPDoc.
+
+### Implementation Choice
+
+- Reuse `phpSuperTypeReferences` inside `phpClassHierarchyHasProperty`, matching the method hierarchy proof path.
+- Keep the existing declared-property, trait, mixin, and parent behavior.
+- Only suppress when the implemented interface hierarchy actually exposes the property through the cached member parser.
+
+### Acceptance Criteria
+
+- A PHPactor diagnostic for a property documented by an implemented interface is suppressed when the receiver resolves to the concrete class.
+- Unknown properties on the same receiver remain visible.
+- Full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- `phpClassHierarchyHasProperty` now walks all parsed supertypes, including implemented interfaces.
+- Added preview coverage for an interface-level `@property-read` and an unknown-property control on the same receiver.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "suppresses implemented interface PHPDoc property diagnostics on inferred receivers"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
 - Pending commit.
 - Intended included files:
   - `src/application/useWorkbenchController.ts`
