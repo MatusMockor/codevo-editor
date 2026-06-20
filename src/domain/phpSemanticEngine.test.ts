@@ -621,6 +621,9 @@ class AlbumController
         $afterGetRelationTerminal = Album::query()
             ->getRelation('tracks')
             ->first();
+        $afterFillInsertTerminal = Album::query()
+            ->fillAndInsertGetId(['title' => 'Blue'])
+            ->first();
 
         $album->tit
         $morphAlbum->tit
@@ -652,6 +655,7 @@ class AlbumController
         $afterToBaseTerminal->tit
         $afterQualifyColumnTerminal->tit
         $afterGetRelationTerminal->tit
+        $afterFillInsertTerminal->tit
     }
 }
 `;
@@ -893,6 +897,14 @@ class AlbumController
         source,
         positionAfter(source, "$afterGetRelationTerminal->tit"),
         "afterGetRelationTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$afterFillInsertTerminal->tit"),
+        "afterFillInsertTerminal",
         laravelOptions,
       ),
     ).toBeNull();
