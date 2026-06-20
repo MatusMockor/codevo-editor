@@ -3705,3 +3705,41 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Controller Direct Runtime Status Root Guard
 
 - Committed as `11bffa0e Guard controller runtime status roots`.
+
+## Next Slice: Controller Stop Runtime Response Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b0e02432 Fix controller runtime root guard plan record`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Direct `start()` and initial `getStatus()` paths now reject rootless or mismatched active runtime responses.
+- The controller stop helpers still cached direct `stop()` responses under the requested root without checking whether the returned status explicitly belonged to that root.
+- A malformed rootless or mismatched `running` stop response could therefore re-mark PHPactor or the TypeScript server as active for the workspace that was just stopped.
+
+### Implementation Choice
+
+- Normalize direct stop responses through a requested-root guard before caching or displaying them.
+- Accept stop responses only when their explicit `rootPath` matches the requested root.
+- Convert rootless or mismatched stop responses into a safe `stopped` status for the requested root.
+- Add PHP and JS/TS preview regressions for rootless `running` stop responses.
+
+### Acceptance Criteria
+
+- Rootless PHP direct `stop()` responses do not become active statuses for the current workspace.
+- Rootless JS/TS direct `stop()` responses do not become active statuses for the current workspace.
+- Rooted matching stop responses still cache/display normally.
+- Focused stop-response preview tests, full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: Controller Stop Runtime Response Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rootless .* stop response"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`

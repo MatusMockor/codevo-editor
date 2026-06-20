@@ -1688,9 +1688,13 @@ export function useWorkbenchController(
 
     try {
       const status = await languageServerRuntimeGateway.stop(targetRootPath);
+      const requestedStatus = runtimeStatusForRequestedRoot(
+        status,
+        targetRootPath,
+      );
       const rootedStatus = cachePhpLanguageServerRuntimeStatus(
         targetRootPath,
-        status,
+        requestedStatus,
       );
 
       if (workspaceRootKeysEqual(targetRootPath, currentWorkspaceRootRef.current)) {
@@ -1701,7 +1705,7 @@ export function useWorkbenchController(
         resetLanguageServerDocuments();
       }
 
-      return status;
+      return rootedStatus;
     } catch (error) {
       reportLanguageServerError(error);
       return null;
@@ -1724,10 +1728,14 @@ export function useWorkbenchController(
     try {
       const status =
         await javaScriptTypeScriptLanguageServerRuntimeGateway.stop(targetRootPath);
+      const requestedStatus = runtimeStatusForRequestedRoot(
+        status,
+        targetRootPath,
+      );
       const rootedStatus =
         cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
           targetRootPath,
-          status,
+          requestedStatus,
         );
       clearJavaScriptTypeScriptDiagnosticsForRoot(targetRootPath);
 
@@ -1737,7 +1745,7 @@ export function useWorkbenchController(
         resetJavaScriptTypeScriptLanguageServerDocuments();
       }
 
-      return status;
+      return rootedStatus;
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(
         targetRootPath,
@@ -14984,6 +14992,17 @@ function runtimeStatusRootPath(
   }
 
   return status.kind === "stopped" ? (fallbackRootPath ?? null) : null;
+}
+
+function runtimeStatusForRequestedRoot(
+  status: LanguageServerRuntimeStatus,
+  rootPath: string,
+): LanguageServerRuntimeStatus {
+  if (status.rootPath && workspaceRootKeysEqual(status.rootPath, rootPath)) {
+    return status;
+  }
+
+  return { kind: "stopped", rootPath };
 }
 
 function isLanguageServerStatusForWorkspace(

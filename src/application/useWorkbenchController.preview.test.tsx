@@ -5223,6 +5223,82 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace");
   });
 
+  it("does not attach the workspace root to a rootless JavaScript and TypeScript stop response", async () => {
+    const rootedRunningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 14,
+    };
+    const rootlessStopStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 15,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => rootedRunningStatus),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => rootedRunningStatus),
+        stop: vi.fn(async () => rootlessStopStatus),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan:
+        readyJavaScriptTypeScriptPlan("/workspace"),
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 14,
+      }),
+    );
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        {
+          ...defaultWorkspaceSettings(),
+          javaScriptTypeScriptService: "off",
+        },
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(
+      expect.objectContaining({ kind: "stopped", rootPath: "/workspace" }),
+    );
+  });
+
   it("notifies the running JavaScript and TypeScript language service when workspace settings change", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
@@ -5653,6 +5729,67 @@ describe("useWorkbenchController preview tabs", () => {
       dependencies.indexProgressGateway.clearWorkspaceIndex,
     ).toHaveBeenCalledWith("/workspace");
     expect(getWorkbench().intelligenceMode).toBe("basic");
+  });
+
+  it("does not attach the workspace root to a rootless PHP stop response", async () => {
+    const rootedRunningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 44,
+    };
+    const rootlessStopStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 45,
+    };
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => rootedRunningStatus),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => rootedRunningStatus),
+      stop: vi.fn(async () => rootlessStopStatus),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerPlan: phpactorLanguageServerPlan(),
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 44,
+      }),
+    );
+
+    await act(async () => {
+      await getWorkbench().toggleSmartMode();
+      await flushAsyncTurns(24);
+    });
+
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace",
+    );
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({ kind: "stopped", rootPath: "/workspace" }),
+    );
   });
 
   it("toggles file structure to inherited members on the second Cmd+R", async () => {
