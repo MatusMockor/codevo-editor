@@ -240,7 +240,7 @@ export interface LanguageServerPrepareRenameResult {
 export interface LanguageServerWorkspaceEditEvent {
   edit: LanguageServerWorkspaceEdit;
   label: string | null;
-  rootPath?: string;
+  rootPath: string;
   sessionId: number;
 }
 
@@ -259,7 +259,7 @@ export type LanguageServerRefreshFeature =
 
 export interface LanguageServerRefreshEvent {
   feature: LanguageServerRefreshFeature;
-  rootPath?: string;
+  rootPath: string;
   sessionId: number;
 }
 

@@ -2632,3 +2632,56 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Provider Event Root Contract
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c3774758 Record JS TS provider event root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens the TypeScript event contract after the provider runtime guard.
+- Main agent implemented directly because the change is limited to domain event types and existing provider/infra fixtures.
+
+### Why This Slice
+
+- Provider runtime guards now reject rootless JS/TS workspace-edit and refresh events.
+- The shared TypeScript event interfaces still described `rootPath` as optional, which kept the old permissive contract alive for new callers.
+- Rooted event types make the isolation boundary explicit at compile time while retaining malformed-event regression coverage with `as any`.
+
+### Implementation Choice
+
+- Make `LanguageServerWorkspaceEditEvent.rootPath` required.
+- Make `LanguageServerRefreshEvent.rootPath` required.
+- Mark rootless provider regression events as intentionally malformed with `as any`.
+
+### Acceptance Criteria
+
+- Tauri workspace-edit and refresh gateway fixtures still satisfy the rooted event contract.
+- Provider rootless-event runtime regressions still pass as malformed input tests.
+- Focused provider/infra tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Provider Event Root Contract
+
+- Tightened workspace-edit and refresh event interfaces to require `rootPath`.
+- Kept defensive malformed rootless event tests in the provider suite.
+
+### Verification: JS/TS Provider Event Root Contract
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/infrastructure/tauriLanguageServerWorkspaceEditGateway.test.ts src/infrastructure/tauriLanguageServerRefreshGateway.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Provider Event Root Contract
+
+- Pending commit and push.
+- Included files:
+  - `src/domain/languageServerFeatures.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

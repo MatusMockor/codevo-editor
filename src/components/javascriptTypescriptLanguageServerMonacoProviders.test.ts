@@ -3523,7 +3523,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           edit: workspaceEdit("file:///project/src/user.ts", "Rootless"),
           label: "Missing root",
           sessionId: 1,
-        });
+        } as any);
         return unsubscribe;
       }),
     };
@@ -3735,7 +3735,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     emitRefresh({
       feature: "codeLens",
       sessionId: 2,
-    });
+    } as any);
     emitRefresh({
       feature: "inlayHint",
       rootPath: "/project",
