@@ -396,6 +396,32 @@ Route::name('admin.')->group(function () {
     ]);
   });
 
+  it("filters literal Laravel resource route names with only and except", () => {
+    const source = `<?php
+Route::resource('photos', PhotoController::class)->only(['index', 'show']);
+Route::resource('posts', PostController::class)->except(['create', 'edit', 'destroy']);
+Route::apiResource('api.comments', ApiCommentController::class)->except(['destroy']);
+Route::resource('reports', ReportController::class)->only('index', 'store');
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      ...expectedRouteDefinitions(source, "photos", ["index", "show"]),
+      ...expectedRouteDefinitions(source, "posts", [
+        "index",
+        "store",
+        "show",
+        "update",
+      ]),
+      ...expectedRouteDefinitions(source, "api.comments", [
+        "index",
+        "store",
+        "show",
+        "update",
+      ]),
+      ...expectedRouteDefinitions(source, "reports", ["index", "store"]),
+    ]);
+  });
+
   it("expands Laravel singleton route name modifiers", () => {
     const source = `<?php
 Route::singleton('photos.thumbnail', ThumbnailController::class)->creatable();

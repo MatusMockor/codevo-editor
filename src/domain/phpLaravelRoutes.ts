@@ -211,12 +211,22 @@ function laravelResourceRouteActionsForMethod(
 ): readonly string[] | null {
   const baseActions = laravelResourceRouteActions.get(routeMethod);
 
-  if (!baseActions || !laravelSingletonResourceRouteMethods.has(routeMethod)) {
-    return baseActions ?? null;
+  if (!baseActions) {
+    return null;
   }
 
   const chainStart = closeParen + 1;
   const chainEnd = phpStatementEndOffset(source, chainStart);
+
+  if (!laravelSingletonResourceRouteMethods.has(routeMethod)) {
+    return laravelRouteActionsWithOnlyExcept(
+      source,
+      chainStart,
+      chainEnd,
+      baseActions,
+    );
+  }
+
   const creatable = hasLaravelRouteChainMethod(
     source,
     chainStart,
@@ -228,19 +238,19 @@ function laravelResourceRouteActionsForMethod(
     hasLaravelRouteChainMethod(source, chainStart, chainEnd, "destroyable");
 
   if (routeMethod === "apisingleton") {
-    return [
+    return laravelRouteActionsWithOnlyExcept(source, chainStart, chainEnd, [
       ...(creatable ? ["store"] : []),
       "show",
       "update",
       ...(destroyable ? ["destroy"] : []),
-    ];
+    ]);
   }
 
-  return [
+  return laravelRouteActionsWithOnlyExcept(source, chainStart, chainEnd, [
     ...(creatable ? ["create", "store"] : []),
     ...baseActions,
     ...(destroyable ? ["destroy"] : []),
-  ];
+  ]);
 }
 
 function hasLaravelRouteChainMethod(
@@ -262,6 +272,73 @@ function hasLaravelRouteChainMethod(
   }
 
   return false;
+}
+
+function laravelRouteActionsWithOnlyExcept(
+  source: string,
+  chainStart: number,
+  chainEnd: number,
+  actions: readonly string[],
+): readonly string[] {
+  const actionSet = new Set(actions);
+  const chainSource = source.slice(chainStart, chainEnd);
+  const filterPattern = /->\s*(only|except)\s*\(/gi;
+  let filteredActions = [...actions];
+
+  for (const match of chainSource.matchAll(filterPattern)) {
+    const methodName = match[1]?.toLowerCase();
+    const filterOpenParen =
+      chainStart + (match.index ?? 0) + match[0].lastIndexOf("(");
+
+    if (!methodName || !isPhpCodeOffset(source, filterOpenParen)) {
+      continue;
+    }
+
+    const filterActions = laravelRouteActionNamesAtOpenParen(
+      source,
+      filterOpenParen,
+    ).filter((action) => actionSet.has(action));
+
+    if (filterActions.length === 0) {
+      continue;
+    }
+
+    if (methodName === "only") {
+      filteredActions = actions.filter((action) => filterActions.includes(action));
+      continue;
+    }
+
+    filteredActions = filteredActions.filter(
+      (action) => !filterActions.includes(action),
+    );
+  }
+
+  return filteredActions;
+}
+
+function laravelRouteActionNamesAtOpenParen(
+  source: string,
+  openParen: number,
+): string[] {
+  const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+  if (closeParen === null) {
+    return [];
+  }
+
+  const argumentStart = skipWhitespace(source, openParen + 1);
+
+  if (source[argumentStart] === "[") {
+    const arrayClose = matchingBracketOffset(source, argumentStart, "[", "]");
+
+    if (arrayClose === null || arrayClose > closeParen) {
+      return [];
+    }
+
+    return topLevelArrayStringValues(source, argumentStart, arrayClose);
+  }
+
+  return topLevelCallStringArguments(source, openParen, closeParen);
 }
 
 function firstArrayLiteralKeysAtOpenParen(
@@ -294,17 +371,48 @@ function firstArrayLiteralKeysAtOpenParen(
   return topLevelArrayStringKeys(source, argumentStart, arrayClose);
 }
 
+function topLevelCallStringArguments(
+  source: string,
+  openParen: number,
+  closeParen: number,
+): string[] {
+  return topLevelStringLiterals(source, openParen, closeParen, {
+    include: "values",
+  }).map((literal) => literal.value);
+}
+
 function topLevelArrayStringKeys(
   source: string,
   arrayOpen: number,
   arrayClose: number,
+): PhpStringLiteral[] {
+  return topLevelStringLiterals(source, arrayOpen, arrayClose, {
+    include: "keys",
+  });
+}
+
+function topLevelArrayStringValues(
+  source: string,
+  arrayOpen: number,
+  arrayClose: number,
+): string[] {
+  return topLevelStringLiterals(source, arrayOpen, arrayClose, {
+    include: "values",
+  }).map((literal) => literal.value);
+}
+
+function topLevelStringLiterals(
+  source: string,
+  openOffset: number,
+  closeOffset: number,
+  options: { include: "keys" | "values" },
 ): PhpStringLiteral[] {
   const keys: PhpStringLiteral[] = [];
   let blockComment = false;
   let depth = 0;
   let lineComment = false;
 
-  for (let index = arrayOpen + 1; index < arrayClose; index += 1) {
+  for (let index = openOffset + 1; index < closeOffset; index += 1) {
     const character = source[index] ?? "";
     const nextCharacter = source[index + 1] ?? "";
 
@@ -361,9 +469,11 @@ function topLevelArrayStringKeys(
     }
 
     const afterLiteral = skipWhitespace(source, literal.quoteEnd + 1);
+    const isKey = source.slice(afterLiteral, afterLiteral + 2) === "=>";
+    const includeLiteral = options.include === "keys" ? isKey : !isKey;
 
     if (
-      source.slice(afterLiteral, afterLiteral + 2) === "=>" &&
+      includeLiteral &&
       !(literal.quote === "\"" && hasPhpVariableInterpolation(literal.value))
     ) {
       keys.push(literal);

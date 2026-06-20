@@ -1363,3 +1363,48 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `c3f51dae Expand Laravel resource array route names`.
+
+## Slice: Laravel Partial Resource Route Names - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c15fc379 Record Laravel resource array route commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Avoid suggesting Laravel resource route names excluded by `only()` or `except()` partial resource definitions.
+
+### Implementation Choice
+
+- Parse literal action lists from `only([...])`, `except([...])`, and simple string-argument variants such as `only('index', 'store')`.
+- Apply filters after the default resource action set is determined, preserving action order.
+- Keep dynamic filter arguments ignored so extraction stays conservative.
+
+### Acceptance Criteria
+
+- `Route::resource(...)->only(['index', 'show'])` contributes only `index` and `show`.
+- `Route::resource(...)->except(['create', 'edit', 'destroy'])` omits those route names.
+- `Route::apiResource(...)->except(['destroy'])` omits API destroy while preserving API action defaults.
+- Focused route tests, full route tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added literal `only()` / `except()` route action filtering for single resource route extraction.
+- Supported array action lists and simple string-argument variants while preserving default action order.
+- Added route extractor coverage for web resource `only`, web resource `except`, API resource `except`, and string-argument `only`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "filters literal Laravel resource route names with only and except"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
