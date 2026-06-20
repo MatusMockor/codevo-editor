@@ -1056,6 +1056,7 @@ class Album extends Model
 namespace App\\Models;
 
 use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\HasManyThrough;
 
 class Comment extends Model
 {
@@ -1080,9 +1081,11 @@ class Comment extends Model
         $relation = $this->hasOne(self::class);
         $selfComment = $relation->first();
         $constantPost = $this->hasMany(self::POST_MODEL)->firstOrFail();
+        $relationMethodPost = $this->posts()->first();
         $throughTrack = $this->hasManyThrough(self::TRACK_MODEL, Playlist::class)
             ->whereNull('archived_at')
             ->first();
+        $documentedThroughTrack = $this->documentedTracks()->first();
         $namedThroughTrack = $this
             ->through(relationship: 'playlists')
             ->has(relation: 'tracks')
@@ -1108,7 +1111,9 @@ class Comment extends Model
         $morphed->tit
         $selfComment->bod
         $constantPost->tit
+        $relationMethodPost->tit
         $throughTrack->dur
+        $documentedThroughTrack->dur
         $namedThroughTrack->dur
         $dynamicThroughTrack->dur
         $namedThroughTracks->first()->dur
@@ -1119,6 +1124,17 @@ class Comment extends Model
     public function playlists()
     {
         return $this->hasMany(Playlist::class);
+    }
+
+    public function posts()
+    {
+        return $this->hasMany(Post::class);
+    }
+
+    /** @return HasManyThrough<Track, Playlist> */
+    public function documentedTracks(): HasManyThrough
+    {
+        return $this->hasManyThrough($related, $through);
     }
 }
 
@@ -1212,8 +1228,24 @@ class Tag extends Model
     expect(
       phpVariableTypeInSource(
         source,
+        positionAfter(source, "$relationMethodPost->tit"),
+        "relationMethodPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
         positionAfter(source, "$throughTrack->dur"),
         "throughTrack",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Track");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$documentedThroughTrack->dur"),
+        "documentedThroughTrack",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Track");

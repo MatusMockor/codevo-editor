@@ -2306,6 +2306,17 @@ function phpLaravelEloquentMethodCallReturnTypeFromSource(
     return fluentThroughReturnType;
   }
 
+  const relationMethodReturnType =
+    phpLaravelRelationMethodCallReturnTypeFromSource(
+      source,
+      methodName,
+      receiverType,
+    );
+
+  if (relationMethodReturnType) {
+    return relationMethodReturnType;
+  }
+
   const relationModelType = phpLaravelEloquentRelationModelTypeFromReceiverType(
     source,
     receiverType,
@@ -2469,6 +2480,131 @@ function phpLaravelRelationFactoryCallReturnTypeFromSource(
 
   return relatedModelType
     ? `Illuminate\\Database\\Eloquent\\Relations\\${relationClassName}<${relatedModelType}>`
+    : null;
+}
+
+function phpLaravelRelationMethodCallReturnTypeFromSource(
+  source: string,
+  methodName: string,
+  receiverType: string | null,
+): string | null {
+  const declaringModelType = phpLaravelStaticModelReceiverType(
+    source,
+    receiverType,
+  );
+
+  if (!declaringModelType) {
+    return null;
+  }
+
+  const declaringSource =
+    phpClassSourceForClassName(source, declaringModelType) ?? source;
+  const relationTargetType = phpLaravelRelationPropertyTargetTypeByName(
+    declaringSource,
+    source,
+    declaringModelType,
+    methodName,
+  );
+  const relationClassName = phpLaravelRelationClassNameForMethod(
+    declaringSource,
+    methodName,
+  );
+
+  if (!relationTargetType || !relationClassName) {
+    return null;
+  }
+
+  const relatedModelType = phpLaravelResolvedModelTypeCandidate(
+    source,
+    phpLaravelRelationTypeForDeclaringClass(
+      relationTargetType,
+      declaringModelType,
+      declaringSource,
+    ),
+  );
+
+  return relatedModelType
+    ? `Illuminate\\Database\\Eloquent\\Relations\\${relationClassName}<${relatedModelType}>`
+    : null;
+}
+
+function phpLaravelRelationClassNameForMethod(
+  source: string,
+  methodName: string,
+): string | null {
+  const lookupName = methodName.trim().toLowerCase();
+
+  if (!lookupName) {
+    return null;
+  }
+
+  const masked = maskPhpStringsAndComments(source);
+  const pattern =
+    /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?::\s*([^{;\n]+))?/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const modifiers = (match[1] ?? "").toLowerCase();
+    const name = match[2];
+
+    if (
+      !name ||
+      name.toLowerCase() !== lookupName ||
+      /\b(?:private|protected|static)\b/.test(modifiers)
+    ) {
+      continue;
+    }
+
+    const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
+    const docBlock = phpDocBlockBefore(source, functionOffset);
+    const declaredReturnType = normalizeReturnType(match[4] ?? null);
+    const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
+    const returnType = bestPhpReturnType(declaredReturnType, documentedReturnType);
+    const relationClassName = phpLaravelRelationClassNameFromReturnType(returnType);
+
+    if (relationClassName) {
+      return relationClassName;
+    }
+
+    return phpMethodReturnExpressions(source, methodName)
+      .map((expression) => phpLaravelRelationClassNameFromExpression(expression))
+      .find((className): className is string => Boolean(className)) ?? null;
+  }
+
+  return null;
+}
+
+function phpLaravelRelationClassNameFromReturnType(
+  returnType: string | null,
+): string | null {
+  const relationTypeName = phpLaravelEloquentRelationTypeName(returnType);
+
+  if (!relationTypeName || !laravelEloquentRelationTypes.has(relationTypeName)) {
+    return null;
+  }
+
+  return laravelEloquentRelationFactoryClassNames.get(relationTypeName) ?? null;
+}
+
+function phpLaravelRelationClassNameFromExpression(
+  expression: string,
+): string | null {
+  const normalizedExpression = expression.trim();
+  const pattern =
+    /\b(belongsTo|belongsToMany|hasMany|hasManyThrough|hasOne|hasOneThrough|morphMany|morphOne|morphedByMany|morphTo|morphToMany)\s*\(/g;
+
+  for (const match of normalizedExpression.matchAll(pattern)) {
+    const relationType = match[1]?.toLowerCase();
+    const relationClassName = relationType
+      ? laravelEloquentRelationFactoryClassNames.get(relationType)
+      : null;
+
+    if (relationClassName) {
+      return relationClassName;
+    }
+  }
+
+  return phpLaravelFluentThroughRelationPathFromExpression(normalizedExpression)
+    ? "HasManyThrough"
     : null;
 }
 

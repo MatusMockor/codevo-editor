@@ -2630,3 +2630,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `a5715d58 Cover Laravel fluent through semantic variants`.
+
+## Slice: Laravel Relation Method Semantic Chains - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f5eefd40 Record Laravel fluent through variants commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Infer assigned model types from ordinary Laravel relation method chains such as `$this->posts()->first()`, not only inline relation factory calls.
+
+### Implementation Choice
+
+- Reuse the existing relation method parser that already powers magic relation-property completion.
+- Return typed Eloquent relation objects for model receiver method calls whose method body or PHPDoc return type identifies a Laravel relation target.
+- Cover body-inferred relations and PHPDoc-generic through relations with semantic assignment tests.
+
+### Acceptance Criteria
+
+- `$this->posts()->first()` infers the related `Post` model from the relation method body.
+- `$this->documentedTracks()->first()` infers `Track` from `HasManyThrough<Track, Playlist>` PHPDoc generics.
+- Existing direct relation factory and fluent-through semantic chains remain green.
+- Focused and full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- PENDING.
