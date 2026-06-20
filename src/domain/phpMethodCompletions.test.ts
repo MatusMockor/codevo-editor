@@ -66,6 +66,9 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentBuilderMethodName("whereHasMorph")).toBe(true);
     expect(isLaravelEloquentBuilderFluentMethod("whereMorphedTo")).toBe(true);
     expect(isLaravelEloquentBuilderFluentMethod("doesntHaveMorph")).toBe(true);
+    expect(isLaravelEloquentStaticBuilderMethod("withWhereHas")).toBe(true);
+    expect(isLaravelEloquentBuilderFluentMethod("withWhereHas")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("withWhereHas")).toBe(true);
   });
 
   it("infers Laravel builder return types without global local-scope leakage", () => {
@@ -185,6 +188,7 @@ class Album extends Model
       "whereNotMorphedTo",
       "whereMorphRelation",
       "doesntHaveMorph",
+      "withWhereHas",
     ]) {
       expect(
         phpLaravelMethodCallReturnTypeFromSource(

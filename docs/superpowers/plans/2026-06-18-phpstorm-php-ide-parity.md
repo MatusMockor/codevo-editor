@@ -1543,3 +1543,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `f7d94887 Detect array Laravel route name groups`.
+
+## Slice: Laravel WithWhereHas Builder Fluent - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3e840f88 Record Laravel array route group commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Laravel `withWhereHas` as a builder-preserving Eloquent fluent so chains keep model-aware inference.
+
+### Implementation Choice
+
+- Add `withWhereHas` to both static model builder methods and instance Eloquent builder fluent methods.
+- Reuse the existing callback-context support already present in the semantic engine.
+- Add semantic chain coverage proving `withWhereHas(...)->first()` resolves back to the model type.
+
+### Acceptance Criteria
+
+- `withWhereHas` is classified as a Laravel Eloquent builder method.
+- Direct method return inference preserves `Builder<Model>`.
+- `Album::query()->withWhereHas(...)->first()` infers `Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added `withWhereHas` to Laravel static and instance Eloquent builder fluent recognition.
+- Added method classification and return-type coverage for `withWhereHas`.
+- Added semantic-chain coverage proving `Album::query()->withWhereHas(...)->first()` resolves to `Album`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes as model-specific|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

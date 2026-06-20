@@ -544,11 +544,15 @@ class AlbumController
         $morphAlbum = Album::query()
             ->whereHasMorph('commentable', [Post::class])
             ->first();
+        $withWhereHasAlbum = Album::query()
+            ->withWhereHas('tracks', $visibleTracks)
+            ->first();
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
 
         $album->tit
         $morphAlbum->tit
+        $withWhereHasAlbum->tit
         $query->whe
         $latest->tit
     }
@@ -568,6 +572,14 @@ class AlbumController
         source,
         positionAfter(source, "$morphAlbum->tit"),
         "morphAlbum",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$withWhereHasAlbum->tit"),
+        "withWhereHasAlbum",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
