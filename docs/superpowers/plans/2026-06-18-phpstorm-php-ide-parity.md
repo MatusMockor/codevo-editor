@@ -1635,3 +1635,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `d5b00a53 Parse balanced PHP method chains`.
+
+## Slice: Laravel Aggregate Builder Fluents - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `68a90e33 Record balanced PHP method chain commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Laravel aggregate eager-load helpers as builder-preserving Eloquent fluents so chains like `withSum(...)->first()` keep model-aware inference.
+
+### Implementation Choice
+
+- Add `withAggregate`, `withAvg`, `withMax`, `withMin`, and `withSum` to static and instance Eloquent builder method sets.
+- Keep existing `withCount` and `withExists` behavior unchanged.
+- Add semantic-chain coverage for an aggregate helper followed by a terminal model method.
+
+### Acceptance Criteria
+
+- Aggregate helpers are classified as Laravel Eloquent builder methods.
+- Direct method return inference preserves `Builder<Model>`.
+- `Album::query()->withSum(...)->first()` infers `Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added Laravel aggregate eager-load helpers to static and instance Eloquent builder fluent recognition.
+- Added method classification and return-type coverage for aggregate builder helpers.
+- Added semantic-chain coverage proving `withSum(...)->first()` resolves to the model type.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes as model-specific|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

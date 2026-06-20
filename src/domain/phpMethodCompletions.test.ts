@@ -69,6 +69,17 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentStaticBuilderMethod("withWhereHas")).toBe(true);
     expect(isLaravelEloquentBuilderFluentMethod("withWhereHas")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("withWhereHas")).toBe(true);
+    for (const aggregateMethod of [
+      "withAggregate",
+      "withAvg",
+      "withMax",
+      "withMin",
+      "withSum",
+    ]) {
+      expect(isLaravelEloquentStaticBuilderMethod(aggregateMethod)).toBe(true);
+      expect(isLaravelEloquentBuilderFluentMethod(aggregateMethod)).toBe(true);
+      expect(isLaravelEloquentBuilderMethodName(aggregateMethod)).toBe(true);
+    }
   });
 
   it("infers Laravel builder return types without global local-scope leakage", () => {
@@ -189,6 +200,11 @@ class Album extends Model
       "whereMorphRelation",
       "doesntHaveMorph",
       "withWhereHas",
+      "withAggregate",
+      "withAvg",
+      "withMax",
+      "withMin",
+      "withSum",
     ]) {
       expect(
         phpLaravelMethodCallReturnTypeFromSource(

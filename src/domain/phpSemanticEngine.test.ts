@@ -547,12 +547,16 @@ class AlbumController
         $withWhereHasAlbum = Album::query()
             ->withWhereHas('tracks', fn ($trackQuery) => $trackQuery->where('visible', true))
             ->first();
+        $summedAlbum = Album::query()
+            ->withSum('tracks', 'duration')
+            ->first();
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
 
         $album->tit
         $morphAlbum->tit
         $withWhereHasAlbum->tit
+        $summedAlbum->tit
         $query->whe
         $latest->tit
     }
@@ -580,6 +584,14 @@ class AlbumController
         source,
         positionAfter(source, "$withWhereHasAlbum->tit"),
         "withWhereHasAlbum",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$summedAlbum->tit"),
+        "summedAlbum",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
