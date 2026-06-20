@@ -18,6 +18,7 @@ import {
   phpLaravelDynamicWhereCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelMethodCallReturnTypeFromSource,
+  phpLaravelModelAccessorTargetFromSource,
   phpLaravelModelAttributeTargetFromSource,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
@@ -959,6 +960,47 @@ class Comment
       },
     });
     expect(phpLaravelModelAttributeTargetFromSource(source, "missing")).toBeNull();
+  });
+
+  it("locates Laravel accessor source attributes", () => {
+    const source = `<?php
+use Illuminate\\Database\\Eloquent\\Casts\\Attribute;
+
+class Comment
+{
+    public function getFullNameAttribute(): string
+    {
+        return '';
+    }
+
+    protected function displayName(): Attribute
+    {
+        return Attribute::make(get: fn () => '');
+    }
+}
+`;
+
+    expect(
+      phpLaravelModelAccessorTargetFromSource(source, "full_name"),
+    ).toEqual({
+      attributeName: "full_name",
+      position: {
+        column: 21,
+        lineNumber: 6,
+      },
+    });
+    expect(
+      phpLaravelModelAccessorTargetFromSource(source, "display_name"),
+    ).toEqual({
+      attributeName: "display_name",
+      position: {
+        column: 24,
+        lineNumber: 11,
+      },
+    });
+    expect(
+      phpLaravelModelAccessorTargetFromSource(source, "missing"),
+    ).toBeNull();
   });
 
   it("recognizes compound and orWhere Laravel dynamic where attributes", () => {

@@ -10508,7 +10508,8 @@ class CommentController
         Comment::whereContent(
 
         $foundComment = Comment::whereContent('hello')->first();
-        $foundComment->get
+        $foundComment->getC
+        $foundComment->full_name;
 
         $query = Comment::query();
         $query->whereIsP
@@ -10555,6 +10556,11 @@ class Comment
     ];
 
     public function getContent(): string {}
+
+    public function getFullNameAttribute(): string
+    {
+        return '';
+    }
 }
 `;
         }
@@ -10643,7 +10649,7 @@ class Builder
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
-        positionAfter(controllerSource, "$foundComment->get"),
+        positionAfter(controllerSource, "$foundComment->getC"),
       ),
     ).resolves.toEqual([
       {
@@ -10712,6 +10718,31 @@ class Builder
       },
     });
 
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$foundComment->full_name"),
+      );
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(commentPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: commentPath,
+      position: {
+        column: 21,
+        lineNumber: 16,
+      },
+    });
+
     expect(diagnosticsListener).not.toBeNull();
 
     act(() => {
@@ -10726,7 +10757,7 @@ class Builder
           },
           {
             character: 24,
-            line: 18,
+            line: lineNumberOf(controllerSource, "Comment::missingDynamic") - 1,
             message:
               "Method App\\Models\\Comment::missingDynamic() does not exist",
             severity: "error",
@@ -10743,7 +10774,7 @@ class Builder
     expect(getWorkbench().languageServerDiagnosticsByPath[controllerPath]).toEqual([
       {
         character: 24,
-        line: 18,
+        line: lineNumberOf(controllerSource, "Comment::missingDynamic") - 1,
         message: "Method App\\Models\\Comment::missingDynamic() does not exist",
         severity: "error",
         source: "phpactor",

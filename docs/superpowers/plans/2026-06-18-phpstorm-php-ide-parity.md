@@ -74,3 +74,61 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 - Improve PHPDoc inheritance and remaining trait host-context diagnostics beyond member/property false positives without hiding app bugs.
 - Add relation return inference for remaining implicit targets, especially multi-target `morphTo()` inverse relations, through-relations with intermediate generics, and polymorphic edge cases not covered by explicit related-class factories.
 - Add UI smoke tests for IDE Mode on a real Laravel workspace.
+
+## Slice: Laravel Accessor-Backed Attribute Navigation - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a4350cd Add JS TS source definition navigation`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Existing WIP entering the slice:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Goal
+
+- Finish the in-progress Laravel accessor target work by wiring accessor-backed model properties into Cmd+B / Go to Definition.
+
+### Implementation Choice
+
+- Reuse the new `phpLaravelModelAccessorTargetFromSource` parser as a fallback after declared model attribute source lookup.
+- Preserve existing navigation preference for `$fillable`, `$casts`, `$attributes`, and `$appends` entries.
+- Add a workbench preview regression proving a model property such as `$comment->full_name` opens `getFullNameAttribute()`.
+
+### Acceptance Criteria
+
+- Domain accessor target tests pass.
+- Workbench Go to Definition opens legacy accessor methods for accessor-backed model properties.
+- `npm run check` is unblocked unless another unrelated issue appears.
+- `git diff --check` passes.
+
+### Completed
+
+- Added `phpLaravelModelAccessorTargetFromSource` to resolve legacy `getFooAttribute()` and modern `Attribute` accessor methods back to their source method positions.
+- Reused the accessor target as a fallback for Laravel model property navigation after direct model attribute source lookup.
+- Added workbench coverage proving `$foundComment->full_name` opens `getFullNameAttribute()` through Go to Definition.
+- Kept existing `$fillable`, `$casts`, `$attributes`, and `$appends` navigation behavior intact by preserving the existing target lookup priority.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "locates Laravel accessor source attributes"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "exposes Laravel dynamic where helpers from model attributes"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/application/useWorkbenchController.preview.test.tsx -t "Laravel accessor|exposes Laravel dynamic where helpers from model attributes|locates Laravel accessor source attributes|extracts Laravel accessor"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
+- Intended included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

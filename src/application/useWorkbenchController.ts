@@ -185,6 +185,7 @@ import {
   phpLaravelEloquentBuilderModelTypeCandidate,
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelLocalScopeCompletionsFromMethods,
+  phpLaravelModelAccessorTargetFromSource,
   phpLaravelModelAttributeTargetFromSource,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
   phpLaravelRelationPropertyCompletionsFromSource,
@@ -9170,7 +9171,7 @@ export function useWorkbenchController(
           const target = phpLaravelModelAttributeTargetFromSource(
             content,
             attributeName,
-          );
+          ) ?? phpLaravelModelAccessorTargetFromSource(content, attributeName);
 
           if (!target) {
             continue;

@@ -1102,6 +1102,30 @@ export function phpLaravelModelAttributeTargetFromSource(
   };
 }
 
+export function phpLaravelModelAccessorTargetFromSource(
+  source: string,
+  attributeName: string,
+): PhpLaravelDynamicWhereAttributeTarget | null {
+  const attributeLookup = attributeName.trim().toLowerCase();
+
+  if (!attributeLookup) {
+    return null;
+  }
+
+  const firstMatch = phpLaravelAccessorAttributeMatches(source).find(
+    (match) => match.attributeName.toLowerCase() === attributeLookup,
+  );
+
+  if (!firstMatch) {
+    return null;
+  }
+
+  return {
+    attributeName: firstMatch.attributeName,
+    position: editorPositionAtOffset(source, firstMatch.methodOffset),
+  };
+}
+
 export function isLaravelDynamicWhereMethodForSource(
   source: string,
   methodName: string,
@@ -2913,10 +2937,25 @@ function phpStringConstantExpressionValue(
 function phpLaravelAccessorAttributes(
   source: string,
 ): Array<[string, string | null]> {
+  return phpLaravelAccessorAttributeMatches(source).map((match) => [
+    match.attributeName,
+    match.returnType,
+  ]);
+}
+
+interface PhpLaravelAccessorAttributeMatch {
+  attributeName: string;
+  methodOffset: number;
+  returnType: string | null;
+}
+
+function phpLaravelAccessorAttributeMatches(
+  source: string,
+): PhpLaravelAccessorAttributeMatch[] {
   const masked = maskPhpStringsAndComments(source);
   const pattern =
     /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?::\s*([^{;\n]+))?/g;
-  const attributes: Array<[string, string | null]> = [];
+  const matches: PhpLaravelAccessorAttributeMatch[] = [];
 
   for (const match of masked.matchAll(pattern)) {
     const modifiers = (match[1] ?? "").toLowerCase();
@@ -2932,6 +2971,8 @@ function phpLaravelAccessorAttributes(
     }
 
     const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
+    const methodOffset =
+      (match.index ?? 0) + match[0].indexOf(name, match[0].lastIndexOf("function"));
     const docBlock = phpDocBlockBefore(source, functionOffset);
     const declaredReturnType = normalizeReturnType(match[4] ?? null);
     const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
@@ -2939,21 +2980,27 @@ function phpLaravelAccessorAttributes(
     const legacyAccessorName = phpLaravelLegacyAccessorAttributeName(name);
 
     if (legacyAccessorName) {
-      attributes.push([legacyAccessorName, returnType ?? "mixed"]);
+      matches.push({
+        attributeName: legacyAccessorName,
+        methodOffset,
+        returnType: returnType ?? "mixed",
+      });
       continue;
     }
 
     if (phpLaravelAttributeAccessorReturnType(returnType)) {
-      attributes.push([
-        phpCamelCaseToSnakeCase(name),
-        phpLaravelAttributeAccessorValueType(returnType) ??
+      matches.push({
+        attributeName: phpCamelCaseToSnakeCase(name),
+        methodOffset,
+        returnType:
+          phpLaravelAttributeAccessorValueType(returnType) ??
           phpLaravelAttributeAccessorValueTypeFromReturnExpression(source, name) ??
           "mixed",
-      ]);
+      });
     }
   }
 
-  return attributes;
+  return matches;
 }
 
 function phpArrayAssignmentBodies(source: string, propertyName: string): string[] {

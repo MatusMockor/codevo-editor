@@ -1205,8 +1205,8 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Go To Source Definition
 
-- Pending commit.
-- Intended included files:
+- Committed and pushed as `a4350cd Add JS TS source definition navigation`.
+- Included files:
   - `src-tauri/src/lib.rs`
   - `src-tauri/src/lsp_features.rs`
   - `src-tauri/src/lsp_session.rs`
