@@ -1324,7 +1324,7 @@ function toMonacoDiagnosticMarker(
 ): Monaco.editor.IMarkerData {
   const range = diagnosticRange(diagnostic);
 
-  return {
+  const marker: Monaco.editor.IMarkerData & { data?: unknown } = {
     code: diagnosticCode(monaco, diagnostic),
     endColumn: range.endCharacter + 1,
     endLineNumber: range.endLine + 1,
@@ -1336,6 +1336,12 @@ function toMonacoDiagnosticMarker(
     tags: diagnosticTags(monaco, diagnostic.tags ?? []),
     relatedInformation: diagnosticRelatedInformation(monaco, diagnostic),
   };
+
+  if ("data" in diagnostic) {
+    marker.data = diagnostic.data;
+  }
+
+  return marker;
 }
 
 function diagnosticCode(

@@ -427,6 +427,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                         "rangeFormatting": { "dynamicRegistration": false },
                         "publishDiagnostics": {
                             "codeDescriptionSupport": true,
+                            "dataSupport": true,
                             "relatedInformation": true,
                             "tagSupport": {
                                 "valueSet": [1, 2]
@@ -776,6 +777,10 @@ mod tests {
         assert_eq!(
             request.params["capabilities"]["textDocument"]["publishDiagnostics"]
                 ["codeDescriptionSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["publishDiagnostics"]["dataSupport"],
             true
         );
         assert_eq!(

@@ -15,6 +15,8 @@ pub struct LanguageServerDiagnosticEvent {
 pub struct LanguageServerDiagnostic {
     pub code: Option<LanguageServerDiagnosticCode>,
     pub code_description_href: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
     pub message: String,
     pub severity: LanguageServerDiagnosticSeverity,
     pub source: Option<String>,
@@ -91,6 +93,7 @@ fn parse_diagnostic(value: &Value) -> LanguageServerDiagnostic {
             .and_then(|description| description.get("href"))
             .and_then(Value::as_str)
             .map(str::to_string),
+        data: value.get("data").cloned(),
         message: value
             .get("message")
             .and_then(Value::as_str)
@@ -226,6 +229,9 @@ mod tests {
                             "codeDescription": {
                                 "href": "https://phpactor.example/docs/worse.docblock_missing_param"
                             },
+                            "data": {
+                                "fixId": "addMissingImport"
+                            },
                             "source": "phpactor",
                             "tags": [1, 2, 99, "bad"],
                             "relatedInformation": [
@@ -277,6 +283,10 @@ mod tests {
         assert_eq!(
             event.diagnostics[0].code_description_href,
             Some("https://phpactor.example/docs/worse.docblock_missing_param".to_string())
+        );
+        assert_eq!(
+            event.diagnostics[0].data,
+            Some(json!({ "fixId": "addMissingImport" }))
         );
         assert_eq!(event.diagnostics[0].line, 2);
         assert_eq!(event.diagnostics[0].character, 4);

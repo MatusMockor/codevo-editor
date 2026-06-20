@@ -11,6 +11,7 @@ export type LanguageServerDiagnosticNoticeSeverity =
 export interface LanguageServerDiagnostic {
   code?: string | number | null;
   codeDescriptionHref?: string | null;
+  data?: unknown;
   message: string;
   severity: LanguageServerDiagnosticSeverity;
   source: string | null;
