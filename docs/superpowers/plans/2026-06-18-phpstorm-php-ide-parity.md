@@ -2231,3 +2231,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `fba5d9f0 Infer additional Laravel model terminals`.
+
+## Slice: Laravel Fluent Builder Helper Recognition - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `76278297 Record Laravel model terminal commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize additional Eloquent fluent builder helpers for scopes, eager-load configuration, query casts, cloning, and after-query hooks while preserving the current model-aware builder type.
+
+### Implementation Choice
+
+- Add the missing fluent helpers to Laravel Eloquent static/fluent builder method recognition.
+- Reuse existing builder-preserving return inference for known fluent methods.
+- Add semantic coverage proving representative eager and scope helper chains still infer the model after `first()`.
+
+### Acceptance Criteria
+
+- Helpers such as `applyScopes`, `scopes`, `withOnly`, `withAttributes`, `withCasts`, `withoutGlobalScopes`, `setQuery`, `setEagerLoads`, `clone`, and `onClone` are recognized as Laravel Eloquent builder methods.
+- Direct return inference for these helpers resolves to `Builder<Model>`.
+- Representative eager/scope helper chains infer `App\Models\Album` after `first()`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added scope, eager-load, cast, clone, query setter, and after-query helpers to known Eloquent static/fluent builder method recognition.
+- Added direct return-type coverage proving the helpers preserve `Builder<App\Models\Album>`.
+- Added semantic assignment coverage proving representative eager/scope helper chains infer `App\Models\Album` after `first()`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending.

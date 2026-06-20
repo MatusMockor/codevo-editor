@@ -547,6 +547,15 @@ class AlbumController
         $withWhereHasAlbum = Album::query()
             ->withWhereHas('tracks', fn ($trackQuery) => $trackQuery->where('visible', true))
             ->first();
+        $fromEagerHelpers = Album::query()
+            ->withOnly('tracks')
+            ->withCasts(['released_at' => 'datetime'])
+            ->first();
+        $fromScopeHelpers = Album::query()
+            ->withoutGlobalScopes()
+            ->scopes(['popular'])
+            ->applyScopes()
+            ->first();
         $summedAlbum = Album::query()
             ->withSum('tracks', 'duration')
             ->first();
@@ -610,6 +619,8 @@ class AlbumController
         $album->tit
         $morphAlbum->tit
         $withWhereHasAlbum->tit
+        $fromEagerHelpers->tit
+        $fromScopeHelpers->tit
         $summedAlbum->tit
         $lazySummedAlbum->tit
         $fromLoadedCollection->tit
@@ -658,6 +669,22 @@ class AlbumController
         source,
         positionAfter(source, "$withWhereHasAlbum->tit"),
         "withWhereHasAlbum",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromEagerHelpers->tit"),
+        "fromEagerHelpers",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromScopeHelpers->tit"),
+        "fromScopeHelpers",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
