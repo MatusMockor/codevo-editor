@@ -4646,8 +4646,20 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().openFile(fileEntry(path, "userService.ts"));
     });
     await flushAsyncTurns(12);
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.fileStructure",
+    );
+
+    expect(
+      command?.isEnabled({
+        activeDocumentDirty: false,
+        hasActiveDocument: true,
+        hasWorkspace: true,
+      }),
+    ).toBe(true);
     await act(async () => {
-      getWorkbench().openFileStructure();
+      await command?.run();
     });
     await flushAsyncTurns(12);
 

@@ -1735,7 +1735,57 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Watched Files Capability Alignment
 
-- Pending commit.
+- Committed and pushed as `dbdf8f2c Align JS TS watched file capability`.
 - Included files:
   - `src-tauri/src/lsp.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS File Structure Command Enablement
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `dbdf8f2c Align JS TS watched file capability`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The file-structure controller path already loads JS/TS document symbols through the TypeScript language server.
+- The command registry still enabled `editor.fileStructure` only for PHP language-server documents.
+- JS/TS users could call the direct controller API in tests, but the actual command palette action stayed disabled.
+
+### Implementation Choice
+
+- Enable `editor.fileStructure` for JS/TS documents only when the active workspace has a running TypeScript service with `documentSymbol` capability.
+- Preserve the existing PHP command enablement.
+- Convert the existing JS/TS file-structure preview test to use the command path and assert enablement.
+
+### Acceptance Criteria
+
+- `editor.fileStructure` is enabled for an active `.ts` document with running JS/TS `documentSymbol` support.
+- Running the command opens the JS/TS file structure and loads document symbols.
+- Existing PHP file-structure behavior remains unchanged.
+- Focused/full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS File Structure Command Enablement
+
+- Updated `editor.fileStructure` command enablement to include JS/TS documents with a running document-symbol-capable TypeScript service.
+- Added preview coverage that runs JS/TS file structure through the command registry.
+
+### Verification: JS/TS File Structure Command Enablement
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "loads JavaScript and TypeScript file structure"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS File Structure Command Enablement
+
+- Pending commit.
+- Included files:
+  - `src/application/useWorkbenchController.ts`
+  - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

@@ -11603,9 +11603,27 @@ export function useWorkbenchController(
       title: "File Structure",
       category: "Editor",
       shortcut: shortcut("editor.fileStructure"),
-      isEnabled: () =>
-        Boolean(activeDocument) &&
-        Boolean(activeDocument && isLanguageServerDocument(activeDocument)),
+      isEnabled: () => {
+        if (!activeDocument) {
+          return false;
+        }
+
+        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+          return (
+            isRunningLanguageServerForWorkspace(
+              javaScriptTypeScriptLanguageServerRuntimeStatus,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+              workspaceRoot,
+            ) &&
+            canUseLanguageServerFeature(
+              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+              "documentSymbol",
+            )
+          );
+        }
+
+        return isLanguageServerDocument(activeDocument);
+      },
       run: openFileStructure,
     });
 
