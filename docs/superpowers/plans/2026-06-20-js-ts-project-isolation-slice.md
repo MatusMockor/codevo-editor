@@ -2073,3 +2073,56 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Hierarchy Same-Root Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5c6f09cb Record diagnostic code description filter commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- A read-only frontend scan identified the same-root session gap in `openCallHierarchy` and `openTypeHierarchy`.
+- The backend scan did not need to block this slice because the affected flow is in the workbench command UI.
+
+### Why This Slice
+
+- JS/TS navigation now drops stale same-root TypeScript session results, but hierarchy command views still used root-only guards.
+- `openCallHierarchy` and `openTypeHierarchy` each perform multi-step LSP work after the initial command.
+- A same-root TypeScript runtime restart during `prepareCallHierarchy`, incoming/outgoing calls, `prepareTypeHierarchy`, or subtype/supertype requests could populate hierarchy UI with stale results from the old session.
+
+### Implementation Choice
+
+- Add a shared controller callback that checks the active workspace root and cached JS/TS runtime `sessionId`.
+- Reuse that shared session guard in JS/TS navigation, call hierarchy, and type hierarchy command flows.
+- Re-check the session after document flush, after prepare calls, after hierarchy follow-up calls, and before error reporting.
+- Add same-root restart regressions for both call hierarchy and type hierarchy.
+
+### Acceptance Criteria
+
+- Same-root TypeScript session restarts drop stale call hierarchy results before incoming/outgoing calls run.
+- Same-root TypeScript session restarts drop stale type hierarchy results before supertype/subtype calls run.
+- Existing successful call/type hierarchy command flows still work.
+- Focused hierarchy tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Hierarchy Same-Root Session Guard
+
+- Added shared JS/TS root + session guard in the workbench controller.
+- Applied same-root session checks to JS/TS call hierarchy and type hierarchy command flows.
+- Added regression coverage for stale same-root session restarts in both hierarchy views.
+
+### Verification: JS/TS Hierarchy Same-Root Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "call hierarchy.*same-root session restart|type hierarchy.*same-root session restart|opens JavaScript and TypeScript call hierarchy|opens JavaScript and TypeScript type hierarchy"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Hierarchy Same-Root Session Guard
+
+- Pending commit and push.

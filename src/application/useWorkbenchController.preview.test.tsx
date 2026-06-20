@@ -4880,6 +4880,109 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("drops stale JavaScript and TypeScript call hierarchy after same-root session restart", async () => {
+    const path = "/workspace/src/userService.ts";
+    const prepareCallHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareCallHierarchy"]>
+        >
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(29)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(29)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const item = {
+      data: { symbolId: "loadUser" },
+      detail: "src/userService.ts",
+      kind: 6,
+      name: "loadUser",
+      range: range(1, 9, 3, 3),
+      selectionRange: range(1, 9, 1, 17),
+      tags: [],
+      uri: "file:///workspace/src/userService.ts",
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockImplementationOnce(async () => prepareCallHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(29),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(29),
+      readTextFile: vi.fn(async () => "export function loadUser() {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 17,
+        lineNumber: 1,
+      });
+    });
+
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy,
+      ).toHaveBeenCalled();
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(30));
+    });
+    await flushAsyncTurns();
+
+    prepareCallHierarchy.resolve([item]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.incomingCalls,
+    ).not.toHaveBeenCalled();
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.outgoingCalls,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().callHierarchyView).toBeNull();
+  });
+
   it("opens JavaScript and TypeScript type hierarchy from command palette actions", async () => {
     const path = "/workspace/src/user.ts";
     const subtypePath = "/workspace/src/adminUser.ts";
@@ -4984,6 +5087,109 @@ describe("useWorkbenchController preview tabs", () => {
         lineNumber: 3,
       },
     });
+  });
+
+  it("drops stale JavaScript and TypeScript type hierarchy after same-root session restart", async () => {
+    const path = "/workspace/src/user.ts";
+    const prepareTypeHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareTypeHierarchy"]>
+        >
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(14)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(14)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const item = {
+      data: { symbolId: "User" },
+      detail: "src/user.ts",
+      kind: 5,
+      name: "User",
+      range: range(0, 0, 4, 1),
+      selectionRange: range(0, 13, 0, 17),
+      tags: [],
+      uri: "file:///workspace/src/user.ts",
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockImplementationOnce(async () => prepareTypeHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(14),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(14),
+      readTextFile: vi.fn(async () => "export class User {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "user.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 15,
+        lineNumber: 1,
+      });
+    });
+
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showTypeHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.prepareTypeHierarchy,
+      ).toHaveBeenCalled();
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(15));
+    });
+    await flushAsyncTurns();
+
+    prepareTypeHierarchy.resolve([item]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySupertypes,
+    ).not.toHaveBeenCalled();
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySubtypes,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().typeHierarchyView).toBeNull();
   });
 
   it("opens JavaScript and TypeScript definitions through workbench commands", async () => {
