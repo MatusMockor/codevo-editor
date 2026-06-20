@@ -557,6 +557,8 @@ class AlbumController
             ->get()
             ->loadSum('tracks', 'duration')
             ->first();
+        $foundOr = Album::query()
+            ->findOr(1, fn () => null);
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
 
@@ -566,6 +568,7 @@ class AlbumController
         $summedAlbum->tit
         $lazySummedAlbum->tit
         $fromLoadedCollection->tit
+        $foundOr->tit
         $query->whe
         $latest->tit
     }
@@ -617,6 +620,14 @@ class AlbumController
         source,
         positionAfter(source, "$fromLoadedCollection->tit"),
         "fromLoadedCollection",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$foundOr->tit"),
+        "foundOr",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");

@@ -198,6 +198,7 @@ const laravelEloquentBuilderFluentMethods = new Set([
 const laravelEloquentBuilderTerminalModelMethods = new Set([
   "create",
   "find",
+  "findor",
   "findorfail",
   "first",
   "firstor",

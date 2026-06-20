@@ -1772,3 +1772,49 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `8847fad1 Preserve Laravel collection lazy loaders`.
+
+## Slice: Laravel FindOr Terminal Model Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `faba5c9a Record Laravel collection lazy loader commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Laravel `findOr(...)` as a terminal model-returning Eloquent builder method, matching `firstOr(...)` behavior.
+
+### Implementation Choice
+
+- Add `findOr` to the Eloquent builder terminal model method set.
+- Reuse existing static model and builder return inference paths.
+- Add semantic assignment coverage for `Album::query()->findOr(...)`.
+
+### Acceptance Criteria
+
+- `findOr` is classified as a Laravel Eloquent terminal model method.
+- `Album::findOr(...)` infers `Album`.
+- `Album::query()->findOr(...)` infers `Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added `findOr` to Eloquent builder terminal model method recognition.
+- Added method classification and direct static model return-type coverage.
+- Added semantic-chain coverage proving `Album::query()->findOr(...)` resolves to `Album`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "common Eloquent finder|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

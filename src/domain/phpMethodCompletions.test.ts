@@ -48,8 +48,10 @@ function positionAfter(source: string, needle: string) {
 
 describe("phpMethodCompletions", () => {
   it("treats common Eloquent finder methods as terminal model methods", () => {
+    expect(isLaravelEloquentBuilderTerminalModelMethod("findOr")).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("firstWhere")).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("firstOrNew")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("findOr")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("firstWhere")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("firstOrNew")).toBe(true);
   });
@@ -180,6 +182,14 @@ class Album extends Model
         "first",
         "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
         null,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "findOr",
+        "Album",
+        "Album::findOr(1, fn () => null)",
       ),
     ).toBe("App\\Models\\Album");
     for (const methodName of [
