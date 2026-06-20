@@ -283,7 +283,12 @@ export function EditorSurface({
     }
 
     editorApi.trigger("mockor.phpIdeReadiness", "editor.action.triggerSuggest", {});
-  }, [activeDocument, editorApi, phpIdeReadinessVersion]);
+  }, [
+    activeDocument,
+    editorApi,
+    phpIdeReadinessVersion,
+    providePhpMethodCompletions,
+  ]);
 
   useEffect(() => {
     if (!monacoApi) {

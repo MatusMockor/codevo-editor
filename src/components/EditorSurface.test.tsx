@@ -312,7 +312,10 @@ interface ParserFactory
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = createMonaco(model);
 
-    const render = (phpIdeReadinessVersion: number) =>
+    const render = (
+      phpIdeReadinessVersion: number,
+      providePhpMethodCompletions = vi.fn(async () => []),
+    ) =>
       root.render(
         <EditorSurface
           activeDocument={activeDocument}
@@ -340,7 +343,7 @@ interface ParserFactory
           onRevealTargetHandled={vi.fn()}
           onRevertChangeHunk={vi.fn()}
           phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
-          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodCompletions={providePhpMethodCompletions}
           providePhpMethodSignature={vi.fn(async () => null)}
         />,
       );
@@ -353,6 +356,92 @@ interface ParserFactory
 
     await act(async () => {
       render(1);
+      await Promise.resolve();
+    });
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "mockor.phpIdeReadiness",
+      "editor.action.triggerSuggest",
+      {},
+    );
+  });
+
+  it("reopens PHP suggestions when the IDE method provider becomes ready", async () => {
+    const content = "<?php\n$comment->\n";
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "CommentController.php",
+      path: "/workspace/src/CommentController.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => content),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({
+      column: 11,
+      lineNumber: 2,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const emptyProvider = vi.fn(async () => []);
+    const readyProvider = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "forceDelete",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+
+    const render = (
+      providePhpMethodCompletions: typeof emptyProvider | typeof readyProvider,
+    ) =>
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          phpIdeReadinessVersion={1}
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={providePhpMethodCompletions}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+
+    await act(async () => {
+      render(emptyProvider);
+      await Promise.resolve();
+    });
+    editor.trigger.mockClear();
+
+    await act(async () => {
+      render(readyProvider);
       await Promise.resolve();
     });
 
