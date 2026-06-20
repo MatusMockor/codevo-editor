@@ -261,6 +261,7 @@ fn workspace_edit_event_payload(
 pub enum LanguageServerRefreshFeature {
     CodeLens,
     InlayHint,
+    SemanticTokens,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1667,6 +1668,13 @@ fn server_request_result(
             let _ = refresh_sink.emit_refresh(LanguageServerRefreshEvent {
                 session_id,
                 feature: LanguageServerRefreshFeature::InlayHint,
+            });
+            Value::Null
+        }
+        "workspace/semanticTokens/refresh" => {
+            let _ = refresh_sink.emit_refresh(LanguageServerRefreshEvent {
+                session_id,
+                feature: LanguageServerRefreshFeature::SemanticTokens,
             });
             Value::Null
         }
@@ -3293,6 +3301,15 @@ mod tests {
                 "params": null
             }),
         );
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 48,
+                "method": "workspace/semanticTokens/refresh",
+                "params": null
+            }),
+        );
 
         assert_eq!(
             refresh_rx
@@ -3313,11 +3330,24 @@ mod tests {
             }
         );
         assert_eq!(
+            refresh_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("semantic tokens refresh"),
+            LanguageServerRefreshEvent {
+                session_id: 1,
+                feature: LanguageServerRefreshFeature::SemanticTokens,
+            }
+        );
+        assert_eq!(
             wait_for_captured_response(&capture, 46)["result"],
             Value::Null
         );
         assert_eq!(
             wait_for_captured_response(&capture, 47)["result"],
+            Value::Null
+        );
+        assert_eq!(
+            wait_for_captured_response(&capture, 48)["result"],
             Value::Null
         );
     }

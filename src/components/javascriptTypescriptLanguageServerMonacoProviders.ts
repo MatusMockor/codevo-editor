@@ -214,10 +214,12 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
   const disposables: Disposable[] = [];
   const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
   const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
+  const semanticTokensRefreshEmitter = createMonacoEventEmitter<void>();
   disposables.push({
     dispose: () => {
       codeLensRefreshEmitter.dispose();
       inlayHintRefreshEmitter.dispose();
+      semanticTokensRefreshEmitter.dispose();
     },
   });
   let refreshUnsubscribe: (() => void) | null = null;
@@ -248,6 +250,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           event,
           codeLensRefreshEmitter,
           inlayHintRefreshEmitter,
+          semanticTokensRefreshEmitter,
         );
       })
       .then((unsubscribe) => {
@@ -584,6 +587,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerDocumentSemanticTokensProvider) {
       disposables.push(
         registry.registerDocumentSemanticTokensProvider(language, {
+          onDidChange: semanticTokensRefreshEmitter.event,
           getLegend: () => semanticTokensLegendForActiveRuntime(context),
           provideDocumentSemanticTokens: (model) =>
             provideDocumentSemanticTokens(context, model),
@@ -2708,6 +2712,7 @@ function handleLanguageServerRefreshEvent(
   event: LanguageServerRefreshEvent,
   codeLensRefreshEmitter: MonacoEventEmitter<void>,
   inlayHintRefreshEmitter: MonacoEventEmitter<void>,
+  semanticTokensRefreshEmitter: MonacoEventEmitter<void>,
 ): void {
   if (!isRefreshEventActive(context, event)) {
     return;
@@ -2720,6 +2725,11 @@ function handleLanguageServerRefreshEvent(
 
   if (event.feature === "inlayHint") {
     inlayHintRefreshEmitter.fire(undefined);
+    return;
+  }
+
+  if (event.feature === "semanticTokens") {
+    semanticTokensRefreshEmitter.fire(undefined);
   }
 }
 

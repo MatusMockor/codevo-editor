@@ -240,7 +240,10 @@ export interface LanguageServerWorkspaceEditGateway {
   ): Promise<LanguageServerWorkspaceEditUnsubscribeFn>;
 }
 
-export type LanguageServerRefreshFeature = "codeLens" | "inlayHint";
+export type LanguageServerRefreshFeature =
+  | "codeLens"
+  | "inlayHint"
+  | "semanticTokens";
 
 export interface LanguageServerRefreshEvent {
   feature: LanguageServerRefreshFeature;

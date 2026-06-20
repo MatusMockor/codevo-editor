@@ -512,6 +512,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                             "relativePatternSupport": true
                         },
                         "inlayHint": { "refreshSupport": true },
+                        "semanticTokens": { "refreshSupport": true },
                         "symbol": { "dynamicRegistration": false },
                         "workspaceEdit": {
                             "documentChanges": true
@@ -890,6 +891,10 @@ mod tests {
         );
         assert_eq!(
             request.params["capabilities"]["workspace"]["inlayHint"]["refreshSupport"],
+            true
+        );
+        assert_eq!(
+            request.params["capabilities"]["workspace"]["semanticTokens"]["refreshSupport"],
             true
         );
         assert_eq!(

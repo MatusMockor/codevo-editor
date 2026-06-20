@@ -548,3 +548,64 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/infrastructure/tauriLanguageServerRefreshGateway.ts`
   - `src/infrastructure/tauriLanguageServerRefreshGateway.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Semantic Tokens Refresh
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f08d4ab Refresh JS TS code lens and inlay providers`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Why This Slice
+
+- Monaco document semantic token providers support an `onDidChange` event.
+- The TypeScript language server can ask clients to refresh semantic tokens via `workspace/semanticTokens/refresh` when project state or configuration changes.
+- The previous refresh slice added shared refresh infrastructure, so semantic token refresh can be added without a new event channel.
+
+### Implementation Choice
+
+- Extend the typed refresh feature union with `semanticTokens`.
+- Advertise `workspace.semanticTokens.refreshSupport` in the JS/TS initialize capabilities.
+- Emit the refresh event from Rust for `workspace/semanticTokens/refresh`.
+- Reuse the JS/TS refresh gateway and active workspace/session filtering before firing Monaco semantic token provider `onDidChange`.
+
+### Acceptance Criteria
+
+- JS/TS initialize capabilities advertise semantic token refresh support.
+- Rust session emits a `semanticTokens` refresh event and acknowledges the server request.
+- JS/TS Monaco semantic token provider exposes `onDidChange`.
+- Stale session, inactive workspace, and unknown refresh feature events remain ignored.
+- Focused Rust and provider tests pass.
+
+### Completed Slice: JS/TS Semantic Tokens Refresh
+
+- JS/TS initialize capabilities now advertise `workspace.semanticTokens.refreshSupport`.
+- Rust session refresh handling now emits `semanticTokens` refresh events for `workspace/semanticTokens/refresh`.
+- The shared JS/TS refresh gateway/provider path now supports `semanticTokens` alongside CodeLens and inlay hints.
+- Monaco document semantic token provider now exposes `onDidChange`, guarded by active workspace and current runtime session checks.
+
+### Verification: JS/TS Semantic Tokens Refresh
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml workspace_refresh_requests_emit_refresh_events_and_acknowledge --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "refreshes CodeLens"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts src/infrastructure/tauriLanguageServerRefreshGateway.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: JS/TS Semantic Tokens Refresh
+
+- Included files:
+  - `src-tauri/src/lsp.rs`
+  - `src-tauri/src/lsp_session.rs`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `src/domain/languageServerFeatures.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

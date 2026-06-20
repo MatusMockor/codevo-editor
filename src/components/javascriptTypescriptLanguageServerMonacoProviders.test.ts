@@ -2996,11 +2996,17 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     const inlayHintsProvider = (
       monaco.languages.registerInlayHintsProvider as any
     ).mock.calls[0][1];
+    const semanticTokensProvider = (
+      monaco.languages.registerDocumentSemanticTokensProvider as any
+    ).mock.calls[0][1];
     const codeLensRefresh = vi.fn();
     const inlayHintRefresh = vi.fn();
+    const semanticTokensRefresh = vi.fn();
     const codeLensSubscription = codeLensProvider.onDidChange(codeLensRefresh);
     const inlayHintSubscription =
       inlayHintsProvider.onDidChangeInlayHints(inlayHintRefresh);
+    const semanticTokensSubscription =
+      semanticTokensProvider.onDidChange(semanticTokensRefresh);
     const emitRefresh = (event: LanguageServerRefreshEvent) => {
       expect(refreshListener).not.toBeNull();
       refreshListener?.(event);
@@ -3013,6 +3019,11 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
     emitRefresh({
       feature: "inlayHint",
+      rootPath: "/project",
+      sessionId: 2,
+    });
+    emitRefresh({
+      feature: "semanticTokens",
       rootPath: "/project",
       sessionId: 2,
     });
@@ -3034,9 +3045,11 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
 
     expect(codeLensRefresh).toHaveBeenCalledTimes(1);
     expect(inlayHintRefresh).toHaveBeenCalledTimes(1);
+    expect(semanticTokensRefresh).toHaveBeenCalledTimes(1);
 
     codeLensSubscription.dispose();
     inlayHintSubscription.dispose();
+    semanticTokensSubscription.dispose();
     emitRefresh({
       feature: "codeLens",
       rootPath: "/project",
@@ -3047,9 +3060,15 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       rootPath: "/project",
       sessionId: 2,
     });
+    emitRefresh({
+      feature: "semanticTokens",
+      rootPath: "/project",
+      sessionId: 2,
+    });
 
     expect(codeLensRefresh).toHaveBeenCalledTimes(1);
     expect(inlayHintRefresh).toHaveBeenCalledTimes(1);
+    expect(semanticTokensRefresh).toHaveBeenCalledTimes(1);
 
     disposable.dispose();
 
