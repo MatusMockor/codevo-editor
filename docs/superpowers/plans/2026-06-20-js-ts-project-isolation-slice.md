@@ -3471,7 +3471,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: App Runtime Label Workspace Memo Guard
 
-- Pending commit.
+- Committed and pushed as `a4c2c2ea Root App runtime status labels by workspace`.
 - Included files:
   - `src/App.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
