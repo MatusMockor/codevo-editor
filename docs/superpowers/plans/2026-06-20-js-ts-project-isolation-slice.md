@@ -358,3 +358,67 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/js_ts_file_watcher.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: TypeScript Source Action Kinds
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `176ee93 Forward JS TS directory watch events`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+
+### Why This Slice
+
+- TypeScript-language-server documents TypeScript-specific source action kinds such as `source.organizeImports.ts`, `source.removeUnusedImports.ts`, `source.sortImports.ts`, `source.addMissingImports.ts`, and `source.fixAll.ts`.
+- The editor currently advertises only generic source action kinds to the server and Monaco.
+- Adding the TS-specific kinds improves VS Code-like Source Actions discovery while reusing the existing code action/resolve/execute-command pipeline.
+
+### Implementation Choice
+
+- This slice is limited to:
+  - `src-tauri/src/lsp.rs`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - focused tests in existing nearby files
+- Main agent implements directly because the change is a small advertised-kind expansion and does not touch PHP WIP.
+
+### Acceptance Criteria
+
+- JS/TS initialize capabilities include TypeScript-specific source action kinds.
+- Monaco JS/TS code action provider advertises the same TypeScript-specific source action kinds.
+- Existing command execution path remains unchanged.
+- Focused frontend and Rust tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: TypeScript Source Action Kinds
+
+- JS/TS initialize capabilities now include TypeScript-language-server source action kinds:
+  - `source.fixAll.ts`
+  - `source.addMissingImports.ts`
+  - `source.organizeImports.ts`
+  - `source.removeUnused.ts`
+  - `source.removeUnusedImports.ts`
+  - `source.sortImports.ts`
+- Monaco JS/TS code action provider advertises the same TypeScript-specific source action kinds.
+- Existing code action resolve/execute-command path remains unchanged and continues to handle returned edits/commands.
+
+### Verification: TypeScript Source Action Kinds
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "registers VS Code-like navigation"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: TypeScript Source Action Kinds
+
+- Included files:
+  - `src-tauri/src/lsp.rs`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

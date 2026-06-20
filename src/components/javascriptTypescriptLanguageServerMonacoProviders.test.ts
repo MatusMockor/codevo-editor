@@ -65,6 +65,19 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       (monaco.languages.registerCompletionItemProvider as any).mock.calls[0][1]
         .triggerCharacters,
     ).toEqual([".", "'", "\"", "`", "/", "@", "<", "#"]);
+    expect(
+      (monaco.languages.registerCodeActionProvider as any).mock.calls[0][2]
+        .providedCodeActionKinds,
+    ).toEqual(
+      expect.arrayContaining([
+        "source.addMissingImports.ts",
+        "source.fixAll.ts",
+        "source.organizeImports.ts",
+        "source.removeUnused.ts",
+        "source.removeUnusedImports.ts",
+        "source.sortImports.ts",
+      ]),
+    );
 
     disposable.dispose();
 

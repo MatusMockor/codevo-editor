@@ -397,7 +397,13 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                                         "refactor.rewrite",
                                         "source",
                                         "source.fixAll",
-                                        "source.organizeImports"
+                                        "source.fixAll.ts",
+                                        "source.addMissingImports.ts",
+                                        "source.organizeImports",
+                                        "source.organizeImports.ts",
+                                        "source.removeUnused.ts",
+                                        "source.removeUnusedImports.ts",
+                                        "source.sortImports.ts"
                                     ]
                                 }
                             },
@@ -782,6 +788,20 @@ mod tests {
             request.params["capabilities"]["textDocument"]["codeAction"]["disabledSupport"],
             true
         );
+        let code_action_kinds = request.params["capabilities"]["textDocument"]["codeAction"]
+            ["codeActionLiteralSupport"]["codeActionKind"]["valueSet"]
+            .as_array()
+            .expect("code action kind value set");
+        for kind in [
+            "source.addMissingImports.ts",
+            "source.fixAll.ts",
+            "source.organizeImports.ts",
+            "source.removeUnused.ts",
+            "source.removeUnusedImports.ts",
+            "source.sortImports.ts",
+        ] {
+            assert!(code_action_kinds.contains(&json!(kind)));
+        }
         assert_eq!(
             request.params["capabilities"]["textDocument"]["publishDiagnostics"]["tagSupport"]
                 ["valueSet"],
