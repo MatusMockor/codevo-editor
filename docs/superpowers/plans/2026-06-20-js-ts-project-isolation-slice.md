@@ -682,3 +682,59 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/EditorSurface.test.tsx`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Server Window Messages Runtime Log
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `165e129 Resolve JS TS inlay hints lazily`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The runtime log already captures process stderr, which is useful when the TypeScript language server crashes or starts noisily.
+- LSP servers also report important startup, project, and tsserver messages via `window/logMessage` and `window/showMessage` notifications on stdout.
+- Capturing those messages in the same bounded runtime log improves JS/TS diagnostics without changing editor behavior or touching PHP/Laravel WIP.
+
+### Implementation Choice
+
+- Keep this backend-contained in `src-tauri/src/lsp_session.rs`.
+- Append both pre-handshake and post-handshake `window/logMessage`/`window/showMessage` notifications to the existing bounded runtime log.
+- Leave request/response, diagnostics, refresh, and workspace-edit routing unchanged.
+
+### Acceptance Criteria
+
+- Runtime log includes LSP `window/logMessage` notifications with severity.
+- Runtime log includes LSP `window/showMessage` notifications with severity.
+- Messages emitted before initialize completes are captured.
+- Focused Rust test passes.
+- `git diff --check` passes.
+
+### Completed Slice: Server Window Messages Runtime Log
+
+- Runtime log now captures `window/logMessage` notifications from the language server stdout reader.
+- Runtime log now captures `window/showMessage` notifications with the same bounded-log behavior used for stderr.
+- Messages emitted before the initialize handshake completes are captured before normal handshake filtering.
+- Request/response routing, diagnostics, refresh, and workspace-edit handling remain unchanged.
+
+### Verification: Server Window Messages Runtime Log
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml captures_language_server_window_messages_in_runtime_log --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_session --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: Server Window Messages Runtime Log
+
+- Included files:
+  - `src-tauri/src/lsp_session.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

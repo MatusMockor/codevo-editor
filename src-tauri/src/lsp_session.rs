@@ -949,6 +949,7 @@ impl LanguageServerSupervisor {
             spawned.stdout,
             Arc::clone(&stdin),
             Arc::clone(&self.status),
+            Arc::clone(&self.log),
             diagnostics_sink,
             workspace_edit_sink,
             refresh_sink,
@@ -1488,6 +1489,7 @@ fn spawn_reader(
     stdout: Box<dyn Read + Send>,
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
     status: Arc<Mutex<LanguageServerRuntimeStatus>>,
+    runtime_log: RuntimeLog,
     diagnostics_sink: Arc<dyn DiagnosticsSink>,
     workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
     refresh_sink: Arc<dyn RefreshSink>,
@@ -1511,6 +1513,11 @@ fn spawn_reader(
                     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
                         continue;
                     };
+
+                    if let Some(message) = server_window_message(&value, server_label) {
+                        append_runtime_log(&runtime_log, &message);
+                        continue;
+                    }
 
                     if handshake_done {
                         if stop_requested.load(Ordering::SeqCst) {
@@ -1599,6 +1606,36 @@ fn spawn_reader(
             }
         }
     })
+}
+
+fn server_window_message(value: &Value, server_label: &str) -> Option<String> {
+    let method = value.get("method").and_then(Value::as_str)?;
+    let method_label = match method {
+        "window/logMessage" => "logMessage",
+        "window/showMessage" => "showMessage",
+        _ => return None,
+    };
+    let params = value.get("params")?;
+    let message = params.get("message").and_then(Value::as_str)?;
+
+    if message.trim().is_empty() {
+        return None;
+    }
+
+    let severity = language_server_message_type_label(params.get("type").and_then(Value::as_u64));
+    Some(format!(
+        "[{server_label} {method_label} {severity}] {message}\n"
+    ))
+}
+
+fn language_server_message_type_label(message_type: Option<u64>) -> &'static str {
+    match message_type {
+        Some(1) => "error",
+        Some(2) => "warning",
+        Some(3) => "info",
+        Some(4) => "log",
+        _ => "message",
+    }
 }
 
 fn respond_to_server_request(
@@ -2169,6 +2206,53 @@ mod tests {
 
         assert!(log.contains("TypeScript language server session 1 started"));
         assert!(log.contains("tsserver warning"));
+    }
+
+    #[test]
+    fn captures_language_server_window_messages_in_runtime_log() {
+        let mut script = framed(json!({
+            "jsonrpc": "2.0",
+            "method": "window/logMessage",
+            "params": {
+                "type": 2,
+                "message": "Using TypeScript 5.4.5 from workspace",
+            },
+        }));
+        script.extend(ready_script());
+        let spawner = FakeSpawner::new(script, true);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, _rx) = ChannelSink::new();
+        let supervisor = LanguageServerSupervisor::new_with_label("TypeScript language server");
+
+        supervisor
+            .start(
+                &command(),
+                &initialize_request(),
+                &spawner,
+                sink,
+                noop_diagnostics_sink(),
+            )
+            .expect("start");
+        write_held_message(
+            &held,
+            json!({
+                "jsonrpc": "2.0",
+                "method": "window/showMessage",
+                "params": {
+                    "type": 1,
+                    "message": "tsconfig.json contains an unsupported option",
+                },
+            }),
+        );
+
+        wait_for_log(
+            &supervisor,
+            "[TypeScript language server logMessage warning] Using TypeScript 5.4.5 from workspace",
+        );
+        wait_for_log(
+            &supervisor,
+            "[TypeScript language server showMessage error] tsconfig.json contains an unsupported option",
+        );
     }
 
     #[test]
