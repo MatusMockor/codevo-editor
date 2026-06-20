@@ -73,6 +73,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         .providedCodeActionKinds,
     ).toEqual(
       expect.arrayContaining([
+        "refactor.move",
         "source.addMissingImports.ts",
         "source.fixAll.ts",
         "source.organizeImports.ts",

@@ -1072,7 +1072,71 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Call Hierarchy Capability Advertisement
 
-- Pending commit.
+- Committed and pushed as `1c4014b Advertise JS TS call hierarchy support`.
 - Included files:
   - `src-tauri/src/lsp.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Move To File Refactor Support
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1c4014b Advertise JS TS call hierarchy support`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Choice
+
+- Frontend explorer Volta recommended "Go to Source Definition" as a high-value remaining gap, but that slice needs `src/application/useWorkbenchController.ts`, which currently contains user PHP/Laravel WIP.
+- The main agent is taking this safer backend/provider slice first because it avoids the WIP file while still unlocking a VS Code-like TypeScript refactor path.
+
+### Why This Slice
+
+- `typescript-language-server` reads `initializationOptions.supportsMoveToFileCodeAction` and only includes interactive TypeScript "Move to file" refactors when that flag is true and TypeScript is new enough.
+- The editor already supports JS/TS code actions, `_typescript.applyRefactoring` command execution, server-initiated `workspace/applyEdit`, and workspace edit filtering.
+- Monaco currently advertises broad refactor support, but not the `refactor.move` branch that TypeScript uses for move-file refactors.
+
+### Implementation Choice
+
+- Add `supportsMoveToFileCodeAction: true` to JS/TS initialization options.
+- Add `refactor.move` to the LSP code action kind value set and Monaco JS/TS provider advertised action kinds.
+- Keep this slice limited to feature advertisement; no new command palette action and no changes to `useWorkbenchController.ts`.
+
+### Acceptance Criteria
+
+- JS/TS initialize request advertises TypeScript move-to-file refactor support.
+- LSP and Monaco code-action kind declarations include `refactor.move`.
+- Focused Rust initialize-plan and frontend provider registration tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: JS/TS Move To File Refactor Support
+
+- JS/TS initialize options now advertise `supportsMoveToFileCodeAction: true`, enabling TypeScript-language-server to surface supported interactive "Move to file" refactors on modern TypeScript versions.
+- The JS/TS LSP code-action kind value set now includes `refactor.move`.
+- The Monaco JS/TS code-action provider now advertises `refactor.move` alongside the existing quick fix, source, and refactor branches.
+- This slice intentionally avoided `src/application/useWorkbenchController.ts` so the unrelated PHP/Laravel WIP remains untouched.
+
+### Verification: JS/TS Move To File Refactor Support
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --quiet -- --test-threads=1`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+- NOTE: A default parallel `cargo test --manifest-path src-tauri/Cargo.toml --quiet` run hit two unrelated git test temp-repo setup failures; the full suite passed when run serially.
+
+### Commit Status: JS/TS Move To File Refactor Support
+
+- Pending commit.
+- Intended included files:
+  - `src-tauri/src/lsp.rs`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

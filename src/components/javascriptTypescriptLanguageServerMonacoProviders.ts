@@ -473,6 +473,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
             providedCodeActionKinds: [
               "quickfix",
               "refactor",
+              "refactor.move",
               "source",
               "source.fixAll",
               "source.fixAll.ts",

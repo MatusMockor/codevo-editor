@@ -397,6 +397,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                                         "refactor",
                                         "refactor.extract",
                                         "refactor.inline",
+                                        "refactor.move",
                                         "refactor.rewrite",
                                         "source",
                                         "source.fixAll",
@@ -540,6 +541,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                 },
                 "initializationOptions": {
                     "hostInfo": "Mockor Editor",
+                    "supportsMoveToFileCodeAction": true,
                     "tsserver": {
                         "useClientFileWatcher": true
                     },
@@ -818,6 +820,7 @@ mod tests {
             .as_array()
             .expect("code action kind value set");
         for kind in [
+            "refactor.move",
             "source.addMissingImports.ts",
             "source.fixAll.ts",
             "source.organizeImports.ts",
@@ -831,6 +834,10 @@ mod tests {
             request.params["capabilities"]["textDocument"]["publishDiagnostics"]["tagSupport"]
                 ["valueSet"],
             json!([1, 2])
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["supportsMoveToFileCodeAction"],
+            true
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["publishDiagnostics"]
