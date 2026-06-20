@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
   phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkProviderSignature,
@@ -150,6 +151,32 @@ use App\\Services\\FooService;
     ).toBe(false);
     expect(
       isKnownPhpFrameworkStaticMethod(source, "Album", "withRelations", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(false);
+  });
+
+  it("recognizes global Laravel builder member methods through the Laravel provider", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Album extends Model
+{
+}
+`;
+
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "Album::query()", "whereNull", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "Album::query()", "whereNull", []),
+    ).toBe(false);
+    expect(
+      isKnownPhpFrameworkMemberMethod(source, "Album::query()", "withRelations", [
         phpLaravelFrameworkProvider,
       ]),
     ).toBe(false);
@@ -375,6 +402,7 @@ class Post extends Model
         ],
       },
       diagnostics: {
+        isKnownMemberMethod: ({ methodName }) => methodName === "whereMagic",
         isKnownStaticMethod: ({ methodName }) => methodName === "whereMagic",
       },
     };
@@ -394,6 +422,11 @@ class Post extends Model
     ]);
     expect(
       isKnownPhpFrameworkStaticMethod("<?php", "Article", "whereMagic", [
+        netteProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      isKnownPhpFrameworkMemberMethod("<?php", "Article::query()", "whereMagic", [
         netteProvider,
       ]),
     ).toBe(true);

@@ -1,6 +1,7 @@
 import {
   isLaravelEloquentBuilderMethodName,
   isLaravelEloquentStaticBuilderReceiver,
+  phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
   phpLaravelMethodCallReturnTypeFromSource,
@@ -19,6 +20,12 @@ export interface PhpFrameworkMemberCompletionContext {
 export interface PhpFrameworkStaticMethodContext {
   className: string;
   methodName: string;
+  source: string;
+}
+
+export interface PhpFrameworkMemberMethodContext {
+  methodName: string;
+  receiverExpression: string;
   source: string;
 }
 
@@ -57,6 +64,7 @@ export interface PhpFrameworkProvider {
     ) => PhpMethodCompletion[];
   };
   diagnostics?: {
+    isKnownMemberMethod?: (context: PhpFrameworkMemberMethodContext) => boolean;
     isKnownStaticMethod?: (context: PhpFrameworkStaticMethodContext) => boolean;
   };
   semantics?: {
@@ -87,6 +95,14 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     ],
   },
   diagnostics: {
+    isKnownMemberMethod: ({ methodName, receiverExpression, source }) =>
+      isLaravelEloquentBuilderMethodName(methodName) &&
+      Boolean(
+        phpLaravelEloquentBuilderModelTypeFromExpression(
+          source,
+          receiverExpression,
+        ),
+      ),
     isKnownStaticMethod: ({ className, methodName, source }) =>
       isLaravelEloquentBuilderMethodName(methodName) &&
       isLaravelEloquentStaticBuilderReceiver(source, className),
@@ -170,6 +186,22 @@ export function isKnownPhpFrameworkStaticMethod(
       provider.diagnostics?.isKnownStaticMethod?.({
         className,
         methodName,
+        source,
+      }) ?? false,
+  );
+}
+
+export function isKnownPhpFrameworkMemberMethod(
+  source: string,
+  receiverExpression: string,
+  methodName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return providers.some(
+    (provider) =>
+      provider.diagnostics?.isKnownMemberMethod?.({
+        methodName,
+        receiverExpression,
         source,
       }) ?? false,
   );

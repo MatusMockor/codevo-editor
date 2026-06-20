@@ -1,6 +1,7 @@
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 import {
   defaultPhpFrameworkProviders,
+  isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
@@ -74,6 +75,11 @@ export function filterPhpLanguageServerDiagnostics(
         diagnostic,
         options.contextualMemberMethods,
       ) &&
+      !isKnownPhpFrameworkMemberMethodDiagnostic(
+        source,
+        diagnostic,
+        options.frameworkProviders ?? defaultPhpFrameworkProviders,
+      ) &&
       !isPhpactorTraitHostMethodDiagnostic(
         source,
         diagnostic,
@@ -122,6 +128,24 @@ function isKnownPhpFrameworkStaticMethodDiagnostic(
       isKnownPhpFrameworkStaticMethod(
         source,
         context.className,
+        context.methodName,
+        frameworkProviders,
+      ),
+  );
+}
+
+function isKnownPhpFrameworkMemberMethodDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  frameworkProviders: readonly PhpFrameworkProvider[],
+): boolean {
+  const context = phpUnresolvedMemberMethodDiagnosticContext(source, diagnostic);
+
+  return Boolean(
+    context &&
+      isKnownPhpFrameworkMemberMethod(
+        source,
+        context.receiverExpression,
         context.methodName,
         frameworkProviders,
       ),

@@ -157,6 +157,44 @@ $album = Album::query()->missingMagic()->first();
     ).toEqual([unknown]);
   });
 
+  it("suppresses global Laravel builder member method diagnostics through the framework provider", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Album extends Model
+{
+}
+
+$album = Album::query()->whereNull('parent_id')->first();
+$album = Album::query()->withRelations()->first();
+`;
+    const globalBuilderMethod = diagnostic({
+      character: 26,
+      line: 9,
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::whereNull() does not exist",
+    });
+    const localScope = diagnostic({
+      character: 26,
+      line: 10,
+      message:
+        "Method Illuminate\\Database\\Eloquent\\Builder::withRelations() does not exist",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [globalBuilderMethod, localScope], {
+        frameworkProviders: [phpLaravelFrameworkProvider],
+      }),
+    ).toEqual([localScope]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [globalBuilderMethod], {
+        frameworkProviders: [],
+      }),
+    ).toEqual([globalBuilderMethod]);
+  });
+
   it("suppresses confirmed unresolved member method diagnostics on multiline chains", () => {
     const source = `<?php
 
