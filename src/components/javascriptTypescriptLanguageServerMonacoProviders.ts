@@ -59,6 +59,14 @@ type WorkspaceEditContext = {
   path: string;
   versionId: number | undefined;
 };
+type StoredLanguageServerPayloadRequest = {
+  __languageServerSessionId?: number;
+  __sourcePath?: string;
+  __workspaceRoot?: string;
+  path?: string;
+  rootPath?: string;
+  sessionId?: number;
+};
 type MonacoWorkspaceSymbol = {
   containerName?: string;
   kind: Monaco.languages.SymbolKind;
@@ -87,6 +95,7 @@ export type JavaScriptTypeScriptWorkspaceEditApplier = (
 interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __languageServerAction?: LanguageServerCodeAction;
   __languageServerSessionId?: number;
+  __sourcePath?: string;
   __workspaceEditContext?: WorkspaceEditContext;
   __workspaceRoot?: string;
 }
@@ -94,6 +103,7 @@ interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
 interface LanguageServerBackedCodeLens extends Monaco.languages.CodeLens {
   __languageServerCodeLens?: LanguageServerCodeLens;
   __languageServerSessionId?: number;
+  __sourcePath?: string;
   __workspaceRoot?: string;
 }
 
@@ -102,24 +112,28 @@ interface LanguageServerBackedCompletionItem
   __completionRange?: Monaco.IRange | Monaco.languages.CompletionItemRanges;
   __languageServerItem?: LanguageServerCompletionItem;
   __languageServerSessionId?: number;
+  __sourcePath?: string;
   __workspaceRoot?: string;
 }
 
 interface LanguageServerBackedLink extends Monaco.languages.ILink {
   __languageServerLink?: LanguageServerDocumentLink;
   __languageServerSessionId?: number;
+  __sourcePath?: string;
   __workspaceRoot?: string;
 }
 
 interface LanguageServerBackedInlayHint extends Monaco.languages.InlayHint {
   __languageServerInlayHint?: LanguageServerInlayHint;
   __languageServerSessionId?: number;
+  __sourcePath?: string;
   __workspaceRoot?: string;
 }
 
 interface ExecuteCommandPayload {
   command?: LanguageServerCodeActionCommand | null;
   edit?: LanguageServerWorkspaceEdit | null;
+  path?: string;
   rootPath: string;
   sessionId: number;
 }
@@ -318,6 +332,12 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       }
 
       try {
+        if (
+          !(await flushPendingDocumentChangeForStoredPayload(context, payload))
+        ) {
+          return;
+        }
+
         if (payload.edit) {
           await applyWorkspaceEditAfterMonacoEdit(
             monaco,
@@ -735,6 +755,7 @@ async function provideCompletionItems(
           item,
           request.rootPath,
           request.sessionId,
+          request.path,
           range,
           `0_${String(index).padStart(4, "0")}`,
         );
@@ -781,6 +802,12 @@ async function resolveCompletionItem(
   }
 
   try {
+    if (
+      !(await flushPendingDocumentChangeForStoredPayload(context, backedItem))
+    ) {
+      return item;
+    }
+
     const resolved = await context.featuresGateway.resolveCompletionItem(
       backedItem.__workspaceRoot,
       backedItem.__languageServerItem,
@@ -803,6 +830,7 @@ async function resolveCompletionItem(
         resolved,
         backedItem.__workspaceRoot,
         backedItem.__languageServerSessionId,
+        backedItem.__sourcePath,
         backedItem.__completionRange ?? item.range,
         item.sortText,
       ),
@@ -1171,7 +1199,13 @@ async function provideDocumentLinks(
     return {
       dispose: () => undefined,
       links: links.map((link) =>
-        toMonacoDocumentLink(monaco, request.rootPath, request.sessionId, link),
+        toMonacoDocumentLink(
+          monaco,
+          request.rootPath,
+          request.sessionId,
+          request.path,
+          link,
+        ),
       ),
     };
   } catch (error) {
@@ -1263,6 +1297,12 @@ async function resolveDocumentLink(
   }
 
   try {
+    if (
+      !(await flushPendingDocumentChangeForStoredPayload(context, backedLink))
+    ) {
+      return link;
+    }
+
     const resolved = await context.featuresGateway.resolveDocumentLink(
       backedLink.__workspaceRoot,
       backedLink.__languageServerLink,
@@ -1284,6 +1324,7 @@ async function resolveDocumentLink(
         monaco,
         backedLink.__workspaceRoot,
         backedLink.__languageServerSessionId,
+        backedLink.__sourcePath,
         resolved,
       ),
     };
@@ -1558,6 +1599,7 @@ async function provideCodeActions(
           workspaceEditContext(model),
           request.rootPath,
           request.sessionId,
+          request.path,
           action,
           actionContext,
         ),
@@ -1591,6 +1633,12 @@ async function resolveCodeAction(
   }
 
   try {
+    if (
+      !(await flushPendingDocumentChangeForStoredPayload(context, backedAction))
+    ) {
+      return action;
+    }
+
     const resolved = await context.featuresGateway.resolveCodeAction(
       backedAction.__workspaceRoot,
       backedAction.__languageServerAction,
@@ -1614,6 +1662,7 @@ async function resolveCodeAction(
       },
       backedAction.__workspaceRoot,
       backedAction.__languageServerSessionId,
+      backedAction.__sourcePath,
       resolved,
       {
         markers: action.diagnostics ?? [],
@@ -1656,7 +1705,13 @@ async function provideCodeLenses(
 
     return {
       lenses: lenses.map((lens) =>
-        toMonacoCodeLens(monaco, request.rootPath, request.sessionId, lens),
+        toMonacoCodeLens(
+          monaco,
+          request.rootPath,
+          request.sessionId,
+          request.path,
+          lens,
+        ),
       ),
       dispose: () => undefined,
     };
@@ -1687,6 +1742,12 @@ async function resolveCodeLens(
   }
 
   try {
+    if (
+      !(await flushPendingDocumentChangeForStoredPayload(context, backedCodeLens))
+    ) {
+      return codeLens;
+    }
+
     const resolved = await context.featuresGateway.resolveCodeLens(
       backedCodeLens.__workspaceRoot,
       backedCodeLens.__languageServerCodeLens,
@@ -1708,6 +1769,7 @@ async function resolveCodeLens(
         monaco,
         backedCodeLens.__workspaceRoot,
         backedCodeLens.__languageServerSessionId,
+        backedCodeLens.__sourcePath,
         resolved,
       ),
     };
@@ -1857,7 +1919,13 @@ async function provideInlayHints(
 
     return {
       hints: hints.map((hint) =>
-        toMonacoInlayHint(monaco, hint, request.rootPath, request.sessionId),
+        toMonacoInlayHint(
+          monaco,
+          hint,
+          request.rootPath,
+          request.sessionId,
+          request.path,
+        ),
       ),
       dispose: () => undefined,
     };
@@ -1888,6 +1956,12 @@ async function resolveInlayHint(
   }
 
   try {
+    if (
+      !(await flushPendingDocumentChangeForStoredPayload(context, backedHint))
+    ) {
+      return hint;
+    }
+
     const resolvedHint = await context.featuresGateway.resolveInlayHint(
       backedHint.__workspaceRoot,
       backedHint.__languageServerInlayHint,
@@ -1908,6 +1982,7 @@ async function resolveInlayHint(
       resolvedHint,
       backedHint.__workspaceRoot,
       backedHint.__languageServerSessionId,
+      backedHint.__sourcePath,
     );
   } catch (error) {
     reportErrorForActiveRoot(context, backedHint.__workspaceRoot, error);
@@ -2037,6 +2112,23 @@ async function flushPendingDocumentChangeForActiveRoot(
   await context.flushPendingDocumentChange(request.path);
 
   return isFeatureRequestActive(context, request);
+}
+
+async function flushPendingDocumentChangeForStoredPayload(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  payload: StoredLanguageServerPayloadRequest,
+): Promise<boolean> {
+  const path = payload.path ?? payload.__sourcePath;
+  const rootPath = payload.rootPath ?? payload.__workspaceRoot;
+  const sessionId = payload.sessionId ?? payload.__languageServerSessionId;
+
+  if (!path || !rootPath || sessionId == null) {
+    return false;
+  }
+
+  await context.flushPendingDocumentChange(path);
+
+  return isStoredLanguageServerPayloadActive(context, rootPath, sessionId);
 }
 
 function isFeatureRequestActive(
@@ -2207,11 +2299,13 @@ function toMonacoDocumentLink(
   monaco: MonacoApi,
   rootPath: string,
   sessionId: number,
+  sourcePath: string | undefined,
   link: LanguageServerDocumentLink,
 ): LanguageServerBackedLink {
   return {
     __languageServerLink: link,
     __languageServerSessionId: sessionId,
+    __sourcePath: sourcePath,
     __workspaceRoot: rootPath,
     range: toMonacoRange(monaco, link.range),
     ...(link.target ? { url: link.target } : {}),
@@ -2353,11 +2447,13 @@ function toMonacoCodeLens(
   monaco: MonacoApi,
   rootPath: string,
   sessionId: number,
+  sourcePath: string | undefined,
   lens: LanguageServerCodeLens,
 ): LanguageServerBackedCodeLens {
   return {
     __languageServerCodeLens: lens,
     __languageServerSessionId: sessionId,
+    __sourcePath: sourcePath,
     __workspaceRoot: rootPath,
     ...(lens.command
       ? {
@@ -2365,6 +2461,7 @@ function toMonacoCodeLens(
             monaco,
             rootPath,
             sessionId,
+            sourcePath,
             lens.command,
           ),
         }
@@ -2377,6 +2474,7 @@ function toMonacoCodeLensCommand(
   monaco: MonacoApi,
   rootPath: string,
   sessionId: number,
+  sourcePath: string | undefined,
   command: LanguageServerCodeActionCommand,
 ): Monaco.languages.Command {
   if (command.command === "editor.action.showReferences") {
@@ -2395,6 +2493,7 @@ function toMonacoCodeLensCommand(
     arguments: [
       {
         command,
+        ...(sourcePath ? { path: sourcePath } : {}),
         rootPath,
         sessionId,
       } satisfies ExecuteCommandPayload,
@@ -2778,6 +2877,7 @@ function toMonacoCodeAction(
   editContext: WorkspaceEditContext,
   rootPath: string,
   sessionId: number,
+  sourcePath: string | undefined,
   action: LanguageServerCodeAction,
   context: Monaco.languages.CodeActionContext,
 ): Monaco.languages.CodeAction[] {
@@ -2788,6 +2888,7 @@ function toMonacoCodeAction(
   const codeAction: LanguageServerBackedCodeAction = {
     __languageServerAction: action,
     __languageServerSessionId: sessionId,
+    __sourcePath: sourcePath,
     __workspaceEditContext: editContext,
     __workspaceRoot: rootPath,
     diagnostics: context.markers,
@@ -2798,6 +2899,7 @@ function toMonacoCodeAction(
               {
                 command: action.command,
                 edit: action.edit,
+                ...(sourcePath ? { path: sourcePath } : {}),
                 rootPath,
                 sessionId,
               } satisfies ExecuteCommandPayload,
@@ -2895,10 +2997,17 @@ function toMonacoInlayHint(
   hint: LanguageServerInlayHint,
   rootPath: string,
   sessionId: number,
+  sourcePath?: string,
 ): Monaco.languages.InlayHint {
   const monacoHint: Monaco.languages.InlayHint = {
     kind: monacoInlayHintKindFromLspKind(monaco, hint.kind),
-    label: toMonacoInlayHintLabel(monaco, hint.label, rootPath, sessionId),
+    label: toMonacoInlayHintLabel(
+      monaco,
+      hint.label,
+      rootPath,
+      sessionId,
+      sourcePath,
+    ),
     paddingLeft: hint.paddingLeft,
     paddingRight: hint.paddingRight,
     position: {
@@ -2922,6 +3031,9 @@ function toMonacoInlayHint(
     __languageServerSessionId: {
       value: sessionId,
     },
+    __sourcePath: {
+      value: sourcePath,
+    },
     __workspaceRoot: {
       value: rootPath,
     },
@@ -2935,6 +3047,7 @@ function toMonacoInlayHintLabel(
   label: LanguageServerInlayHint["label"],
   rootPath: string,
   sessionId: number,
+  sourcePath?: string,
 ): Monaco.languages.InlayHint["label"] {
   if (typeof label === "string") {
     return label;
@@ -2952,6 +3065,7 @@ function toMonacoInlayHintLabel(
             command: toMonacoLanguageServerCommand(
               rootPath,
               sessionId,
+              sourcePath,
               part.command,
             ),
           }
@@ -3233,6 +3347,7 @@ function toMonacoCompletionItem(
   item: LanguageServerCompletionItem,
   rootPath: string,
   sessionId: number,
+  sourcePath: string | undefined,
   fallbackRange: Monaco.IRange | Monaco.languages.CompletionItemRanges,
   fallbackSortText?: string,
 ): LanguageServerBackedCompletionItem {
@@ -3247,6 +3362,7 @@ function toMonacoCompletionItem(
     __completionRange: fallbackRange,
     __languageServerItem: item,
     __languageServerSessionId: sessionId,
+    __sourcePath: sourcePath,
     __workspaceRoot: rootPath,
     ...(additionalTextEdits ? { additionalTextEdits } : {}),
     ...(item.commitCharacters && item.commitCharacters.length > 0
@@ -3257,7 +3373,14 @@ function toMonacoCompletionItem(
     filterText: item.filterText || undefined,
     insertText: insert.insertText,
     ...(item.command
-      ? { command: toMonacoLanguageServerCommand(rootPath, sessionId, item.command) }
+      ? {
+          command: toMonacoLanguageServerCommand(
+            rootPath,
+            sessionId,
+            sourcePath,
+            item.command,
+          ),
+        }
       : insert.command
         ? { command: insert.command }
         : {}),
@@ -3278,12 +3401,14 @@ function toMonacoCompletionItem(
 function toMonacoLanguageServerCommand(
   rootPath: string,
   sessionId: number,
+  sourcePath: string | undefined,
   command: LanguageServerCodeActionCommand,
 ): Monaco.languages.Command {
   return {
     arguments: [
       {
         command,
+        ...(sourcePath ? { path: sourcePath } : {}),
         rootPath,
         sessionId,
       } satisfies ExecuteCommandPayload,

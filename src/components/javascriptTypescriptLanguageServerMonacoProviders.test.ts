@@ -2374,6 +2374,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       arguments: [
         {
           command: completionCommand,
+          path: "/project/src/user.ts",
           rootPath: "/project",
           sessionId: 1,
         },
@@ -2388,6 +2389,74 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.executeCommand).toHaveBeenCalledWith(
       "/project",
       completionCommand,
+    );
+  });
+
+  it("flushes pending document changes before resolving TypeScript completion items", async () => {
+    const monaco = createMonaco();
+    const resolveFlush = createDeferred<void>();
+    const flushPendingDocumentChange = vi.fn(async () => {
+      if (flushPendingDocumentChange.mock.calls.length === 2) {
+        await resolveFlush.promise;
+      }
+    });
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            data: { entryNames: ["loadUser"] },
+            detail: "function",
+            documentation: null,
+            insertText: "loadUser",
+            kind: 3,
+            label: "loadUser",
+          },
+        ],
+      },
+      resolvedCompletionItem: {
+        data: { entryNames: ["loadUser"] },
+        detail: "resolved function loadUser(id: string): Promise<User>",
+        documentation: "Resolved docs",
+        insertText: "loadUser",
+        kind: 3,
+        label: "loadUser",
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const completion = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+
+    const resolvePromise = completionProvider.resolveCompletionItem(
+      completion.suggestions[0],
+    );
+
+    await Promise.resolve();
+
+    expect(flushPendingDocumentChange).toHaveBeenNthCalledWith(
+      2,
+      "/project/src/user.ts",
+    );
+    expect(gateway.resolveCompletionItem).not.toHaveBeenCalled();
+
+    resolveFlush.resolve(undefined);
+    await expect(resolvePromise).resolves.toEqual(
+      expect.objectContaining({ detail: "resolved function loadUser(id: string): Promise<User>" }),
+    );
+    expect(gateway.resolveCompletionItem).toHaveBeenCalledWith(
+      "/project",
+      expect.objectContaining({ label: "loadUser" }),
     );
   });
 
@@ -2512,6 +2581,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
           arguments: [
             {
               command: resolvedCommand,
+              path: "/project/src/user.ts",
               rootPath: "/project",
               sessionId: 1,
             },
@@ -2592,6 +2662,132 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops TypeScript code action resolves after switching project tabs during document flush", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const resolveFlush = createDeferred<void>();
+    const flushPendingDocumentChange = vi.fn(async () => {
+      if (flushPendingDocumentChange.mock.calls.length === 2) {
+        await resolveFlush.promise;
+      }
+    });
+    const codeAction = {
+      command: {
+        arguments: [{ tsActionId: "unusedIdentifier" }],
+        command: "_typescript.applyFixAllCodeAction",
+        title: "Fix all unused identifiers",
+      },
+      data: { globalId: 1, providerId: 2 },
+      edit: null,
+      isPreferred: false,
+      kind: "quickfix",
+      title: "Fix all unused identifiers",
+    };
+    const gateway = featuresGateway({
+      codeActions: [codeAction],
+      resolvedCodeAction: {
+        ...codeAction,
+        edit: workspaceEdit("file:///project/src/user.ts", "Resolved"),
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const codeActionProvider = (
+      monaco.languages.registerCodeActionProvider as any
+    ).mock.calls[0][1];
+    const actions = await codeActionProvider.provideCodeActions(
+      textModel(),
+      new monaco.Range(1, 1, 1, 5),
+      {
+        markers: [],
+        only: "quickfix",
+      },
+    );
+    const originalAction = actions.actions[0];
+
+    const resolvePromise = codeActionProvider.resolveCodeAction(originalAction);
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    resolveFlush.resolve(undefined);
+
+    await expect(resolvePromise).resolves.toBe(originalAction);
+    expect(flushPendingDocumentChange).toHaveBeenNthCalledWith(
+      2,
+      "/project/src/user.ts",
+    );
+    expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
+  });
+
+  it("drops TypeScript commands after switching project tabs during document flush", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const resolveFlush = createDeferred<void>();
+    const flushPendingDocumentChange = vi.fn(async () => {
+      if (flushPendingDocumentChange.mock.calls.length === 2) {
+        await resolveFlush.promise;
+      }
+    });
+    const completionCommand = {
+      arguments: [{ source: "completion" }],
+      command: "_typescript.applyCompletionCodeAction",
+      title: "Apply completion code action",
+    };
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            command: completionCommand,
+            detail: "function",
+            documentation: null,
+            insertText: "loadUser",
+            kind: 3,
+            label: "loadUser",
+          },
+        ],
+      },
+    });
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const completion = await completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 1 },
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    const commandPromise = commandDescriptor.run(
+      null,
+      completion.suggestions[0].command.arguments[0],
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    resolveFlush.resolve(undefined);
+    await commandPromise;
+
+    expect(flushPendingDocumentChange).toHaveBeenNthCalledWith(
+      2,
+      "/project/src/user.ts",
+    );
+    expect(gateway.executeCommand).not.toHaveBeenCalled();
+  });
+
   it("drops in-flight TypeScript command edits after switching project tabs", async () => {
     const monaco = createMonaco();
     const model = textModel();
@@ -2621,19 +2817,21 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         command: "_typescript.organizeImports",
         title: "Organize Imports",
       },
+      path: "/project/src/user.ts",
       rootPath: "/project",
       sessionId: 1,
     });
 
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(gateway.executeCommand).toHaveBeenCalledWith(
+        "/project",
+        expect.objectContaining({ command: "_typescript.organizeImports" }),
+      );
+    });
     activeRoot = "/other";
     commandEdit.resolve(workspaceEdit("file:///project/src/user.ts", "Organized"));
     await commandPromise;
 
-    expect(gateway.executeCommand).toHaveBeenCalledWith(
-      "/project",
-      expect.objectContaining({ command: "_typescript.organizeImports" }),
-    );
     expect(model.pushEditOperations).not.toHaveBeenCalled();
     expect(applyWorkspaceEdit).not.toHaveBeenCalled();
   });
@@ -2678,6 +2876,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         command: "_typescript.organizeImports",
         title: "Organize Imports",
       },
+      path: "/project/src/user.ts",
       rootPath: "/project",
       sessionId: 1,
     });

@@ -1784,8 +1784,62 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS File Structure Command Enablement
 
-- Pending commit.
+- Committed and pushed as `a0dfaba9 Enable JS TS file structure command`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Lazy Resolve Document Sync
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a0dfaba9 Enable JS TS file structure command`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Normal JS/TS Monaco providers flush pending document changes before asking the TypeScript language server.
+- Lazy resolve paths for completion items, document links, code actions, code lenses, and inlay hints reused stored LSP payloads without flushing the source document first.
+- A project tab or same-root TypeScript session could change while a pending flush was still in flight, allowing stale resolve or command work to run against the wrong active workspace/session.
+
+### Implementation Choice
+
+- Store the source document path on JS/TS language-server backed Monaco payloads.
+- Flush that source path before lazy resolve calls and language-server command execution.
+- Re-check the active workspace root and TypeScript session after the flush, before calling the LSP or applying workspace edits.
+- Preserve the existing stale-payload guards after LSP calls.
+
+### Acceptance Criteria
+
+- Lazy JS/TS completion/code action/document link/code lens/inlay resolve requests flush the source document before reaching the LSP.
+- Switching project tabs or TypeScript sessions during that flush drops the lazy resolve/command without calling the stale LSP session.
+- Existing JS/TS provider behavior remains unchanged for active payloads.
+- Focused provider tests, full provider tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Lazy Resolve Document Sync
+
+- Added source-path tracking to JS/TS language-server backed Monaco payloads.
+- Flushed the source document before lazy completion, document-link, code-action, code-lens, and inlay-hint resolves.
+- Flushed the source document before JS/TS language-server command execution.
+- Re-checked active workspace root and TypeScript session after the flush before calling the LSP or applying edits.
+- Added regression coverage for lazy resolve/command races while switching project tabs during pending flushes.
+
+### Verification: JS/TS Lazy Resolve Document Sync
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "flushes pending document changes before resolving TypeScript completion items|drops TypeScript code action resolves after switching project tabs during document flush|drops TypeScript commands after switching project tabs during document flush|resolves TypeScript completion items through the language server|maps TypeScript completion commands through the guarded language server executor"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Lazy Resolve Document Sync
+
+- Pending commit.
+- Included files:
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.ts`
+  - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
