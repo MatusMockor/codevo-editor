@@ -2680,7 +2680,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Provider Event Root Contract
 
-- Pending commit and push.
+- Committed and pushed as `76a5b559 Require roots in JS TS provider event contracts`.
 - Included files:
   - `src/domain/languageServerFeatures.ts`
   - `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
