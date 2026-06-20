@@ -1272,4 +1272,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Inlay Hint Payload Filtering
 
-- Pending commit.
+- Committed and pushed as `b4297ee Filter JS TS inlay hint payloads`.
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
