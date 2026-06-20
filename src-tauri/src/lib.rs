@@ -531,6 +531,13 @@ fn filter_lsp_locations_to_workspace(
         .collect())
 }
 
+fn parse_javascript_typescript_navigation_locations_result(
+    result: &Value,
+) -> Result<Vec<LanguageServerLocation>, String> {
+    // Definition-like JS/TS requests may legitimately point at dependency or type-library files.
+    parse_definition_result(result)
+}
+
 fn filter_lsp_workspace_symbols_to_workspace(
     root_path: &str,
     symbols: Vec<LanguageServerWorkspaceSymbol>,
@@ -1816,7 +1823,7 @@ fn javascript_typescript_text_document_definition(
         return Ok(Vec::new());
     };
 
-    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
+    parse_javascript_typescript_navigation_locations_result(&result)
 }
 
 #[tauri::command]
@@ -1852,7 +1859,7 @@ fn javascript_typescript_text_document_implementation(
         None => return Ok(Vec::new()),
     };
 
-    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
+    parse_javascript_typescript_navigation_locations_result(&result)
 }
 
 #[tauri::command]
@@ -1886,7 +1893,7 @@ fn javascript_typescript_text_document_type_definition(
         return Ok(Vec::new());
     };
 
-    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
+    parse_javascript_typescript_navigation_locations_result(&result)
 }
 
 #[tauri::command]
@@ -3278,7 +3285,8 @@ mod tests {
         filter_lsp_document_links_to_workspace, filter_lsp_incoming_calls_to_workspace,
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
-        filter_lsp_workspace_symbols_to_workspace, normalize_path, path_from_file_uri,
+        filter_lsp_workspace_symbols_to_workspace, normalize_path, parse_definition_result,
+        parse_javascript_typescript_navigation_locations_result, path_from_file_uri,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
@@ -3484,6 +3492,64 @@ mod tests {
             ],
         )
         .expect("filtered locations");
+
+        assert_eq!(filtered, vec![location(&inside_uri)]);
+    }
+
+    #[test]
+    fn javascript_typescript_navigation_locations_preserve_external_file_uris() {
+        let root = temp_workspace("js-ts-navigation-root");
+        let external = temp_workspace("js-ts-navigation-external");
+        let inside_uri = file_uri(&root.join("src/App.ts"));
+        let external_definition_uri = file_uri(&external.join("node_modules/pkg/index.d.ts"));
+        let external_type_uri = file_uri(&external.join("typescript/lib/lib.dom.d.ts"));
+
+        let locations = parse_javascript_typescript_navigation_locations_result(&json!([
+            {
+                "uri": inside_uri,
+                "range": lsp_range(),
+            },
+            {
+                "uri": external_definition_uri,
+                "range": lsp_range(),
+            },
+            {
+                "targetUri": external_type_uri,
+                "targetRange": lsp_range(),
+            }
+        ]))
+        .expect("navigation locations");
+
+        assert_eq!(
+            locations,
+            vec![
+                location(&inside_uri),
+                location(&external_definition_uri),
+                location(&external_type_uri),
+            ]
+        );
+    }
+
+    #[test]
+    fn javascript_typescript_reference_locations_drop_external_file_uris() {
+        let root = temp_workspace("js-ts-references-root");
+        let external = temp_workspace("js-ts-references-external");
+        let inside_uri = file_uri(&root.join("src/App.ts"));
+        let external_uri = file_uri(&external.join("node_modules/pkg/index.d.ts"));
+        let reference_locations = parse_definition_result(&json!([
+            {
+                "uri": inside_uri,
+                "range": lsp_range(),
+            },
+            {
+                "uri": external_uri,
+                "range": lsp_range(),
+            }
+        ]))
+        .expect("reference locations");
+
+        let filtered = filter_lsp_locations_to_workspace(&path_string(&root), reference_locations)
+            .expect("filtered reference locations");
 
         assert_eq!(filtered, vec![location(&inside_uri)]);
     }

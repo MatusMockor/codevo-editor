@@ -127,3 +127,63 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ## Commit Status: Final Checkpoint
 
 - This section records the final doc-only checkpoint for the current pass.
+
+## Next Slice: External JS/TS Navigation Targets
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1c2e1a3 Record JS TS isolation final scan`
+- Existing PHP/Laravel WIP remains uncommitted and excluded:
+  - `src/application/useWorkbenchController.ts`
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Frontend provider tests already model VS Code-like JS/TS navigation to external read-only targets such as dependency `.d.ts` files and bundled TypeScript library files.
+- The backend JS/TS commands currently root-filter all location responses, including `definition`, `implementation`, and `typeDefinition`.
+- That protects isolation, but it also drops legitimate TypeScript navigation targets outside the project root. References and workspace symbols should stay workspace-filtered because those surfaces are project-wide result lists.
+
+### Delegation
+
+- Worker owns `src-tauri/src/lib.rs` only:
+  - let JS/TS definition/implementation/typeDefinition return parsed locations without workspace filtering,
+  - keep JS/TS references and workspace symbols root-filtered,
+  - add focused Rust regression coverage.
+- Main agent owns this plan document, integration review, verification, commit, and push.
+
+### Acceptance Criteria
+
+- JS/TS definition/implementation/typeDefinition can preserve external file URI targets from the selected runtime response.
+- JS/TS references still drop outside-root locations.
+- PHP command paths remain unchanged.
+- Focused Rust tests pass.
+- `git diff --check` passes.
+
+### Completed Slice: External JS/TS Navigation Targets
+
+- JS/TS `definition`, `implementation`, and `typeDefinition` backend commands now preserve external file URI locations from the selected TypeScript runtime response.
+- JS/TS `references` remains root-filtered, so project-wide reference lists still cannot leak locations from another workspace.
+- PHP LSP command paths were left unchanged.
+- Added Rust regression coverage proving:
+  - external JS/TS navigation locations are preserved,
+  - external JS/TS reference locations are still dropped.
+
+### Verification: External JS/TS Navigation Targets
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_navigation_locations_preserve_external_file_uris --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_reference_locations_drop_external_file_uris --lib`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml`
+- PASS: `git diff --check`
+- STILL BLOCKED by existing PHP/Laravel WIP: `npm run check`
+  - Known failure remains `src/application/useWorkbenchController.ts(188,3): error TS6133: 'phpLaravelModelAccessorTargetFromSource' is declared but its value is never read.`
+
+### Commit Status: External JS/TS Navigation Targets
+
+- Included files:
+  - `src-tauri/src/lib.rs`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
