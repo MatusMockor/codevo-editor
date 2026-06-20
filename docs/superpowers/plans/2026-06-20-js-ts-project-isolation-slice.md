@@ -3187,7 +3187,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Runtime Status Root Guard
 
-- Pending commit.
+- Committed and pushed as `b280bb63 Require roots for PHP runtime status events`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
