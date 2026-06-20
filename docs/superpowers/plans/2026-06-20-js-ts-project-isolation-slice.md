@@ -2341,7 +2341,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Settings Configuration Same-Root Session Guard
 
-- Pending commit and push.
+- Committed and pushed as `84fe55e9 Guard JS TS settings config by session`.
 - Included files:
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
