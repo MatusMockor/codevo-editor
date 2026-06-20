@@ -3250,3 +3250,62 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Included files:
   - `src-tauri/src/lsp_session.rs`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Runtime Gateway Direct Root Contract
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `077609c2 Record LSP reader stop guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens the frontend infrastructure runtime gateway contract.
+- Main agent implemented directly because the direct command normalization and tests live in the Tauri runtime gateway file pair.
+
+### Why This Slice
+
+- Direct root-scoped runtime calls already receive a requested workspace root, but the gateway returned backend statuses unchanged.
+- Outside Tauri, `getStatus`, `stop`, and `start` also returned rootless statuses, preserving a root fallback burden in the workbench layer.
+- Subscription events should remain raw so malformed rootless events continue to be rejected by application/provider root guards.
+
+### Implementation Choice
+
+- Add the requested `rootPath` to direct `getStatus(rootPath)`, `start(rootPath)`, and `stop(rootPath)` results when the returned status lacks one.
+- Preserve an explicit backend-provided `rootPath` if it is already present.
+- Root browser-development fallback statuses for direct calls.
+- Leave `subscribeStatus` payloads untouched.
+
+### Acceptance Criteria
+
+- Direct runtime command results are rooted to the requested workspace when the backend omits `rootPath`.
+- Browser-development fallback statuses are rooted to the requested workspace.
+- Subscription status events are still delivered exactly as received.
+- Runtime-status controller regressions still pass.
+- Gateway tests, preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: Runtime Gateway Direct Root Contract
+
+- Rooted direct Tauri runtime gateway results for `getStatus`, `start`, and `stop`.
+- Kept subscription payloads raw to preserve malformed-event coverage.
+- Updated runtime gateway tests and reran controller runtime-status regressions.
+
+### Verification: Runtime Gateway Direct Root Contract
+
+- PASS: `npm test -- src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP runtime status events without an explicit workspace root|runtime status events without an explicit workspace root|auto-starts PHP IDE services while initial runtime status is still unknown|auto-starts JavaScript and TypeScript service while initial runtime status is still unknown"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: Runtime Gateway Direct Root Contract
+
+- Pending commit.
+- Included files:
+  - `src/infrastructure/tauriLanguageServerRuntimeGateway.ts`
+  - `src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

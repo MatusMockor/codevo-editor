@@ -48,8 +48,19 @@ const invokeRuntimeCommand: InvokeRuntimeCommand = (command, args) =>
 const listenToRuntimeStatus: ListenToRuntimeStatus = (event, handler) =>
   listen<LanguageServerRuntimeStatus>(event, handler);
 
-function stoppedStatus(): LanguageServerRuntimeStatus {
-  return { kind: "stopped" };
+function stoppedStatus(rootPath: string): LanguageServerRuntimeStatus {
+  return { kind: "stopped", rootPath };
+}
+
+function statusForRequestedRoot(
+  status: LanguageServerRuntimeStatus,
+  rootPath: string,
+): LanguageServerRuntimeStatus {
+  if (status.rootPath) {
+    return status;
+  }
+
+  return { ...status, rootPath };
 }
 
 export class TauriLanguageServerRuntimeGateway
@@ -65,13 +76,13 @@ export class TauriLanguageServerRuntimeGateway
 
   getStatus(rootPath: string): Promise<LanguageServerRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
-      return Promise.resolve(stoppedStatus());
+      return Promise.resolve(stoppedStatus(rootPath));
     }
 
-    return this.invokeCommand(
-      this.commands.getStatus,
-      { rootPath },
-    ) as Promise<LanguageServerRuntimeStatus>;
+    return this.invokeCommand(this.commands.getStatus, { rootPath }).then(
+      (status) =>
+        statusForRequestedRoot(status as LanguageServerRuntimeStatus, rootPath),
+    );
   }
 
   start(
@@ -82,6 +93,7 @@ export class TauriLanguageServerRuntimeGateway
       return Promise.resolve({
         kind: "crashed",
         message: DESKTOP_RUNTIME_REQUIRED,
+        rootPath,
       });
     }
 
@@ -107,20 +119,19 @@ export class TauriLanguageServerRuntimeGateway
       args.validationEnabled = options.validationEnabled;
     }
 
-    return this.invokeCommand(
-      this.commands.start,
-      args,
-    ) as Promise<LanguageServerRuntimeStatus>;
+    return this.invokeCommand(this.commands.start, args).then((status) =>
+      statusForRequestedRoot(status as LanguageServerRuntimeStatus, rootPath),
+    );
   }
 
   stop(rootPath: string): Promise<LanguageServerRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
-      return Promise.resolve(stoppedStatus());
+      return Promise.resolve(stoppedStatus(rootPath));
     }
 
-    return this.invokeCommand(this.commands.stop, {
-      rootPath,
-    }) as Promise<LanguageServerRuntimeStatus>;
+    return this.invokeCommand(this.commands.stop, { rootPath }).then((status) =>
+      statusForRequestedRoot(status as LanguageServerRuntimeStatus, rootPath),
+    );
   }
 
   openLog(rootPath: string): Promise<string | null> {

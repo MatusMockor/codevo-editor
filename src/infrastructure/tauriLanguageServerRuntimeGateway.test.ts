@@ -21,12 +21,17 @@ describe("TauriLanguageServerRuntimeGateway", () => {
 
     await expect(gateway.getStatus("/workspace")).resolves.toEqual({
       kind: "stopped",
+      rootPath: "/workspace",
     });
-    await expect(gateway.stop("/workspace")).resolves.toEqual({ kind: "stopped" });
+    await expect(gateway.stop("/workspace")).resolves.toEqual({
+      kind: "stopped",
+      rootPath: "/workspace",
+    });
     await expect(gateway.openLog("/workspace")).resolves.toBeNull();
     await expect(gateway.start("/workspace")).resolves.toEqual({
       kind: "crashed",
       message: "Language server requires the Tauri desktop runtime.",
+      rootPath: "/workspace",
     });
 
     const unsubscribe = await gateway.subscribeStatus(vi.fn());
@@ -72,6 +77,10 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         workspaceSymbol: true,
       },
     };
+    const rootedRunning: LanguageServerRuntimeStatus = {
+      ...running,
+      rootPath: "/workspace",
+    };
     const invokeCommand = vi.fn<InvokeCommand>(async () => running);
     const listenToEvent = vi.fn<ListenToEvent>(async (_event, handler) => {
       handler({ payload: running });
@@ -84,9 +93,11 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       () => true,
     );
 
-    await expect(gateway.getStatus("/workspace")).resolves.toEqual(running);
-    await expect(gateway.start("/workspace")).resolves.toEqual(running);
-    await expect(gateway.stop("/workspace")).resolves.toEqual(running);
+    await expect(gateway.getStatus("/workspace")).resolves.toEqual(
+      rootedRunning,
+    );
+    await expect(gateway.start("/workspace")).resolves.toEqual(rootedRunning);
+    await expect(gateway.stop("/workspace")).resolves.toEqual(rootedRunning);
     await gateway.subscribeStatus(listener);
 
     expect(invokeCommand).toHaveBeenCalledWith("get_php_language_server_status", {
@@ -141,6 +152,10 @@ describe("TauriLanguageServerRuntimeGateway", () => {
       kind: "running",
       sessionId: 4,
     };
+    const rootedRunning: LanguageServerRuntimeStatus = {
+      ...running,
+      rootPath: "/workspace",
+    };
     const invokeCommand = vi.fn<InvokeCommand>(async () => running);
     const gateway = new TauriLanguageServerRuntimeGateway(
       invokeCommand,
@@ -157,7 +172,7 @@ describe("TauriLanguageServerRuntimeGateway", () => {
         typeScriptVersionPreference: "workspace",
         validationEnabled: false,
       }),
-    ).resolves.toEqual(running);
+    ).resolves.toEqual(rootedRunning);
 
     expect(invokeCommand).toHaveBeenCalledWith(
       "start_javascript_typescript_language_server",
