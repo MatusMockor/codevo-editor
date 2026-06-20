@@ -1166,6 +1166,56 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
+- Committed and pushed as `3361fe52 Preserve Laravel soft delete relation chains`.
+- Included files:
+  - `src/domain/phpFrameworkLaravel.ts`
+  - `src/domain/phpMethodCompletions.test.ts`
+  - `src/domain/phpSemanticEngine.test.ts`
+  - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: Laravel Morph Query Builder Fluents - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3361fe52 Preserve Laravel soft delete relation chains`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Laravel morph-query builder methods as first-class builder-preserving fluents so chains like `Album::query()->whereHasMorph(...)->first()` keep model-aware inference.
+
+### Implementation Choice
+
+- Add common morph-query methods to both static and instance Eloquent builder fluent sets.
+- Cover explicit method classification, direct return-type inference, and a semantic assignment chain.
+
+### Acceptance Criteria
+
+- `whereHasMorph`, `orWhereHasMorph`, `whereMorphedTo`, `whereNotMorphedTo`, `whereMorphRelation`, and `doesntHaveMorph` preserve `Builder<Model>`.
+- `Album::query()->whereHasMorph(...)->first()` infers `Album`.
+- Existing Eloquent builder and Laravel relation-chain inference remains unchanged.
+- Focused domain tests, semantic engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added common Laravel morph-query methods to Eloquent builder fluent recognition.
+- Added explicit classification and return-type coverage for morph-query builder methods.
+- Added semantic-chain coverage proving `whereHasMorph(...)->first()` keeps the model type.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes as model-specific|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent builder chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
 - Pending commit.
 - Included files:
   - `src/domain/phpFrameworkLaravel.ts`

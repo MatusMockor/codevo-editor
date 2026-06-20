@@ -61,6 +61,11 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentStaticBuilderMethod("withTrashed")).toBe(true);
     expect(isLaravelEloquentBuilderFluentMethod("withTrashed")).toBe(true);
     expect(isLaravelEloquentBuilderMethodName("withTrashed")).toBe(true);
+    expect(isLaravelEloquentStaticBuilderMethod("whereHasMorph")).toBe(true);
+    expect(isLaravelEloquentBuilderFluentMethod("whereHasMorph")).toBe(true);
+    expect(isLaravelEloquentBuilderMethodName("whereHasMorph")).toBe(true);
+    expect(isLaravelEloquentBuilderFluentMethod("whereMorphedTo")).toBe(true);
+    expect(isLaravelEloquentBuilderFluentMethod("doesntHaveMorph")).toBe(true);
   });
 
   it("infers Laravel builder return types without global local-scope leakage", () => {
@@ -173,6 +178,23 @@ class Album extends Model
         null,
       ),
     ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    for (const methodName of [
+      "whereHasMorph",
+      "orWhereHasMorph",
+      "whereMorphedTo",
+      "whereNotMorphedTo",
+      "whereMorphRelation",
+      "doesntHaveMorph",
+    ]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+          null,
+        ),
+      ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>");
+    }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,

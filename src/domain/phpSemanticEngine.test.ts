@@ -532,6 +532,7 @@ class AlbumRepository
 namespace App\\Http\\Controllers;
 
 use App\\Models\\Album;
+use App\\Models\\Post;
 
 class AlbumController
 {
@@ -540,10 +541,14 @@ class AlbumController
         $album = Album::query()
             ->whereNull('parent_id')
             ->firstOrFail();
+        $morphAlbum = Album::query()
+            ->whereHasMorph('commentable', [Post::class])
+            ->first();
         $query = Album::query()->whereKey(1);
         $latest = $query->first();
 
         $album->tit
+        $morphAlbum->tit
         $query->whe
         $latest->tit
     }
@@ -555,6 +560,14 @@ class AlbumController
         source,
         positionAfter(source, "$album->tit"),
         "album",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$morphAlbum->tit"),
+        "morphAlbum",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");
