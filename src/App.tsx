@@ -288,6 +288,8 @@ function App() {
 
     const runtimeLabel = languageServerStatusLabel(
       workbench.languageServerRuntimeStatus,
+      "PHPactor",
+      { workspaceRoot: workbench.workspaceRoot },
     );
 
     if (runtimeLabel) {
@@ -318,6 +320,7 @@ function App() {
     const runtimeLabel = languageServerStatusLabel(
       workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
       "TS Server",
+      { workspaceRoot: workbench.workspaceRoot },
     );
 
     if (!runtimeLabel) {

@@ -115,8 +115,12 @@ export function languageServerStatusBelongsToWorkspace(
   status: LanguageServerRuntimeStatus,
   workspaceRoot: string | null | undefined,
 ): boolean {
-  if (!workspaceRoot || !status.rootPath) {
+  if (!workspaceRoot) {
     return true;
+  }
+
+  if (!status.rootPath) {
+    return false;
   }
 
   return (

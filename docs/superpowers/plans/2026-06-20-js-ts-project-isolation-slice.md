@@ -3309,3 +3309,61 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/infrastructure/tauriLanguageServerRuntimeGateway.ts`
   - `src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: Runtime Status Label Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2ebc8012 Record runtime gateway root contract commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Delegation Notes
+
+- This slice tightens the UI-facing runtime status label contract.
+- Main agent implemented directly because the guard lives in the runtime domain helper and the active labels live in `App.tsx`.
+
+### Why This Slice
+
+- `languageServerStatusBelongsToWorkspace` still treated a rootless runtime status as belonging to a provided workspace root.
+- Application and provider guards now reject rootless runtime events, but the UI label helper still preserved the old permissive fallback.
+- Runtime labels should only render for the active workspace when the status explicitly belongs to that workspace.
+
+### Implementation Choice
+
+- Keep generic labels unchanged when no workspace root is supplied.
+- When a workspace root is supplied, reject runtime statuses that do not carry a `rootPath`.
+- Pass the active `workbench.workspaceRoot` into PHP and JavaScript/TypeScript runtime labels in `App.tsx`.
+
+### Acceptance Criteria
+
+- Rootless runtime statuses do not render project-scoped status labels.
+- Rooted matching statuses still render labels.
+- Rooted mismatching statuses still suppress labels.
+- Domain runtime tests, StatusBar tests, focused preview runtime tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: Runtime Status Label Root Guard
+
+- Tightened workspace membership for runtime status labels.
+- Rooted the main app's PHP and TS Server label checks to the active workspace.
+- Added regression coverage for rootless status-label suppression when a workspace root is provided.
+
+### Verification: Runtime Status Label Root Guard
+
+- PASS: `npm test -- src/domain/languageServerRuntime.test.ts`
+- PASS: `npm test -- src/components/StatusBar.test.tsx`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP runtime status events without an explicit workspace root|runtime status events without an explicit workspace root"`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: Runtime Status Label Root Guard
+
+- Pending commit.
+- Included files:
+  - `src/App.tsx`
+  - `src/domain/languageServerRuntime.ts`
+  - `src/domain/languageServerRuntime.test.ts`
+  - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`

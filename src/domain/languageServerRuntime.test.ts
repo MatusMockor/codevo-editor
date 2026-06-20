@@ -50,6 +50,11 @@ describe("languageServerStatusLabel", () => {
         workspaceRoot: "/workspace-b",
       }),
     ).toBeNull();
+    expect(
+      languageServerStatusLabel(status("running"), "TS Server", {
+        workspaceRoot: "/workspace-a",
+      }),
+    ).toBeNull();
   });
 });
 
@@ -86,7 +91,10 @@ describe("languageServerStatusBelongsToWorkspace", () => {
     ).toBe(false);
     expect(
       languageServerStatusBelongsToWorkspace(status("running"), "/workspace-b"),
-    ).toBe(true);
+    ).toBe(false);
+    expect(languageServerStatusBelongsToWorkspace(status("running"), null)).toBe(
+      true,
+    );
   });
 });
 
