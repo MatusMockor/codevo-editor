@@ -5155,6 +5155,117 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("drops stale JavaScript and TypeScript navigation after same-root session restart", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/src/user.ts";
+    const source = "import { User } from './user';\nconst user = new User();\n";
+    const target = "export class User {\n  name = '';\n}\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const definitionResult =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(41)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(41)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishRuntimeStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    ).mockImplementationOnce(async () => definitionResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return target;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(41),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(41),
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    expect(command).toBeDefined();
+
+    let navigationPromise: Promise<void> = Promise.resolve();
+
+    await act(async () => {
+      navigationPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+      ).toHaveBeenCalled();
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(42));
+    });
+    await flushAsyncTurns();
+
+    definitionResult.resolve([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await navigationPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().activePath).toBe(sourcePath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe(
+      "Opened definition user.ts:1:14",
+    );
+  });
+
   it("opens JavaScript and TypeScript source definitions through workbench commands", async () => {
     const sourcePath = "/workspace/src/main.ts";
     const targetPath = "/workspace/packages/user/src/user.ts";

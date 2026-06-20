@@ -1972,3 +1972,51 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
   - `src/components/EditorSurface.test.tsx`
   - `src/components/languageServerMonacoProviders.test.ts`
   - `docs/superpowers/plans/2026-06-20-js-ts-project-isolation-slice.md`
+
+## Next Slice: JS/TS Same-Root Navigation Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5e0b8577 Record JS TS range semantic token commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The previous navigation isolation slice guarded project-tab/root switches while JS/TS navigation was in flight.
+- The JS/TS navigation command captured the requested root but not the active TypeScript language-server `sessionId`.
+- A same-root TypeScript runtime restart during an in-flight definition/source-definition/implementation request could let a stale response open/reveal a target for a dead session.
+
+### Implementation Choice
+
+- Capture the running JS/TS `sessionId` at command start.
+- Re-check the active workspace root and current cached JS/TS runtime session after document flush, after the LSP response, after implementation target mapping, and after target open.
+- Use a guarded single-implementation target open path for JS/TS so that implementation navigation gets the same session checks as definition/source-definition.
+- Suppress stale errors from the old JS/TS session after a same-root restart.
+
+### Acceptance Criteria
+
+- If the same workspace's TypeScript session restarts while a JS/TS definition request is in flight, the stale result is ignored.
+- Existing project-tab switch navigation guard still works.
+- Existing successful JS/TS definition navigation still opens and reveals the target.
+- Focused preview tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed Slice: JS/TS Same-Root Navigation Session Guard
+
+- Added same-root JS/TS session checks to guarded workbench navigation.
+- Added guarded JS/TS single implementation target opening.
+- Added regression coverage for dropping a stale definition response after a same-root TypeScript session restart.
+
+### Verification: JS/TS Same-Root Navigation Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "same-root session restart|switching project tabs during target open|opens JavaScript and TypeScript definitions through workbench commands"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Same-Root Navigation Session Guard
+
+- Pending commit and push.

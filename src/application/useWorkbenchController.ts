@@ -10069,6 +10069,7 @@ export function useWorkbenchController(
       return false;
     }
 
+    const requestedSessionId = runtimeStatus.sessionId;
     const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
 
     if (!editorPosition) {
@@ -10076,6 +10077,31 @@ export function useWorkbenchController(
     }
 
     const requestedPath = document.path;
+    const isRequestedJavaScriptTypeScriptSessionActive = () => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return false;
+      }
+
+      const currentRuntimeStatus =
+        cachedLanguageServerRuntimeStatusForRoot(
+          javaScriptTypeScriptRuntimeStatusByRootRef.current,
+          requestedRoot,
+        ) ??
+        (workspaceRootKeysEqual(
+          javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+          requestedRoot,
+        )
+          ? javaScriptTypeScriptLanguageServerRuntimeStatusRef.current
+          : null);
+
+      return isRunningLanguageServerSessionForWorkspace(
+        currentRuntimeStatus,
+        currentRuntimeStatus?.rootPath ??
+          javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+        requestedRoot,
+        requestedSessionId,
+      );
+    };
 
     if (feature === "implementation") {
       setImplementationChooser(null);
@@ -10084,7 +10110,7 @@ export function useWorkbenchController(
     try {
       await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
         return false;
       }
 
@@ -10098,7 +10124,7 @@ export function useWorkbenchController(
           toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
         );
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
         return false;
       }
 
@@ -10110,7 +10136,7 @@ export function useWorkbenchController(
       if (feature === "implementation" && locations.length > 1) {
         const targets = await implementationTargetsFromLocations(locations);
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return false;
         }
 
@@ -10125,7 +10151,30 @@ export function useWorkbenchController(
         const [onlyTarget] = targets;
 
         if (onlyTarget) {
-          await openImplementationTarget(onlyTarget);
+          if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+            return false;
+          }
+
+          setImplementationChooser(null);
+          recordCurrentNavigationLocation();
+          const opened = await openPathForNavigation(onlyTarget.path);
+
+          if (!opened) {
+            return false;
+          }
+
+          if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+            return false;
+          }
+
+          setEditorRevealTarget({
+            path: onlyTarget.path,
+            position: onlyTarget.position,
+          });
+          const targetPosition = onlyTarget.position;
+          setMessage(
+            `Opened ${onlyTarget.label} ${getFileName(onlyTarget.path)}:${targetPosition.lineNumber}:${targetPosition.column}`,
+          );
           return true;
         }
       }
@@ -10144,13 +10193,18 @@ export function useWorkbenchController(
       }
 
       recordCurrentNavigationLocation();
+
+      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+        return false;
+      }
+
       const opened = await openPathForNavigation(targetPath);
 
       if (!opened) {
         return false;
       }
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
         return false;
       }
 
@@ -10164,7 +10218,7 @@ export function useWorkbenchController(
       );
       return true;
     } catch (error) {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
         return false;
       }
 
@@ -10182,7 +10236,6 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    openImplementationTarget,
     openPathForNavigation,
     recordCurrentNavigationLocation,
     reportErrorForActiveWorkspaceRoot,
@@ -14660,6 +14713,18 @@ function isRunningLanguageServerForWorkspace(
   }
 
   return status.kind === "running";
+}
+
+function isRunningLanguageServerSessionForWorkspace(
+  status: LanguageServerRuntimeStatus | null,
+  statusRoot: string | null,
+  workspaceRoot: string | null | undefined,
+  sessionId: number,
+): status is Extract<LanguageServerRuntimeStatus, { kind: "running" }> {
+  return (
+    isRunningLanguageServerForWorkspace(status, statusRoot, workspaceRoot) &&
+    status.sessionId === sessionId
+  );
 }
 
 function isLanguageServerActiveForWorkspace(
