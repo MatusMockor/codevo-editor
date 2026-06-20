@@ -3661,4 +3661,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Autostart Probe Root Guard
 
-- PENDING.
+- Committed as `62705f69 Guard JS TS autostart probe roots`.
