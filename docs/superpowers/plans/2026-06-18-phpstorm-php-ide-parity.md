@@ -1956,3 +1956,48 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed and pushed as `7cf950ba Infer Laravel lazy builder collections`.
+
+## Slice: Laravel Hydrate FromQuery Collection Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1d9238a1 Record Laravel lazy builder commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat Laravel `hydrate(...)` and `fromQuery(...)` as Eloquent collection-returning methods.
+
+### Implementation Choice
+
+- Add `hydrate` and `fromQuery` to the Eloquent builder collection-returning method set.
+- Reuse existing `Collection<int, Model>` return formatting and collection terminal inference.
+- Add semantic-chain coverage for `hydrate(...)->first()`.
+
+### Acceptance Criteria
+
+- `Album::hydrate(...)` and `Album::fromQuery(...)` infer `Collection<int, Album>`.
+- `Album::hydrate(...)->first()` infers `Album`.
+- Focused PHP method-completion tests, semantic-engine tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Added `hydrate` and `fromQuery` to Eloquent builder collection method recognition.
+- Added direct static model return-type coverage for `Album::hydrate(...)` and `Album::fromQuery(...)`.
+- Added semantic-chain coverage proving `Album::hydrate(...)->first()` resolves to `Album`.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "resolves Laravel model assignments from Eloquent collection chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending.

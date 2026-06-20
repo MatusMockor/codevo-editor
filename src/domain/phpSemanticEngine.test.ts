@@ -688,12 +688,14 @@ class Album extends Model
         $fromStaticCollection = Album::all()->first();
         $fromCursor = Album::cursor()->first();
         $fromLazyById = Album::query()->lazyById()->first();
+        $fromHydrated = Album::hydrate([])->first();
 
         $fromAssignedCollection->tit
         $fromDirectCollection->tit
         $fromStaticCollection->tit
         $fromCursor->tit
         $fromLazyById->tit
+        $fromHydrated->tit
     }
 }
 `;
@@ -743,6 +745,14 @@ class Album extends Model
         source,
         positionAfter(source, "$fromLazyById->tit"),
         "fromLazyById",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromHydrated->tit"),
+        "fromHydrated",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Album");

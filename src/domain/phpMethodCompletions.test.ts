@@ -217,6 +217,16 @@ class Album extends Model
         "Album::findMany([1, 2])",
       ),
     ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    for (const methodName of ["fromQuery", "hydrate"]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "Album",
+          null,
+        ),
+      ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
