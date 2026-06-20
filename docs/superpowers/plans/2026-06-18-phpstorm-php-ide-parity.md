@@ -977,3 +977,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
   - `src/application/useWorkbenchController.ts`
   - `src/application/useWorkbenchController.preview.test.tsx`
   - `docs/superpowers/plans/2026-06-18-phpstorm-php-ide-parity.md`
+
+## Slice: PHPDoc Interface Method Return Inference - 2026-06-20
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `23daf42 Update PHP parity plan status`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Infer chained return types from PHPDoc `@method` declarations inherited through implemented interfaces.
+
+### Implementation Choice
+
+- Reuse `phpSuperTypeReferences` in `resolvePhpMethodReturnType`, matching completions, diagnostics, and direct navigation.
+- Preserve trait/mixin traversal, inherited template substitution, and late-static handling.
+
+### Acceptance Criteria
+
+- `$comment->publisher()->pub` suggests `publishNow()` when `publisher()` is declared as interface PHPDoc `@method CommentPublisher publisher()`.
+- Existing generic repository interface, trait, and mixin return inference tests still pass.
+- Relevant preview tests, `npm run check`, and `git diff --check` pass.
+
+### Completed
+
+- Method return inference now walks parsed supertypes, so implemented-interface PHPDoc `@method` returns can drive chained completions.
+- Existing trait, mixin, generic inheritance, and late-static paths remain on the same resolver.
+- Added preview coverage for chaining from an interface PHPDoc method return into the returned class.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "interface PHPDoc method returns|generic repository interface method returns|generic trait method returns|generic mixin method returns"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

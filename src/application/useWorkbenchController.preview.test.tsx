@@ -6653,6 +6653,128 @@ class Comment
     ]);
   });
 
+  it("resolves implemented interface PHPDoc method returns on chains", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const interfacePath = "/workspace/app/Contracts/PublishesComments.php";
+    const publisherPath = "/workspace/app/Services/CommentPublisher.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->publisher()->pub
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 7,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\PublishesComments",
+          kind: "interface",
+          lineNumber: 10,
+          name: "PublishesComments",
+          path: interfacePath,
+          relativePath: "app/Contracts/PublishesComments.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Services\\CommentPublisher",
+          kind: "class",
+          lineNumber: 5,
+          name: "CommentPublisher",
+          path: publisherPath,
+          relativePath: "app/Services/CommentPublisher.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use App\\Contracts\\PublishesComments;
+
+class Comment implements PublishesComments
+{
+}
+`;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+use App\\Services\\CommentPublisher;
+
+/**
+ * @method CommentPublisher publisher()
+ */
+interface PublishesComments
+{
+}
+`;
+        }
+
+        if (path === publisherPath) {
+          return `<?php
+namespace App\\Services;
+
+class CommentPublisher
+{
+    public function publishNow(): void {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->publisher()->pub"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Services\\CommentPublisher",
+        name: "publishNow",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+  });
+
   it("resolves generic trait method returns through PHPDoc use", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryPath = "/workspace/app/Repositories/CommentRepository.php";

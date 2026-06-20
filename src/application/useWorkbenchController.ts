@@ -7170,27 +7170,31 @@ export function useWorkbenchController(
             }
           }
 
-          const parentClassName = phpExtendsClassName(content);
-          const resolvedParentClassName = parentClassName
-            ? resolvePhpClassReference(content, parentClassName)
-            : null;
+          for (const superTypeName of phpSuperTypeReferences(content)) {
+            const resolvedSuperTypeName = resolvePhpClassReference(
+              content,
+              superTypeName,
+            );
 
-          if (resolvedParentClassName) {
-            const parentTemplateTypes =
+            if (!resolvedSuperTypeName) {
+              continue;
+            }
+
+            const superTypeTemplateTypes =
               await resolvePhpGenericTemplateTypesForInheritedClass(
                 content,
-                resolvedParentClassName,
+                resolvedSuperTypeName,
               );
-            const parentReturnType = await resolvePhpMethodReturnType(
-              resolvedParentClassName,
+            const superTypeReturnType = await resolvePhpMethodReturnType(
+              resolvedSuperTypeName,
               methodName,
               visitedClassNames,
               normalizedLateStaticClassName || normalizedClassName,
-              parentTemplateTypes,
+              superTypeTemplateTypes,
             );
 
-            if (parentReturnType) {
-              return parentReturnType;
+            if (superTypeReturnType) {
+              return superTypeReturnType;
             }
           }
 
