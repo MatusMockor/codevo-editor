@@ -8772,3 +8772,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Broadcast Manager Connection Names
 
 - Committed as `6a09d53d Add Laravel broadcast connection navigation`.
+
+## Next Slice: Laravel Broadcast Fluent Connection Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `74e42050 Record Laravel broadcast connection commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- After Broadcast manager calls, Laravel also exposes connection names through fluent broadcast APIs such as `broadcast(...)->via(...)`, `Broadcast::event(...)->via(...)`, and event `$this->broadcastVia(...)`.
+- This extends the same `broadcasting.connections.<connection>` navigation while keeping the matcher anchored to known broadcast receivers instead of matching arbitrary `->via(...)` calls.
+
+### Implementation Choice
+
+- Add anchored `via(...)` detection for `broadcast(...)`, `broadcast_if(...)`, `broadcast_unless(...)`, and `Broadcast::event/on/private/presence(...)->via(...)`.
+- Add `$this/self/static::broadcastVia(...)` support, including direct short-array argument values through the existing PHP array string argument helper.
+- Reuse the existing Broadcast connection config mapping, completion branch, and Go to Definition handler.
+
+### Verification: Laravel Broadcast Fluent Connection Names
+
+- `npm test -- src/domain/phpLaravelBroadcasting.test.ts` passed: 5 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Broadcast connection names"` passed: 2 passed, 413 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpLaravelBroadcasting.test.ts src/domain/phpNavigation.test.ts` passed: 32 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 415 passed.
+- `npm test` passed: 77 files, 1105 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Broadcast Fluent Connection Names
+
+- Committed as `471a3129 Support Laravel broadcast fluent connection navigation`.
