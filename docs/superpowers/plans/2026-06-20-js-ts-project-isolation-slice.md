@@ -6573,4 +6573,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Queued didOpen Workspace-Tab Guard
 
-- Pending commit after full frontend verification.
+- Committed as `37660507 Guard queued LSP didOpen by workspace`.
