@@ -202,6 +202,12 @@ import {
   type PhpLaravelNamedRouteDefinition,
 } from "../domain/phpLaravelRoutes";
 import {
+  phpLaravelCacheStoreCompletionInsertText,
+  phpLaravelCacheStoreConfigKey,
+  phpLaravelCacheStoreNameFromConfigKey,
+  phpLaravelCacheStoreReferenceContextAt,
+} from "../domain/phpLaravelCache";
+import {
   phpLaravelConfigCompletionInsertText,
   phpLaravelConfigFileNameFromRelativePath,
   phpLaravelConfigKeyCandidateRelativePath,
@@ -381,6 +387,10 @@ interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
 }
 
 type PhpLaravelConfigNavigationTarget = PhpLaravelConfigTarget;
+
+interface PhpLaravelCacheStoreTarget extends PhpLaravelConfigTarget {
+  storeName: string;
+}
 
 interface PhpLaravelStorageDiskTarget extends PhpLaravelConfigTarget {
   diskName: string;
@@ -7990,6 +8000,53 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const collectPhpLaravelCacheStoreTargets = useCallback(async (): Promise<
+    PhpLaravelCacheStoreTarget[]
+  > => {
+    const targets = new Map<string, PhpLaravelCacheStoreTarget>();
+
+    for (const target of await collectPhpLaravelConfigTargets()) {
+      const storeName = phpLaravelCacheStoreNameFromConfigKey(target.key);
+
+      if (!storeName) {
+        continue;
+      }
+
+      const key = storeName.toLowerCase();
+
+      if (!targets.has(key)) {
+        targets.set(key, {
+          ...target,
+          storeName,
+        });
+      }
+    }
+
+    return Array.from(targets.values()).sort((left, right) =>
+      left.storeName.localeCompare(right.storeName),
+    );
+  }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelCacheStoreTarget = useCallback(
+    async (storeName: string): Promise<PhpLaravelCacheStoreTarget | null> => {
+      const configKey = phpLaravelCacheStoreConfigKey(storeName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            storeName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const collectPhpLaravelStorageDiskTargets = useCallback(async (): Promise<
     PhpLaravelStorageDiskTarget[]
   > => {
@@ -12372,6 +12429,36 @@ export function useWorkbenchController(
           }));
       }
 
+      const cacheStoreContext = phpLaravelCacheStoreReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && cacheStoreContext && activeDocument) {
+        const normalizedPrefix = cacheStoreContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelCacheStoreTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.storeName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelCacheStoreCompletionInsertText(
+              target.storeName,
+            ),
+            kind: "config",
+            name: target.storeName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const storageDiskContext = phpLaravelStorageDiskReferenceContextAt(
         source,
         position,
@@ -12550,6 +12637,7 @@ export function useWorkbenchController(
         .slice(0, 80);
     },
     [
+      collectPhpLaravelCacheStoreTargets,
       collectPhpLaravelConfigTargets,
       collectPhpLaravelEnvTargets,
       collectPhpLaravelStorageDiskTargets,
@@ -13969,6 +14057,43 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelCacheStoreDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelCacheStoreString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelCacheStoreTarget(context.storeName);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(`No Laravel cache store ${context.storeName} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.storeName);
+    },
+    [
+      activeDocument,
+      findPhpLaravelCacheStoreTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelStorageDiskDefinition = useCallback(
     async (
       context: Extract<
@@ -14145,6 +14270,10 @@ export function useWorkbenchController(
       return goToPhpLaravelConfigDefinition(context);
     }
 
+    if (context.kind === "laravelCacheStoreString") {
+      return goToPhpLaravelCacheStoreDefinition(context);
+    }
+
     if (context.kind === "laravelStorageDiskString") {
       return goToPhpLaravelStorageDiskDefinition(context);
     }
@@ -14178,6 +14307,7 @@ export function useWorkbenchController(
     return false;
   }, [
     activeDocument,
+    goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelConfigDefinition,
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
@@ -14700,6 +14830,10 @@ export function useWorkbenchController(
           return goToPhpLaravelConfigDefinition(context);
         }
 
+        if (context.kind === "laravelCacheStoreString") {
+          return goToPhpLaravelCacheStoreDefinition(context);
+        }
+
         if (context.kind === "laravelStorageDiskString") {
           return goToPhpLaravelStorageDiskDefinition(context);
         }
@@ -14812,6 +14946,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpClassIdentifierDefinition,
+    goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelConfigDefinition,
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,

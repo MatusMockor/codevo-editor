@@ -32305,6 +32305,192 @@ return [
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  it("suggests Laravel Cache store names from cache config", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CacheController.php";
+    const configRoot = "/workspace/config";
+    const cacheConfigPath = "/workspace/config/cache.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Cache;
+
+class CacheController
+{
+    public function store(): void
+    {
+        Cache::store('red');
+        cache()->store('dat');
+    }
+}
+`;
+    const cacheConfigSource = `<?php
+
+return [
+    'default' => 'file',
+    'stores' => [
+        'file' => [
+            'driver' => 'file',
+        ],
+        'redis' => [
+            'driver' => 'redis',
+        ],
+        'database' => [
+            'driver' => 'database',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot ? [fileEntry(cacheConfigPath, "cache.php")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === cacheConfigPath) {
+          return cacheConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CacheController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Cache::store('red"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/cache.php",
+        insertText: "redis",
+        kind: "config",
+        name: "redis",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "cache()->store('dat"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/cache.php",
+        insertText: "database",
+        kind: "config",
+        name: "database",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Cache store names before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CacheController.php";
+    const cacheConfigPath = "/workspace/config/cache.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Cache;
+
+class CacheController
+{
+    public function store(): mixed
+    {
+        return Cache::store('redis')->get('profile');
+    }
+}
+`;
+    const cacheConfigSource = `<?php
+
+return [
+    'default' => 'file',
+    'stores' => [
+        'file' => [
+            'driver' => 'file',
+        ],
+        'redis' => [
+            'driver' => 'redis',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === cacheConfigPath) {
+          return cacheConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CacheController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Cache::store('redis"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(cacheConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: cacheConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+  });
+
   it("suggests Laravel Storage disk names from filesystem config", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/UploadController.php";
     const configRoot = "/workspace/config";

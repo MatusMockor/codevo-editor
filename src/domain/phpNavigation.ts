@@ -12,6 +12,7 @@ import {
   type PhpProjectDescriptor,
   type Psr4Root,
 } from "./workspace";
+import { phpLaravelCacheStoreReferenceContextAt } from "./phpLaravelCache";
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
 import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
@@ -44,6 +45,10 @@ export type PhpIdentifierContext =
   | {
       configKey: string;
       kind: "laravelConfigString";
+    }
+  | {
+      kind: "laravelCacheStoreString";
+      storeName: string;
     }
   | {
       envName: string;
@@ -159,6 +164,18 @@ export function phpIdentifierContextAt(
     return {
       configKey: configReference.key,
       kind: "laravelConfigString",
+    };
+  }
+
+  const cacheStoreReference = phpLaravelCacheStoreReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (cacheStoreReference) {
+    return {
+      kind: "laravelCacheStoreString",
+      storeName: cacheStoreReference.storeName,
     };
   }
 
