@@ -18318,6 +18318,133 @@ class Comment extends Model
     ).toEqual([missingDiagnostic]);
   });
 
+  it("stops stale PHP trait host-property search after switching project tabs", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const commentPath = "/workspace-a/app/Models/Comment.php";
+    const usesConnectionNamePath =
+      "/workspace-a/app/Models/Concerns/UsesConnectionName.php";
+    const usesConnectionNameSource = `<?php
+namespace App\\Models\\Concerns;
+
+trait UsesConnectionName
+{
+    public function connectionName(): mixed
+    {
+        return $this->connectionName;
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 41,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const staleTraitHostSearch = createDeferred<TextSearchResult[]>();
+    const searchText = vi.fn(async (_root, query) =>
+      query === "UsesConnectionName" ? staleTraitHostSearch.promise : [],
+    );
+    let commentReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === usesConnectionNamePath) {
+          return usesConnectionNameSource;
+        }
+
+        if (path === commentPath) {
+          commentReadCount += 1;
+          return `<?php
+namespace App\\Models;
+
+use App\\Models\\Concerns\\UsesConnectionName;
+
+class Comment
+{
+    use UsesConnectionName;
+
+    protected $fillable = [
+        'connectionName',
+    ];
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 22,
+            line:
+              lineNumberOf(usesConnectionNameSource, "$this->connectionName") -
+              1,
+            message:
+              'Property "$connectionName" does not exist on trait "App\\Models\\Concerns\\UsesConnectionName"',
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(usesConnectionNamePath),
+        version: null,
+      });
+    });
+    await vi.waitFor(() => {
+      expect(searchText).toHaveBeenCalledWith(
+        "/workspace-a",
+        "UsesConnectionName",
+        200,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleTraitHostSearch.resolve([
+      {
+        column: 5,
+        lineNumber: 8,
+        lineText: "    use UsesConnectionName;",
+        path: commentPath,
+        relativePath: "app/Models/Comment.php",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(commentReadCount).toBe(0);
+  });
+
   it("suppresses Laravel model attribute property diagnostics only when the property exists", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
