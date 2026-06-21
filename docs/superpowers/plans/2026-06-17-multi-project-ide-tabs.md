@@ -762,3 +762,43 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `dd16a360 Cover TypeScript selection ranges without active workspace`.
+
+### Slice: TypeScript Session-Aware Provider Error Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1bad59f9 Record TypeScript selection range root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent stale JS/TS provider errors from an old runtime session from surfacing after the TypeScript language server restarts in the same workspace root.
+
+#### Implementation Choice
+
+- Replace root-only provider error reporting with session-aware guards for feature requests.
+- Use stored payload session checks for lazy resolves and execute-command payloads.
+- Use workspace-edit event session checks before reporting server-initiated workspace edit failures.
+- Add a regression where a completion request starts in `/project` with `sessionId: 1`, the runtime restarts to `sessionId: 2`, and the stale request rejects without calling `reportError`.
+
+#### Acceptance Criteria
+
+- Stale JS/TS provider errors are suppressed after same-root runtime session restart.
+- Existing stale-error suppression after project tab switch still passes.
+- Lazy payload and workspace edit event error reporting now use the same root/session invariant as their success paths.
+- Full JS/TS provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "drops stale TypeScript provider errors after same-root session restart|drops stale TypeScript provider errors after switching project tabs"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `73752f47 Guard TypeScript provider errors by session`.
