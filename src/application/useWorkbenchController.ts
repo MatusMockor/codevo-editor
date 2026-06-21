@@ -1597,10 +1597,18 @@ export function useWorkbenchController(
 
       try {
         await indexProgressGateway.clearWorkspaceIndex(rootPath);
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          return;
+        }
+
         if (message) {
           setMessage(message);
         }
       } catch (error) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          return;
+        }
+
         reportError("Index", error);
       }
     },

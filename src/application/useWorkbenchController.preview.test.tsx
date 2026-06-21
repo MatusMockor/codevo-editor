@@ -3492,6 +3492,59 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).not.toBe("Soft reindex started.");
   });
 
+  it("ignores index clear errors after switching project tabs", async () => {
+    const indexClear =
+      createDeferred<
+        Awaited<ReturnType<IndexProgressGateway["clearWorkspaceIndex"]>>
+      >();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns();
+    vi.mocked(
+      dependencies.indexProgressGateway.clearWorkspaceIndex,
+    ).mockImplementationOnce(async () => indexClear.promise);
+
+    let modePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      modePromise = getWorkbench().setSmartMode("basic");
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.indexProgressGateway.clearWorkspaceIndex,
+      ).toHaveBeenCalledWith("/workspace-a");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      indexClear.reject(new Error("stale clear"));
+      await modePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Index" && notice.message.includes("stale clear"),
+      ),
+    ).toBe(false);
+  });
+
   it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {
