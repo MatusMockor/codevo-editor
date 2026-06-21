@@ -8839,3 +8839,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Notification MailMessage Mailer Names
 
 - Committed as `6243eb06 Support Laravel notification mailer navigation`.
+
+## Next Slice: Laravel Auth Guard Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c13eb5bb Record Laravel notification mailer commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel Auth guard names are configured under `config/auth.php` as `auth.guards.<guard>`.
+- Guard strings are common in Auth facade/helper calls such as `Auth::guard('admin')`, `auth('admin')`, and `auth()->guard('admin')`.
+- This is another config-derived string reference and reuses the existing Laravel config target collector / finder with the same stale-root guard behavior.
+
+### Implementation Choice
+
+- Add a focused Auth guard detector for `Auth::guard(...)`, `Auth::shouldUse(...)`, `Auth::setDefaultDriver(...)`, `auth(...)`, and `auth()->guard(...)`.
+- Map guard names to `auth.guards.<guard>` and reject nested config keys such as `auth.guards.admin.driver`.
+- Keep route middleware strings such as `auth:admin`, request helper guards, and test helper guards for separate parser-specific follow-ups.
+
+### Verification: Laravel Auth Guard Names
+
+- `npm test -- src/domain/phpLaravelAuth.test.ts` passed: 4 passed.
+- `npm test -- src/domain/phpNavigation.test.ts` passed: 27 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Auth guard"` passed: 2 passed, 415 skipped.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 417 passed.
+- `npm test -- src/domain/phpLaravelAuth.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test` passed: 78 files, 1111 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Auth Guard Names
+
+- Committed as `9d0e8864 Add Laravel auth guard navigation`.
