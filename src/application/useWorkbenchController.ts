@@ -13939,41 +13939,94 @@ export function useWorkbenchController(
 
   const openTypeHierarchy = useCallback(async () => {
     if (!activeDocument) {
-      setMessage("Open a JavaScript or TypeScript file to show type hierarchy.");
+      setMessage(
+        "Open a PHP, JavaScript, or TypeScript file to show type hierarchy.",
+      );
       return;
     }
 
     if (
       !workspaceRoot ||
-      !isJavaScriptTypeScriptLanguageServerDocument(activeDocument)
-    ) {
-      setMessage("Type hierarchy is available for JavaScript and TypeScript files.");
-      return;
-    }
-
-    if (
-      !isRunningLanguageServerForWorkspace(
-        javaScriptTypeScriptLanguageServerRuntimeStatus,
-        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-        workspaceRoot,
-      )
+      (!isLanguageServerDocument(activeDocument) &&
+        !isJavaScriptTypeScriptLanguageServerDocument(activeDocument))
     ) {
       setMessage(
-        "JavaScript/TypeScript service is starting. Try type hierarchy again in a moment.",
+        "Type hierarchy is available for PHP, JavaScript, and TypeScript files.",
       );
       return;
     }
 
-    if (
-      !canUseLanguageServerFeature(
-        javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-        "typeHierarchy",
-      )
-    ) {
-      setMessage(
-        "JavaScript/TypeScript service does not provide type hierarchy.",
-      );
-      return;
+    const isPhpDocument = isLanguageServerDocument(activeDocument);
+    let typeHierarchyContext: {
+      featuresGateway: LanguageServerFeaturesGateway;
+      flushPendingChange(path: string): Promise<void>;
+      isSessionActive(rootPath: string, sessionId: number): boolean;
+      sessionId: number;
+    };
+
+    if (isPhpDocument) {
+      if (
+        !isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          workspaceRoot,
+        )
+      ) {
+        setMessage(
+          "PHP language server is starting. Try type hierarchy again in a moment.",
+        );
+        return;
+      }
+
+      if (
+        !canUseLanguageServerFeature(
+          languageServerRuntimeStatus.capabilities,
+          "typeHierarchy",
+        )
+      ) {
+        setMessage("PHP language server does not provide type hierarchy.");
+        return;
+      }
+
+      typeHierarchyContext = {
+        featuresGateway: languageServerFeaturesGateway,
+        flushPendingChange: flushPendingDocumentChange,
+        isSessionActive: isLanguageServerSessionActiveForRoot,
+        sessionId: languageServerRuntimeStatus.sessionId,
+      };
+    } else {
+      if (
+        !isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        )
+      ) {
+        setMessage(
+          "JavaScript/TypeScript service is starting. Try type hierarchy again in a moment.",
+        );
+        return;
+      }
+
+      if (
+        !canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "typeHierarchy",
+        )
+      ) {
+        setMessage(
+          "JavaScript/TypeScript service does not provide type hierarchy.",
+        );
+        return;
+      }
+
+      typeHierarchyContext = {
+        featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
+        flushPendingChange: flushPendingJavaScriptTypeScriptDocumentChange,
+        isSessionActive:
+          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+        sessionId: javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
+      };
     }
 
     const editorPosition = activeEditorPositionRef.current;
@@ -13985,13 +14038,9 @@ export function useWorkbenchController(
 
     const requestedRoot = workspaceRoot;
     const requestedPath = activeDocument.path;
-    const requestedSessionId =
-      javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
-    const isRequestedJavaScriptTypeScriptSessionActive = () =>
-      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-        requestedRoot,
-        requestedSessionId,
-      );
+    const requestedSessionId = typeHierarchyContext.sessionId;
+    const isRequestedSessionActive = () =>
+      typeHierarchyContext.isSessionActive(requestedRoot, requestedSessionId);
 
     setPaletteOpen(false);
     setQuickOpenOpen(false);
@@ -14004,19 +14053,18 @@ export function useWorkbenchController(
     setTypeHierarchyView(null);
 
     try {
-      await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
+      await typeHierarchyContext.flushPendingChange(requestedPath);
 
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+      if (!isRequestedSessionActive()) {
         return;
       }
 
-      const [item] =
-        await javaScriptTypeScriptLanguageServerFeaturesGateway.prepareTypeHierarchy(
-          requestedRoot,
-          toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
-        );
+      const [item] = await typeHierarchyContext.featuresGateway.prepareTypeHierarchy(
+        requestedRoot,
+        toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
+      );
 
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+      if (!isRequestedSessionActive()) {
         return;
       }
 
@@ -14026,17 +14074,17 @@ export function useWorkbenchController(
       }
 
       const [supertypes, subtypes] = await Promise.all([
-        javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySupertypes(
+        typeHierarchyContext.featuresGateway.typeHierarchySupertypes(
           requestedRoot,
           item,
         ),
-        javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySubtypes(
+        typeHierarchyContext.featuresGateway.typeHierarchySubtypes(
           requestedRoot,
           item,
         ),
       ]);
 
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+      if (!isRequestedSessionActive()) {
         return;
       }
 
@@ -14047,7 +14095,7 @@ export function useWorkbenchController(
       });
       setMessage(null);
     } catch (error) {
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+      if (!isRequestedSessionActive()) {
         return;
       }
 
@@ -14055,11 +14103,16 @@ export function useWorkbenchController(
     }
   }, [
     activeDocument,
+    flushPendingDocumentChange,
     flushPendingJavaScriptTypeScriptDocumentChange,
+    isLanguageServerSessionActiveForRoot,
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    languageServerFeaturesGateway,
+    languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
     reportError,
     workspaceRoot,
   ]);
@@ -15367,21 +15420,38 @@ export function useWorkbenchController(
       id: "editor.showTypeHierarchy",
       title: "Show Type Hierarchy",
       category: "Editor",
-      isEnabled: () =>
-        Boolean(activeDocument) &&
-        Boolean(
-          activeDocument &&
-            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
-        ) &&
-        isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        ) &&
-        canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "typeHierarchy",
-        ),
+      isEnabled: () => {
+        if (!activeDocument) {
+          return false;
+        }
+
+        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+          return (
+            isRunningLanguageServerForWorkspace(
+              javaScriptTypeScriptLanguageServerRuntimeStatus,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+              workspaceRoot,
+            ) &&
+            canUseLanguageServerFeature(
+              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+              "typeHierarchy",
+            )
+          );
+        }
+
+        return (
+          isLanguageServerDocument(activeDocument) &&
+          isRunningLanguageServerForWorkspace(
+            languageServerRuntimeStatus,
+            languageServerRuntimeStatusRoot,
+            workspaceRoot,
+          ) &&
+          canUseLanguageServerFeature(
+            languageServerRuntimeStatus.capabilities,
+            "typeHierarchy",
+          )
+        );
+      },
       run: openTypeHierarchy,
     });
 

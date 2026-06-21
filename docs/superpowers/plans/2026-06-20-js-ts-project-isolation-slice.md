@@ -7734,3 +7734,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP LSP Call Hierarchy In Workbench
 
 - Committed as `2a366e21 Use PHP call hierarchy in workbench`.
+
+## Next Slice: PHP LSP Type Hierarchy In Workbench
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `94faa557 Record PHP call hierarchy commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Shared type hierarchy domain/UI and PHP gateway/Tauri commands already exist.
+- The workbench `Show Type Hierarchy` command is still JS/TS-only, so PHP/Laravel users cannot inspect model/controller inheritance through the existing dialog.
+- This mirrors the completed PHP call hierarchy wiring and finishes the paired hierarchy UI gap.
+
+### Implementation Choice
+
+- Add a PHP branch to `openTypeHierarchy` for active PHP language-server documents.
+- Use `flushPendingDocumentChange`, `languageServerFeaturesGateway.prepareTypeHierarchy`, `typeHierarchySupertypes`, and `typeHierarchySubtypes`.
+- Keep root/session stale guards around prepare and follow-up calls, mirroring JS/TS behavior.
+- Enable the command for PHP only when the active workspace PHP server is running and advertises `typeHierarchy`.
+
+### Acceptance Criteria
+
+- PHP `Show Type Hierarchy` opens the existing type hierarchy dialog from a PHP document.
+- PHP type hierarchy row opening reveals the target range without opening inactive workspace-tab rows.
+- Stale PHP type hierarchy errors/results after workspace-tab switch are ignored.
+- Stale PHP type hierarchy results after same-root PHP session restart are ignored.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP LSP Type Hierarchy In Workbench
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP type hierarchy|JavaScript and TypeScript type hierarchy"` passed: 12 passed, 354 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 366 passed.
+- `npm run check` passed.
+- `npm test` passed: 65 files, 990 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Pending

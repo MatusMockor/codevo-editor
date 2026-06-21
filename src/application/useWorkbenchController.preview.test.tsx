@@ -12985,6 +12985,620 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("opens PHP type hierarchy from command palette actions", async () => {
+    const path = "/workspace/app/Models/User.php";
+    const subtypePath = "/workspace/app/Models/AdminUser.php";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 212,
+    };
+    const item = {
+      data: { symbolId: "App\\Models\\User" },
+      detail: "app/Models/User.php",
+      kind: 5,
+      name: "User",
+      range: range(4, 0, 12, 1),
+      selectionRange: range(4, 6, 4, 10),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const subtype = {
+      data: { symbolId: "App\\Models\\AdminUser" },
+      detail: "app/Models/AdminUser.php",
+      kind: 5,
+      name: "AdminUser",
+      range: range(6, 0, 14, 1),
+      selectionRange: range(6, 6, 6, 15),
+      tags: [],
+      uri: fileUriFromPath(subtypePath),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockResolvedValue([item]);
+    vi.mocked(
+      languageServerFeaturesGateway.typeHierarchySupertypes,
+    ).mockResolvedValue([]);
+    vi.mocked(
+      languageServerFeaturesGateway.typeHierarchySubtypes,
+    ).mockResolvedValue([subtype]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === subtypePath) {
+          return "<?php\n\nnamespace App\\Models;\n\nclass AdminUser extends User {}\n";
+        }
+
+        return "<?php\n\nnamespace App\\Models;\n\nclass User {}\n";
+      }),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 8,
+        lineNumber: 5,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.showTypeHierarchy",
+    );
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      languageServerFeaturesGateway.prepareTypeHierarchy,
+    ).toHaveBeenCalledWith("/workspace", {
+      character: 7,
+      line: 4,
+      path,
+    });
+    expect(languageServerFeaturesGateway.typeHierarchySupertypes).toHaveBeenCalledWith(
+      "/workspace",
+      item,
+    );
+    expect(languageServerFeaturesGateway.typeHierarchySubtypes).toHaveBeenCalledWith(
+      "/workspace",
+      item,
+    );
+    expect(getWorkbench().typeHierarchyView?.item.name).toBe("User");
+    expect(getWorkbench().typeHierarchyView?.subtypes).toHaveLength(1);
+
+    const [row] = typeHierarchyRows(getWorkbench().typeHierarchyView!);
+
+    await act(async () => {
+      await getWorkbench().openTypeHierarchyRow(row);
+    });
+
+    expect(getWorkbench().typeHierarchyView).toBe(null);
+    expect(getWorkbench().activePath).toBe(subtypePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: subtypePath,
+      position: {
+        column: 7,
+        lineNumber: 7,
+      },
+    });
+  });
+
+  it("keeps PHP type hierarchy open for rows from inactive project tabs", async () => {
+    const path = "/workspace-b/app/Models/User.php";
+    const subtypePath = "/workspace-b/app/Models/AdminUser.php";
+    const staleSubtypePath = "/workspace-a/app/Models/AdminUser.php";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 213,
+    };
+    const item = {
+      data: { symbolId: "App\\Models\\User" },
+      detail: "app/Models/User.php",
+      kind: 5,
+      name: "User",
+      range: range(4, 0, 12, 1),
+      selectionRange: range(4, 6, 4, 10),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const subtype = {
+      data: { symbolId: "App\\Models\\AdminUser" },
+      detail: "app/Models/AdminUser.php",
+      kind: 5,
+      name: "AdminUser",
+      range: range(6, 0, 14, 1),
+      selectionRange: range(6, 6, 6, 15),
+      tags: [],
+      uri: fileUriFromPath(subtypePath),
+    };
+    const staleSubtype = {
+      ...subtype,
+      name: "StaleAdminUser",
+      uri: fileUriFromPath(staleSubtypePath),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockResolvedValue([item]);
+    vi.mocked(
+      languageServerFeaturesGateway.typeHierarchySupertypes,
+    ).mockResolvedValue([]);
+    vi.mocked(
+      languageServerFeaturesGateway.typeHierarchySubtypes,
+    ).mockResolvedValue([subtype]);
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 8,
+        lineNumber: 5,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showTypeHierarchy")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().typeHierarchyView?.item.name).toBe("User");
+
+    const [staleRow] = typeHierarchyRows({
+      item,
+      subtypes: [staleSubtype],
+      supertypes: [],
+    });
+
+    await act(async () => {
+      await getWorkbench().openTypeHierarchyRow(staleRow);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().typeHierarchyView?.item.name).toBe("User");
+    expect(getWorkbench().activePath).toBe(path);
+    expect(readTextFile).not.toHaveBeenCalledWith(staleSubtypePath);
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP type hierarchy errors after switching project tabs", async () => {
+    const path = "/workspace-a/app/Models/User.php";
+    const prepareTypeHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareTypeHierarchy"]>
+        >
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 214,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockImplementationOnce(async () => prepareTypeHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 8,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showTypeHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await flushAsyncTurns(4);
+
+    expect(languageServerFeaturesGateway.prepareTypeHierarchy).toHaveBeenCalledWith(
+      "/workspace-a",
+      {
+        character: 7,
+        line: 0,
+        path,
+      },
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    prepareTypeHierarchy.reject(new Error("stale PHP type hierarchy"));
+    await act(async () => {
+      await commandPromise;
+    });
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale PHP type hierarchy");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Type Hierarchy" &&
+          notice.message.includes("stale PHP type hierarchy"),
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP type hierarchy results after switching project tabs", async () => {
+    const path = "/workspace-a/app/Models/User.php";
+    const prepareTypeHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareTypeHierarchy"]>
+        >
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 215,
+    };
+    const item = {
+      data: { symbolId: "App\\Models\\StaleUser" },
+      detail: "app/Models/User.php",
+      kind: 5,
+      name: "StaleUser",
+      range: range(4, 0, 12, 1),
+      selectionRange: range(4, 6, 4, 15),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockImplementationOnce(async () => prepareTypeHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 8,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showTypeHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await flushAsyncTurns(4);
+
+    expect(languageServerFeaturesGateway.prepareTypeHierarchy).toHaveBeenCalledWith(
+      "/workspace-a",
+      {
+        character: 7,
+        line: 0,
+        path,
+      },
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    prepareTypeHierarchy.resolve([item]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      languageServerFeaturesGateway.typeHierarchySupertypes,
+    ).not.toHaveBeenCalled();
+    expect(
+      languageServerFeaturesGateway.typeHierarchySubtypes,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().typeHierarchyView).toBeNull();
+  });
+
+  it("drops stale PHP type hierarchy follow-up results after switching project tabs", async () => {
+    const path = "/workspace-a/app/Models/User.php";
+    const supertypes =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["typeHierarchySupertypes"]>
+        >
+      >();
+    const subtypes =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["typeHierarchySubtypes"]>
+        >
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 216,
+    };
+    const item = {
+      data: { symbolId: "App\\Models\\User" },
+      detail: "app/Models/User.php",
+      kind: 5,
+      name: "User",
+      range: range(4, 0, 12, 1),
+      selectionRange: range(4, 6, 4, 10),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const subtype = {
+      data: { symbolId: "App\\Models\\AdminUser" },
+      detail: "app/Models/AdminUser.php",
+      kind: 5,
+      name: "StaleAdminUser",
+      range: range(6, 0, 14, 1),
+      selectionRange: range(6, 6, 6, 20),
+      tags: [],
+      uri: fileUriFromPath("/workspace-a/app/Models/AdminUser.php"),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockResolvedValueOnce([item]);
+    vi.mocked(
+      languageServerFeaturesGateway.typeHierarchySupertypes,
+    ).mockImplementationOnce(async () => supertypes.promise);
+    vi.mocked(
+      languageServerFeaturesGateway.typeHierarchySubtypes,
+    ).mockImplementationOnce(async () => subtypes.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 8,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showTypeHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await vi.waitFor(() => {
+      expect(languageServerFeaturesGateway.typeHierarchySubtypes).toHaveBeenCalledWith(
+        "/workspace-a",
+        item,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    supertypes.resolve([]);
+    subtypes.resolve([subtype]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().typeHierarchyView).toBeNull();
+  });
+
+  it("drops stale PHP type hierarchy after same-root session restart", async () => {
+    const path = "/workspace/app/Models/User.php";
+    const prepareTypeHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareTypeHierarchy"]>
+        >
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(217)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(217)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const item = {
+      data: { symbolId: "App\\Models\\User" },
+      detail: "app/Models/User.php",
+      kind: 5,
+      name: "User",
+      range: range(4, 0, 12, 1),
+      selectionRange: range(4, 6, 4, 10),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockImplementationOnce(async () => prepareTypeHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus(217),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 8,
+        lineNumber: 1,
+      });
+    });
+
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showTypeHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        languageServerFeaturesGateway.prepareTypeHierarchy,
+      ).toHaveBeenCalled();
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(218));
+    });
+    await flushAsyncTurns();
+
+    prepareTypeHierarchy.resolve([item]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      languageServerFeaturesGateway.typeHierarchySupertypes,
+    ).not.toHaveBeenCalled();
+    expect(
+      languageServerFeaturesGateway.typeHierarchySubtypes,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().typeHierarchyView).toBeNull();
+  });
+
   it("keeps JavaScript and TypeScript type hierarchy open for rows from inactive project tabs", async () => {
     const path = "/workspace-b/src/user.ts";
     const subtypePath = "/workspace-b/src/adminUser.ts";
