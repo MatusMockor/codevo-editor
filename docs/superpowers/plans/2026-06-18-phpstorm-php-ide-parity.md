@@ -6619,4 +6619,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `26e18b8c Support Laravel legacy action-array named routes`.
