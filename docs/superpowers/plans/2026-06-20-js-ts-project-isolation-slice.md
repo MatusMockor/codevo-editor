@@ -5071,3 +5071,49 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Workspace Trust Toggle Continuation Guard
 
 - Committed as `af0c8c71 Guard workspace trust toggle continuations`.
+
+## Next Slice: Diagnostics Subscription Cleanup Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8063061a Record workspace trust toggle guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 843 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP and JS/TS diagnostics gateway subscriptions used cleanup flags for callbacks and dispose registration.
+- Their rejection handlers ignored the cleanup/root state.
+- A stale diagnostics subscription rejection from a previous project tab could report `Language Server` or `JavaScript/TypeScript` notices into the newly active workspace.
+
+### Implementation Choice
+
+- Guard PHP diagnostics subscription rejection by the effect cleanup flag and captured workspace root.
+- Guard JS/TS diagnostics subscription rejection by the effect cleanup flag and captured workspace root.
+- Include `workspaceRoot` in both diagnostics subscription effect dependencies.
+- Add preview regressions where stale PHP and JS/TS diagnostics subscription promises reject after switching from `/workspace-a` to `/workspace-b`.
+
+### Acceptance Criteria
+
+- Stale diagnostics subscription failures do not set active-workspace messages or notices after project-tab switches.
+- Runtime subscription stale guards remain green.
+- Existing diagnostic filtering and language-server subscription tests remain green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Diagnostics Subscription Cleanup Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "diagnostic subscription|runtime subscription|diagnostics subscription"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "diagnostic|Diagnostics|runtime subscription|subscription|Language Server|JavaScript/TypeScript"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 845 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Diagnostics Subscription Cleanup Guard
+
+- Pending commit.

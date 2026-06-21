@@ -2066,6 +2066,91 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale PHP diagnostic subscription errors after switching project tabs", async () => {
+    const subscription = createDeferred<() => void>();
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi
+        .fn()
+        .mockImplementationOnce(async () => subscription.promise)
+        .mockImplementation(async () => () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      subscription.reject(new Error("stale php diagnostics subscription"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe(
+      "Error: stale php diagnostics subscription",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale php diagnostics subscription"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores stale JavaScript and TypeScript diagnostic subscription errors after switching project tabs", async () => {
+    const subscription = createDeferred<() => void>();
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi
+          .fn()
+          .mockImplementationOnce(async () => subscription.promise)
+          .mockImplementation(async () => () => undefined),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      subscription.reject(new Error("stale js diagnostics subscription"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe(
+      "Error: stale js diagnostics subscription",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale js diagnostics subscription"),
+      ),
+    ).toBe(false);
+  });
+
   it("keeps JavaScript TypeScript document sync state after stale same-root did-open failure", async () => {
     const path = "/workspace/src/App.ts";
     const didOpenAttempts: Deferred<void>[] = [];

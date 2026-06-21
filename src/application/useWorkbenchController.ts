@@ -15978,7 +15978,17 @@ export function useWorkbenchController(
 
         unsubscribe = dispose;
       })
-      .catch((error) => reportLanguageServerError(error));
+      .catch((error) => {
+        if (
+          !active ||
+          (workspaceRoot &&
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot))
+        ) {
+          return;
+        }
+
+        reportLanguageServerError(error);
+      });
 
     return () => {
       active = false;
@@ -15988,6 +15998,7 @@ export function useWorkbenchController(
     applyLanguageServerDiagnostics,
     languageServerDiagnosticsGateway,
     reportLanguageServerError,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -16010,7 +16021,17 @@ export function useWorkbenchController(
 
         unsubscribe = dispose;
       })
-      .catch((error) => reportError("JavaScript/TypeScript", error));
+      .catch((error) => {
+        if (
+          !active ||
+          (workspaceRoot &&
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot))
+        ) {
+          return;
+        }
+
+        reportError("JavaScript/TypeScript", error);
+      });
 
     return () => {
       active = false;
@@ -16020,6 +16041,7 @@ export function useWorkbenchController(
     applyJavaScriptTypeScriptLanguageServerDiagnostics,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     reportError,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
