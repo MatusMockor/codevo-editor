@@ -3337,6 +3337,87 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale JavaScript TypeScript bulk did-close errors after workspace tab switch and session restart", async () => {
+    const path = "/workspace-a/src/App.ts";
+    const didClose = createDeferred<void>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(361)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(361)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(361),
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(361),
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+    vi.mocked(syncGateway.didClose).mockImplementationOnce(
+      () => didClose.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    let switchPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path);
+    });
+
+    act(() => {
+      publishStatus?.(runningStatus(362));
+    });
+    await flushAsyncTurns();
+
+    didClose.reject(new Error("stale bulk did close"));
+    await act(async () => {
+      await switchPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale bulk did close"),
+      ),
+    ).toBe(false);
+  });
+
   it("does not send queued JavaScript and TypeScript didOpen after switching project tabs while didClose is pending", async () => {
     const path = "/workspace-a/src/App.ts";
     const didClose = createDeferred<void>();

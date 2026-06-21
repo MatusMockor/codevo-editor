@@ -3242,6 +3242,26 @@ export function useWorkbenchController(
         javaScriptTypeScriptDocumentSyncGenerationRef.current += 1;
       }
 
+      const currentRuntimeStatus =
+        cachedLanguageServerRuntimeStatusForRoot(
+          javaScriptTypeScriptRuntimeStatusByRootRef.current,
+          rootPath,
+        ) ??
+        (workspaceRootKeysEqual(
+          javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+          rootPath,
+        )
+          ? javaScriptTypeScriptLanguageServerRuntimeStatusRef.current
+          : null);
+      const requestedSessionId = isRunningLanguageServerForWorkspace(
+        currentRuntimeStatus,
+        currentRuntimeStatus?.rootPath ??
+          javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+        rootPath,
+      )
+        ? currentRuntimeStatus.sessionId
+        : null;
+
       await Promise.all(
         syncedDocuments.map(async ({ key, path }) => {
           clearJavaScriptTypeScriptDocumentChangeTimer(key);
@@ -3264,6 +3284,16 @@ export function useWorkbenchController(
               ),
             );
           } catch (error) {
+            if (
+              requestedSessionId !== null &&
+              !isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
+                rootPath,
+                requestedSessionId,
+              )
+            ) {
+              return;
+            }
+
             reportErrorForActiveWorkspaceRoot(
               rootPath,
               "JavaScript/TypeScript",
@@ -3276,6 +3306,7 @@ export function useWorkbenchController(
     [
       clearJavaScriptTypeScriptDocumentChangeTimer,
       enqueueJavaScriptTypeScriptDocumentSync,
+      isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       reportErrorForActiveWorkspaceRoot,
     ],

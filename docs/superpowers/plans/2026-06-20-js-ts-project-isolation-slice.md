@@ -7491,3 +7491,41 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Inlay Hints Provider
 
 - Committed as `46186545 Register PHP inlay hints provider`.
+
+## Next Slice: JS/TS Bulk Close Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f5c9729d Record PHP inlay hints provider commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- The JS/TS VS Code-like provider surface is functionally broad, but a read-only audit identified one remaining narrow isolation risk before calling the JS/TS side done-done.
+- Single-document JS/TS `didClose` already suppresses stale errors after a same-root language-server session restart.
+- Bulk JS/TS close during workspace-tab switches did not capture the runtime session before queued `didClose` calls, so a stale close error could still be reported after a session restart.
+
+### Implementation Choice
+
+- Mirror the PHP bulk-close and JS/TS single-close session guard pattern in `closeSyncedJavaScriptTypeScriptDocumentsForRoot`.
+- Capture the current JS/TS runtime session for the root before dispatching bulk `didClose` calls.
+- Suppress stale bulk-close errors when that captured session is no longer current.
+
+### Acceptance Criteria
+
+- Bulk JS/TS document close still sends `didClose` for synced in-root documents during a workspace-tab switch.
+- A stale JS/TS bulk-close error after same-root session restart is not surfaced to the active workbench notices.
+- Focused preview regression, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: JS/TS Bulk Close Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "bulk did-close"` (1 test)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript TypeScript did-close|queued JavaScript and TypeScript didOpen|bulk did-close"` (3 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx` (349 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 960 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Pending
