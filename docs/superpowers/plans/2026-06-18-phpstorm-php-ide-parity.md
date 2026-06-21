@@ -5497,3 +5497,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `20dbbd02 Guard stale contextual PHP class navigation`.
+
+## Slice: Stale Contextual PHP Method Navigation Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `078d023e Record stale contextual PHP class navigation guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale contextual PHP method navigation targets from opening after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `openDirectPhpMethodTarget`.
+- Guard after indexed method symbol search, before opening indexed method targets, before/after class hierarchy source reads, before hierarchy target opens, after hierarchy read failures, and after framework binding resolution.
+- Add a preview regression where Go to Definition starts on `$this->commentsService->create()` in `/workspace-a`, switches to `/workspace-b`, then resolves the stale method index target to an external file.
+
+### Acceptance Criteria
+
+- Stale contextual PHP method targets are ignored after tab switch.
+- Stale external method targets are not read, opened, or revealed in the active workspace.
+- Existing contextual PHP method definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "contextual PHP method targets"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `87cf8052 Guard stale contextual PHP method navigation`.
