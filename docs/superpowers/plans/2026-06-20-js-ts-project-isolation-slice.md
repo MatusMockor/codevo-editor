@@ -5806,3 +5806,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP IDE Readiness Clear Reset Guard
 
 - Committed as `e85d4c42 Reset PHP readiness on workspace clear`.
+
+## Next Slice: Managed PHPactor Install Clear Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d738932f Record PHP readiness reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 853 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Opening a workspace reset managed PHPactor install root/loading state, but clearing the active workspace did not.
+- Closing the last project tab during a pending managed PHPactor install could leave `installingManagedPhpactor` true in the no-workspace state.
+- A stale install completion should not repopulate messages or loading state after the workspace is gone.
+
+### Implementation Choice
+
+- Reset `installingManagedPhpactorRootRef` when clearing the active workspace.
+- Reset `installingManagedPhpactor` to `false` in the same clear path.
+- Add a regression that starts a pending managed PHPactor install, closes the only project tab, resolves the install, and asserts loading/message state stays cleared.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears managed PHPactor install loading state.
+- A stale managed install completion after last-tab close does not publish a success message.
+- Existing managed install switch guards and workspace reset guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Managed PHPactor Install Clear Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (320 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 854 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Managed PHPactor Install Clear Reset Guard
+
+- Committed as `578358f5 Clear managed install state on workspace reset`.
