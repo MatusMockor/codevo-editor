@@ -264,3 +264,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `9c276315 Close inactive PHP workspace documents`.
+
+### Slice: Inactive Workspace Runtime Disposal Fallback Coverage - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2c61a68a Record inactive PHP workspace document cleanup commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prove inactive workspace tab close still falls back to explicit runtime stops when unified workspace disposal fails.
+
+#### Implementation Choice
+
+- Add controller coverage for an inactive tab close where `disposeWorkspace` rejects.
+- Verify fallback cleanup stops the PHP language server, JavaScript/TypeScript language server, and terminal sessions for the closed root while keeping the active workspace unchanged.
+
+#### Acceptance Criteria
+
+- `closeWorkspaceTab` keeps the tab close path resilient when the workspace runtime disposal gateway rejects.
+- The fallback targets only the closed inactive root.
+- The active workspace tab remains selected.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "falls back to explicit runtime stops when inactive project disposal fails|removes an inactive project tab without changing the active workspace"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Pending implementation commit.

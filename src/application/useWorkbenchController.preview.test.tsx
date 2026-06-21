@@ -2426,6 +2426,40 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("falls back to explicit runtime stops when inactive project disposal fails", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockRejectedValueOnce(new Error("dispose failed"));
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith("/workspace-b");
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-b",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-b");
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace-b",
+    );
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-a"]);
+  });
+
   it("does not dispose an inactive PHP project runtime before closing synced documents", async () => {
     const path = "/workspace-a/app/Models/User.php";
     const { dependencies, getWorkbench } = renderController({
