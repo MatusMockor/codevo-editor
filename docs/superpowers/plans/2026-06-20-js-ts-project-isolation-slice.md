@@ -6689,3 +6689,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco References Provider
 
 - Committed as `8152989c Register PHP references provider`.
+
+## Next Slice: JS/TS Completion Resolve Capability Advertisement
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `be431f78 Record PHP references provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- The app already parses, guards, and can execute command payloads on resolved TypeScript completion items.
+- The TypeScript initialize payload advertised completion resolve support for documentation, detail, additional text edits, and label details, but not `command`.
+- Advertising the already-supported field lets TypeScript-language-server return richer VS Code-like completion resolve payloads without changing frontend behavior.
+
+### Implementation Choice
+
+- Add `command` to `textDocument.completion.completionItem.resolveSupport.properties` for TypeScript initialization.
+- Keep PHP initialization unchanged.
+- Extend the existing TypeScript initialize payload regression.
+
+### Acceptance Criteria
+
+- TypeScript completion resolve support advertises `command` while preserving existing properties.
+- Completion resolve request serialization remains unchanged.
+- Focused Rust tests, `rustfmt --check src-tauri/src/lsp.rs`, full Tauri lib tests, and `git diff --check` pass.
+
+### Verification: JS/TS Completion Resolve Capability Advertisement
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib` (1 test)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_features::tests::completion_item_resolve_request_serializes_item_data --lib` (1 test)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp::tests:: --lib` (10 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib --quiet` (309 tests)
+- PASS: `rustfmt --check src-tauri/src/lsp.rs`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Completion Resolve Capability Advertisement
+
+- Pending commit after full Tauri verification.
