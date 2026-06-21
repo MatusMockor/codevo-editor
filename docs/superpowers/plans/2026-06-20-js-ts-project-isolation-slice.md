@@ -8636,3 +8636,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Mail Mailer Names
 
 - Committed as `e45c753c Add Laravel mailer navigation`.
+
+## Next Slice: Laravel Log Channel Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `da6b76d5 Record Laravel mailer commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel log channel names are configured under `config/logging.php` and commonly referenced through `Log::channel(...)` or the compatible `Log::driver(...)` manager method.
+- This is a safe scalar-only slice; `Log::stack([...])` needs array-element string parsing and stays out of scope for this commit.
+
+### Implementation Choice
+
+- Add a focused Log channel string detector for supported Log facade calls and named arguments.
+- Map a channel name to `logging.channels.<channel>` for target lookup.
+- Suggest channel names from exact `logging.channels.*` config targets and navigate to the channel key in `config/logging.php`.
+
+### Verification: Laravel Log Channel Names
+
+- `npm test -- src/domain/phpLaravelLog.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Log channel names"` passed: 2 passed, 411 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpLaravelLog.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 413 passed.
+- `npm test` passed: 75 files, 1092 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Log Channel Names
+
+- Committed as `7faf75a4 Add Laravel log channel navigation`.
