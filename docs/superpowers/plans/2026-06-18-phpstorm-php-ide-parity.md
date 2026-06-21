@@ -5575,3 +5575,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `b01045f8 Guard stale contextual PHP property navigation`.
+
+## Slice: Stale Laravel Model Attribute Target Candidate Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `976d57fe Record stale contextual PHP property navigation guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale Laravel model-attribute target candidate reads after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `openPhpLaravelModelAttributeTarget`.
+- Guard before each class source read, after source reads, before target opens, and after failed candidate reads.
+- Add a preview regression where Go to Definition starts on `$comment->content` in `/workspace-a`, the model attribute source read is delayed, the workspace switches to `/workspace-b`, and the delayed read fails.
+- Assert no additional package candidate read is started after the tab switch.
+
+### Acceptance Criteria
+
+- Stale Laravel model-attribute target candidate reads stop after tab switch.
+- Stale attribute targets are not opened or revealed in the active workspace.
+- Existing Laravel attribute/property definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel model attribute target candidates"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `f2fac6ea Guard stale Laravel model attribute targets`.
