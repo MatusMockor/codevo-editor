@@ -4968,3 +4968,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `7b81bf6b Refresh Laravel container bindings after edits`.
+
+## Slice: Stale Type Hierarchy Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `67f6f79b Record container binding edit refresh commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down the successful-response side of JavaScript/TypeScript type hierarchy isolation when a project tab switch happens while `prepareTypeHierarchy` is in flight.
+
+### Implementation Choice
+
+- Add a preview controller regression for a delayed successful `prepareTypeHierarchy` response from an inactive project tab.
+- Start type hierarchy loading in `/workspace-a`, switch to `/workspace-b`, then resolve the stale request with a `StaleUser` item.
+- Assert the command resolves, the active workspace remains `/workspace-b`, subtype/supertype calls are not made, and no stale type hierarchy view is opened.
+- Keep this as a test-only slice because the controller already guards type hierarchy requests through the requested root/session checks.
+
+### Acceptance Criteria
+
+- A delayed type hierarchy result from an inactive project tab is ignored.
+- The active workspace remains `/workspace-b`.
+- Stale type hierarchy results do not trigger follow-up hierarchy calls or populate the active view.
+- Existing stale type hierarchy error and same-root session restart coverage remain unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "type hierarchy .* switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `a2640877 Cover stale type hierarchy tab results`.
