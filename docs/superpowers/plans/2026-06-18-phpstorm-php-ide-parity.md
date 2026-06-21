@@ -6816,4 +6816,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `13a4a1ed Support Laravel arrow route group prefixes`.
