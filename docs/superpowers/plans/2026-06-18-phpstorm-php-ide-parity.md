@@ -2902,3 +2902,39 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `9970d1cc Recognize Laravel inRandomOrder builder helper`.
+
+## Slice: Laravel Ordering Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b71aa1d8 Record Laravel inRandomOrder helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize Laravel ordering helpers that preserve Eloquent builder/model inference through query and relation chains.
+
+### Implementation Choice
+
+- Add `orderByDesc` and `reorder` to Eloquent static builder and fluent builder method recognition.
+- Add `reorder` to database query-builder fluent method recognition.
+- Cover method recognition, return-type inference, and relation-method semantic inference through `orderByDesc(...)->first()` and `reorder(...)->first()`.
+
+### Acceptance Criteria
+
+- `orderByDesc` and `reorder` are recognized as Laravel Eloquent builder method names.
+- Eloquent builder calls through `orderByDesc` and `reorder` preserve `Builder<Model>` inference.
+- Relation-method chains through `orderByDesc(...)->first()` and `reorder(...)->first()` infer the related model.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`

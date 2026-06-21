@@ -1093,6 +1093,8 @@ class Comment extends Model
         $relationMethodLatestPost = $this->posts()->latest()->first();
         $relationMethodOldestPost = $this->posts()->oldest()->first();
         $relationMethodRandomPost = $this->posts()->inRandomOrder()->first();
+        $relationMethodDescendingPost = $this->posts()->orderByDesc('created_at')->first();
+        $relationMethodReorderedPost = $this->posts()->reorder('created_at')->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
@@ -1144,6 +1146,8 @@ class Comment extends Model
         $relationMethodLatestPost->tit
         $relationMethodOldestPost->tit
         $relationMethodRandomPost->tit
+        $relationMethodDescendingPost->tit
+        $relationMethodReorderedPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
@@ -1360,6 +1364,22 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodRandomPost->tit"),
         "relationMethodRandomPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodDescendingPost->tit"),
+        "relationMethodDescendingPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodReorderedPost->tit"),
+        "relationMethodReorderedPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
