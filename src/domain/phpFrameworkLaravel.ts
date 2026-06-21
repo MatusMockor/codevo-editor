@@ -1643,6 +1643,7 @@ function phpLaravelMorphMapArrayBody(
 function phpLaravelMorphMapArrayConstantBody(
   source: string,
   expression: string,
+  visitedConstantNames: Set<string> = new Set(),
 ): string | null {
   const declaringClassName = phpLaravelClassNameContainingExpression(
     source,
@@ -1669,11 +1670,19 @@ function phpLaravelMorphMapArrayConstantBody(
     return null;
   }
 
+  const visitKey = `${ownerClassName.toLowerCase()}::${constantName.toLowerCase()}`;
+
+  if (visitedConstantNames.has(visitKey)) {
+    return null;
+  }
+
   const body = phpClassBodyForClassName(source, ownerClassName);
 
   if (!body) {
     return null;
   }
+
+  visitedConstantNames.add(visitKey);
 
   for (const statement of phpClassConstStatements(body)) {
     for (const item of splitPhpParameterList(statement)) {
@@ -1696,6 +1705,16 @@ function phpLaravelMorphMapArrayConstantBody(
 
       if (constantBody !== null) {
         return constantBody;
+      }
+
+      const nestedConstantBody = phpLaravelMorphMapArrayConstantBody(
+        source,
+        constantValue,
+        visitedConstantNames,
+      );
+
+      if (nestedConstantBody !== null) {
+        return nestedConstantBody;
       }
     }
   }
