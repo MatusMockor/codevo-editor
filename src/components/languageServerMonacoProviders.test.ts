@@ -6,6 +6,7 @@ import type {
   LanguageServerDocumentLink,
   LanguageServerFeaturesGateway,
   LanguageServerHover,
+  LanguageServerLinkedEditingRanges,
   LanguageServerLocation,
   LanguageServerRange,
   LanguageServerWorkspaceEdit,
@@ -20,7 +21,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document link and folding range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document link, folding range and linked editing range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -49,6 +50,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentHighlightLanguage).toBe("php");
     expect(registered.documentLinkLanguage).toBe("php");
     expect(registered.foldingRangeLanguage).toBe("php");
+    expect(registered.linkedEditingRangeLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
         "quickfix",
@@ -76,6 +78,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentHighlightDispose).toHaveBeenCalled();
     expect(registered.documentLinkDispose).toHaveBeenCalled();
     expect(registered.foldingRangeDispose).toHaveBeenCalled();
+    expect(registered.linkedEditingRangeDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -2532,6 +2535,241 @@ describe("registerLanguageServerMonacoProviders", () => {
     await expect(rootPromise).resolves.toBeNull();
   });
 
+  it("maps PHP linked editing ranges and wordPattern", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: [range(3, 4, 3, 8), range(7, 12, 7, 16)],
+        wordPattern: "[A-Za-z_][A-Za-z0-9_]*",
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+        model(),
+        position(),
+      ),
+    ).resolves.toEqual({
+      ranges: [
+        expect.objectContaining({
+          endColumn: 9,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        }),
+        expect.objectContaining({
+          endColumn: 17,
+          endLineNumber: 8,
+          startColumn: 13,
+          startLineNumber: 8,
+        }),
+      ],
+      wordPattern: /[A-Za-z_][A-Za-z0-9_]*/,
+    });
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.linkedEditingRanges).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
+  });
+
+  it("returns null for null or empty PHP linked editing ranges", async () => {
+    const nullRegistered = createRegisteredProviders();
+    const nullGateway = featuresGateway({ linkedEditingRanges: null });
+    registerLanguageServerMonacoProviders(
+      nullRegistered.monaco,
+      providerContext({ featuresGateway: nullGateway }),
+    );
+
+    await expect(
+      nullRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+        model(),
+        position(),
+      ),
+    ).resolves.toBeNull();
+
+    const emptyRegistered = createRegisteredProviders();
+    const emptyGateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: [],
+        wordPattern: "[A-Za-z]+",
+      },
+    });
+    registerLanguageServerMonacoProviders(
+      emptyRegistered.monaco,
+      providerContext({ featuresGateway: emptyGateway }),
+    );
+
+    await expect(
+      emptyRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+        model(),
+        position(),
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("omits invalid PHP linked editing word patterns", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: [range(3, 4, 3, 8)],
+        wordPattern: "[",
+      },
+    });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    await expect(
+      registered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+        model(),
+        position(),
+      ),
+    ).resolves.toEqual({
+      ranges: [
+        expect.objectContaining({
+          endColumn: 9,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        }),
+      ],
+    });
+  });
+
+  it("does not request PHP linked editing ranges when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: [range(3, 4, 3, 8)],
+        wordPattern: null,
+      },
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({ linkedEditingRange: false }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+        model(),
+        position(),
+      ),
+    ).resolves.toBeNull();
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.linkedEditingRanges).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway({
+      linkedEditingRanges: {
+        ranges: [range(7, 12, 7, 16)],
+        wordPattern: null,
+      },
+    });
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+        model(),
+        position(),
+      ),
+    ).resolves.toBeNull();
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.linkedEditingRanges).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP linked editing range results after session or root changes", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionRanges = createDeferred<LanguageServerLinkedEditingRanges | null>();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.linkedEditingRanges).mockImplementationOnce(
+      async () => sessionRanges.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const sessionPromise =
+      sessionRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+        model(),
+        position(),
+      );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    sessionRanges.resolve({
+      ranges: [range(3, 4, 3, 8)],
+      wordPattern: null,
+    });
+
+    await expect(sessionPromise).resolves.toBeNull();
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootRanges = createDeferred<LanguageServerLinkedEditingRanges | null>();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.linkedEditingRanges).mockImplementationOnce(
+      async () => rootRanges.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootPromise =
+      rootRegistered.linkedEditingRangeProvider.provideLinkedEditingRanges(
+        model(),
+        position(),
+      );
+
+    await Promise.resolve();
+    activeRoot = null;
+    rootRanges.resolve({
+      ranges: [range(7, 12, 7, 16)],
+      wordPattern: null,
+    });
+
+    await expect(rootPromise).resolves.toBeNull();
+  });
+
   it("resolves LSP-backed code actions", async () => {
     const registered = createRegisteredProviders();
     const unresolvedAction = {
@@ -4571,6 +4809,7 @@ function createRegisteredProviders() {
   const foldingRangeDispose = vi.fn();
   const hoverDispose = vi.fn();
   const implementationDispose = vi.fn();
+  const linkedEditingRangeDispose = vi.fn();
   const referenceDispose = vi.fn();
   const completionDispose = vi.fn();
   const renameDispose = vi.fn();
@@ -4608,6 +4847,9 @@ function createRegisteredProviders() {
     implementationDispose: ReturnType<typeof vi.fn>;
     implementationLanguage: string | null;
     implementationProvider: any;
+    linkedEditingRangeDispose: ReturnType<typeof vi.fn>;
+    linkedEditingRangeLanguage: string | null;
+    linkedEditingRangeProvider: any;
     monaco: any;
     referenceDispose: ReturnType<typeof vi.fn>;
     referenceLanguage: string | null;
@@ -4655,6 +4897,9 @@ function createRegisteredProviders() {
     implementationDispose,
     implementationLanguage: null,
     implementationProvider: null,
+    linkedEditingRangeDispose,
+    linkedEditingRangeLanguage: null,
+    linkedEditingRangeProvider: null,
     monaco: null,
     referenceDispose,
     referenceLanguage: null,
@@ -4767,6 +5012,11 @@ function createRegisteredProviders() {
         registered.implementationProvider = provider;
         return { dispose: implementationDispose };
       }),
+      registerLinkedEditingRangeProvider: vi.fn((language, provider) => {
+        registered.linkedEditingRangeLanguage = language;
+        registered.linkedEditingRangeProvider = provider;
+        return { dispose: linkedEditingRangeDispose };
+      }),
       registerReferenceProvider: vi.fn((language, provider) => {
         registered.referenceLanguage = language;
         registered.referenceProvider = provider;
@@ -4874,6 +5124,9 @@ function featuresGateway(
     hover: LanguageServerHover | null;
     implementation: LanguageServerLocation[];
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
+    linkedEditingRanges: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>
+    >;
     prepareRename: Awaited<
       ReturnType<LanguageServerFeaturesGateway["prepareRename"]>
     >;
@@ -4922,7 +5175,7 @@ function featuresGateway(
     implementation: vi.fn(async () => responses.implementation ?? []),
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     resolveInlayHint: vi.fn(async (_rootPath, hint) => hint),
-    linkedEditingRanges: vi.fn(async () => null),
+    linkedEditingRanges: vi.fn(async () => responses.linkedEditingRanges ?? null),
     onTypeFormatting: vi.fn(async () => []),
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),

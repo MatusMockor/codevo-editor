@@ -7249,3 +7249,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Document Link Provider
 
 - Committed as `3fed4db6 Register PHP document link provider`.
+
+## Next Slice: PHP Monaco Linked Editing Range Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0ee079f4 Record PHP document link provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support `linkedEditingRange`.
+- The PHP Monaco provider did not register linked editing ranges, so PHPactor-provided paired-symbol editing metadata was unavailable in PHP files.
+- Linked editing is a small provider parity step that reuses existing position-based root/session isolation.
+
+### Implementation Choice
+
+- Register an optional PHP linked editing range Monaco provider.
+- Use the existing PHP feature request context, pending change flush, capability gate, active session guard, stale result dropping, and error reporting.
+- Map LSP linked editing ranges to Monaco ranges and safely convert optional word-pattern strings.
+
+### Acceptance Criteria
+
+- PHP linked editing ranges route to `featuresGateway.linkedEditingRanges` and map ranges/wordPattern correctly.
+- Empty or null server responses return `null`.
+- Disabled capability and stale root/session responses do not call or return stale results.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Linked Editing Range Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "linked editing|LinkedEditing"` (6 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (91 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 934 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Linked Editing Range Provider
+
+- Pending commit after verification.

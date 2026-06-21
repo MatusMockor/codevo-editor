@@ -10,6 +10,7 @@ import {
   type LanguageServerDocumentHighlight,
   type LanguageServerFoldingRange,
   type LanguageServerFeaturesGateway,
+  type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
   type LanguageServerRange,
   type LanguageServerSelectionRange,
@@ -272,6 +273,12 @@ export function registerLanguageServerMonacoProviders(
           provideFoldingRanges(monaco, context, model),
       })
     : { dispose: () => undefined };
+  const linkedEditingRange = monaco.languages.registerLinkedEditingRangeProvider
+    ? monaco.languages.registerLinkedEditingRangeProvider("php", {
+        provideLinkedEditingRanges: (model, position) =>
+          provideLinkedEditingRanges(monaco, context, model, position),
+      })
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -291,6 +298,7 @@ export function registerLanguageServerMonacoProviders(
       documentHighlight.dispose();
       documentLink.dispose();
       foldingRange.dispose();
+      linkedEditingRange.dispose();
     },
   };
 }
@@ -547,6 +555,44 @@ async function provideFoldingRanges(
     }
 
     return ranges.map((range) => toMonacoFoldingRange(monaco, range));
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
+}
+
+async function provideLinkedEditingRanges(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.LinkedEditingRanges | null> {
+  const request = featureRequestContext(
+    context,
+    model,
+    position,
+    "linkedEditingRange",
+  );
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const ranges = await context.featuresGateway.linkedEditingRanges(
+      request.rootPath,
+      request.position,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    return toMonacoLinkedEditingRanges(monaco, ranges);
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -1217,6 +1263,30 @@ function toMonacoFoldingRange(
       : undefined,
     start: range.startLine + 1,
   };
+}
+
+function toMonacoLinkedEditingRanges(
+  monaco: MonacoApi,
+  ranges: LanguageServerLinkedEditingRanges | null,
+): Monaco.languages.LinkedEditingRanges | null {
+  if (!ranges || ranges.ranges.length === 0) {
+    return null;
+  }
+
+  return {
+    ranges: ranges.ranges.map((range) => toMonacoRange(monaco, range)),
+    ...(ranges.wordPattern
+      ? { wordPattern: safeRegExp(ranges.wordPattern) }
+      : {}),
+  };
+}
+
+function safeRegExp(pattern: string): RegExp | undefined {
+  try {
+    return new RegExp(pattern);
+  } catch {
+    return undefined;
+  }
 }
 
 function toMonacoTextEdit(
@@ -2235,6 +2305,7 @@ function featureRequestContext(
     | "documentHighlight"
     | "hover"
     | "implementation"
+    | "linkedEditingRange"
     | "prepareRename"
     | "references"
     | "rename"
@@ -2265,6 +2336,7 @@ function featureDocumentRequestContext(
     | "foldingRange"
     | "hover"
     | "implementation"
+    | "linkedEditingRange"
     | "prepareRename"
     | "references"
     | "rename"
