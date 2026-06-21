@@ -6964,4 +6964,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Workspace Edit File Operation Reconciliation
 
-- Pending commit after verification.
+- Committed as `eb38f0d1 Reconcile PHP workspace edit file operations`.
