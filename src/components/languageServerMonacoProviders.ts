@@ -660,7 +660,13 @@ async function provideCompletionItems(
     source,
     position,
     range,
+    documentContext.rootPath,
   );
+
+  if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+    return { suggestions: [] };
+  }
+
   const memberAccessCompletionContext = phpMemberAccessCompletionContextAt(
     source,
     position,
@@ -700,10 +706,20 @@ async function provideCompletionItems(
 
   try {
     await context.flushPendingDocumentChange(request.path);
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return { suggestions: [] };
+    }
+
     const completion = await context.featuresGateway.completion(
       request.rootPath,
       request.position,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return { suggestions: [] };
+    }
+
     const lspSuggestions = completion.items.flatMap((item, index) => {
       const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
 
@@ -743,8 +759,60 @@ async function provideCompletionItems(
       ]),
     };
   } catch (error) {
-    context.reportError(error);
-    return { suggestions };
+    if (isStoredWorkspaceRootActive(context, request.rootPath)) {
+      context.reportError(error);
+      return { suggestions };
+    }
+
+    return { suggestions: [] };
+  }
+}
+
+async function phpMethodSuggestions(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  source: string,
+  position: MonacoPosition,
+  range: ReturnType<typeof completionRange>,
+  rootPath: string,
+): Promise<Monaco.languages.CompletionItem[]> {
+  if (!context.providePhpMethodCompletions) {
+    return [];
+  }
+
+  try {
+    const methods = await context.providePhpMethodCompletions(source, position);
+
+    if (!isStoredWorkspaceRootActive(context, rootPath)) {
+      return [];
+    }
+
+    return methods.map((item, index) => ({
+      command:
+        item.kind !== "property" &&
+        item.kind !== "relation" &&
+        item.kind !== "route" &&
+        phpMethodParameters(item.parameters).length
+          ? {
+              id: "editor.action.triggerParameterHints",
+              title: "Trigger parameter hints",
+            }
+          : undefined,
+      detail: phpMethodDetail(item),
+      documentation: phpMethodDocumentation(item),
+      insertText: phpMethodSnippet(item),
+      insertTextRules:
+        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      kind: phpMethodCompletionKind(monaco, item),
+      label: phpMethodCompletionLabel(item),
+      range,
+      sortText: `0_${String(index).padStart(4, "0")}`,
+    }));
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, rootPath)) {
+      context.reportError(error);
+    }
+    return [];
   }
 }
 
@@ -804,47 +872,6 @@ function phpLspCompletionAllowedInMemberContext(
   }
 
   return completionItemValuesLookLikeSignature(item, item.insertText, labelName);
-}
-
-async function phpMethodSuggestions(
-  monaco: MonacoApi,
-  context: LanguageServerMonacoProviderContext,
-  source: string,
-  position: MonacoPosition,
-  range: ReturnType<typeof completionRange>,
-): Promise<Monaco.languages.CompletionItem[]> {
-  if (!context.providePhpMethodCompletions) {
-    return [];
-  }
-
-  try {
-    const methods = await context.providePhpMethodCompletions(source, position);
-
-    return methods.map((item, index) => ({
-      command:
-        item.kind !== "property" &&
-        item.kind !== "relation" &&
-        item.kind !== "route" &&
-        phpMethodParameters(item.parameters).length
-          ? {
-              id: "editor.action.triggerParameterHints",
-              title: "Trigger parameter hints",
-            }
-          : undefined,
-      detail: phpMethodDetail(item),
-      documentation: phpMethodDocumentation(item),
-      insertText: phpMethodSnippet(item),
-      insertTextRules:
-        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-      kind: phpMethodCompletionKind(monaco, item),
-      label: phpMethodCompletionLabel(item),
-      range,
-      sortText: `0_${String(index).padStart(4, "0")}`,
-    }));
-  } catch (error) {
-    context.reportError(error);
-    return [];
-  }
 }
 
 async function provideSignatureHelp(
@@ -1263,6 +1290,7 @@ function activePhpDocumentContext(
   return {
     activeDocument,
     path,
+    rootPath,
   };
 }
 

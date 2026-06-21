@@ -248,6 +248,60 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight PHP completions when no project tab is active", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const completion = createDeferred<LanguageServerCompletionList>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: phpCompletionFixtureSource() }),
+        position(),
+      );
+
+    for (
+      let tick = 0;
+      tick < 5 && vi.mocked(gateway.completion).mock.calls.length === 0;
+      tick += 1
+    ) {
+      await Promise.resolve();
+    }
+    expect(gateway.completion).toHaveBeenCalledTimes(1);
+
+    activeRoot = null;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: "class",
+          documentation: "A stale user",
+          insertText: "User",
+          kind: 7,
+          label: "User",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 4,
+        line: 10,
+        path: "/project/src/User.php",
+      },
+    );
+  });
+
   it("does not request completion when the PHP runtime status belongs to another workspace root", async () => {
     const registered = createRegisteredProviders();
     const source = phpCompletionFixtureSource();
