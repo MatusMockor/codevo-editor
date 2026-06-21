@@ -6212,3 +6212,50 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Managed PHPactor Sibling Cleanup Guard
 
 - Committed and pushed as `4431ea11 Guard managed PHPactor cleanup by active roots`.
+
+## Next Slice: PHP Runtime Diagnostics Background Cache
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `93be8bbb Record managed PHPactor cleanup guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 861 tests)
+- Worktree was clean at slice start before the PHP diagnostics cache ref was added.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Hubble's PHP/Laravel audit identified a P0 workspace-tab isolation gap: PHP runtime status and diagnostics were active-root only.
+- JS/TS already cached diagnostics and runtime status for background project tabs, but PHP ignored background-root events.
+- That meant a running PHPactor session in `/workspace-b` could publish valid diagnostics while `/workspace-a` was active, then lose those diagnostics instead of restoring them when the user switched to `/workspace-b`.
+
+### Implementation Choice
+
+- Add a PHP diagnostics cache keyed by normalized workspace root and diagnostic path.
+- Accept PHP runtime status events for any open workspace tab, cache them by root, and update visible runtime status only for the active root.
+- Accept PHP diagnostics for any open workspace tab when the event session matches that root's cached PHP runtime session.
+- Keep active-workspace notices and contextual diagnostic filtering active-root only, while caching background diagnostics for later tab activation.
+- Clear PHP diagnostics by root when stopping or disposing that workspace runtime, and restore cached diagnostics when activating a workspace tab.
+
+### Acceptance Criteria
+
+- Background PHP runtime status events do not replace the active workspace status.
+- Background PHP diagnostic events do not populate the active workspace diagnostics map.
+- Switching to the background project tab restores its cached PHP runtime status and diagnostics.
+- Existing PHP contextual diagnostic filtering semantics remain unchanged, including empty `[]` diagnostics for suppressed false positives.
+- Focused diagnostics tests, full preview controller tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Runtime Diagnostics Background Cache
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "background project tabs|PHP runtime status|PHP diagnostics"` (5 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx` (327 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 862 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Runtime Diagnostics Background Cache
+
+- Committed as `cf489a7e Cache PHP diagnostics by workspace root`.
