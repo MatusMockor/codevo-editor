@@ -6883,4 +6883,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Completion InsertTextMode Capability Advertisement
 
-- Pending commit after verification.
+- Committed as `a4590878 Advertise TypeScript completion insert text modes`.
