@@ -13179,11 +13179,22 @@ use Illuminate\\Database\\Eloquent\\Relations\\BelongsTo;
 use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
 use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
 use Illuminate\\Database\\Eloquent\\Relations\\MorphedByMany;
+use Illuminate\\Database\\Eloquent\\Relations\\Relation;
 use Illuminate\\Database\\Eloquent\\Model;
 
 /** @property-read \\Illuminate\\Database\\Eloquent\\Collection<int, User> $reviewers */
 class Comment
 {
+    private const OWNER_MODEL = User::class;
+    private const MORPH_MAP = [
+        'user' => self::OWNER_MODEL,
+    ];
+
+    protected static function booted(): void
+    {
+        Relation::morphMap(self::MORPH_MAP);
+    }
+
     public function parent(): BelongsTo
     {
         return $this->belongsTo(Comment::class, 'parent_id');
@@ -13226,6 +13237,11 @@ class Comment
 
     /** @return MorphTo<Model, User> */
     public function documentedOwner(): MorphTo
+    {
+        return $this->morphTo();
+    }
+
+    public function mappedOwner(): MorphTo
     {
         return $this->morphTo();
     }
@@ -13287,6 +13303,9 @@ class CommentController
 
         $owner = $comment->documentedOwner;
         $owner->get
+
+        $mappedOwner = $comment->mappedOwner()->first();
+        $mappedOwner->get
 
         $documentedParent = $comment->documentedParent()->first();
         $documentedParent->get
@@ -13540,6 +13559,19 @@ class User
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "$owner->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        name: "getName",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$mappedOwner->get"),
       ),
     ).resolves.toEqual([
       {
