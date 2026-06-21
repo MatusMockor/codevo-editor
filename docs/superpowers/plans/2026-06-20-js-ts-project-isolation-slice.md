@@ -6449,7 +6449,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Workspace ApplyEdit Frontend Guard
 
-- Pending integrated commit.
+- Committed in integrated PHP LSP checkpoint as `a3409cd5 Wire PHP workspace edits and LSP settings`.
 
 ## Next Slice: PHP Language Server Settings Backend Activation
 
@@ -6497,4 +6497,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Language Server Settings Backend Activation
 
-- Pending integrated commit.
+- Committed in integrated PHP LSP checkpoint as `a3409cd5 Wire PHP workspace edits and LSP settings`.
