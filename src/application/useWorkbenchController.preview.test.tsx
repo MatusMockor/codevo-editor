@@ -11520,6 +11520,230 @@ class Comment
     });
   });
 
+  it("refreshes Laravel container binding completions after editing service provider files", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const providerPath = "/workspace/app/Providers/AppServiceProvider.php";
+    const repositoryInterfacePath =
+      "/workspace/app/Contracts/CommentRepositoryInterface.php";
+    const eloquentRepositoryPath =
+      "/workspace/app/Repositories/EloquentCommentRepository.php";
+    const cachedRepositoryPath =
+      "/workspace/app/Repositories/CachedCommentRepository.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const archivedCommentPath = "/workspace/app/Models/ArchivedComment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Http\\Requests\\GetOneCommentRequest;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->for
+    }
+}
+`;
+    const updatedControllerSource = controllerSource.replace(
+      "$comment->for",
+      "$comment->arc",
+    );
+    const eloquentProviderSource = `<?php
+namespace App\\Providers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Repositories\\EloquentCommentRepository;
+
+class AppServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
+    }
+}
+`;
+    const cachedProviderSource = `<?php
+namespace App\\Providers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Repositories\\CachedCommentRepository;
+
+class AppServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(CommentRepositoryInterface::class, CachedCommentRepository::class);
+    }
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === providerPath) {
+        return eloquentProviderSource;
+      }
+
+      if (path === repositoryInterfacePath) {
+        return `<?php
+namespace App\\Contracts;
+
+interface CommentRepositoryInterface
+{
+}
+`;
+      }
+
+      if (path === eloquentRepositoryPath) {
+        return `<?php
+namespace App\\Repositories;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Models\\Comment;
+
+class EloquentCommentRepository implements CommentRepositoryInterface
+{
+    public function findOrFail(int $id): Comment
+    {
+    }
+}
+`;
+      }
+
+      if (path === cachedRepositoryPath) {
+        return `<?php
+namespace App\\Repositories;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Models\\ArchivedComment;
+
+class CachedCommentRepository implements CommentRepositoryInterface
+{
+    public function findOrFail(int $id): ArchivedComment
+    {
+    }
+}
+`;
+      }
+
+      if (path === commentPath) {
+        return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function forceDelete(): bool
+    {
+    }
+}
+`;
+      }
+
+      if (path === archivedCommentPath) {
+        return `<?php
+namespace App\\Models;
+
+class ArchivedComment
+{
+    public function archive(): void
+    {
+    }
+}
+`;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      searchText: vi.fn(async (_root, query) =>
+        query === "CommentRepositoryInterface::class"
+          ? [
+              {
+                column: 26,
+                lineNumber: 11,
+                lineText:
+                  "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
+                path: providerPath,
+                relativePath: "app/Providers/AppServiceProvider.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->for"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "forceDelete",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(providerPath, "AppServiceProvider.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument(cachedProviderSource);
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument(updatedControllerSource);
+    });
+    expect(
+      getWorkbench().openDocuments.find((document) => document.path === providerPath)
+        ?.content,
+    ).toBe(cachedProviderSource);
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        updatedControllerSource,
+        positionAfter(updatedControllerSource, "$comment->arc"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\ArchivedComment",
+        name: "archive",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+  });
+
   it("keeps Laravel repository completions stable during container binding warm-up", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const providerPath = "/workspace/app/Providers/AppServiceProvider.php";

@@ -5283,15 +5283,29 @@ export function useWorkbenchController(
 
       pinDocument(activeDocument.path);
       if (activeDocument.language === "php") {
+        phpFrameworkBindingCacheRef.current = {};
         phpLaravelMorphMapModelTypeCacheRef.current = {};
       }
-      setDocuments((current) => ({
-        ...current,
-        [activeDocument.path]: {
-          ...activeDocument,
-          content,
-        },
-      }));
+      const updatedDocument = {
+        ...activeDocument,
+        content,
+      };
+      activeDocumentRef.current = updatedDocument;
+      documentsRef.current = {
+        ...documentsRef.current,
+        [activeDocument.path]: updatedDocument,
+      };
+      setDocuments((current) => {
+        const currentDocument = current[activeDocument.path] ?? activeDocument;
+
+        return {
+          ...current,
+          [activeDocument.path]: {
+            ...currentDocument,
+            content,
+          },
+        };
+      });
     },
     [activeDocument, pinDocument],
   );
@@ -5493,7 +5507,13 @@ export function useWorkbenchController(
 
   const readNavigationFileContent = useCallback(
     async (path: string): Promise<string> => {
-      const openDocument = documents[path];
+      const activeOpenDocument = activeDocumentRef.current;
+
+      if (activeOpenDocument?.path === path) {
+        return activeOpenDocument.content;
+      }
+
+      const openDocument = documentsRef.current[path];
 
       if (openDocument) {
         return openDocument.content;
@@ -5501,7 +5521,7 @@ export function useWorkbenchController(
 
       return workspaceFiles.readTextFile(path);
     },
-    [documents, workspaceFiles],
+    [workspaceFiles],
   );
 
   const resolvePhpClassReference = useCallback(
@@ -8937,6 +8957,39 @@ export function useWorkbenchController(
         return null;
       }
 
+      const resolveBoundFrameworkMethodCallReturnType = async (
+        candidateExpression: string,
+      ): Promise<string | null> => {
+        const methodCall = phpMethodCallExpression(candidateExpression.trim());
+
+        if (!methodCall) {
+          return null;
+        }
+
+        const directReceiverType = phpReceiverExpressionTypeInSource(
+          source,
+          position,
+          methodCall.receiverExpression,
+          { frameworkProviders: activePhpFrameworkProviders },
+        );
+        const receiverType = directReceiverType
+          ? resolvePhpClassReference(source, directReceiverType)
+          : null;
+        const boundReceiverType = receiverType
+          ? await resolvePhpFrameworkBoundConcrete(receiverType)
+          : null;
+        const boundReceiverReturnType =
+          boundReceiverType &&
+          boundReceiverType.toLowerCase() !== receiverType?.toLowerCase()
+            ? await resolvePhpMethodReturnType(
+                boundReceiverType,
+                methodCall.methodName,
+              )
+            : null;
+
+        return boundReceiverReturnType;
+      };
+
       const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
         expression.trim(),
       );
@@ -8953,6 +9006,13 @@ export function useWorkbenchController(
         variableMatch?.[1] &&
         !phpDocRawTypeForVariableBefore(source, position, variableMatch[1])
       ) {
+        const boundAssignmentType =
+          await resolveBoundFrameworkMethodCallReturnType(assignmentExpression);
+
+        if (boundAssignmentType) {
+          return boundAssignmentType;
+        }
+
         const frameworkAssignmentType = resolvePhpFrameworkReturnTypeReference(
           source,
           phpReceiverExpressionTypeInSource(
@@ -9339,6 +9399,22 @@ export function useWorkbenchController(
           methodCall.receiverExpression,
           depth + 1,
         );
+        const boundReceiverType = receiverType
+          ? await resolvePhpFrameworkBoundConcrete(receiverType)
+          : null;
+        const boundReceiverReturnType =
+          boundReceiverType &&
+          boundReceiverType.toLowerCase() !== receiverType?.toLowerCase()
+            ? await resolvePhpMethodReturnType(
+                boundReceiverType,
+                methodCall.methodName,
+              )
+            : null;
+
+        if (boundReceiverReturnType) {
+          return boundReceiverReturnType;
+        }
+
         const frameworkReturnType = phpFrameworkMethodCallReturnTypeFromSource(
           source,
           methodCall.methodName,
@@ -9435,6 +9511,7 @@ export function useWorkbenchController(
       phpClassHasLaravelLocalScope,
       phpClassHasLaravelDynamicWhere,
       isLaravelFrameworkActive,
+      resolvePhpFrameworkBoundConcrete,
       resolvePhpFrameworkReturnTypeReference,
       resolvePhpMethodReturnType,
     ],
