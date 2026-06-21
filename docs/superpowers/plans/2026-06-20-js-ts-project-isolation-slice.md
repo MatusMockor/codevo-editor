@@ -5338,3 +5338,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Directory Loading Reset Guard
 
 - Committed as `8e7c9dcb Reset directory loading on workspace switches`.
+
+## Next Slice: JavaScript/TypeScript Outline Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f8fb1a76 Record directory loading reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 850 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP outline cache/loading state was reset on workspace open, but JS/TS file outline cache/loading state was not.
+- Closing and reopening a workspace could reuse stale JS/TS file structure data without asking the language server again.
+- The leak was visible when reopening the same workspace path after closing the last project tab.
+
+### Implementation Choice
+
+- Clear JS/TS file outline cache and loading paths when clearing the active workspace.
+- Clear JS/TS file outline cache and loading paths when opening a workspace.
+- Add a close/reopen regression that expects a second `documentSymbols` request and a fresh outline label.
+
+### Acceptance Criteria
+
+- Closing and reopening a workspace reloads JS/TS file structure from the language server.
+- JS/TS outline loading state is cleared alongside PHP outline loading state on workspace reset.
+- Existing stale file-structure session guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: JavaScript/TypeScript Outline Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (317 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 851 tests)
+- PASS: `git diff --check`
+
+### Commit Status: JavaScript/TypeScript Outline Reset Guard
+
+- Committed as `d6ebdfc7 Reset JavaScript TypeScript outlines on workspace close`.
