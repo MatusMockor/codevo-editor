@@ -44,6 +44,7 @@ import {
 import {
   phpLaravelRelationStringCompletionContextAt,
 } from "../domain/phpNavigation";
+import { phpLaravelViewReferenceContextAt } from "../domain/phpLaravelViews";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
 import {
@@ -300,7 +301,8 @@ export function EditorSurface({
     const isPhpCompletionContext = Boolean(
       phpMemberAccessCompletionContextAt(source, position) ||
         phpStaticAccessCompletionContextAt(source, position) ||
-        phpLaravelRelationStringCompletionContextAt(source, position),
+        phpLaravelRelationStringCompletionContextAt(source, position) ||
+        phpLaravelViewReferenceContextAt(source, position),
     );
 
     if (!isPhpCompletionContext) {

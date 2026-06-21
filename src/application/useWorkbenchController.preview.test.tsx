@@ -31602,6 +31602,299 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
     });
   });
 
+  it("suggests Laravel Blade views inside view helper strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const viewsRoot = "/workspace/resources/views";
+    const commentsDirectory = "/workspace/resources/views/comments";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        return view('comments.sh');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) => {
+        if (path === viewsRoot) {
+          return [
+            directoryEntry(commentsDirectory, "comments"),
+            fileEntry("/workspace/resources/views/dashboard.blade.php", "dashboard.blade.php"),
+            fileEntry("/workspace/resources/views/ignored.txt", "ignored.txt"),
+          ];
+        }
+
+        if (path === commentsDirectory) {
+          return [
+            fileEntry(
+              "/workspace/resources/views/comments/show.blade.php",
+              "show.blade.php",
+            ),
+            fileEntry(
+              "/workspace/resources/views/comments/show.php",
+              "show.php",
+            ),
+          ];
+        }
+
+        return [];
+      }),
+      readTextFile: vi.fn(async (path: string) =>
+        path === controllerPath ? controllerSource : "",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.sh"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "resources/views/comments/show.blade.php",
+        insertText: "show",
+        kind: "view",
+        name: "comments.show",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Blade views before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const viewPath = "/workspace/resources/views/comments/show.blade.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        return view('comments.show');
+    }
+}
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === viewPath) {
+          return "<h1>{{ $comment->title }}</h1>\n";
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "comments.show"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(viewPath);
+    expect(getWorkbench().activeDocument?.language).toBe("blade");
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: viewPath,
+      position: {
+        column: 1,
+        lineNumber: 1,
+      },
+    });
+  });
+
+  it("opens Laravel Route::view Blade views before LSP fallback", async () => {
+    const routesPath = "/workspace/routes/web.php";
+    const viewPath = "/workspace/resources/views/dashboard.blade.php";
+    const routesSource = `<?php
+
+Route::view('/dashboard', 'dashboard');
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === routesPath) {
+          return routesSource;
+        }
+
+        if (path === viewPath) {
+          return "<x-layout />\n";
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 2,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(routesSource, "', 'dashboard"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(viewPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: viewPath,
+      position: {
+        column: 1,
+        lineNumber: 1,
+      },
+    });
+  });
+
+  it("drops stale Laravel Blade view targets after switching project tabs", async () => {
+    const controllerPath =
+      "/workspace-a/app/Http/Controllers/CommentController.php";
+    const viewPath = "/workspace-a/resources/views/comments/show.blade.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        return view('comments.show');
+    }
+}
+`;
+    const staleViewRead = createDeferred<string>();
+    let viewReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === viewPath) {
+          viewReadCount += 1;
+          return staleViewRead.promise;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "comments.show"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(viewReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleViewRead.resolve("<h1>Stale</h1>\n");
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(viewPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("drops stale Laravel named route definition targets after switching project tabs", async () => {
     const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace-a/routes/web.php";
@@ -33057,6 +33350,14 @@ function phpProjectDescriptor(
 function fileEntry(path: string, name: string): FileEntry {
   return {
     kind: "file",
+    name,
+    path,
+  };
+}
+
+function directoryEntry(path: string, name: string): FileEntry {
+  return {
+    kind: "directory",
     name,
     path,
   };

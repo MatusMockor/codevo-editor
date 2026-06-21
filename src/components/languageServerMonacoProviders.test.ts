@@ -761,6 +761,66 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("inserts Laravel view name completions as plain string suffixes", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "resources/views/comments/show.blade.php",
+        insertText: "show",
+        kind: "view" as const,
+        name: "comments.show",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(): string\n{\n    return view('comments.sh');\n}\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    return view('comments.sh');",
+        word: {
+          endColumn: 31,
+          startColumn: 29,
+        },
+      }),
+      {
+        column: 31,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        command: undefined,
+        detail:
+          "Laravel view - resources/views/comments/show.blade.php",
+        documentation: "Laravel view\n\ncomments.show",
+        insertText: "show",
+        insertTextRules: 4,
+        kind: 17,
+        label: {
+          description: "view - resources/views/comments/show.blade.php",
+          detail: "",
+          label: "comments.show",
+        },
+      }),
+    ]);
+  });
+
   it("deduplicates typed PHP methods against LSP signature labels", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -7360,6 +7420,7 @@ function createRegisteredProviders() {
         Class: 7,
         Constant: 21,
         Field: 5,
+        File: 17,
         Function: 3,
         Interface: 8,
         Method: 2,

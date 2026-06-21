@@ -31,6 +31,7 @@ import {
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { phpLaravelRelationStringCompletionContextAt } from "../domain/phpNavigation";
+import { phpLaravelViewReferenceContextAt } from "../domain/phpLaravelViews";
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
@@ -2616,11 +2617,15 @@ async function provideCompletionItems(
   );
   const relationStringCompletionContext =
     phpLaravelRelationStringCompletionContextAt(source, position);
+  const viewStringCompletionContext =
+    phpLaravelViewReferenceContextAt(source, position);
   const isMemberOrStaticAccessCompletion = Boolean(
     memberAccessCompletionContext || staticAccessCompletionContext,
   );
   const isScopedCompletion = Boolean(
-    isMemberOrStaticAccessCompletion || relationStringCompletionContext,
+    isMemberOrStaticAccessCompletion ||
+      relationStringCompletionContext ||
+      viewStringCompletionContext,
   );
   const variableSuggestions: Monaco.languages.CompletionItem[] =
     methodSuggestions.length > 0 || isScopedCompletion
@@ -2729,6 +2734,7 @@ async function phpMethodSuggestions(
         item.kind !== "property" &&
         item.kind !== "relation" &&
         item.kind !== "route" &&
+        item.kind !== "view" &&
         phpMethodParameters(item.parameters).length
           ? {
               id: "editor.action.triggerParameterHints",
@@ -3029,6 +3035,10 @@ function phpMethodCompletionKind(
     return monaco.languages.CompletionItemKind.Value;
   }
 
+  if (item.kind === "view") {
+    return monaco.languages.CompletionItemKind.File;
+  }
+
   if (item.kind === "property") {
     return monaco.languages.CompletionItemKind.Property;
   }
@@ -3053,6 +3063,10 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
     return `Laravel route - ${item.declaringClassName}`;
   }
 
+  if (item.kind === "view") {
+    return `Laravel view - ${item.declaringClassName}`;
+  }
+
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
@@ -3070,6 +3084,10 @@ function phpMethodDocumentation(item: PhpMethodCompletion): string {
 
   if (item.kind === "route") {
     return `Laravel named route\n\n${item.name}`;
+  }
+
+  if (item.kind === "view") {
+    return `Laravel view\n\n${item.name}`;
   }
 
   const parameters = phpMethodParameters(item.parameters);
@@ -3096,11 +3114,16 @@ function phpMethodCompletionLabel(
         ? `relation - ${item.declaringClassName}`
         : item.kind === "route"
         ? `route - ${item.declaringClassName}`
+        : item.kind === "view"
+        ? `view - ${item.declaringClassName}`
         : item.kind === "property"
         ? `property - ${item.declaringClassName}`
         : `method - ${item.declaringClassName}`,
     detail:
-      item.kind === "property" || item.kind === "relation" || item.kind === "route"
+      item.kind === "property" ||
+      item.kind === "relation" ||
+      item.kind === "route" ||
+      item.kind === "view"
         ? ""
         : "()",
     label: item.name,
@@ -3119,7 +3142,12 @@ function phpMethodSnippet(item: PhpMethodCompletion): string {
     return item.insertText;
   }
 
-  if (item.kind === "property" || item.kind === "relation" || item.kind === "route") {
+  if (
+    item.kind === "property" ||
+    item.kind === "relation" ||
+    item.kind === "route" ||
+    item.kind === "view"
+  ) {
     return item.name;
   }
 

@@ -7776,3 +7776,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP LSP Type Hierarchy In Workbench
 
 - Committed as `820b32be Use PHP type hierarchy in workbench`.
+
+## Next Slice: Laravel Blade View-Name Navigation And Completion
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `79e7ab3c Record PHP type hierarchy commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel named routes and relation strings already have first-class local navigation/completion.
+- Blade view names are a high-frequency Laravel workflow and currently fall through to generic PHP/LSP behavior.
+- Supporting local `resources/views` view names makes controller-to-Blade navigation useful without requiring framework config indexing.
+
+### Implementation Choice
+
+- Add a narrow domain helper for local Laravel view-name string contexts and view-name/path mapping.
+- Resolve `view('comments.show')`-style strings to `resources/views/comments/show.blade.php` or `.php`.
+- Suggest local view names from `resources/views/**/*.blade.php` and `resources/views/**/*.php` with dotted suffix insert text.
+- Keep package namespaces such as `vendor::admin.dashboard`, dynamic strings, cached view indexes, and custom view paths out of scope.
+
+### Acceptance Criteria
+
+- Cmd+B on `view('comments.show')` opens `resources/views/comments/show.blade.php` before LSP fallback.
+- Cmd+B on `Route::view('/dashboard', 'dashboard')` opens `resources/views/dashboard.blade.php`.
+- Completion inside `view('comments.sh')` suggests `comments.show` with insert text `show`.
+- Completion ignores package namespaces and non-view files.
+- Stale workspace-tab results do not open view targets or publish stale messages.
+- Focused domain/preview/provider tests, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel Blade View-Name Navigation And Completion
+
+- `npm test -- src/domain/phpLaravelViews.test.ts src/domain/workspace.test.ts src/components/languageServerMonacoProviders.test.ts -t "Laravel view|phpLaravelViews|detects language"` passed: 8 passed, 138 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Blade views|Laravel Route::view|Laravel named route"` passed: 14 passed, 356 skipped.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts` passed: 130 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 370 passed.
+- `npm test -- src/domain/phpLaravelViews.test.ts src/domain/workspace.test.ts` passed: 16 passed.
+- `npm run check` passed.
+- `npm test` passed: 66 files, 1001 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Pending

@@ -23,6 +23,9 @@ describe("workspace path helpers", () => {
 
   it("detects language from the file name instead of dotted directories", () => {
     expect(detectLanguage("/project.v1/src/User.php")).toBe("php");
+    expect(detectLanguage("/project.v1/resources/views/comments/show.blade.php")).toBe(
+      "blade",
+    );
     expect(detectLanguage("/project.v1/src/README")).toBe("plaintext");
   });
 

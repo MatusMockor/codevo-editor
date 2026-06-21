@@ -212,7 +212,13 @@ export function getFileName(path: string): string {
 }
 
 export function detectLanguage(path: string): string {
-  const parts = getFileName(path).split(".");
+  const fileName = getFileName(path).toLowerCase();
+
+  if (fileName.endsWith(".blade.php")) {
+    return "blade";
+  }
+
+  const parts = fileName.split(".");
   const extension = parts[parts.length - 1]?.toLowerCase();
 
   if (!extension) {

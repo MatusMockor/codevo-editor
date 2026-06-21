@@ -13,6 +13,7 @@ import {
   type Psr4Root,
 } from "./workspace";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
+import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 
 export type PhpIdentifierContext =
   | {
@@ -35,6 +36,10 @@ export type PhpIdentifierContext =
   | {
       kind: "laravelNamedRouteString";
       routeName: string;
+    }
+  | {
+      kind: "laravelViewString";
+      viewName: string;
     }
   | {
       kind: "methodCall";
@@ -104,6 +109,15 @@ export function phpIdentifierContextAt(
     return {
       kind: "laravelNamedRouteString",
       routeName: namedRoute.name,
+    };
+  }
+
+  const viewReference = phpLaravelViewReferenceContextAt(source, position);
+
+  if (viewReference) {
+    return {
+      kind: "laravelViewString",
+      viewName: viewReference.name,
     };
   }
 
