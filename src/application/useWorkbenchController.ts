@@ -12483,14 +12483,14 @@ export function useWorkbenchController(
         return false;
       }
 
+      if (!isRequestedSessionActive()) {
+        return false;
+      }
+
       const targetPath = pathFromLanguageServerUri(target.uri);
 
       if (!targetPath) {
         setMessage(`Could not open ${label} target.`);
-        return false;
-      }
-
-      if (!isRequestedSessionActive()) {
         return false;
       }
 
@@ -12679,14 +12679,14 @@ export function useWorkbenchController(
         return false;
       }
 
+      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+        return false;
+      }
+
       const targetPath = pathFromLanguageServerUri(target.uri);
 
       if (!targetPath) {
         setMessage(`Could not open ${label} target.`);
-        return false;
-      }
-
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
         return false;
       }
 

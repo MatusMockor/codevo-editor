@@ -11456,6 +11456,94 @@ function helper_call(): string
     );
   });
 
+  it("drops stale PHP language server invalid definition targets after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/app/Http/Controllers/UserController.php";
+    const source = `<?php
+
+$result = helper_call();
+`;
+    const cursorPosition = positionAfter(source, "helper_ca");
+    const definitionResult =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 52,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.definition,
+    ).mockImplementationOnce(async () => definitionResult.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => source),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(languageServerFeaturesGateway.definition).toHaveBeenCalledWith(
+        "/workspace-a",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    definitionResult.resolve([
+      {
+        range: range(2, 9, 2, 20),
+        uri: "untitled:stale-definition",
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Could not open definition target.");
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+
   it("drops stale PHP language server definition results after same-root session restart", async () => {
     const sourcePath = "/workspace/app/Http/Controllers/UserController.php";
     const targetPath = "/external/vendor/package/Helper.php";
@@ -12040,6 +12128,92 @@ function helper_call(): string
     expect(getWorkbench().editorRevealTarget).toBeNull();
     expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
     expect(getWorkbench().message).not.toBe("Opened declaration user.d.ts:1:14");
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+
+  it("drops stale JavaScript and TypeScript invalid declaration targets after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/src/main.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const declarationResult =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["declaration"]>>
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 41,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.declaration,
+    ).mockImplementationOnce(async () => declarationResult.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => source),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.declaration,
+      ).toHaveBeenCalledWith("/workspace-a", {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    declarationResult.resolve([
+      {
+        range: range(0, 13, 0, 17),
+        uri: "untitled:stale-declaration",
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Could not open declaration target.");
     expect(
       getWorkbench()
         .commands.find((candidate) => candidate.id === "navigation.back")
