@@ -80,12 +80,16 @@ class CommentController
  * @method publish(bool $quietly = false)
  * @method static findForSlug(string $slug)
  * @method \\Illuminate\\Support\\Collection<int, Comment> activeComments()
+ * @phpstan-method bool archive(bool $quietly = false)
+ * @psalm-method static fromUuid(string $uuid)
  */
 class CommentFactory
 {
 }
 `;
     const activeCommentsPosition = positionAfter(source, "activeComments");
+    const archivePosition = positionAfter(source, "archive");
+    const fromUuidPosition = positionAfter(source, "fromUuid");
 
     expect(phpDocMethodPositionOrNull(source, "fromNamed")).toEqual({
       column: 26,
@@ -103,6 +107,14 @@ class CommentFactory
       column: activeCommentsPosition.column - "activeComments".length + 1,
       lineNumber: activeCommentsPosition.lineNumber,
     });
+    expect(phpDocMethodPositionOrNull(source, "archive")).toEqual({
+      column: archivePosition.column - "archive".length + 1,
+      lineNumber: archivePosition.lineNumber,
+    });
+    expect(phpDocMethodPositionOrNull(source, "fromUuid")).toEqual({
+      column: fromUuidPosition.column - "fromUuid".length + 1,
+      lineNumber: fromUuidPosition.lineNumber,
+    });
     expect(phpDocMethodPositionOrNull(source, "missing")).toBeNull();
   });
 
@@ -112,6 +124,8 @@ class CommentFactory
  * @property string $body
  * @property-read int $externalId
  * @property-write bool $archived
+ * @phpstan-property-read string $slug
+ * @psalm-property-write bool $hidden
  */
 class Comment
 {
@@ -133,6 +147,14 @@ class Comment
     expect(phpDocPropertyPositionOrNull(source, "$archived")).toEqual({
       column: 26,
       lineNumber: 5,
+    });
+    expect(phpDocPropertyPositionOrNull(source, "slug")).toEqual({
+      column: positionAfter(source, "$slug").column - "slug".length + 1,
+      lineNumber: positionAfter(source, "$slug").lineNumber,
+    });
+    expect(phpDocPropertyPositionOrNull(source, "$hidden")).toEqual({
+      column: positionAfter(source, "$hidden").column - "hidden".length + 1,
+      lineNumber: positionAfter(source, "$hidden").lineNumber,
     });
     expect(phpDocPropertyPositionOrNull(source, "missing")).toBeNull();
   });

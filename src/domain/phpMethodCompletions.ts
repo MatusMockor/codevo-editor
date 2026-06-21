@@ -204,7 +204,7 @@ function phpDocMethodCompletionsFromSource(
   const members: PhpMethodCompletion[] = [];
 
   for (const match of source.matchAll(
-    /@method\s+([^\r\n*]*?)([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/g,
+    /@(?:(?:phpstan|psalm)-)?method\s+([^\r\n*]*?)([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/g,
   )) {
     const name = match[2];
 
@@ -239,7 +239,7 @@ function phpPropertyCompletionsFromSource(
   const members: PhpMethodCompletion[] = [];
 
   for (const match of source.matchAll(
-    /@property(?:-read|-write)?\s+([^\r\n*]+?)\s+\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
+    /@(?:(?:phpstan|psalm)-)?property(?:-read|-write)?\s+([^\r\n*]+?)\s+\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
   )) {
     const returnType = normalizeReturnType(firstPhpDocTypeToken(match[1] ?? null));
     const name = match[2];

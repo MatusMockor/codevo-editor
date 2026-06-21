@@ -339,7 +339,9 @@ export function phpDocMethodPositionOrNull(
   source: string,
   methodName: string,
 ): EditorPosition | null {
-  for (const match of source.matchAll(/@method\s+([^\r\n*]+)/g)) {
+  for (const match of source.matchAll(
+    /@(?:(?:phpstan|psalm)-)?method\s+([^\r\n*]+)/g,
+  )) {
     const body = match[1] ?? "";
     const bodyOffset = (match.index ?? 0) + match[0].indexOf(body);
     const methodMatch = /([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(body);
@@ -377,7 +379,7 @@ export function phpDocPropertyPositionOrNull(
   }
 
   const pattern = new RegExp(
-    String.raw`@property(?:-read|-write)?\s+[^\r\n*]+?\s+\$` +
+    String.raw`@(?:(?:phpstan|psalm)-)?property(?:-read|-write)?\s+[^\r\n*]+?\s+\$` +
       escapeRegExp(normalizedPropertyName) +
       String.raw`\b`,
     "g",

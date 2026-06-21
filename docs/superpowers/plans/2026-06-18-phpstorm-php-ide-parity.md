@@ -7136,3 +7136,45 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `aecec87c Support PHPStan Psalm PHPDoc mixin tags`.
+
+## Slice: PHPStan Psalm PHPDoc Magic Member Tags - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1575322f Record PHPStan Psalm mixin tag commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat `@phpstan-method`, `@psalm-method`, `@phpstan-property*`, and `@psalm-property*` like standard PHPDoc magic member tags.
+
+### Implementation Choice
+
+- Extend PHPDoc magic method completion parsing to accept PHPStan/Psalm prefixes.
+- Extend PHPDoc magic property completion parsing to accept PHPStan/Psalm prefixes.
+- Extend PHPDoc magic method and property navigation lookup to the same prefixed tags.
+- Add focused domain coverage for completions and navigation positions.
+
+### Acceptance Criteria
+
+- Prefixed magic methods appear in member completion with static/return/parameter metadata.
+- Prefixed magic properties appear in property completion.
+- Cmd+B / Go to Definition can locate prefixed magic method/property declarations.
+- Focused/full domain and preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "PHPDoc magic methods|PHPDoc properties"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts -t "PHPDoc magic"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpNavigation.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc magic|implemented interface PHPDoc|PHPDoc mixin"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

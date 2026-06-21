@@ -2175,6 +2175,8 @@ class Comment extends Model
 /**
  * @method static \\Illuminate\\Database\\Eloquent\\Builder<static> whereNull(string $column, string $boolean = 'and')
  * @method \\App\\Models\\Album publish(bool $quietly = false)
+ * @phpstan-method bool archive(bool $quietly = false)
+ * @psalm-method static restoreBySlug(string $slug)
  */
 class Album
 {
@@ -2195,6 +2197,19 @@ class Album
         name: "publish",
         parameters: "bool $quietly = false",
         returnType: "\\App\\Models\\Album",
+      },
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "archive",
+        parameters: "bool $quietly = false",
+        returnType: "bool",
+      },
+      {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "restoreBySlug",
+        parameters: "string $slug",
+        returnType: null,
       },
     ]);
   });
@@ -2266,6 +2281,8 @@ trait InteractsWithInput
  * @property string $body
  * @property-read int $externalId
  * @property-read \\Illuminate\\Database\\Eloquent\\Collection<int, Comment> $children
+ * @phpstan-property-read string $slug
+ * @psalm-property-write bool $archived
  */
 class Comment
 {
@@ -2305,6 +2322,20 @@ class Comment
         name: "children",
         parameters: "",
         returnType: "\\Illuminate\\Database\\Eloquent\\Collection<int, Comment>",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "slug",
+        parameters: "",
+        returnType: "string",
+      },
+      {
+        declaringClassName: "Comment",
+        kind: "property",
+        name: "archived",
+        parameters: "",
+        returnType: "bool",
       },
       {
         declaringClassName: "Comment",
