@@ -6056,4 +6056,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `5f785353 Guard stale PHP method hierarchy diagnostics`.
