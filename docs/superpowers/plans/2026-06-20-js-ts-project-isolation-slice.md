@@ -8152,3 +8152,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Guard Stale Laravel Translation Target Locale Discovery
 
 - Committed as `ff02d4ac Guard stale Laravel translation target discovery`.
+
+## Next Slice: Laravel Translation Lang Facade Calls
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ab916813 Record Laravel translation target guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- The initial translation helper slice supported `Lang::get`, but Laravel facade usage also commonly includes `Lang::has` and `Lang::choice`.
+- These call shapes can reuse the same translation context, target lookup, completion metadata, and stale guards.
+
+### Implementation Choice
+
+- Extend the translation context detector to recognize `Lang::has(...)` and `Lang::choice(...)`.
+- Add domain coverage for both calls.
+- Add preview coverage proving `Lang::has('messages.welcome')` opens the local translation key before LSP fallback.
+
+### Acceptance Criteria
+
+- `Lang::has('messages.welcome')` and `Lang::choice('messages.apples', 3)` are detected as Laravel translation key contexts.
+- Go to Definition from a `Lang::has(...)` key opens the local translation PHP array key before LSP fallback.
+- Focused domain/preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel Translation Lang Facade Calls
+
+- `npm test -- src/domain/phpLaravelTranslations.test.ts` passed: 6 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel translation|Lang facade"` passed: 8 passed, 382 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 390 passed.
+- `npm run check` passed.
+- `npm test` passed: 69 files, 1041 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Translation Lang Facade Calls
+
+- Pending commit.

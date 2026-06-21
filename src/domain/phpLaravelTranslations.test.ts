@@ -34,6 +34,8 @@ return __('messages.welcome');
       ["trans('messages.welcome')", "trans"],
       ["trans_choice('messages.apples', 3)", "trans_choice"],
       ["Lang::get('messages.welcome')", "Lang::get"],
+      ["Lang::has('messages.welcome')", "Lang::has"],
+      ["Lang::choice('messages.apples', 3)", "Lang::choice"],
       ["__(key: 'messages.welcome')", "__"],
     ] as const;
 

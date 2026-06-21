@@ -7,7 +7,9 @@ import type { EditorPosition } from "./languageServerFeatures";
 
 export type PhpLaravelTranslationReferenceCall =
   | "__"
+  | "Lang::choice"
   | "Lang::get"
+  | "Lang::has"
   | "trans"
   | "trans_choice";
 
@@ -182,6 +184,14 @@ function laravelTranslationReferenceCallAt(
 
   if (/\bLang\s*::\s*get\s*$/.test(beforeCall)) {
     return "Lang::get";
+  }
+
+  if (/\bLang\s*::\s*has\s*$/.test(beforeCall)) {
+    return "Lang::has";
+  }
+
+  if (/\bLang\s*::\s*choice\s*$/.test(beforeCall)) {
+    return "Lang::choice";
   }
 
   const functionMatch = /(?:^|[^A-Za-z0-9_>$:])([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(

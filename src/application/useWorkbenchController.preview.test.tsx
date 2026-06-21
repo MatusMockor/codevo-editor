@@ -32377,6 +32377,92 @@ return [
     });
   });
 
+  it("opens Laravel Lang facade translation keys before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace/lang";
+    const langRoot = "/workspace/lang/en";
+    const messagesPath = "/workspace/lang/en/messages.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Lang;
+
+class AppController
+{
+    public function label(): bool
+    {
+        return Lang::has('messages.welcome');
+    }
+}
+`;
+    const messagesSource = `<?php
+
+return [
+    'welcome' => 'Welcome',
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase ? [directoryEntry(langRoot, "en")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === messagesPath) {
+          return messagesSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "messages.welcome"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(messagesPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: messagesPath,
+      position: {
+        column: 6,
+        lineNumber: 4,
+      },
+    });
+  });
+
   it("drops stale Laravel translation targets after switching project tabs", async () => {
     const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
     const langBase = "/workspace-a/lang";
