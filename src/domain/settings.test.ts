@@ -27,6 +27,7 @@ describe("settings defaults", () => {
       autoSave: true,
       autoSaveConfigured: true,
       extraIgnorePatterns: [],
+      formatOnSave: false,
       intelligenceMode: "basic",
       intelephensePath: null,
       javaScriptTypeScriptAutoImports: true,
@@ -137,6 +138,7 @@ describe("normalizeWorkspaceSettings", () => {
         autoSave: true,
         autoSaveConfigured: true,
         extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
+        formatOnSave: true,
         intelligenceMode: "lightSmart",
         intelephensePath: "/tools/intelephense",
         javaScriptTypeScriptAutoImports: false,
@@ -175,6 +177,7 @@ describe("normalizeWorkspaceSettings", () => {
       autoSave: true,
       autoSaveConfigured: true,
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
+      formatOnSave: true,
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
       javaScriptTypeScriptAutoImports: false,
@@ -227,6 +230,16 @@ describe("normalizeWorkspaceSettings", () => {
         intelligenceMode: "basic",
       }).autoSave,
     ).toBe(false);
+  });
+
+  it("defaults formatOnSave to false and ignores non-boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).formatOnSave).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ formatOnSave: "yes" }).formatOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave,
+    ).toBe(true);
   });
 
   it("falls back for invalid workspace settings", () => {

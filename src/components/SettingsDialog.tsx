@@ -215,6 +215,12 @@ export function SettingsDialog({
                       autoSaveConfigured: true,
                     })
                   }
+                  onChangeFormatOnSave={(formatOnSave) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      formatOnSave,
+                    })
+                  }
                   onChangeJavaScriptTypeScriptService={(
                     javaScriptTypeScriptService,
                   ) =>
@@ -372,6 +378,7 @@ interface GeneralSettingsProps {
   workspaceRoot: string | null;
   workspaceSettings: WorkspaceSettings;
   onChangeAutoSave(autoSave: boolean): void;
+  onChangeFormatOnSave(formatOnSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeJavaScriptTypeScriptService(
     mode: JavaScriptTypeScriptServiceMode,
@@ -399,6 +406,7 @@ function GeneralSettings({
   draftTrusted,
   hasWorkspace,
   onChangeAutoSave,
+  onChangeFormatOnSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
   onChangeJavaScriptTypeScriptCodeLens,
@@ -564,6 +572,16 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>Auto Save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.formatOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) => onChangeFormatOnSave(event.currentTarget.checked)}
+          type="checkbox"
+        />
+        <span>Format on Save</span>
       </label>
 
       <label className="settings-toggle">

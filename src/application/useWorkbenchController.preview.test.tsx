@@ -34,6 +34,7 @@ import type {
   EditorPosition,
   LanguageServerFeaturesGateway,
   LanguageServerRange,
+  LanguageServerTextEdit,
   LanguageServerWorkspaceEdit,
 } from "../domain/languageServerFeatures";
 import {
@@ -3131,6 +3132,369 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().message).not.toBe("Saved User.php");
+  });
+
+  describe("format on save", () => {
+    const runningJavaScriptTypeScriptStatus = (): LanguageServerRuntimeStatus => ({
+      capabilities: { ...emptyLanguageServerCapabilities(), formatting: true },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 920,
+    });
+
+    const wholeDocumentReplacement = (
+      original: string,
+      newText: string,
+    ): LanguageServerTextEdit => {
+      const lines = original.split("\n");
+
+      return {
+        newText,
+        range: {
+          end: {
+            character: lines[lines.length - 1]?.length ?? 0,
+            line: lines.length - 1,
+          },
+          start: { character: 0, line: 0 },
+        },
+      };
+    };
+
+    it("does not format the document before saving when formatOnSave is disabled", async () => {
+      const path = "/workspace/src/App.ts";
+      const featuresGatewayInstance = featuresGateway();
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptLanguageServerFeaturesGateway:
+          featuresGatewayInstance,
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        readTextFile: vi.fn(async () => "export const value=1;\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument("export const value=2;\n");
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(featuresGatewayInstance.formatting).not.toHaveBeenCalled();
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, "export const value=2;\n");
+    });
+
+    it("formats the active document through the formatting provider before writing it when formatOnSave is enabled", async () => {
+      const path = "/workspace/src/App.ts";
+      const unformatted = "export const value=2;\n";
+      const formatted = "export const value = 2;\n";
+      const featuresGatewayInstance = featuresGateway();
+      vi.mocked(featuresGatewayInstance.formatting).mockResolvedValue([
+        wholeDocumentReplacement(unformatted, formatted),
+      ]);
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptLanguageServerFeaturesGateway:
+          featuresGatewayInstance,
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        readTextFile: vi.fn(async () => "export const value=1;\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
+        "/workspace",
+        path,
+        expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+      );
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, formatted);
+      expect(getWorkbench().activeDocument?.content).toBe(formatted);
+    });
+
+    it("still saves the document when the formatting provider throws", async () => {
+      const path = "/workspace/src/App.ts";
+      const unformatted = "export const value=2;\n";
+      const featuresGatewayInstance = featuresGateway();
+      vi.mocked(featuresGatewayInstance.formatting).mockRejectedValue(
+        new Error("formatter crashed"),
+      );
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptLanguageServerFeaturesGateway:
+          featuresGatewayInstance,
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        readTextFile: vi.fn(async () => "export const value=1;\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(featuresGatewayInstance.formatting).toHaveBeenCalled();
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, unformatted);
+    });
+
+    it("saves without formatting when no formatting provider is available for the language", async () => {
+      const path = "/workspace/notes.md";
+      const featuresGatewayInstance = featuresGateway();
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptLanguageServerFeaturesGateway:
+          featuresGatewayInstance,
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        readTextFile: vi.fn(async () => "# Notes\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "notes.md"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument("# Notes changed\n");
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(featuresGatewayInstance.formatting).not.toHaveBeenCalled();
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, "# Notes changed\n");
+    });
+
+    it("formats PHP documents through the PHP formatting provider before saving", async () => {
+      const path = "/workspace/src/User.php";
+      const unformatted = "<?php\nclass User{}\n";
+      const formatted = "<?php\n\nclass User\n{\n}\n";
+      const runningPhpStatus: LanguageServerRuntimeStatus = {
+        capabilities: { ...emptyLanguageServerCapabilities(), formatting: true },
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 73,
+      };
+      const phpFeaturesGateway = featuresGateway();
+      vi.mocked(phpFeaturesGateway.formatting).mockResolvedValue([
+        wholeDocumentReplacement(unformatted, formatted),
+      ]);
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        languageServerFeaturesGateway: phpFeaturesGateway,
+        runtimeStatus: runningPhpStatus,
+        readTextFile: vi.fn(async () => unformatted),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(phpFeaturesGateway.formatting).toHaveBeenCalledWith(
+        "/workspace",
+        path,
+        expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+      );
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, formatted);
+    });
+
+    it("does not apply or write format-on-save edits after switching project tabs while formatting is pending", async () => {
+      const path = "/workspace-a/src/App.ts";
+      const unformatted = "export const value=2;\n";
+      const formatted = "export const value = 2;\n";
+      const runningStatus: LanguageServerRuntimeStatus = {
+        capabilities: { ...emptyLanguageServerCapabilities(), formatting: true },
+        kind: "running",
+        sessionId: 921,
+      };
+      const formattingResult = createDeferred<LanguageServerTextEdit[]>();
+      const featuresGatewayInstance = featuresGateway();
+      vi.mocked(featuresGatewayInstance.formatting).mockImplementation(
+        async () => formattingResult.promise,
+      );
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+        javaScriptTypeScriptLanguageServerFeaturesGateway:
+          featuresGatewayInstance,
+        javaScriptTypeScriptRuntimeStatus: runningStatus,
+        readTextFile: vi.fn(async (requestedPath: string) =>
+          requestedPath.endsWith(".ts") ? "export const value=1;\n" : "",
+        ),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      // Kick off the save; formatting stays pending on the deferred promise.
+      let savePromise: Promise<void> = Promise.resolve();
+      await act(async () => {
+        savePromise = getWorkbench().saveActiveDocument();
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
+          "/workspace-a",
+          path,
+          expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+        );
+      });
+
+      // Switch to another project while the formatter is still running.
+      let switchPromise: Promise<void> = Promise.resolve();
+      await act(async () => {
+        switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await vi.waitFor(() => {
+        expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      });
+
+      // The formatter only now resolves, targeting the no-longer-active root.
+      act(() => {
+        formattingResult.resolve([
+          wholeDocumentReplacement(unformatted, formatted),
+        ]);
+      });
+      await act(async () => {
+        await Promise.all([savePromise, switchPromise]);
+      });
+      await flushAsyncTurns(24);
+
+      // The stale format result must not be persisted to the inactive document.
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).not.toHaveBeenCalledWith(path, formatted);
+      const writeCalls = vi.mocked(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).mock.calls;
+      expect(
+        writeCalls.some(([writtenPath]) => writtenPath === path),
+      ).toBe(false);
+
+      // The active workspace stayed on /workspace-b and no /workspace-b model
+      // was mutated by the stale /workspace-a formatting result.
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activeDocument?.content).not.toBe(formatted);
+    });
   });
 
   it("does not send PHP didSave after switching project tabs while didOpen is pending", async () => {

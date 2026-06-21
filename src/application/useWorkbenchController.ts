@@ -102,6 +102,11 @@ import {
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import {
+  defaultFormatOnSaveOptions,
+  planFormatOnSave,
+  type FormatOnSavePlan,
+} from "../domain/formatOnSave";
+import {
   matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
@@ -6106,6 +6111,98 @@ export function useWorkbenchController(
     ],
   );
 
+  const requestFormatOnSaveEdits = useCallback(
+    async (
+      plan: FormatOnSavePlan,
+      requestedRoot: string,
+      path: string,
+    ): Promise<LanguageServerTextEdit[]> => {
+      const options = defaultFormatOnSaveOptions();
+
+      if (plan.provider === "javaScriptTypeScript") {
+        return javaScriptTypeScriptLanguageServerFeaturesGateway.formatting(
+          requestedRoot,
+          path,
+          options,
+        );
+      }
+
+      return languageServerFeaturesGateway.formatting(
+        requestedRoot,
+        path,
+        options,
+      );
+    },
+    [
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      languageServerFeaturesGateway,
+    ],
+  );
+
+  const formattedContentForSave = useCallback(
+    async (
+      document: EditorDocument,
+      requestedRoot: string,
+    ): Promise<string> => {
+      if (!workspaceSettingsRef.current.formatOnSave) {
+        return document.content;
+      }
+
+      const plan = planFormatOnSave({
+        document,
+        hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
+        javaScriptTypeScript: {
+          status: javaScriptTypeScriptLanguageServerRuntimeStatusRef.current,
+          statusRoot:
+            javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+        },
+        php: {
+          status: languageServerRuntimeStatusRef.current,
+          statusRoot: languageServerRuntimeStatusRootRef.current,
+        },
+        workspaceRoot: requestedRoot,
+      });
+
+      if (!plan) {
+        return document.content;
+      }
+
+      const isRequestedSessionActive = () =>
+        plan.provider === "javaScriptTypeScript"
+          ? isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+              requestedRoot,
+              plan.sessionId,
+            )
+          : isLanguageServerSessionActiveForRoot(requestedRoot, plan.sessionId);
+
+      try {
+        const edits = await requestFormatOnSaveEdits(
+          plan,
+          requestedRoot,
+          document.path,
+        );
+
+        if (!isRequestedSessionActive()) {
+          return document.content;
+        }
+
+        if (edits.length === 0) {
+          return document.content;
+        }
+
+        return applyLanguageServerTextEdits(document.content, edits);
+      } catch {
+        return document.content;
+      }
+    },
+    [
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      isLanguageServerSessionActiveForRoot,
+      requestFormatOnSaveEdits,
+      workspaceDescriptor?.php,
+    ],
+  );
+
   const saveActiveDocument = useCallback(async () => {
     if (!activeDocument || activeDocument.readOnly) {
       return;
@@ -6117,33 +6214,57 @@ export function useWorkbenchController(
     }
 
     try {
+      const formattedContent = await formattedContentForSave(
+        activeDocument,
+        requestedRoot,
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      const documentToSave: EditorDocument = {
+        ...activeDocument,
+        content: formattedContent,
+      };
+
       await workspaceFiles.writeTextFile(
-        activeDocument.path,
-        activeDocument.content,
+        documentToSave.path,
+        documentToSave.content,
       );
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
-      setDocuments((current) => ({
-        ...current,
-        [activeDocument.path]: {
-          ...activeDocument,
-          savedContent: activeDocument.content,
-        },
-      }));
-      await syncSavedDocument(activeDocument);
-      await syncSavedJavaScriptTypeScriptDocument(activeDocument);
+      setDocuments((current) => {
+        const existing = current[documentToSave.path];
+
+        if (!existing) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [documentToSave.path]: {
+            ...existing,
+            content: documentToSave.content,
+            savedContent: documentToSave.content,
+          },
+        };
+      });
+      await syncSavedDocument(documentToSave);
+      await syncSavedJavaScriptTypeScriptDocument(documentToSave);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
-      setMessage(`Saved ${activeDocument.name}`);
+      setMessage(`Saved ${documentToSave.name}`);
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", error);
     }
   }, [
     activeDocument,
+    formattedContentForSave,
     reportErrorForActiveWorkspaceRoot,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,

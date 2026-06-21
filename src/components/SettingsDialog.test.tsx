@@ -107,6 +107,47 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("keeps Format on Save disabled by default and persists enabling it from settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(formatOnSaveCheckbox().checked).toBe(false);
+
+    await act(async () => {
+      formatOnSaveCheckbox().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        formatOnSave: true,
+      },
+    });
+  });
+
   it("persists JavaScript and TypeScript service mode changes", async () => {
     const onSave = vi.fn(async () => undefined);
 
@@ -394,6 +435,10 @@ describe("SettingsDialog", () => {
     }
 
     return input;
+  }
+
+  function formatOnSaveCheckbox(): HTMLInputElement {
+    return checkboxWithLabel("Format on Save");
   }
 
   function javaScriptTypeScriptServiceSelect(): HTMLSelectElement {

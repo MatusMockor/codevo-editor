@@ -52,6 +52,7 @@ export interface WorkspaceSettings {
   autoSave: boolean;
   autoSaveConfigured: boolean;
   extraIgnorePatterns: string[];
+  formatOnSave: boolean;
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
   javaScriptTypeScriptAutoImports: boolean;
@@ -112,6 +113,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     autoSave: true,
     autoSaveConfigured: true,
     extraIgnorePatterns: [],
+    formatOnSave: false,
     intelligenceMode: "basic",
     intelephensePath: null,
     javaScriptTypeScriptAutoImports: true,
@@ -199,6 +201,7 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.extraIgnorePatterns,
       defaults.extraIgnorePatterns,
     ),
+    formatOnSave: normalizeBoolean(value.formatOnSave, defaults.formatOnSave),
     intelligenceMode: isIntelligenceMode(value.intelligenceMode)
       ? value.intelligenceMode
       : defaults.intelligenceMode,
