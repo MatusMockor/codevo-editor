@@ -1820,6 +1820,120 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale save errors after switching project tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const save = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+      ),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nfinal class User {}\n");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).mockImplementationOnce(async () => save.promise);
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.save",
+    );
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, "<?php\nfinal class User {}\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      save.reject(new Error("stale save"));
+      await savePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Save File" &&
+          notice.message.includes("stale save"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores stale save completions after switching project tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const save = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+      ),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nfinal class User {}\n");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).mockImplementationOnce(async () => save.promise);
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.save",
+    );
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, "<?php\nfinal class User {}\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      save.resolve(undefined);
+      await savePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Saved User.php");
+  });
+
   it("ignores stale JavaScript TypeScript did-close errors after same-root session restart", async () => {
     const path = "/workspace/src/App.ts";
     const didClose = createDeferred<void>();

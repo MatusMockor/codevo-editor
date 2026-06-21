@@ -800,6 +800,17 @@ export function useWorkbenchController(
     ]);
   }, []);
 
+  const reportLanguageServerErrorForActiveWorkspaceRoot = useCallback(
+    (rootPath: string | null | undefined, error: unknown) => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return;
+      }
+
+      reportLanguageServerError(error);
+    },
+    [reportLanguageServerError],
+  );
+
   const applyAppSettings = useCallback((settings: AppSettings) => {
     appSettingsRef.current = settings;
     setAppSettings(settings);
@@ -2439,14 +2450,14 @@ export function useWorkbenchController(
           ),
         );
       } catch (error) {
-        reportLanguageServerError(error);
+        reportLanguageServerErrorForActiveWorkspaceRoot(rootPath, error);
       }
     },
     [
       enqueueDocumentSync,
       flushPendingDocumentChange,
       languageServerDocumentSyncGateway,
-      reportLanguageServerError,
+      reportLanguageServerErrorForActiveWorkspaceRoot,
     ],
   );
 
@@ -4926,11 +4937,20 @@ export function useWorkbenchController(
       return;
     }
 
+    const requestedRoot = workspaceRoot;
+    if (!requestedRoot) {
+      return;
+    }
+
     try {
       await workspaceFiles.writeTextFile(
         activeDocument.path,
         activeDocument.content,
       );
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       setDocuments((current) => ({
         ...current,
         [activeDocument.path]: {
@@ -4940,16 +4960,21 @@ export function useWorkbenchController(
       }));
       await syncSavedDocument(activeDocument);
       await syncSavedJavaScriptTypeScriptDocument(activeDocument);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       setMessage(`Saved ${activeDocument.name}`);
     } catch (error) {
-      reportError("Save File", error);
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", error);
     }
   }, [
     activeDocument,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     workspaceFiles,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
