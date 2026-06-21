@@ -5369,6 +5369,7 @@ describe("useWorkbenchController preview tabs", () => {
         "/workspace-b",
       );
     });
+    expect(getWorkbench().installingManagedPhpactor).toBe(false);
 
     await act(async () => {
       installPlanRefresh.resolve({
@@ -5419,6 +5420,8 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
     });
     await flushAsyncTurns();
+
+    expect(getWorkbench().installingManagedPhpactor).toBe(false);
 
     await act(async () => {
       installManagedPhpactor.reject(new Error("stale managed install"));

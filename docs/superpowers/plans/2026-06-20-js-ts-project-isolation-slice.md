@@ -4886,3 +4886,50 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Rename Success Active Workspace Guard
 
 - Committed as `6905bd76 Guard rename success by active workspace`.
+
+## Next Slice: Managed PHPactor Install Loading Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3b04ff4d Record rename success guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 840 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Managed PHPactor install completion/error paths already avoided stale messages after project-tab switches.
+- The global `installingManagedPhpactor` loading flag was not rooted.
+- A pending install from `/workspace-a` could keep `/workspace-b` looking busy, and a stale `finally` could clear a newer install's loading state.
+
+### Implementation Choice
+
+- Track the workspace root that owns the managed PHPactor install.
+- Reset the install loading state when opening another workspace.
+- Ignore duplicate install requests only for the same owning root.
+- Clear the loading state in `finally` only if the finishing request still owns the install root.
+- Extend existing managed install stale completion/error tests to assert the loading flag is cleared after switching tabs.
+
+### Acceptance Criteria
+
+- Stale managed PHPactor installs do not keep the newly active workspace in an installing state.
+- Stale managed PHPactor completions/errors still do not publish messages or notices into the active workspace.
+- PHP language-server plan/start/autostart tests remain green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Managed PHPactor Install Loading Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "managed PHPactor install|managed install|PHP language server plan"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP language server|managed PHPactor|manual PHP|PHP autostart|Language Server"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 840 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Managed PHPactor Install Loading Guard
+
+- Pending commit.

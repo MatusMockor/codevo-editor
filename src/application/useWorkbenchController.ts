@@ -581,6 +581,7 @@ export function useWorkbenchController(
   const phpLanguageServerAutostartAttemptsByRootRef = useRef<
     Record<string, number>
   >({});
+  const installingManagedPhpactorRootRef = useRef<string | null>(null);
   const autoStartedJavaScriptTypeScriptLanguageServerRootRef = useRef<
     string | null
   >(null);
@@ -3234,6 +3235,8 @@ export function useWorkbenchController(
       pendingIndexScanRef.current = false;
       autoStartedLanguageServerRootRef.current = null;
       phpLanguageServerAutostartAttemptsByRootRef.current = {};
+      installingManagedPhpactorRootRef.current = null;
+      setInstallingManagedPhpactor(false);
       autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
 
       try {
@@ -13880,12 +13883,16 @@ export function useWorkbenchController(
       return;
     }
 
-    if (installingManagedPhpactor) {
+    if (
+      installingManagedPhpactor &&
+      workspaceRootKeysEqual(installingManagedPhpactorRootRef.current, workspaceRoot)
+    ) {
       return;
     }
 
     setInstallingManagedPhpactor(true);
     const targetWorkspaceRoot = workspaceRoot;
+    installingManagedPhpactorRootRef.current = targetWorkspaceRoot;
 
     try {
       await phpToolGateway.installManagedPhpactor();
@@ -13943,7 +13950,15 @@ export function useWorkbenchController(
         reportLanguageServerError(error);
       }
     } finally {
-      setInstallingManagedPhpactor(false);
+      if (
+        workspaceRootKeysEqual(
+          installingManagedPhpactorRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
+        installingManagedPhpactorRootRef.current = null;
+        setInstallingManagedPhpactor(false);
+      }
     }
   }, [
     installingManagedPhpactor,
