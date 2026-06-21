@@ -766,6 +766,65 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("does not let stale workspace settings load overwrite the active project tab", async () => {
+    const workspaceASettingsLoad = createDeferred<
+      ReturnType<typeof defaultWorkspaceSettings>
+    >();
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a", "/workspace-b"],
+    };
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => appSettings),
+      loadWorkspaceSettings: vi.fn(async (path: string) => {
+        if (path === "/workspace-a") {
+          return workspaceASettingsLoad.promise;
+        }
+
+        return defaultWorkspaceSettings();
+      }),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings,
+      settingsGateway,
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
+        "/workspace-b",
+      );
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+
+    await act(async () => {
+      workspaceASettingsLoad.reject(new Error("stale workspace settings load"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Settings" &&
+          notice.message.includes("stale workspace settings load"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale directory load errors after switching project tabs", async () => {
     const workspaceADirectory = createDeferred<FileEntry[]>();
     const readDirectory = vi.fn(async (path: string) => {
@@ -27187,6 +27246,7 @@ final class InvoiceAdapter
     runtimeStatus = { kind: "stopped" as const },
     searchFiles = vi.fn(async () => []),
     searchText,
+    settingsGateway,
     workspaceDetectionGateway,
     workspaceDescriptor,
     workspaceRuntimeLifecycleGateway,
@@ -27222,6 +27282,7 @@ final class InvoiceAdapter
       query: string,
       limit: number,
     ) => Promise<TextSearchResult[]>;
+    settingsGateway?: SettingsGateway;
     workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
     workspaceDescriptor?: WorkspaceDescriptor;
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
@@ -27251,6 +27312,7 @@ final class InvoiceAdapter
       runtimeStatus,
       searchFiles,
       searchText,
+      settingsGateway,
       workspaceDetectionGateway,
       workspaceDescriptor,
       workspaceRuntimeLifecycleGateway,
@@ -27339,6 +27401,7 @@ function createControllerDependencies({
   runtimeStatus,
   searchFiles,
   searchText,
+  settingsGateway,
   workspaceDetectionGateway,
   workspaceDescriptor,
   workspaceRuntimeLifecycleGateway,
@@ -27374,6 +27437,7 @@ function createControllerDependencies({
     query: string,
     limit: number,
   ): Promise<TextSearchResult[]>;
+  settingsGateway?: SettingsGateway;
   workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
@@ -27540,12 +27604,13 @@ function createControllerDependencies({
       confirm: vi.fn(() => true),
       prompt: vi.fn(() => null),
     },
-    settingsGateway: {
-      loadAppSettings: vi.fn(async () => appSettings),
-      loadWorkspaceSettings: vi.fn(async () => workspaceSettings),
-      saveAppSettings: vi.fn(async () => undefined),
-      saveWorkspaceSettings: vi.fn(async () => undefined),
-    },
+    settingsGateway:
+      settingsGateway ?? {
+        loadAppSettings: vi.fn(async () => appSettings),
+        loadWorkspaceSettings: vi.fn(async () => workspaceSettings),
+        saveAppSettings: vi.fn(async () => undefined),
+        saveWorkspaceSettings: vi.fn(async () => undefined),
+      },
     smartModeGateway: {
       getState: vi.fn(async () => ({
         message: "Basic",

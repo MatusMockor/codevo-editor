@@ -4658,3 +4658,50 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Diagnostic Filter Active Workspace Guard
 
 - Committed as `54c53d07 Guard PHP diagnostic filter errors by active workspace`.
+
+## Next Slice: Workspace Settings Load Request Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `710038f8 Record PHP diagnostic filter guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 835 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `openWorkspacePath` awaited `settingsGateway.loadWorkspaceSettings(path)` before publishing the active root.
+- A stale `/workspace-a` settings load could resolve or reject after `/workspace-b` became active.
+- On rejection it could report a stale `Settings` notice into the active workspace; on resolution it could flip the active root back to the old tab.
+
+### Implementation Choice
+
+- Add an `openWorkspaceRequestTokenRef` next to the other request tokens.
+- Capture a token at the start of each workspace-open request.
+- Abort stale requests after close-document cleanup and after workspace settings load.
+- Suppress stale settings-load errors before they reach the global `Settings` reporter.
+- Add a preview regression where a pending `/workspace-a` settings load rejects after activating `/workspace-b`.
+
+### Acceptance Criteria
+
+- Stale workspace settings load failures do not create active-workspace `Settings` notices.
+- Stale workspace settings load completions cannot overwrite the active workspace root.
+- Normal workspace tab activation and settings save/rollback behavior remain green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Workspace Settings Load Request Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace settings load|stale directory load|workspace detection"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace tab|project tab|Settings|workspace settings|status bar|session persistence|directory load"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+- PASS: `npm test` (64 files, 837 tests)
+
+### Commit Status: Workspace Settings Load Request Guard
+
+- Pending commit.

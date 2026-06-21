@@ -570,6 +570,7 @@ export function useWorkbenchController(
   const workspaceSessionRestoredRef = useRef(false);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const lastPhpIdeReadinessSignatureRef = useRef<string | null>(null);
+  const openWorkspaceRequestTokenRef = useRef(0);
   const openFileRequestTokenRef = useRef(0);
   const gitDiffRequestTokenRef = useRef(0);
   const editorGitBaselineRequestTokenRef = useRef(0);
@@ -3117,6 +3118,10 @@ export function useWorkbenchController(
 
   const openWorkspacePath = useCallback(
     async (path: string) => {
+      const requestToken = openWorkspaceRequestTokenRef.current + 1;
+      openWorkspaceRequestTokenRef.current = requestToken;
+      const isCurrentOpenWorkspaceRequest = () =>
+        openWorkspaceRequestTokenRef.current === requestToken;
       const previousRootPath = currentWorkspaceRootRef.current;
       const cachedWorkspaceState = workspaceStateCacheRef.current[path] ?? null;
       const switchingWorkspace =
@@ -3130,6 +3135,10 @@ export function useWorkbenchController(
           closeSyncedLanguageServerDocumentsForRoot(previousRootPath),
           closeSyncedJavaScriptTypeScriptDocumentsForRoot(previousRootPath),
         ]);
+
+        if (!isCurrentOpenWorkspaceRequest()) {
+          return;
+        }
       }
 
       workspaceSessionRestoredRef.current = false;
@@ -3142,7 +3151,15 @@ export function useWorkbenchController(
       try {
         workspaceSettings = await settingsGateway.loadWorkspaceSettings(path);
       } catch (error) {
+        if (!isCurrentOpenWorkspaceRequest()) {
+          return;
+        }
+
         reportError("Settings", error);
+      }
+
+      if (!isCurrentOpenWorkspaceRequest()) {
+        return;
       }
 
       setWorkspaceRoot(path);
