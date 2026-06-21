@@ -2970,7 +2970,7 @@ export function useWorkbenchController(
 
         setWorkspaceDescriptor(descriptor);
       } catch (error) {
-        reportError("Workspace Detection", error);
+        reportErrorForActiveWorkspaceRoot(path, "Workspace Detection", error);
       }
 
       if (cachedWorkspaceState) {

@@ -642,6 +642,65 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale workspace detection errors after switching project tabs", async () => {
+    const workspaceADetection =
+      createDeferred<
+        Awaited<
+          ReturnType<WorkbenchWorkspaceGateways["detection"]["detectWorkspace"]>
+        >
+      >();
+    const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] = {
+      detectWorkspace: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          return workspaceADetection.promise;
+        }
+
+        return {
+          javaScriptTypeScript: null,
+          php: null,
+          rootPath,
+        };
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      workspaceDetectionGateway,
+    });
+    await vi.waitFor(() => {
+      expect(workspaceDetectionGateway.detectWorkspace).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(workspaceDetectionGateway.detectWorkspace).toHaveBeenCalledWith(
+        "/workspace-b",
+      );
+    });
+
+    await act(async () => {
+      workspaceADetection.reject(new Error("stale workspace detection"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Workspace Detection" &&
+          notice.message.includes("stale workspace detection"),
+      ),
+    ).toBe(false);
+  });
+
   it("treats trailing-separator project tabs as the active workspace", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -18169,6 +18228,7 @@ final class InvoiceAdapter
     runtimeStatus = { kind: "stopped" as const },
     searchFiles = vi.fn(async () => []),
     searchText,
+    workspaceDetectionGateway,
     workspaceDescriptor,
     workspaceRuntimeLifecycleGateway,
     workspaceSettings = defaultWorkspaceSettings(),
@@ -18203,6 +18263,7 @@ final class InvoiceAdapter
       query: string,
       limit: number,
     ) => Promise<TextSearchResult[]>;
+    workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
     workspaceDescriptor?: WorkspaceDescriptor;
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
     workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
@@ -18231,6 +18292,7 @@ final class InvoiceAdapter
       runtimeStatus,
       searchFiles,
       searchText,
+      workspaceDetectionGateway,
       workspaceDescriptor,
       workspaceRuntimeLifecycleGateway,
       workspaceSettings,
@@ -18318,6 +18380,7 @@ function createControllerDependencies({
   runtimeStatus,
   searchFiles,
   searchText,
+  workspaceDetectionGateway,
   workspaceDescriptor,
   workspaceRuntimeLifecycleGateway,
   workspaceSettings,
@@ -18352,6 +18415,7 @@ function createControllerDependencies({
     query: string,
     limit: number,
   ): Promise<TextSearchResult[]>;
+  workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
@@ -18364,14 +18428,15 @@ function createControllerDependencies({
     didSave: vi.fn(async () => undefined),
   };
   const workspaceGateways: WorkbenchWorkspaceGateways = {
-    detection: {
-      detectWorkspace: vi.fn(async (path) => ({
-        javaScriptTypeScript:
-          workspaceDescriptor?.javaScriptTypeScript ?? null,
-        php: workspaceDescriptor?.php ?? null,
-        rootPath: path,
-      })),
-    },
+    detection:
+      workspaceDetectionGateway ?? {
+        detectWorkspace: vi.fn(async (path) => ({
+          javaScriptTypeScript:
+            workspaceDescriptor?.javaScriptTypeScript ?? null,
+          php: workspaceDescriptor?.php ?? null,
+          rootPath: path,
+        })),
+      },
     fileSearch: {
       searchFiles,
     },
