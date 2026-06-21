@@ -3350,3 +3350,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `03a56605 Recognize Laravel exists query helpers`.
+
+## Slice: Laravel Having Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `bed99bd7 Record Laravel exists helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize Laravel fluent `having` helper variants as builder-preserving methods.
+
+### Implementation Choice
+
+- Add `havingBetween`, `havingNested`, `havingNotBetween`, `havingNotNull`, `havingNull`, `orHaving`, `orHavingBetween`, `orHavingNotBetween`, `orHavingNotNull`, and `orHavingNull` to Eloquent static/fluent builder recognition.
+- Add the same fluent helpers to base query-builder recognition while preserving existing `having`, `havingRaw`, and `orHavingRaw` support.
+- Cover classifier behavior, Eloquent builder return-type preservation, and relation-method semantic inference through a having helper chain ending in `first()`.
+
+### Acceptance Criteria
+
+- Common `having` helper variants are recognized as Laravel Eloquent builder method names.
+- Base query-builder classifiers recognize the same fluent `having` helpers.
+- Eloquent builder calls through these helpers preserve `Builder<Model>` inference.
+- Relation-method chains through these helpers infer the related model after `first()`.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "raw query builder|local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending implementation commit.
