@@ -4,6 +4,8 @@ import type {
   LanguageServerRange,
   LanguageServerRefreshEvent,
   LanguageServerRefreshGateway,
+  LanguageServerWorkspaceEditEvent,
+  LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import type {
   LanguageServerRuntimeCapabilities,
@@ -4335,9 +4337,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       monaco as any,
       providerContext({ applyWorkspaceEdit, workspaceEditGateway }),
     );
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(model.pushEditOperations).toHaveBeenCalledTimes(1);
+    });
 
-    expect(model.pushEditOperations).toHaveBeenCalledTimes(1);
     expect(model.pushEditOperations).toHaveBeenCalledWith(
       [],
       [
@@ -4372,6 +4375,62 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     disposable.dispose();
 
     expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it("drops in-flight server-initiated workspace edits after switching project tabs", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    let activeRoot = "/project";
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const pendingFlush = createDeferred<void>();
+    const flushPendingDocumentChange = vi.fn(async () => pendingFlush.promise);
+    let editListener:
+      | ((event: LanguageServerWorkspaceEditEvent) => void)
+      | null = null;
+    const workspaceEditGateway: LanguageServerWorkspaceEditGateway = {
+      subscribeWorkspaceEdits: vi.fn(async (listener) => {
+        editListener = listener;
+        return () => undefined;
+      }),
+    };
+    monaco.editor.getModels.mockReturnValue([model]);
+
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        flushPendingDocumentChange,
+        getWorkspaceRoot: () => activeRoot,
+        workspaceEditGateway,
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(editListener).not.toBeNull();
+    });
+    const emitWorkspaceEdit = (event: LanguageServerWorkspaceEditEvent) => {
+      expect(editListener).not.toBeNull();
+      editListener?.(event);
+    };
+
+    emitWorkspaceEdit({
+      edit: workspaceEdit("file:///project/src/user.ts", "Applied"),
+      label: "Organize imports",
+      rootPath: "/project",
+      sessionId: 1,
+    });
+
+    await vi.waitFor(() => {
+      expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+        "/project/src/user.ts",
+      );
+    });
+
+    activeRoot = "/other";
+    pendingFlush.resolve();
+    await flushMicrotasks();
+
+    expect(model.pushEditOperations).not.toHaveBeenCalled();
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
   });
 
   it("drops server-initiated workspace edits from stale TypeScript sessions", async () => {
@@ -4410,9 +4469,10 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         workspaceEditGateway,
       }),
     );
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(model.pushEditOperations).toHaveBeenCalledTimes(1);
+    });
 
-    expect(model.pushEditOperations).toHaveBeenCalledTimes(1);
     expect(model.pushEditOperations).toHaveBeenCalledWith(
       [],
       [
@@ -4806,6 +4866,12 @@ function createDeferred<T>(): {
       resolveValue?.(value);
     },
   };
+}
+
+async function flushMicrotasks(ticks = 8): Promise<void> {
+  for (let index = 0; index < ticks; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 function document(): EditorDocument {

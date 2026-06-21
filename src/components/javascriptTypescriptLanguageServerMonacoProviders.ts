@@ -3314,9 +3314,19 @@ async function applyWorkspaceEditWithOpenModels(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   edit: LanguageServerWorkspaceEdit,
   rootPath: string,
+  isStillActive: () => boolean = () => true,
 ): Promise<void> {
   const scopedEdit = workspaceEditForRoot(edit, rootPath);
+
+  if (!isStillActive()) {
+    return;
+  }
+
   const editedOpenPaths = applyWorkspaceEditToOpenModels(monaco, scopedEdit);
+
+  if (!isStillActive()) {
+    return;
+  }
 
   await context.applyWorkspaceEdit?.(scopedEdit, {
     editedOpenPaths,
@@ -3347,12 +3357,39 @@ async function applyWorkspaceEditEvent(
     return;
   }
 
+  const stillActiveAfterFlush =
+    await flushPendingDocumentChangesForWorkspaceEditEvent(
+      monaco,
+      context,
+      event,
+    );
+
+  if (!stillActiveAfterFlush) {
+    return;
+  }
+
   await applyWorkspaceEditWithOpenModels(
     monaco,
     context,
     event.edit,
     event.rootPath,
+    () => isWorkspaceEditEventActive(context, event),
   );
+}
+
+async function flushPendingDocumentChangesForWorkspaceEditEvent(
+  monaco: MonacoApi,
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  event: LanguageServerWorkspaceEditEvent,
+): Promise<boolean> {
+  const scopedEdit = workspaceEditForRoot(event.edit, event.rootPath);
+  const editedOpenPaths = openModelPathsForWorkspaceEdit(monaco, scopedEdit);
+
+  await Promise.all(
+    editedOpenPaths.map((path) => context.flushPendingDocumentChange(path)),
+  );
+
+  return isWorkspaceEditEventActive(context, event);
 }
 
 function isWorkspaceEditEventActive(
