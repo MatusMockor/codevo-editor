@@ -444,6 +444,9 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                                 "deprecatedSupport": true,
                                 "documentationFormat": ["markdown", "plaintext"],
                                 "insertReplaceSupport": true,
+                                "insertTextModeSupport": {
+                                    "valueSet": [1, 2]
+                                },
                                 "labelDetailsSupport": true,
                                 "preselectSupport": true,
                                 "snippetSupport": true,
@@ -1049,6 +1052,11 @@ mod tests {
             request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
                 ["insertReplaceSupport"],
             true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
+                ["insertTextModeSupport"]["valueSet"],
+            json!([1, 2])
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
