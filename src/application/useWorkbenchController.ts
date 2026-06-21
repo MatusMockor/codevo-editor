@@ -6815,7 +6815,12 @@ export function useWorkbenchController(
       methodName: string,
       visitedClassNames = new Set<string>(),
     ): Promise<boolean> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return false;
       }
 
@@ -6833,12 +6838,24 @@ export function useWorkbenchController(
 
       visitedClassNames.add(visitedKey);
 
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         try {
           const { content, members } = await readPhpClassMembersFromPath(
             path,
             normalizedClassName,
           );
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
 
           if (
             members.some(
@@ -6866,6 +6883,10 @@ export function useWorkbenchController(
             ) {
               return true;
             }
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
           }
 
           for (const mixinName of phpMixinClassNames(content)) {
@@ -6883,6 +6904,10 @@ export function useWorkbenchController(
               ))
             ) {
               return true;
+            }
+
+            if (!isRequestedRootActive()) {
+              return false;
             }
           }
 
@@ -6902,10 +6927,22 @@ export function useWorkbenchController(
             ) {
               return true;
             }
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
           }
         } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           continue;
         }
+      }
+
+      if (!isRequestedRootActive()) {
+        return false;
       }
 
       return false;

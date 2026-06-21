@@ -15530,6 +15530,120 @@ class CommentFactory
     ]);
   });
 
+  it("stops stale PHP static method hierarchy diagnostic traversal after switching project tabs", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const factoryPath = "/workspace-a/app/Factories/CommentFactory.php";
+    const workspaceBBaseFactoryPath =
+      "/workspace-b/app/Factories/BaseCommentFactory.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Factories\\CommentFactory;
+
+class CommentController
+{
+    public function store(): void
+    {
+        CommentFactory::make();
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 37,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const staleFactoryRead = createDeferred<string>();
+    let factoryReadCount = 0;
+    let workspaceBBaseFactoryReadCount = 0;
+    const diagnosticPosition = positionAfter(controllerSource, "make");
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === factoryPath) {
+          factoryReadCount += 1;
+          return staleFactoryRead.promise;
+        }
+
+        if (path === workspaceBBaseFactoryPath) {
+          workspaceBBaseFactoryReadCount += 1;
+          return `<?php
+namespace App\\Factories;
+
+class BaseCommentFactory
+{
+    public static function make(): object {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: diagnosticPosition.column - "make".length - 1,
+            line: diagnosticPosition.lineNumber - 1,
+            message:
+              "Method App\\Factories\\CommentFactory::make() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await vi.waitFor(() => {
+      expect(factoryReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleFactoryRead.resolve(`<?php
+namespace App\\Factories;
+
+class CommentFactory extends BaseCommentFactory
+{
+}
+`);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(workspaceBBaseFactoryReadCount).toBe(0);
+  });
+
   it("suppresses implemented interface PHPDoc property diagnostics on inferred receivers", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
