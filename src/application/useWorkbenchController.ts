@@ -1043,6 +1043,31 @@ export function useWorkbenchController(
     [clearJavaScriptTypeScriptLanguageServerDiagnostics],
   );
 
+  const isLanguageServerSessionCurrentForRoot = useCallback(
+    (rootPath: string, sessionId: number) => {
+      const currentRuntimeStatus =
+        cachedLanguageServerRuntimeStatusForRoot(
+          languageServerRuntimeStatusByRootRef.current,
+          rootPath,
+        ) ??
+        (workspaceRootKeysEqual(
+          languageServerRuntimeStatusRootRef.current,
+          rootPath,
+        )
+          ? languageServerRuntimeStatusRef.current
+          : null);
+
+      return isRunningLanguageServerSessionForWorkspace(
+        currentRuntimeStatus,
+        currentRuntimeStatus?.rootPath ??
+          languageServerRuntimeStatusRootRef.current,
+        rootPath,
+        sessionId,
+      );
+    },
+    [],
+  );
+
   const applyLanguageServerDiagnostics = useCallback(
     (event: LanguageServerDiagnosticEvent) => {
       if (!event.rootPath) {
@@ -1133,12 +1158,32 @@ export function useWorkbenchController(
             [diagnosticPath]: diagnostics,
           }));
         }
-      })().catch(reportLanguageServerError);
+      })().catch((error) => {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, diagnosticsRootPath)) {
+          return;
+        }
+
+        if (
+          currentSessionId !== null &&
+          !isLanguageServerSessionCurrentForRoot(
+            diagnosticsRootPath,
+            currentSessionId,
+          )
+        ) {
+          return;
+        }
+
+        reportLanguageServerErrorForActiveWorkspaceRoot(
+          diagnosticsRootPath,
+          error,
+        );
+      });
     },
     [
+      isLanguageServerSessionCurrentForRoot,
       languageServerRuntimeStatus,
       languageServerRuntimeStatusRoot,
-      reportLanguageServerError,
+      reportLanguageServerErrorForActiveWorkspaceRoot,
     ],
   );
 
@@ -1343,31 +1388,6 @@ export function useWorkbenchController(
 
       return appSettingsRef.current.workspaceTabs.some((tabPath) =>
         workspaceRootKeysEqual(tabPath, rootPath),
-      );
-    },
-    [],
-  );
-
-  const isLanguageServerSessionCurrentForRoot = useCallback(
-    (rootPath: string, sessionId: number) => {
-      const currentRuntimeStatus =
-        cachedLanguageServerRuntimeStatusForRoot(
-          languageServerRuntimeStatusByRootRef.current,
-          rootPath,
-        ) ??
-        (workspaceRootKeysEqual(
-          languageServerRuntimeStatusRootRef.current,
-          rootPath,
-        )
-          ? languageServerRuntimeStatusRef.current
-          : null);
-
-      return isRunningLanguageServerSessionForWorkspace(
-        currentRuntimeStatus,
-        currentRuntimeStatus?.rootPath ??
-          languageServerRuntimeStatusRootRef.current,
-        rootPath,
-        sessionId,
       );
     },
     [],

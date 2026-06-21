@@ -4613,3 +4613,48 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JavaScript TypeScript Autostart Cleanup Guard
 
 - Committed as `d3d1dc01 Clear stale JavaScript TypeScript autostart state`.
+
+## Next Slice: PHP Diagnostic Filter Active Workspace Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2079af23 Record JavaScript TypeScript autostart cleanup commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 835 tests)
+- Worktree carried the in-progress diagnostic guard edit at slice resume.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP diagnostic application already rejected stale roots and sessions before applying diagnostics.
+- The async contextual PHP diagnostic filter still used a generic language-server catch handler.
+- If a root-sensitive filter dependency rejected after switching project tabs, the active workspace could receive a stale `Language Server` notice from the previous tab.
+
+### Implementation Choice
+
+- Move the PHP language-server session freshness helper above the diagnostic callback so the diagnostic catch can use it safely.
+- Guard diagnostic filter errors by the current workspace root and captured PHP LSP session before reporting.
+- Route remaining failures through the active-workspace root-specific language-server reporter.
+- Add a preview regression where a stale trait host-method diagnostic search rejects after switching from `/workspace-a` to `/workspace-b`.
+
+### Acceptance Criteria
+
+- Stale PHP diagnostic filter failures do not surface notices in the newly active workspace.
+- Active-root PHP diagnostic failures can still report through the existing language-server notice path.
+- Existing stale diagnostic traversal and trait host-method guards remain green.
+- Focused/broader/full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Diagnostic Filter Active Workspace Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP diagnostic filter|stale PHP trait host-method search|stale PHP method hierarchy diagnostic traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "diagnostic|Diagnostics|runtime subscription"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Diagnostic Filter Active Workspace Guard
+
+- Pending commit.

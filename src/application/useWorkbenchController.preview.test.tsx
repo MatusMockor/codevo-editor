@@ -20171,6 +20171,107 @@ class Comment
     expect(commentReadCount).toBe(0);
   });
 
+  it("ignores stale PHP diagnostic filter errors after switching project tabs", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const softDeletesPath =
+      "/workspace-a/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php";
+    const softDeletesSource = `<?php
+namespace Illuminate\\Database\\Eloquent;
+
+trait SoftDeletes
+{
+    public function forceDelete()
+    {
+        if ($this->fireModelEvent('forceDeleting') === false) {
+            return false;
+        }
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 41,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const staleTraitHostSearch = createDeferred<TextSearchResult[]>();
+    const searchText = vi.fn(async (_root, query) =>
+      query === "SoftDeletes" ? staleTraitHostSearch.promise : [],
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === softDeletesPath) {
+          return softDeletesSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 20,
+            line: lineNumberOf(softDeletesSource, "fireModelEvent") - 1,
+            message:
+              'Method "fireModelEvent" does not exist on trait "Illuminate\\Database\\Eloquent\\SoftDeletes"',
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(softDeletesPath),
+        version: null,
+      });
+    });
+    await vi.waitFor(() => {
+      expect(searchText).toHaveBeenCalledWith("/workspace-a", "SoftDeletes", 200);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleTraitHostSearch.reject(new Error("stale diagnostic filter"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale diagnostic filter"),
+      ),
+    ).toBe(false);
+  });
+
   it("keeps trait host-method diagnostics when no host hierarchy provides the method", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
