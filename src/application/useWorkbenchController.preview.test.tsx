@@ -6178,6 +6178,78 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("does not notify JavaScript TypeScript did-rename after switching project tabs", async () => {
+    const oldPath = "/workspace-a/src/User.ts";
+    const newPath = "/workspace-a/src/Account.ts";
+    const rename = createDeferred<void>();
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 61,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+    vi.mocked(dependencies.workspaceGateways.files.renamePath).mockImplementationOnce(
+      async () => rename.promise,
+    );
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+        oldPath,
+        newPath,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      rename.resolve(undefined);
+      await renamePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+    ).not.toHaveBeenCalled();
+  });
+
   it("ignores stale JavaScript TypeScript did-rename errors after same-root session restart", async () => {
     const oldPath = "/workspace/src/User.ts";
     const newPath = "/workspace/src/Account.ts";
@@ -7013,6 +7085,63 @@ describe("useWorkbenchController preview tabs", () => {
           notice.message.includes("stale create file"),
       ),
     ).toBe(false);
+  });
+
+  it("does not notify JavaScript TypeScript watched files after switching project tabs", async () => {
+    const newPath = "/workspace-a/src/NewWidget.ts";
+    const creation = createDeferred<void>();
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 62,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("src/NewWidget.ts");
+    vi.mocked(
+      dependencies.workspaceGateways.files.createTextFile,
+    ).mockImplementationOnce(async () => creation.promise);
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.new",
+    );
+    let createPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      createPromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.createTextFile,
+      ).toHaveBeenCalledWith(newPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      creation.resolve(undefined);
+      await createPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles,
+    ).not.toHaveBeenCalled();
   });
 
   it("ignores stale create folder errors after switching project tabs", async () => {

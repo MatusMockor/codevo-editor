@@ -5126,6 +5126,10 @@ export function useWorkbenchController(
           requestedSessionId,
         );
 
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       try {
         await javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles(
           requestedRoot,
@@ -5183,6 +5187,10 @@ export function useWorkbenchController(
           requestedRoot,
           requestedSessionId,
         );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
 
       try {
         await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeWatchedFiles(

@@ -7693,3 +7693,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `f0d99857 Cover PHP didSave same-root restart staleness`.
+
+## Slice: JavaScript TypeScript Rename Watcher Workspace Switch Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2e3233fa Record PHP didSave restart coverage commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 821 tests)
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prevent stale JavaScript/TypeScript rename and watched-file notifications from being sent to a previous workspace after switching project tabs.
+
+### Implementation Choice
+
+- Re-check active root/session before sending `didRenameFiles`.
+- Re-check active root/session before sending `didChangeWatchedFiles`.
+- Add regressions for a pending JS/TS rename and a pending JS/TS file create that complete after the user switches workspace tabs.
+
+### Acceptance Criteria
+
+- Stale JS/TS `didRenameFiles` is not sent after switching workspace tabs.
+- Stale JS/TS `didChangeWatchedFiles` is not sent after switching workspace tabs.
+- Existing same-root stale rename/watched-file error handling remains green.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "did-rename after switching|watched files after switching|did-rename errors after same-root|watched-file errors after same-root"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rename|watched files|create file|delete"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
