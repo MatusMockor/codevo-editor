@@ -1187,3 +1187,42 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `b7342493 Guard managed PHPactor install by active workspace`.
+
+### Slice: Manual PHP Server Start Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `88260770 Record managed PHPactor install guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed manual PHP language-server start failures from surfacing after the user switches project tabs.
+
+#### Implementation Choice
+
+- Capture `requestedRoot` before calling `languageServerRuntimeGateway.start`.
+- Re-check the active workspace root before applying the returned runtime status.
+- Preserve the PHP language-server crash/error reporting path, but only invoke it when the requested root is still active.
+- Add a regression where `/workspace-a` starts the PHP language server, the start promise remains pending, the user switches to `/workspace-b`, and the stale rejection cannot create a Language Server notice.
+
+#### Acceptance Criteria
+
+- Stale manual PHP language-server start failures do not surface in a different active workspace.
+- Normal restored PHP IDE service startup still passes.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores manual PHP language server start errors after switching project tabs|starts IDE services when a restored PHP workspace is already in IDE mode"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `c0841093 Guard manual PHP server start by active workspace`.
