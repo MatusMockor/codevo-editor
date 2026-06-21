@@ -5856,4 +5856,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `2118c6c9 Guard stale PHP class source resolver fallback`.
