@@ -8273,3 +8273,41 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Guard Stale Laravel JSON Translation Targets
 
 - Committed as `3cb25e7b Guard stale Laravel JSON translation targets`.
+
+## Next Slice: Guard Stale Laravel JSON Translation Discovery
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `7903c9ef Record Laravel JSON translation guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- JSON translation completion and target navigation discover JSON locale files by reading `lang/` or `resources/lang/`.
+- The previous JSON guard covered delayed JSON file reads, while the discovery directory read itself needed explicit stale-tab coverage.
+
+### Implementation Choice
+
+- Add preview regressions where JSON translation completion and Go to Definition start in `/workspace-a` and block on reading `/workspace-a/lang`.
+- Switch to `/workspace-b`, resolve the stale discovery read with `es.json`, and assert stale completions/targets are dropped.
+
+### Acceptance Criteria
+
+- Delayed Laravel JSON translation discovery returns no stale suggestions after workspace-tab switch.
+- Delayed Laravel JSON translation target discovery does not open stale files after workspace-tab switch.
+- Existing JSON/PHP-array translation behavior remains unchanged.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Guard Stale Laravel JSON Translation Discovery
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JSON translation|Laravel translation"` passed: 13 passed, 383 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 396 passed.
+- `npm run check` passed.
+- `npm test` passed: 69 files, 1051 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Guard Stale Laravel JSON Translation Discovery
+
+- Pending commit.
