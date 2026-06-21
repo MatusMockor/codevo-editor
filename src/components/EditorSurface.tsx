@@ -42,6 +42,7 @@ import {
   phpStaticAccessCompletionContextAt,
 } from "../domain/phpMethodCompletions";
 import { phpLaravelConfigReferenceContextAt } from "../domain/phpLaravelConfig";
+import { phpLaravelEnvReferenceContextAt } from "../domain/phpLaravelEnv";
 import { phpLaravelRelationStringCompletionContextAt } from "../domain/phpNavigation";
 import { phpLaravelViewReferenceContextAt } from "../domain/phpLaravelViews";
 import type { EditorDocument } from "../domain/workspace";
@@ -301,6 +302,7 @@ export function EditorSurface({
       phpMemberAccessCompletionContextAt(source, position) ||
         phpStaticAccessCompletionContextAt(source, position) ||
         phpLaravelRelationStringCompletionContextAt(source, position) ||
+        phpLaravelEnvReferenceContextAt(source, position) ||
         phpLaravelConfigReferenceContextAt(source, position) ||
         phpLaravelViewReferenceContextAt(source, position),
     );

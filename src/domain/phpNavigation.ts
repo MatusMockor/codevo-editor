@@ -13,6 +13,7 @@ import {
   type Psr4Root,
 } from "./workspace";
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
+import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 
@@ -41,6 +42,10 @@ export type PhpIdentifierContext =
   | {
       configKey: string;
       kind: "laravelConfigString";
+    }
+  | {
+      envName: string;
+      kind: "laravelEnvString";
     }
   | {
       kind: "laravelViewString";
@@ -114,6 +119,15 @@ export function phpIdentifierContextAt(
     return {
       kind: "laravelNamedRouteString",
       routeName: namedRoute.name,
+    };
+  }
+
+  const envReference = phpLaravelEnvReferenceContextAt(source, position);
+
+  if (envReference) {
+    return {
+      envName: envReference.name,
+      kind: "laravelEnvString",
     };
   }
 

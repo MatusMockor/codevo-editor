@@ -31,6 +31,7 @@ import {
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { phpLaravelConfigReferenceContextAt } from "../domain/phpLaravelConfig";
+import { phpLaravelEnvReferenceContextAt } from "../domain/phpLaravelEnv";
 import { phpLaravelRelationStringCompletionContextAt } from "../domain/phpNavigation";
 import { phpLaravelViewReferenceContextAt } from "../domain/phpLaravelViews";
 import {
@@ -2618,6 +2619,8 @@ async function provideCompletionItems(
   );
   const relationStringCompletionContext =
     phpLaravelRelationStringCompletionContextAt(source, position);
+  const envStringCompletionContext =
+    phpLaravelEnvReferenceContextAt(source, position);
   const configStringCompletionContext =
     phpLaravelConfigReferenceContextAt(source, position);
   const viewStringCompletionContext =
@@ -2628,6 +2631,7 @@ async function provideCompletionItems(
   const isScopedCompletion = Boolean(
     isMemberOrStaticAccessCompletion ||
       relationStringCompletionContext ||
+      envStringCompletionContext ||
       configStringCompletionContext ||
       viewStringCompletionContext,
   );
@@ -2737,6 +2741,7 @@ async function phpMethodSuggestions(
       command:
         item.kind !== "property" &&
         item.kind !== "config" &&
+        item.kind !== "env" &&
         item.kind !== "relation" &&
         item.kind !== "route" &&
         item.kind !== "view" &&
@@ -3044,6 +3049,10 @@ function phpMethodCompletionKind(
     return monaco.languages.CompletionItemKind.Value;
   }
 
+  if (item.kind === "env") {
+    return monaco.languages.CompletionItemKind.Value;
+  }
+
   if (item.kind === "view") {
     return monaco.languages.CompletionItemKind.File;
   }
@@ -3076,6 +3085,10 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
     return `Laravel config - ${item.declaringClassName}`;
   }
 
+  if (item.kind === "env") {
+    return `Laravel env - ${item.declaringClassName}`;
+  }
+
   if (item.kind === "view") {
     return `Laravel view - ${item.declaringClassName}`;
   }
@@ -3101,6 +3114,10 @@ function phpMethodDocumentation(item: PhpMethodCompletion): string {
 
   if (item.kind === "config") {
     return `Laravel config\n\n${item.name}`;
+  }
+
+  if (item.kind === "env") {
+    return `Laravel env\n\n${item.name}`;
   }
 
   if (item.kind === "view") {
@@ -3133,6 +3150,8 @@ function phpMethodCompletionLabel(
         ? `route - ${item.declaringClassName}`
         : item.kind === "config"
         ? `config - ${item.declaringClassName}`
+        : item.kind === "env"
+        ? `env - ${item.declaringClassName}`
         : item.kind === "view"
         ? `view - ${item.declaringClassName}`
         : item.kind === "property"
@@ -3141,6 +3160,7 @@ function phpMethodCompletionLabel(
     detail:
       item.kind === "property" ||
       item.kind === "config" ||
+      item.kind === "env" ||
       item.kind === "relation" ||
       item.kind === "route" ||
       item.kind === "view"
@@ -3165,6 +3185,7 @@ function phpMethodSnippet(item: PhpMethodCompletion): string {
   if (
     item.kind === "property" ||
     item.kind === "config" ||
+    item.kind === "env" ||
     item.kind === "relation" ||
     item.kind === "route" ||
     item.kind === "view"

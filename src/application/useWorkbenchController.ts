@@ -211,6 +211,13 @@ import {
   type PhpLaravelConfigTarget,
 } from "../domain/phpLaravelConfig";
 import {
+  phpLaravelEnvCompletionInsertText,
+  phpLaravelEnvEntriesFromSource,
+  phpLaravelEnvReferenceContextAt,
+  phpLaravelEnvTargetFromSource,
+  type PhpLaravelEnvTarget,
+} from "../domain/phpLaravelEnv";
+import {
   phpLaravelViewCompletionInsertText,
   phpLaravelViewNameCandidateRelativePaths,
   phpLaravelViewNameFromRelativePath,
@@ -354,6 +361,8 @@ interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
 }
 
 type PhpLaravelConfigNavigationTarget = PhpLaravelConfigTarget;
+
+type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
 
 interface CachedWorkspaceWorkbenchState {
   activePath: string | null;
@@ -7926,6 +7935,91 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const findPhpLaravelEnvTarget = useCallback(
+    async (envName: string): Promise<PhpLaravelEnvNavigationTarget | null> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isLaravelFrameworkActive || !requestedRoot) {
+        return null;
+      }
+
+      const relativePath = ".env";
+      const path = joinWorkspacePath(requestedRoot, relativePath);
+
+      try {
+        const content = await readNavigationFileContent(path);
+
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        const target = phpLaravelEnvTargetFromSource(content, envName);
+
+        if (!target) {
+          return null;
+        }
+
+        return {
+          ...target,
+          path,
+          relativePath,
+        };
+      } catch {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        return null;
+      }
+    },
+    [
+      isLaravelFrameworkActive,
+      readNavigationFileContent,
+      workspaceRoot,
+    ],
+  );
+
+  const collectPhpLaravelEnvTargets = useCallback(async (): Promise<
+    PhpLaravelEnvTarget[]
+  > => {
+    const requestedRoot = workspaceRoot;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!isLaravelFrameworkActive || !requestedRoot) {
+      return [];
+    }
+
+    const relativePath = ".env";
+    const path = joinWorkspacePath(requestedRoot, relativePath);
+
+    try {
+      const content = await readNavigationFileContent(path);
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      return phpLaravelEnvEntriesFromSource(content).map((target) => ({
+        ...target,
+        path,
+        relativePath,
+      }));
+    } catch {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      return [];
+    }
+  }, [
+    isLaravelFrameworkActive,
+    readNavigationFileContent,
+    workspaceRoot,
+  ]);
+
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
       const methodLookup = methodName.toLowerCase();
@@ -11696,6 +11790,31 @@ export function useWorkbenchController(
           }));
       }
 
+      const envContext = phpLaravelEnvReferenceContextAt(source, position);
+
+      if (isLaravelFrameworkActive && envContext && activeDocument) {
+        const normalizedPrefix = envContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelEnvTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.name.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelEnvCompletionInsertText(target.name),
+            kind: "env",
+            name: target.name,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const configContext = phpLaravelConfigReferenceContextAt(source, position);
 
       if (isLaravelFrameworkActive && configContext && activeDocument) {
@@ -11873,6 +11992,7 @@ export function useWorkbenchController(
     },
     [
       collectPhpLaravelConfigTargets,
+      collectPhpLaravelEnvTargets,
       collectPhpLaravelRelationCompletionsForClass,
       collectPhpLaravelNamedRouteTargets,
       collectPhpLaravelViewTargets,
@@ -13288,6 +13408,40 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelEnvDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "laravelEnvString" }>,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelEnvTarget(context.envName);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(`No Laravel env key ${context.envName} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.name);
+    },
+    [
+      activeDocument,
+      findPhpLaravelEnvTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpClassIdentifierDefinition = useCallback(
     async (name: string): Promise<boolean> => {
       if (!activeDocument) {
@@ -13342,6 +13496,10 @@ export function useWorkbenchController(
       return goToPhpLaravelNamedRouteDefinition(context);
     }
 
+    if (context.kind === "laravelEnvString") {
+      return goToPhpLaravelEnvDefinition(context);
+    }
+
     if (context.kind === "laravelConfigString") {
       return goToPhpLaravelConfigDefinition(context);
     }
@@ -13376,6 +13534,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpLaravelConfigDefinition,
+    goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelViewDefinition,
@@ -13882,6 +14041,10 @@ export function useWorkbenchController(
           return goToPhpLaravelNamedRouteDefinition(context);
         }
 
+        if (context.kind === "laravelEnvString") {
+          return goToPhpLaravelEnvDefinition(context);
+        }
+
         if (context.kind === "laravelConfigString") {
           return goToPhpLaravelConfigDefinition(context);
         }
@@ -13995,6 +14158,7 @@ export function useWorkbenchController(
     activeDocument,
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelConfigDefinition,
+    goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelViewDefinition,

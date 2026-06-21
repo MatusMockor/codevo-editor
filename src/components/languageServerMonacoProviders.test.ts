@@ -820,6 +820,65 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("inserts Laravel env key completions as plain strings", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: ".env",
+        insertText: "APP_NAME",
+        kind: "env" as const,
+        name: "APP_NAME",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction name(): string\n{\n    return env('APP_NA');\n}\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    return env('APP_NA');",
+        word: {
+          endColumn: 25,
+          startColumn: 19,
+        },
+      }),
+      {
+        column: 25,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        command: undefined,
+        detail: "Laravel env - .env",
+        documentation: "Laravel env\n\nAPP_NAME",
+        insertText: "APP_NAME",
+        insertTextRules: 4,
+        kind: 12,
+        label: {
+          description: "env - .env",
+          detail: "",
+          label: "APP_NAME",
+        },
+      }),
+    ]);
+  });
+
   it("inserts Laravel view name completions as plain string suffixes", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [

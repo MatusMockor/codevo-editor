@@ -31983,6 +31983,284 @@ return [
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  it("suggests Laravel env keys inside env helper strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const envPath = "/workspace/.env";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return env('APP_NA');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === envPath) {
+          return "APP_NAME=Codevo\nAPP_ENV=local\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "APP_NA"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: ".env",
+        insertText: "APP_NAME",
+        kind: "env",
+        name: "APP_NAME",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("stops stale Laravel env completions after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const envPath = "/workspace-a/.env";
+    const staleEnvRead = createDeferred<string>();
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return env('APP_NA');
+    }
+}
+`;
+    let envReadCount = 0;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === envPath) {
+          envReadCount += 1;
+          return staleEnvRead.promise;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "APP_NA"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(envReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleEnvRead.resolve("APP_NAME=Stale\n");
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
+  it("opens Laravel env keys before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const envPath = "/workspace/.env";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return env('APP_NAME');
+    }
+}
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === envPath) {
+          return "APP_NAME=Codevo\nAPP_ENV=local\n";
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "APP_NAME"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(envPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: envPath,
+      position: {
+        column: 1,
+        lineNumber: 1,
+      },
+    });
+  });
+
+  it("drops stale Laravel env targets after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const envPath = "/workspace-a/.env";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return env('APP_NAME');
+    }
+}
+`;
+    const staleEnvRead = createDeferred<string>();
+    let envReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === envPath) {
+          envReadCount += 1;
+          return staleEnvRead.promise;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "APP_NAME"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(envReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleEnvRead.resolve("APP_NAME=Stale\n");
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(envPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("suggests Laravel Blade views inside view helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const viewsRoot = "/workspace/resources/views";

@@ -7944,3 +7944,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Guard Stale Laravel Config File Completion Reads
 
 - Committed as `96f063ea Guard stale Laravel config completions`.
+
+## Next Slice: Laravel Env Key Navigation And Completion
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6c693bc9 Record Laravel config completion guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel config files commonly point at `.env` through `env('APP_NAME')`, but those string keys currently fall through to generic PHP/LSP behavior.
+- A narrow `.env` parser provides useful PhpStorm-like navigation and completion without introducing a broader Laravel environment index.
+- The `.env` read is asynchronous and must stay workspace-tab scoped.
+
+### Implementation Choice
+
+- Add a domain helper for `env(...)` string contexts and dotenv key parsing.
+- Resolve `env('APP_NAME')` to the matching key line in the workspace `.env` file.
+- Suggest `.env` keys inside env helper strings as plain string completions.
+- Keep `.env.example`, encrypted env files, dynamic/interpolated keys, and non-standard dotenv key formats out of scope.
+
+### Acceptance Criteria
+
+- Cmd+B on `env('APP_NAME')` opens `.env` at `APP_NAME`.
+- Completion inside `env('APP_NA')` suggests `APP_NAME`.
+- Stale workspace-tab `.env` completion and target reads return no stale suggestions or navigation.
+- Focused domain/provider/preview tests, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel Env Key Navigation And Completion
+
+- `npm test -- src/domain/phpLaravelEnv.test.ts` passed: 5 passed.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts -t "Laravel env|Laravel config|Laravel view|Laravel route"` passed: 4 passed, 128 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel env|Laravel config"` passed: 9 passed, 371 skipped.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts` passed: 132 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 380 passed.
+- `npm run check` passed.
+- `npm test` passed: 68 files, 1024 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Env Key Navigation And Completion
+
+- Pending commit.
