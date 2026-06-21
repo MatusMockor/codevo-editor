@@ -3431,4 +3431,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending implementation commit.
+- Committed as `d6214f67 Recognize Laravel lock query helpers`.
