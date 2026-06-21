@@ -15532,7 +15532,16 @@ export function useWorkbenchController(
 
         unsubscribe = dispose;
       })
-      .catch((error) => reportLanguageServerError(error));
+      .catch((error) => {
+        if (
+          !active ||
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)
+        ) {
+          return;
+        }
+
+        reportLanguageServerErrorForActiveWorkspaceRoot(workspaceRoot, error);
+      });
 
     return () => {
       active = false;
@@ -15541,7 +15550,7 @@ export function useWorkbenchController(
   }, [
     handleLanguageServerRuntimeStatus,
     languageServerRuntimeGateway,
-    reportLanguageServerError,
+    reportLanguageServerErrorForActiveWorkspaceRoot,
     reportError,
     workspaceRoot,
   ]);
@@ -15577,12 +15586,19 @@ export function useWorkbenchController(
           );
         })
         .catch((error) => {
-          if (!active) {
+          if (
+            !active ||
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)
+          ) {
             return;
           }
 
           setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(workspaceRoot);
-          reportError("JavaScript/TypeScript", error);
+          reportErrorForActiveWorkspaceRoot(
+            workspaceRoot,
+            "JavaScript/TypeScript",
+            error,
+          );
         });
     } else {
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
@@ -15605,7 +15621,20 @@ export function useWorkbenchController(
 
         unsubscribe = dispose;
       })
-      .catch((error) => reportError("JavaScript/TypeScript", error));
+      .catch((error) => {
+        if (
+          !active ||
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)
+        ) {
+          return;
+        }
+
+        reportErrorForActiveWorkspaceRoot(
+          workspaceRoot,
+          "JavaScript/TypeScript",
+          error,
+        );
+      });
 
     return () => {
       active = false;
@@ -15614,7 +15643,7 @@ export function useWorkbenchController(
   }, [
     handleJavaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     workspaceRoot,
   ]);
 

@@ -4400,3 +4400,45 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JavaScript TypeScript Provider Same-Root Response Coverage
 
 - Committed as `6c0caa84 Cover JavaScript TypeScript provider same-root responses`.
+
+## Next Slice: Runtime Subscription Active Workspace Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e5a9ac35 Record JavaScript TypeScript provider same-root response commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP and JS/TS runtime status subscriptions already ignored status events after effect cleanup.
+- Their `subscribeStatus(...).catch(...)` paths still reported errors without checking whether the originating workspace effect was active.
+- A delayed subscription rejection from `/workspace-a` after switching to `/workspace-b` could surface as a stale runtime notice in the new workspace.
+
+### Implementation Choice
+
+- Gate PHP runtime subscription failures by the effect `active` flag and current workspace root before reporting.
+- Gate JS/TS runtime subscription failures the same way.
+- Add the same current-root guard to the JS/TS `getStatus` catch path for symmetry with PHP.
+- Add preview regressions for stale PHP and JS/TS runtime subscription rejections after switching workspace tabs.
+
+### Acceptance Criteria
+
+- Stale PHP runtime subscription errors do not create `Language Server` notices after switching workspace tabs.
+- Stale JS/TS runtime subscription errors do not create `JavaScript/TypeScript` notices after switching workspace tabs.
+- Existing runtime status, document sync, and project-tab tests remain green.
+- Focused/broader preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: Runtime Subscription Active Workspace Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "runtime subscription errors"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "runtime status|runtime subscription|same-root did-open|session errors scoped|project tab"`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: Runtime Subscription Active Workspace Guard
+
+- Pending commit.

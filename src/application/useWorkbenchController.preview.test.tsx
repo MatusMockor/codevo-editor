@@ -1652,6 +1652,115 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("ignores stale PHP runtime subscription errors after switching project tabs", async () => {
+    const subscription = createDeferred<() => void>();
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => ({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath,
+        sessionId: 231,
+      })),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi
+        .fn()
+        .mockImplementationOnce(async () => subscription.promise)
+        .mockImplementation(async () => () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      subscription.reject(new Error("stale php runtime subscription"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe(
+      "Error: stale php runtime subscription",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale php runtime subscription"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores stale JavaScript and TypeScript runtime subscription errors after switching project tabs", async () => {
+    const subscription = createDeferred<() => void>();
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async (rootPath) => ({
+          capabilities: emptyLanguageServerCapabilities(),
+          kind: "running" as const,
+          rootPath,
+          sessionId: 232,
+        })),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi
+          .fn()
+          .mockImplementationOnce(async () => subscription.promise)
+          .mockImplementation(async () => () => undefined),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      subscription.reject(new Error("stale js runtime subscription"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe(
+      "Error: stale js runtime subscription",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale js runtime subscription"),
+      ),
+    ).toBe(false);
+  });
+
   it("keeps JavaScript TypeScript document sync state after stale same-root did-open failure", async () => {
     const path = "/workspace/src/App.ts";
     const didOpenAttempts: Deferred<void>[] = [];
