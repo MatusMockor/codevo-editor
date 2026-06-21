@@ -839,12 +839,20 @@ export function useWorkbenchController(
   const persistWorkspaceSettings = useCallback(
     async (rootPath: string, nextSettings: WorkspaceSettings) => {
       const previousSettings = workspaceSettingsRef.current;
-      applyWorkspaceSettings(nextSettings);
+      const isRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath);
+
+      if (isRootActive()) {
+        applyWorkspaceSettings(nextSettings);
+      }
 
       try {
         await settingsGateway.saveWorkspaceSettings(rootPath, nextSettings);
       } catch (error) {
-        applyWorkspaceSettings(previousSettings);
+        if (isRootActive()) {
+          applyWorkspaceSettings(previousSettings);
+        }
+
         throw error;
       }
     },
@@ -4995,12 +5003,13 @@ export function useWorkbenchController(
 
   const setStatusBarItemVisibility = useCallback(
     async (key: keyof StatusBarItemVisibility, visible: boolean) => {
-      if (!workspaceRoot) {
+      const requestedRoot = workspaceRoot;
+      if (!requestedRoot) {
         return;
       }
 
       try {
-        await persistWorkspaceSettings(workspaceRoot, {
+        await persistWorkspaceSettings(requestedRoot, {
           ...workspaceSettingsRef.current,
           statusBar: {
             ...workspaceSettingsRef.current.statusBar,
@@ -5008,10 +5017,10 @@ export function useWorkbenchController(
           },
         });
       } catch (error) {
-        reportError("Status Bar", error);
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "Status Bar", error);
       }
     },
-    [persistWorkspaceSettings, reportError, workspaceRoot],
+    [persistWorkspaceSettings, reportErrorForActiveWorkspaceRoot, workspaceRoot],
   );
 
   const setSmartMode = useCallback(

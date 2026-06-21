@@ -7211,6 +7211,73 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale status bar setting rollbacks after switching project tabs", async () => {
+    const statusBarSave = createDeferred<void>();
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      statusBar: {
+        ...defaultWorkspaceSettings().statusBar,
+        message: false,
+      },
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      workspaceSettings,
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockImplementationOnce(
+      async () => statusBarSave.promise,
+    );
+
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = getWorkbench().setStatusBarItemVisibility("message", true);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.settingsGateway.saveWorkspaceSettings,
+      ).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({
+          statusBar: expect.objectContaining({ message: true }),
+        }),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setStatusBarItemVisibility("message", true);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
+
+    await act(async () => {
+      statusBarSave.reject(new Error("stale status bar"));
+      await savePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Status Bar" &&
+          notice.message.includes("stale status bar"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale session persistence errors after switching project tabs", async () => {
     const sessionSave = createDeferred<void>();
     const { dependencies, getWorkbench } = renderController({
