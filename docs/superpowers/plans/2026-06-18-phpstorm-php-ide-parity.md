@@ -3965,3 +3965,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `c5025e55 Complete Laravel signed redirect route names`.
+
+## Slice: Laravel Uri Route Names - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b9454e2a Record Laravel signed redirect route names commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Provide Laravel named-route completions for fluent `Uri::route(...)` calls.
+
+### Implementation Choice
+
+- Add `Uri::route` to named-route reference detection next to the existing `Uri::signedRoute` and `Uri::temporarySignedRoute` support.
+- Keep existing helper, redirector, URL, signed URL, and `Route::has` first-argument behavior unchanged.
+- Add parser coverage for `Uri::route('comments.uri')`.
+- Add workbench coverage proving route-name completions work inside `Uri::route('comments.ur')`.
+
+### Acceptance Criteria
+
+- `Uri::route(...)` string literals produce named-route reference contexts.
+- Laravel named-route completions work inside `Uri::route(...)`.
+- Existing named-route helper, signed URL, signed redirect, and Redirect facade route completions still pass.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "supported first string arguments|Uri route strings|signed redirect route strings|signed URL route strings|Redirect facade route strings|suggests Laravel named routes inside route helper strings"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `828a610a Complete Laravel Uri route names`.
