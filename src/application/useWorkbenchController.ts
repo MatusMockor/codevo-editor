@@ -10877,27 +10877,33 @@ export function useWorkbenchController(
   const implementationTargetsFromLocations = useCallback(
     async (
       locations: LanguageServerLocation[],
+      shouldContinue: () => boolean = () => true,
     ): Promise<ImplementationTarget[]> => {
-      const targets = await Promise.all(
-        locations.map(async (location) => {
-          const path = pathFromLanguageServerUri(location.uri);
-          let source: string | null = null;
-
-          if (path) {
-            try {
-              source =
-                documents[path]?.content ?? (await workspaceFiles.readTextFile(path));
-            } catch {
-              source = null;
-            }
-          }
-
-          return implementationTargetFromLocation(location, source);
-        }),
-      );
       const uniqueTargets = new Map<string, ImplementationTarget>();
 
-      for (const target of targets) {
+      for (const location of locations) {
+        if (!shouldContinue()) {
+          return [];
+        }
+
+        const path = pathFromLanguageServerUri(location.uri);
+        let source: string | null = null;
+
+        if (path) {
+          try {
+            source =
+              documents[path]?.content ?? (await workspaceFiles.readTextFile(path));
+          } catch {
+            source = null;
+          }
+        }
+
+        if (!shouldContinue()) {
+          return [];
+        }
+
+        const target = implementationTargetFromLocation(location, source);
+
         if (!target) {
           continue;
         }
@@ -10992,7 +10998,10 @@ export function useWorkbenchController(
       );
 
       if (feature === "implementation" && locations.length > 1) {
-        const targets = await implementationTargetsFromLocations(locations);
+        const targets = await implementationTargetsFromLocations(
+          locations,
+          isRequestedSessionActive,
+        );
 
         if (!isRequestedSessionActive()) {
           return false;
@@ -11159,7 +11168,10 @@ export function useWorkbenchController(
       );
 
       if (feature === "implementation" && locations.length > 1) {
-        const targets = await implementationTargetsFromLocations(locations);
+        const targets = await implementationTargetsFromLocations(
+          locations,
+          isRequestedJavaScriptTypeScriptSessionActive,
+        );
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return false;
