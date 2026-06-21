@@ -12,7 +12,10 @@ import {
   useWorkbenchController,
   type WorkbenchWorkspaceGateways,
 } from "./useWorkbenchController";
-import type { IndexProgressGateway } from "../domain/indexProgress";
+import type {
+  IndexProgressGateway,
+  MetadataScanCompletionEvent,
+} from "../domain/indexProgress";
 import type { SmartModeGateway } from "../domain/intelligence";
 import type {
   LanguageServerGateway,
@@ -3595,6 +3598,78 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().message).not.toBe("Updated");
+  });
+
+  it("ignores metadata scan clear errors after switching project tabs", async () => {
+    let publishMetadataScanCompletion:
+      | ((event: MetadataScanCompletionEvent) => void)
+      | null = null;
+    const indexClear =
+      createDeferred<
+        Awaited<ReturnType<IndexProgressGateway["clearWorkspaceIndex"]>>
+      >();
+    const indexProgressGateway: IndexProgressGateway = {
+      clearWorkspaceIndex: vi.fn(async () => indexClear.promise),
+      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "started" as const,
+      })),
+      startReindex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "started" as const,
+      })),
+      subscribeMetadataScanCompletion: vi.fn(async (listener) => {
+        publishMetadataScanCompletion = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      indexProgressGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      publishMetadataScanCompletion?.({
+        databasePath: "/tmp/index.sqlite",
+        message: null,
+        report: null,
+        rootPath: "/workspace-a",
+        status: "completed",
+      });
+    });
+    await vi.waitFor(() => {
+      expect(indexProgressGateway.clearWorkspaceIndex).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      indexClear.reject(new Error("stale metadata clear"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Index" &&
+          notice.message.includes("stale metadata clear"),
+      ),
+    ).toBe(false);
   });
 
   it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
@@ -17540,6 +17615,7 @@ final class InvoiceAdapter
     appSettings = defaultAppSettings(),
     gitGateway,
     javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
+    indexProgressGateway,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerPlan,
@@ -17560,6 +17636,7 @@ final class InvoiceAdapter
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
+    indexProgressGateway?: IndexProgressGateway;
     javaScriptTypeScriptInitialRuntimeStatus?: LanguageServerRuntimeStatus;
     javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
@@ -17591,6 +17668,7 @@ final class InvoiceAdapter
     const dependencies = createControllerDependencies({
       appSettings,
       gitGateway,
+      indexProgressGateway,
       javaScriptTypeScriptInitialRuntimeStatus,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
@@ -17673,6 +17751,7 @@ function WorkbenchHarness({
 function createControllerDependencies({
   appSettings,
   gitGateway,
+  indexProgressGateway,
   javaScriptTypeScriptInitialRuntimeStatus,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
   javaScriptTypeScriptLanguageServerFeaturesGateway,
@@ -17694,6 +17773,7 @@ function createControllerDependencies({
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   gitGateway?: GitGateway;
+  indexProgressGateway?: IndexProgressGateway;
   javaScriptTypeScriptInitialRuntimeStatus: LanguageServerRuntimeStatus;
   javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
@@ -17780,24 +17860,25 @@ function createControllerDependencies({
       stageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
       unstageFiles: vi.fn(async (rootPath) => emptyGitStatus(rootPath)),
     },
-    indexProgressGateway: {
-      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "cleared" as const,
-      })),
-      startInitialMetadataScan: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "started" as const,
-      })),
-      startReindex: vi.fn(async (rootPath) => ({
-        databasePath: "/tmp/index.sqlite",
-        rootPath,
-        status: "started" as const,
-      })),
-      subscribeMetadataScanCompletion: vi.fn(async () => () => undefined),
-    },
+    indexProgressGateway:
+      indexProgressGateway ?? {
+        clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+          databasePath: "/tmp/index.sqlite",
+          rootPath,
+          status: "cleared" as const,
+        })),
+        startInitialMetadataScan: vi.fn(async (rootPath) => ({
+          databasePath: "/tmp/index.sqlite",
+          rootPath,
+          status: "started" as const,
+        })),
+        startReindex: vi.fn(async (rootPath) => ({
+          databasePath: "/tmp/index.sqlite",
+          rootPath,
+          status: "started" as const,
+        })),
+        subscribeMetadataScanCompletion: vi.fn(async () => () => undefined),
+      },
     languageServerDiagnosticsGateway:
       languageServerDiagnosticsGateway ?? {
         subscribeDiagnostics: vi.fn(async () => () => undefined),

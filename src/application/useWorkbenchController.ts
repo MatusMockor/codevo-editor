@@ -1457,12 +1457,19 @@ export function useWorkbenchController(
       }
 
       if (!shouldIndexWorkspace(intelligenceModeRef.current)) {
+        const clearRoot = event.rootPath;
         pendingIndexScanRef.current = false;
         pendingIndexRootRef.current = null;
         activeIndexRootRef.current = null;
         indexProgressGateway
-          .clearWorkspaceIndex(event.rootPath)
-          .catch((error) => reportError("Index", error));
+          .clearWorkspaceIndex(clearRoot)
+          .catch((error) => {
+            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, clearRoot)) {
+              return;
+            }
+
+            reportError("Index", error);
+          });
         return;
       }
 
