@@ -6,6 +6,7 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerDocumentLink,
   type LanguageServerDocumentHighlight,
   type LanguageServerFoldingRange,
   type LanguageServerFeaturesGateway,
@@ -54,6 +55,13 @@ interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __languageServerAction?: LanguageServerCodeAction;
   __languageServerSessionId?: number;
   __workspaceEditContext?: WorkspaceEditContext;
+  __workspaceRoot?: string;
+}
+
+interface LanguageServerBackedLink extends Monaco.languages.ILink {
+  __languageServerLink?: LanguageServerDocumentLink;
+  __languageServerSessionId?: number;
+  __sourcePath?: string;
   __workspaceRoot?: string;
 }
 
@@ -252,6 +260,12 @@ export function registerLanguageServerMonacoProviders(
           provideDocumentHighlights(monaco, context, model, position),
       })
     : { dispose: () => undefined };
+  const documentLink = monaco.languages.registerLinkProvider
+    ? monaco.languages.registerLinkProvider("php", {
+        provideLinks: (model) => provideDocumentLinks(monaco, context, model),
+        resolveLink: (link) => resolveDocumentLink(monaco, context, link),
+      })
+    : { dispose: () => undefined };
   const foldingRange = monaco.languages.registerFoldingRangeProvider
     ? monaco.languages.registerFoldingRangeProvider("php", {
         provideFoldingRanges: (model) =>
@@ -275,6 +289,7 @@ export function registerLanguageServerMonacoProviders(
       implementation.dispose();
       typeDefinition.dispose();
       documentHighlight.dispose();
+      documentLink.dispose();
       foldingRange.dispose();
     },
   };
@@ -538,6 +553,122 @@ async function provideFoldingRanges(
   }
 }
 
+async function provideDocumentLinks(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+): Promise<Monaco.languages.ILinksList> {
+  const request = featureDocumentRequestContext(context, model, "documentLink");
+
+  if (!request) {
+    return documentLinkList();
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return documentLinkList();
+    }
+
+    const links = await context.featuresGateway.documentLinks(
+      request.rootPath,
+      request.path,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return documentLinkList();
+    }
+
+    return documentLinkList(
+      links.map((link) =>
+        toMonacoDocumentLink(
+          monaco,
+          request.rootPath,
+          request.path,
+          request.sessionId,
+          link,
+        ),
+      ),
+    );
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return documentLinkList();
+  }
+}
+
+async function resolveDocumentLink(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  link: Monaco.languages.ILink,
+): Promise<Monaco.languages.ILink> {
+  const backedLink = link as LanguageServerBackedLink;
+
+  if (
+    !backedLink.__languageServerLink ||
+    !backedLink.__sourcePath ||
+    !backedLink.__workspaceRoot ||
+    backedLink.__languageServerSessionId == null ||
+    !isStoredLanguageServerPayloadActive(
+      context,
+      backedLink.__workspaceRoot,
+      backedLink.__languageServerSessionId,
+    )
+  ) {
+    return link;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(backedLink.__sourcePath);
+
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedLink.__workspaceRoot,
+        backedLink.__languageServerSessionId,
+      )
+    ) {
+      return link;
+    }
+
+    const resolved = await context.featuresGateway.resolveDocumentLink(
+      backedLink.__workspaceRoot,
+      backedLink.__languageServerLink,
+    );
+
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedLink.__workspaceRoot,
+        backedLink.__languageServerSessionId,
+      )
+    ) {
+      return link;
+    }
+
+    return {
+      ...link,
+      ...toMonacoDocumentLink(
+        monaco,
+        backedLink.__workspaceRoot,
+        backedLink.__sourcePath,
+        backedLink.__languageServerSessionId,
+        resolved,
+      ),
+    };
+  } catch (error) {
+    if (
+      isStoredLanguageServerPayloadActive(
+        context,
+        backedLink.__workspaceRoot,
+        backedLink.__languageServerSessionId,
+      )
+    ) {
+      context.reportError(error);
+    }
+
+    return link;
+  }
+}
+
 async function provideNavigationLocations(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
@@ -770,6 +901,15 @@ function codeActionList(
   return {
     actions,
     dispose: () => undefined,
+  };
+}
+
+function documentLinkList(
+  links: Monaco.languages.ILink[] = [],
+): Monaco.languages.ILinksList {
+  return {
+    dispose: () => undefined,
+    links,
   };
 }
 
@@ -1031,6 +1171,24 @@ function toMonacoDocumentHighlight(
   return {
     kind: monacoDocumentHighlightKindFromLspKind(monaco, highlight.kind),
     range: toMonacoRange(monaco, highlight.range),
+  };
+}
+
+function toMonacoDocumentLink(
+  monaco: MonacoApi,
+  rootPath: string,
+  sourcePath: string,
+  sessionId: number,
+  link: LanguageServerDocumentLink,
+): LanguageServerBackedLink {
+  return {
+    __languageServerLink: link,
+    __languageServerSessionId: sessionId,
+    __sourcePath: sourcePath,
+    __workspaceRoot: rootPath,
+    range: toMonacoRange(monaco, link.range),
+    tooltip: link.tooltip ?? undefined,
+    url: link.target ?? undefined,
   };
 }
 
@@ -2103,6 +2261,7 @@ function featureDocumentRequestContext(
     | "declaration"
     | "definition"
     | "documentHighlight"
+    | "documentLink"
     | "foldingRange"
     | "hover"
     | "implementation"

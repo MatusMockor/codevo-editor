@@ -7209,3 +7209,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Folding Range Provider
 
 - Committed as `abcf51a2 Register PHP folding range provider`.
+
+## Next Slice: PHP Monaco Document Link Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `7a5f408e Record PHP folding range provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support `documentLink` and document-link resolve.
+- The PHP Monaco provider did not register document links, so PHPactor-provided inline links could not surface in PHP files.
+- Document-link lazy resolution needs the same root/session guards used by JS/TS to avoid stale cross-tab payloads.
+
+### Implementation Choice
+
+- Register an optional PHP document link Monaco provider.
+- Reuse PHP document request context, pending change flush, capability gate, active session guard, stale result dropping, and error reporting for `provideLinks`.
+- Store root/session/source path metadata on LSP-backed Monaco links so `resolveLink` can safely call `featuresGateway.resolveDocumentLink` only while the originating PHP session is active.
+
+### Acceptance Criteria
+
+- PHP document links route to `featuresGateway.documentLinks` and map range, tooltip, and target URL correctly.
+- Lazy link resolution routes to `featuresGateway.resolveDocumentLink` only while the stored root/session are active.
+- Disabled capability and stale root/session responses do not call or return stale results.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Document Link Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "document link|DocumentLink"` (6 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (86 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 929 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Document Link Provider
+
+- Pending commit after verification.

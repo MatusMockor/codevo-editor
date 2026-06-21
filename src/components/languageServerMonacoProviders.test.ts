@@ -3,6 +3,7 @@ import { registerLanguageServerMonacoProviders } from "./languageServerMonacoPro
 import type {
   LanguageServerCompletionList,
   LanguageServerDocumentHighlight,
+  LanguageServerDocumentLink,
   LanguageServerFeaturesGateway,
   LanguageServerHover,
   LanguageServerLocation,
@@ -19,7 +20,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight and folding range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document link and folding range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -46,6 +47,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.implementationLanguage).toBe("php");
     expect(registered.typeDefinitionLanguage).toBe("php");
     expect(registered.documentHighlightLanguage).toBe("php");
+    expect(registered.documentLinkLanguage).toBe("php");
     expect(registered.foldingRangeLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
@@ -72,6 +74,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.implementationDispose).toHaveBeenCalled();
     expect(registered.typeDefinitionDispose).toHaveBeenCalled();
     expect(registered.documentHighlightDispose).toHaveBeenCalled();
+    expect(registered.documentLinkDispose).toHaveBeenCalled();
     expect(registered.foldingRangeDispose).toHaveBeenCalled();
   });
 
@@ -4000,6 +4003,350 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("maps PHP document links and resolves LSP-backed document links lazily", async () => {
+    const registered = createRegisteredProviders();
+    const sourceLink: LanguageServerDocumentLink = {
+      data: { id: "route-link" },
+      range: range(2, 4, 2, 19),
+      target: "file:///project/routes/web.php",
+      tooltip: "Open route",
+    };
+    const resolvedLink: LanguageServerDocumentLink = {
+      ...sourceLink,
+      range: range(5, 2, 5, 17),
+      target: "file:///project/routes/api.php",
+      tooltip: "Open resolved route",
+    };
+    const gateway = featuresGateway({
+      documentLinks: [sourceLink],
+      resolvedDocumentLink: resolvedLink,
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const linksList = await registered.documentLinkProvider.provideLinks(model());
+
+    expect(linksList).toEqual({
+      dispose: expect.any(Function),
+      links: [
+        expect.objectContaining({
+          __languageServerLink: sourceLink,
+          __languageServerSessionId: 1,
+          __sourcePath: "/project/src/User.php",
+          __workspaceRoot: "/project",
+          range: expect.objectContaining({
+            endColumn: 20,
+            endLineNumber: 3,
+            startColumn: 5,
+            startLineNumber: 3,
+          }),
+          tooltip: "Open route",
+          url: "file:///project/routes/web.php",
+        }),
+      ],
+    });
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.documentLinks).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+    );
+
+    const resolved = await registered.documentLinkProvider.resolveLink(
+      linksList.links[0],
+    );
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledTimes(2);
+    expect(gateway.resolveDocumentLink).toHaveBeenCalledWith(
+      "/project",
+      sourceLink,
+    );
+    expect(resolved).toEqual(
+      expect.objectContaining({
+        __languageServerLink: resolvedLink,
+        __languageServerSessionId: 1,
+        __sourcePath: "/project/src/User.php",
+        __workspaceRoot: "/project",
+        range: expect.objectContaining({
+          endColumn: 18,
+          endLineNumber: 6,
+          startColumn: 3,
+          startLineNumber: 6,
+        }),
+        tooltip: "Open resolved route",
+        url: "file:///project/routes/api.php",
+      }),
+    );
+  });
+
+  it("does not request PHP document links when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      documentLinks: [
+        {
+          range: range(2, 4, 2, 19),
+          target: "file:///project/routes/web.php",
+          tooltip: "Open route",
+        },
+      ],
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({ documentLink: false }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.documentLinkProvider.provideLinks(model()),
+    ).resolves.toEqual({
+      dispose: expect.any(Function),
+      links: [],
+    });
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.documentLinks).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway({
+      documentLinks: [
+        {
+          range: range(2, 4, 2, 19),
+          target: "file:///project/routes/web.php",
+          tooltip: "Open route",
+        },
+      ],
+    });
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.documentLinkProvider.provideLinks(model()),
+    ).resolves.toEqual({
+      dispose: expect.any(Function),
+      links: [],
+    });
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.documentLinks).not.toHaveBeenCalled();
+  });
+
+  it("returns empty PHP document links after in-flight root or session changes", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionLinks = createDeferred<LanguageServerDocumentLink[]>();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.documentLinks).mockImplementationOnce(
+      async () => sessionLinks.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const sessionPromise =
+      sessionRegistered.documentLinkProvider.provideLinks(model());
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    sessionLinks.resolve([
+      {
+        range: range(2, 4, 2, 19),
+        target: "file:///project/routes/web.php",
+        tooltip: "Open route",
+      },
+    ]);
+
+    await expect(sessionPromise).resolves.toEqual({
+      dispose: expect.any(Function),
+      links: [],
+    });
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootLinks = createDeferred<LanguageServerDocumentLink[]>();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.documentLinks).mockImplementationOnce(
+      async () => rootLinks.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootPromise = rootRegistered.documentLinkProvider.provideLinks(model());
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rootLinks.resolve([
+      {
+        range: range(2, 4, 2, 19),
+        target: "file:///project/routes/web.php",
+        tooltip: "Open route",
+      },
+    ]);
+
+    await expect(rootPromise).resolves.toEqual({
+      dispose: expect.any(Function),
+      links: [],
+    });
+  });
+
+  it("does not lazily resolve stale or unbacked PHP document links after root or session changes", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sourceLink: LanguageServerDocumentLink = {
+      data: { id: "route-link" },
+      range: range(2, 4, 2, 19),
+      target: null,
+      tooltip: null,
+    };
+    const gateway = featuresGateway({
+      documentLinks: [sourceLink],
+      resolvedDocumentLink: {
+        ...sourceLink,
+        target: "file:///project/routes/web.php",
+        tooltip: "Open route",
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const linksList = await registered.documentLinkProvider.provideLinks(model());
+    const backedLink = linksList.links[0];
+    const unbackedLink = {
+      range: new registered.monaco.Range(2, 4, 2, 19),
+      url: "file:///project/routes/web.php",
+    };
+
+    activeSessionId = 2;
+
+    await expect(
+      registered.documentLinkProvider.resolveLink(backedLink),
+    ).resolves.toBe(backedLink);
+    await expect(
+      registered.documentLinkProvider.resolveLink(unbackedLink),
+    ).resolves.toBe(unbackedLink);
+    expect(flushPendingDocumentChange).toHaveBeenCalledTimes(1);
+    expect(gateway.resolveDocumentLink).not.toHaveBeenCalled();
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootGateway = featuresGateway({
+      documentLinks: [sourceLink],
+      resolvedDocumentLink: {
+        ...sourceLink,
+        target: "file:///project/routes/web.php",
+        tooltip: "Open route",
+      },
+    });
+    const rootFlushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        flushPendingDocumentChange: rootFlushPendingDocumentChange,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootLinksList =
+      await rootRegistered.documentLinkProvider.provideLinks(model());
+    const rootBackedLink = rootLinksList.links[0];
+
+    activeRoot = "/other";
+
+    await expect(
+      rootRegistered.documentLinkProvider.resolveLink(rootBackedLink),
+    ).resolves.toBe(rootBackedLink);
+    expect(rootFlushPendingDocumentChange).toHaveBeenCalledTimes(1);
+    expect(rootGateway.resolveDocumentLink).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP document link resolve results after async response", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sourceLink: LanguageServerDocumentLink = {
+      data: { id: "route-link" },
+      range: range(2, 4, 2, 19),
+      target: null,
+      tooltip: null,
+    };
+    const resolvedLink = createDeferred<LanguageServerDocumentLink>();
+    const gateway = featuresGateway({
+      documentLinks: [sourceLink],
+    });
+    vi.mocked(gateway.resolveDocumentLink).mockImplementationOnce(
+      async () => resolvedLink.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const linksList = await registered.documentLinkProvider.provideLinks(model());
+    const backedLink = linksList.links[0];
+    const resolvePromise =
+      registered.documentLinkProvider.resolveLink(backedLink);
+
+    await Promise.resolve();
+    expect(gateway.resolveDocumentLink).toHaveBeenCalledWith(
+      "/project",
+      sourceLink,
+    );
+
+    activeSessionId = 2;
+    resolvedLink.resolve({
+      ...sourceLink,
+      target: "file:///project/routes/web.php",
+      tooltip: "Open route",
+    });
+
+    await expect(resolvePromise).resolves.toBe(backedLink);
+  });
+
   it("maps PHP document highlights with read, write and text kinds", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -4220,6 +4567,7 @@ function createRegisteredProviders() {
   const declarationDispose = vi.fn();
   const definitionDispose = vi.fn();
   const documentHighlightDispose = vi.fn();
+  const documentLinkDispose = vi.fn();
   const foldingRangeDispose = vi.fn();
   const hoverDispose = vi.fn();
   const implementationDispose = vi.fn();
@@ -4248,6 +4596,9 @@ function createRegisteredProviders() {
     documentHighlightDispose: ReturnType<typeof vi.fn>;
     documentHighlightLanguage: string | null;
     documentHighlightProvider: any;
+    documentLinkDispose: ReturnType<typeof vi.fn>;
+    documentLinkLanguage: string | null;
+    documentLinkProvider: any;
     foldingRangeDispose: ReturnType<typeof vi.fn>;
     foldingRangeLanguage: string | null;
     foldingRangeProvider: any;
@@ -4292,6 +4643,9 @@ function createRegisteredProviders() {
     documentHighlightDispose,
     documentHighlightLanguage: null,
     documentHighlightProvider: null,
+    documentLinkDispose,
+    documentLinkLanguage: null,
+    documentLinkProvider: null,
     foldingRangeDispose,
     foldingRangeLanguage: null,
     foldingRangeProvider: null,
@@ -4392,6 +4746,11 @@ function createRegisteredProviders() {
         registered.documentHighlightLanguage = language;
         registered.documentHighlightProvider = provider;
         return { dispose: documentHighlightDispose };
+      }),
+      registerLinkProvider: vi.fn((language, provider) => {
+        registered.documentLinkLanguage = language;
+        registered.documentLinkProvider = provider;
+        return { dispose: documentLinkDispose };
       }),
       registerFoldingRangeProvider: vi.fn((language, provider) => {
         registered.foldingRangeLanguage = language;
@@ -4504,6 +4863,7 @@ function featuresGateway(
     declaration: LanguageServerLocation[];
     definition: LanguageServerLocation[];
     documentHighlights: LanguageServerDocumentHighlight[];
+    documentLinks: LanguageServerDocumentLink[];
     documentSymbols: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
     >;
@@ -4520,6 +4880,9 @@ function featuresGateway(
     references: LanguageServerLocation[];
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
+    >;
+    resolvedDocumentLink: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["resolveDocumentLink"]>
     >;
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
     selectionRanges: Awaited<
@@ -4549,7 +4912,7 @@ function featuresGateway(
     didChangeWatchedFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
     documentHighlights: vi.fn(async () => responses.documentHighlights ?? []),
-    documentLinks: vi.fn(async () => []),
+    documentLinks: vi.fn(async () => responses.documentLinks ?? []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => null),
     foldingRanges: vi.fn(async () => responses.foldingRanges ?? []),
@@ -4583,7 +4946,9 @@ function featuresGateway(
       async (_rootPath, action) => responses.resolvedCodeAction ?? action,
     ),
     resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
-    resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
+    resolveDocumentLink: vi.fn(
+      async (_rootPath, link) => responses.resolvedDocumentLink ?? link,
+    ),
   };
 }
 
