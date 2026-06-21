@@ -1609,3 +1609,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `5c4d38aa Guard PHP runtime status lookup by active workspace`.
+
+### Slice: File Rename Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `304fdd52 Record PHP runtime status guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed file rename failures from a previous project tab from surfacing in the active workspace.
+
+#### Implementation Choice
+
+- Reuse the captured `requestedRoot` already present in `renameActiveDocument`.
+- Replace the catch-side global Rename File report with `reportErrorForActiveWorkspaceRoot`.
+- Add a regression where `/workspace-a` starts a file rename, the user switches to `/workspace-b`, and the stale `/workspace-a` rejection cannot create a Rename File notice in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale rename failures do not surface after switching project tabs.
+- Existing JS/TS rename notification and same-root stale did-rename guards still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale rename errors after switching project tabs|notifies the JavaScript TypeScript service after rename when only did-rename is supported|ignores stale JavaScript TypeScript did-rename errors after same-root session restart"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `851d0527 Guard file rename errors by active workspace`.
