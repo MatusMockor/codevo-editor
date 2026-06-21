@@ -1769,7 +1769,9 @@ export function useWorkbenchController(
 
       return rootedStatus;
     } catch (error) {
-      reportLanguageServerError(error);
+      if (workspaceRootKeysEqual(targetRootPath, currentWorkspaceRootRef.current)) {
+        reportLanguageServerError(error);
+      }
       return null;
     }
   }, [
