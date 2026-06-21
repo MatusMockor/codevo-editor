@@ -5896,4 +5896,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `a0124315 Guard stale PHP method completion traversal`.
