@@ -1514,6 +1514,94 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("does not request LSP code actions when the PHP runtime status belongs to another workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: null,
+          data: { id: "other-root" },
+          edit: null,
+          isPreferred: true,
+          kind: "quickfix",
+          title: "Import User",
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        path: "/workspace/src/User.php",
+      },
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      getWorkspaceRoot: () => "/workspace",
+      runtimeStatus: {
+        ...runningStatus(),
+        rootPath: "/other",
+      },
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.codeActionProvider.provideCodeActions(
+        model({ path: "/workspace/src/User.php" }),
+        new registered.monaco.Range(3, 5, 3, 9),
+        {
+          markers: [],
+          only: "quickfix",
+          trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+        },
+      ),
+    ).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.codeActions).not.toHaveBeenCalled();
+  });
+
+  it("does not request LSP code actions when the PHP runtime status has no explicit workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: null,
+          data: { id: "rootless" },
+          edit: null,
+          isPreferred: true,
+          kind: "quickfix",
+          title: "Import User",
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      runtimeStatus: rootlessRunningStatus(),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.codeActionProvider.provideCodeActions(
+        model(),
+        new registered.monaco.Range(3, 5, 3, 9),
+        {
+          markers: [],
+          only: "quickfix",
+          trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+        },
+      ),
+    ).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.codeActions).not.toHaveBeenCalled();
+  });
+
   it("requests LSP selection ranges and flattens parent ranges for Monaco", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({

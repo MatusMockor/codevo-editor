@@ -4029,3 +4029,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: EditorSurface JS/TS Defaults Runtime Root Guard
 
 - Committed as `5cb6a37f Root JS TS editor defaults by workspace`.
+
+## Next Slice: PHP Provider Code Action Root Guard Coverage
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6f29f386 Record Laravel relation finder variant commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The PHP Monaco provider already requires a running runtime status with an explicit `rootPath` matching the active workspace before LSP-backed provider requests can run.
+- Hover, completion, and selection range had direct stale/rootless runtime coverage.
+- Code actions use the same shared request gate, but did not have a focused regression proving rootless or mismatched runtime status cannot flush the active document or ask the PHP LSP for actions.
+
+### Implementation Choice
+
+- Add direct PHP code action regressions for a runtime status owned by another workspace root.
+- Add direct PHP code action regressions for a rootless running runtime status.
+- Keep the slice coverage-only because the existing shared provider guard already enforces the runtime root contract.
+
+### Acceptance Criteria
+
+- Rootless PHP runtime status does not trigger LSP code action requests.
+- Mismatched-root PHP runtime status does not trigger LSP code action requests.
+- Existing LSP code action mapping, local quickfix behavior, full provider tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Provider Code Action Root Guard Coverage
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "LSP code actions"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
