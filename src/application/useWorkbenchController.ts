@@ -10203,7 +10203,12 @@ export function useWorkbenchController(
 
   const openDirectPhpPropertyTarget = useCallback(
     async (className: string, propertyName: string): Promise<boolean> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return false;
       }
 
@@ -10218,14 +10223,31 @@ export function useWorkbenchController(
           return false;
         }
 
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         visitedClassNames.add(visitedKey);
 
         for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           try {
             const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
             const position = phpPropertyPositionOrNull(content, propertyName);
 
             if (position) {
+              if (!isRequestedRootActive()) {
+                return false;
+              }
+
               return openNavigationTarget(path, position, `$${propertyName}`);
             }
 
@@ -10271,6 +10293,10 @@ export function useWorkbenchController(
               }
             }
           } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
             continue;
           }
         }
