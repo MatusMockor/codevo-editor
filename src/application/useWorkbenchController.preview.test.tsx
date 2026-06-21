@@ -34064,6 +34064,195 @@ return [
     });
   });
 
+  it("suggests Laravel Password broker names from auth config", async () => {
+    const controllerPath =
+      "/workspace/app/Http/Controllers/PasswordController.php";
+    const configRoot = "/workspace/config";
+    const authConfigPath = "/workspace/config/auth.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Password;
+
+class PasswordController
+{
+    public function reset(): void
+    {
+        Password::broker('ad');
+        Password::setDefaultDriver(name: 'us');
+    }
+}
+`;
+    const authConfigSource = `<?php
+
+return [
+    'defaults' => [
+        'passwords' => 'users',
+    ],
+    'passwords' => [
+        'users' => [
+            'provider' => 'users',
+        ],
+        'admins' => [
+            'provider' => 'admins',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot ? [fileEntry(authConfigPath, "auth.php")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === authConfigPath) {
+          return authConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "PasswordController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Password::broker('ad"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "admins",
+        kind: "config",
+        name: "admins",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Password::setDefaultDriver(name: 'us"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "users",
+        kind: "config",
+        name: "users",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Password broker names before LSP fallback", async () => {
+    const controllerPath =
+      "/workspace/app/Http/Controllers/PasswordController.php";
+    const authConfigPath = "/workspace/config/auth.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Password;
+
+class PasswordController
+{
+    public function reset(): void
+    {
+        Password::broker('admins')->sendResetLink([]);
+    }
+}
+`;
+    const authConfigSource = `<?php
+
+return [
+    'defaults' => [
+        'passwords' => 'users',
+    ],
+    'passwords' => [
+        'users' => [
+            'provider' => 'users',
+        ],
+        'admins' => [
+            'provider' => 'admins',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === authConfigPath) {
+          return authConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "PasswordController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Password::broker('admins"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(authConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: authConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 11,
+      },
+    });
+  });
+
   it("suggests Laravel translation keys inside translation helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const langBase = "/workspace/lang";

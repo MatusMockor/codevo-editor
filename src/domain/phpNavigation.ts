@@ -20,6 +20,7 @@ import { phpLaravelDatabaseConnectionReferenceContextAt } from "./phpLaravelData
 import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
 import { phpLaravelLogChannelReferenceContextAt } from "./phpLaravelLog";
 import { phpLaravelMailMailerReferenceContextAt } from "./phpLaravelMail";
+import { phpLaravelPasswordBrokerReferenceContextAt } from "./phpLaravelPassword";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
 import { phpLaravelQueueConnectionReferenceContextAt } from "./phpLaravelQueue";
 import { phpLaravelStorageDiskReferenceContextAt } from "./phpLaravelStorage";
@@ -79,6 +80,10 @@ export type PhpIdentifierContext =
   | {
       kind: "laravelMailMailerString";
       mailerName: string;
+    }
+  | {
+      brokerName: string;
+      kind: "laravelPasswordBrokerString";
     }
   | {
       channelName: string;
@@ -262,6 +267,18 @@ export function phpIdentifierContextAt(
     return {
       kind: "laravelMailMailerString",
       mailerName: mailMailerReference.mailerName,
+    };
+  }
+
+  const passwordBrokerReference = phpLaravelPasswordBrokerReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (passwordBrokerReference) {
+    return {
+      brokerName: passwordBrokerReference.brokerName,
+      kind: "laravelPasswordBrokerString",
     };
   }
 

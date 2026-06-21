@@ -254,6 +254,12 @@ import {
   phpLaravelMailMailerReferenceContextAt,
 } from "../domain/phpLaravelMail";
 import {
+  phpLaravelPasswordBrokerCompletionInsertText,
+  phpLaravelPasswordBrokerConfigKey,
+  phpLaravelPasswordBrokerNameFromConfigKey,
+  phpLaravelPasswordBrokerReferenceContextAt,
+} from "../domain/phpLaravelPassword";
+import {
   phpLaravelQueueConnectionCompletionInsertText,
   phpLaravelQueueConnectionConfigKey,
   phpLaravelQueueConnectionNameFromConfigKey,
@@ -446,6 +452,10 @@ interface PhpLaravelQueueConnectionTarget extends PhpLaravelConfigTarget {
 
 interface PhpLaravelMailMailerTarget extends PhpLaravelConfigTarget {
   mailerName: string;
+}
+
+interface PhpLaravelPasswordBrokerTarget extends PhpLaravelConfigTarget {
+  brokerName: string;
 }
 
 interface PhpLaravelLogChannelTarget extends PhpLaravelConfigTarget {
@@ -8351,6 +8361,56 @@ export function useWorkbenchController(
     [findPhpLaravelConfigTarget],
   );
 
+  const collectPhpLaravelPasswordBrokerTargets =
+    useCallback(async (): Promise<PhpLaravelPasswordBrokerTarget[]> => {
+      const targets = new Map<string, PhpLaravelPasswordBrokerTarget>();
+
+      for (const target of await collectPhpLaravelConfigTargets()) {
+        const brokerName = phpLaravelPasswordBrokerNameFromConfigKey(
+          target.key,
+        );
+
+        if (!brokerName) {
+          continue;
+        }
+
+        const key = brokerName.toLowerCase();
+
+        if (!targets.has(key)) {
+          targets.set(key, {
+            ...target,
+            brokerName,
+          });
+        }
+      }
+
+      return Array.from(targets.values()).sort((left, right) =>
+        left.brokerName.localeCompare(right.brokerName),
+      );
+    }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelPasswordBrokerTarget = useCallback(
+    async (
+      brokerName: string,
+    ): Promise<PhpLaravelPasswordBrokerTarget | null> => {
+      const configKey = phpLaravelPasswordBrokerConfigKey(brokerName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            brokerName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const collectPhpLaravelLogChannelTargets = useCallback(async (): Promise<
     PhpLaravelLogChannelTarget[]
   > => {
@@ -12964,6 +13024,36 @@ export function useWorkbenchController(
           }));
       }
 
+      const passwordBrokerContext = phpLaravelPasswordBrokerReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && passwordBrokerContext && activeDocument) {
+        const normalizedPrefix = passwordBrokerContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelPasswordBrokerTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.brokerName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelPasswordBrokerCompletionInsertText(
+              target.brokerName,
+            ),
+            kind: "config",
+            name: target.brokerName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const logChannelContext = phpLaravelLogChannelReferenceContextAt(
         source,
         position,
@@ -13180,6 +13270,7 @@ export function useWorkbenchController(
       collectPhpLaravelEnvTargets,
       collectPhpLaravelLogChannelTargets,
       collectPhpLaravelMailMailerTargets,
+      collectPhpLaravelPasswordBrokerTargets,
       collectPhpLaravelQueueConnectionTargets,
       collectPhpLaravelStorageDiskTargets,
       collectPhpLaravelTranslationTargets,
@@ -14844,6 +14935,45 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelPasswordBrokerDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelPasswordBrokerString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelPasswordBrokerTarget(
+        context.brokerName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(`No Laravel password broker ${context.brokerName} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.brokerName);
+    },
+    [
+      activeDocument,
+      findPhpLaravelPasswordBrokerTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelLogChannelDefinition = useCallback(
     async (
       context: Extract<
@@ -15083,6 +15213,10 @@ export function useWorkbenchController(
 
     if (context.kind === "laravelMailMailerString") {
       return goToPhpLaravelMailMailerDefinition(context);
+    }
+
+    if (context.kind === "laravelPasswordBrokerString") {
+      return goToPhpLaravelPasswordBrokerDefinition(context);
     }
 
     if (context.kind === "laravelLogChannelString") {
@@ -15672,6 +15806,10 @@ export function useWorkbenchController(
           return goToPhpLaravelMailMailerDefinition(context);
         }
 
+        if (context.kind === "laravelPasswordBrokerString") {
+          return goToPhpLaravelPasswordBrokerDefinition(context);
+        }
+
         if (context.kind === "laravelLogChannelString") {
           return goToPhpLaravelLogChannelDefinition(context);
         }
@@ -15797,6 +15935,7 @@ export function useWorkbenchController(
     goToPhpLaravelLogChannelDefinition,
     goToPhpLaravelMailMailerDefinition,
     goToPhpLaravelNamedRouteDefinition,
+    goToPhpLaravelPasswordBrokerDefinition,
     goToPhpLaravelQueueConnectionDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelStorageDiskDefinition,
