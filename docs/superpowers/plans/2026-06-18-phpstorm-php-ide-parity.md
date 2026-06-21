@@ -4603,3 +4603,45 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `c7c7bbd5 Cover stale file structure tab switches`.
+
+## Slice: Stale File Structure Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3df931eb Record stale file structure tab switch guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down the successful-response side of JavaScript/TypeScript file structure isolation when document-symbol results arrive after a workspace tab switch.
+
+### Implementation Choice
+
+- Add a preview controller regression for delayed successful `documentSymbols` responses from an inactive project tab.
+- Start file structure loading in `/workspace-a`, switch to `/workspace-b`, then resolve the delayed request with a stale `StaleUserService` symbol.
+- Assert the active workspace remains `/workspace-b` and the stale symbol does not populate the active file structure outline.
+- Keep the previous stale-error regression alongside this stale-result regression.
+
+### Acceptance Criteria
+
+- A delayed file structure result from an inactive project tab is ignored.
+- The active workspace remains `/workspace-b`.
+- Stale symbols do not populate the active file structure outline.
+- Stale error and same-root session restart coverage remain unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "file structure results after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "file structure .* switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `af693582 Cover stale file structure tab results`.
