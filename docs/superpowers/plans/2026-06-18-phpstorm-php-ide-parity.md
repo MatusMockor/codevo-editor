@@ -7051,4 +7051,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `3e3c90ff Guard MorphTo display unions from relation inference`.
