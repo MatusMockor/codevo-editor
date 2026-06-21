@@ -8112,4 +8112,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Guard Stale Laravel Translation Locale Discovery
 
-- Pending commit.
+- Committed as `fe93cd3a Guard stale Laravel translation discovery`.
