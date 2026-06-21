@@ -32214,6 +32214,85 @@ return [
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
   });
 
+  it("stops stale Laravel translation locale discovery after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace-a/lang";
+    const langRoot = "/workspace-a/lang/en";
+    const messagesPath = "/workspace-a/lang/en/messages.php";
+    const staleLangRead = createDeferred<FileEntry[]>();
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('messages.we');
+    }
+}
+`;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path: string) => {
+        if (path === langBase) {
+          return staleLangRead.promise;
+        }
+
+        if (path === langRoot) {
+          return [fileEntry(messagesPath, "messages.php")];
+        }
+
+        return [];
+      }),
+      readTextFile: vi.fn(async (path: string) =>
+        path === controllerPath
+          ? controllerSource
+          : `<?php
+
+return [
+    'welcome' => 'Stale',
+];
+`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "messages.we"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(completionsPromise).not.toBeNull();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleLangRead.resolve([directoryEntry(langRoot, "en")]);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
   it("opens Laravel translation keys before LSP fallback", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const langBase = "/workspace/lang";

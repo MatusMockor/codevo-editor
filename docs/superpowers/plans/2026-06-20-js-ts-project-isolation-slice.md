@@ -8074,3 +8074,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Translation Key Navigation And Completion
 
 - Committed as `9d915d88 Add Laravel translation key navigation`.
+
+## Next Slice: Guard Stale Laravel Translation Locale Discovery
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `85e5ae49 Record Laravel translation navigation commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Translation completion now discovers locale directories before reading translation files.
+- The first async `lang/` directory read must be workspace-tab scoped, not only the later translation file read.
+- A focused stale-discovery regression keeps the new locale discovery path aligned with the broader workspace isolation goal.
+
+### Implementation Choice
+
+- Add a preview regression where translation completion starts in `/workspace-a` and blocks on reading `/workspace-a/lang`.
+- Switch to `/workspace-b` while locale discovery is pending.
+- Resolve the stale locale directory read and assert that completion returns no suggestions.
+
+### Acceptance Criteria
+
+- Delayed Laravel translation locale discovery returns no stale suggestions after workspace-tab switch.
+- Existing Laravel translation navigation/completion behavior remains unchanged.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Guard Stale Laravel Translation Locale Discovery
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel translation"` passed: 6 passed, 382 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 388 passed.
+- `npm run check` passed.
+- `npm test` passed: 69 files, 1039 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Guard Stale Laravel Translation Locale Discovery
+
+- Pending commit.
