@@ -1263,3 +1263,42 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `b9d29d8c Guard manual PHP server stop by active workspace`.
+
+### Slice: Workspace Runtime Dispose Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f651b4fa Record manual PHP stop guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent background workspace runtime disposal failures from inactive project tabs from surfacing in the active workspace.
+
+#### Implementation Choice
+
+- Replace the unscoped Workspace Runtime error report in `stopProjectRuntimes` with `reportErrorForActiveWorkspaceRoot`.
+- Keep fallback runtime shutdown behavior intact after disposal failures.
+- Extend the controller test harness so tests can inject a custom workspace runtime lifecycle gateway.
+- Add a regression where `suspendOnBackground` switches from `/workspace-a` to `/workspace-b`, disposal for inactive `/workspace-a` fails, and `/workspace-b` receives no stale Workspace Runtime notice.
+
+#### Acceptance Criteria
+
+- Inactive workspace runtime disposal failures do not create notices in the active workspace.
+- Existing runtime policy behavior still passes.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores inactive workspace runtime dispose errors after switching project tabs|switches between persisted project tabs without stopping another project runtime|caches stopped JavaScript and TypeScript status when suspending an inactive project runtime"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `22d1b754 Guard workspace runtime dispose by active workspace`.
