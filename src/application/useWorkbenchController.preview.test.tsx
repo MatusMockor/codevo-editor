@@ -4304,6 +4304,15 @@ describe("useWorkbenchController preview tabs", () => {
         recentWorkspacePath: "/workspace",
         workspaceTabs: ["/workspace"],
       },
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+        javaScriptTypeScriptValidation: false,
+        statusBar: {
+          ...defaultWorkspaceSettings().statusBar,
+          message: false,
+        },
+      },
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
@@ -4377,6 +4386,11 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(getWorkbench().workspaceRoot).toBeNull();
     expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(getWorkbench().workspaceSettings.intelligenceMode).toBe("basic");
+    expect(getWorkbench().workspaceSettings.javaScriptTypeScriptValidation).toBe(
+      true,
+    );
+    expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
     expect(getWorkbench().message).toBeNull();
     expect(getWorkbench().notices).toEqual([]);
     expect(getWorkbench().editorRevealTarget).toBeNull();

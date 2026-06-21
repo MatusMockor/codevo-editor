@@ -2231,10 +2231,12 @@ export function useWorkbenchController(
     setSettingsOpen(false);
     setMessage(null);
     setNotices([]);
+    applyWorkspaceSettings(defaultWorkspaceSettings());
     setIntelligenceMode("basic");
     intelligenceModeRef.current = "basic";
     clearIndexWorkspaceState();
   }, [
+    applyWorkspaceSettings,
     clearIndexWorkspaceState,
     stopProjectRuntimes,
   ]);
