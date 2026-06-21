@@ -7616,4 +7616,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `81879590 Guard flush pending LSP edits across workspace switches`.
