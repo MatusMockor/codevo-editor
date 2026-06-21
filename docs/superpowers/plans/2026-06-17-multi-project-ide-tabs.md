@@ -1070,3 +1070,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `e92249e0 Cover stale index clear success messages`.
+
+### Slice: Metadata Index Clear Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f2184ee1 Record stale index clear message guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent metadata-scan completion cleanup errors from a previous project tab from surfacing in the currently active workspace UI.
+
+#### Implementation Choice
+
+- Capture the metadata-completion clear root before `clearWorkspaceIndex` and re-check it against the active workspace root before reporting async clear errors.
+- Extend the controller test harness so a test can inject an `IndexProgressGateway` and capture the metadata completion subscription listener.
+- Add a controller regression where `/workspace-a` receives a metadata completion while indexing is disabled, its clear request stays pending, the user switches to `/workspace-b`, and the stale clear rejection does not create an Index notice.
+
+#### Acceptance Criteria
+
+- Metadata-scan cleanup errors are dropped after switching project tabs.
+- Existing stale index-clear success and error guards still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores metadata scan clear errors after switching project tabs|ignores index clear errors after switching project tabs|ignores index clear success messages after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `fceb1370 Guard metadata index clear errors by active workspace`.
