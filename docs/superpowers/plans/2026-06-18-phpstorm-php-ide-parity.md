@@ -6500,3 +6500,41 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `5288432c Cover returnless PHPDoc method diagnostics`.
+
+## Slice: Spaced Generic PHPDoc Magic Method Navigation - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8e7fa239 Record returnless PHPDoc diagnostic commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Make Cmd+B / Go to Definition find PHPDoc magic methods whose return type contains spaced generic arguments.
+
+### Implementation Choice
+
+- Replace the PHPDoc method definition regex with a per-line parser that identifies the method name immediately before the first `(`.
+- Add domain coverage for a `@method \\Illuminate\\Support\\Collection<int, Comment> activeComments()` annotation.
+- Extend workbench PHPDoc magic method navigation coverage so `CommentFactory::activeComments()` opens the spaced-generic PHPDoc method line.
+
+### Acceptance Criteria
+
+- PHPDoc magic method navigation works with spaced generic return types.
+- Existing explicit-return and returnless PHPDoc magic method navigation remains unchanged.
+- Focused/full navigation and preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc magic method definitions"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

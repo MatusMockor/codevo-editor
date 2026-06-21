@@ -339,15 +339,16 @@ export function phpDocMethodPositionOrNull(
   source: string,
   methodName: string,
 ): EditorPosition | null {
-  const pattern = new RegExp(
-    String.raw`@method\s+(?:static\s+)?(?:[^\s(]+\s+)?` +
-      escapeRegExp(methodName) +
-      String.raw`\s*\(`,
-    "g",
-  );
+  for (const match of source.matchAll(/@method\s+([^\r\n*]+)/g)) {
+    const body = match[1] ?? "";
+    const bodyOffset = (match.index ?? 0) + match[0].indexOf(body);
+    const methodMatch = /([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(body);
 
-  for (const match of source.matchAll(pattern)) {
-    const methodOffset = (match.index ?? 0) + match[0].lastIndexOf(methodName);
+    if (methodMatch?.[1] !== methodName) {
+      continue;
+    }
+
+    const methodOffset = bodyOffset + (methodMatch.index ?? 0);
 
     return editorPositionAtOffset(source, methodOffset);
   }

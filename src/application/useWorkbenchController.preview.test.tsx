@@ -22185,6 +22185,7 @@ class CommentController
     {
         CommentFactory::fromNamed('draft');
         CommentFactory::findForSlug('draft');
+        CommentFactory::activeComments();
     }
 }
 `;
@@ -22194,6 +22195,7 @@ namespace App\\Factories;
 /**
  * @method static object fromNamed(string $name)
  * @method static findForSlug(string $slug)
+ * @method static \\Illuminate\\Support\\Collection<int, Comment> activeComments()
  */
 class CommentFactory
 {
@@ -22271,6 +22273,33 @@ class CommentFactory
       position: {
         column: 19,
         lineNumber: lineNumberOf(factorySource, "findForSlug"),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::activeComments"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const activeCommentsPosition = positionAfter(factorySource, "activeComments");
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: activeCommentsPosition.column - "activeComments".length,
+        lineNumber: activeCommentsPosition.lineNumber,
       },
     });
   });

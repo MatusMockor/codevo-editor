@@ -79,11 +79,13 @@ class CommentController
  * @method static object fromNamed(string $name)
  * @method publish(bool $quietly = false)
  * @method static findForSlug(string $slug)
+ * @method \\Illuminate\\Support\\Collection<int, Comment> activeComments()
  */
 class CommentFactory
 {
 }
 `;
+    const activeCommentsPosition = positionAfter(source, "activeComments");
 
     expect(phpDocMethodPositionOrNull(source, "fromNamed")).toEqual({
       column: 26,
@@ -96,6 +98,10 @@ class CommentFactory
     expect(phpDocMethodPositionOrNull(source, "findForSlug")).toEqual({
       column: 19,
       lineNumber: 5,
+    });
+    expect(phpDocMethodPositionOrNull(source, "activeComments")).toEqual({
+      column: activeCommentsPosition.column - "activeComments".length + 1,
+      lineNumber: activeCommentsPosition.lineNumber,
     });
     expect(phpDocMethodPositionOrNull(source, "missing")).toBeNull();
   });
