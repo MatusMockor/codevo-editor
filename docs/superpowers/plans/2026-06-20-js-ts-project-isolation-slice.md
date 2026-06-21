@@ -8073,4 +8073,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Laravel Translation Key Navigation And Completion
 
-- Pending commit.
+- Committed as `9d915d88 Add Laravel translation key navigation`.
