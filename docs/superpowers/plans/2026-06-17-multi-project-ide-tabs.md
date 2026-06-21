@@ -1571,3 +1571,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `36ce9204 Guard session persistence by active workspace`.
+
+### Slice: PHP Runtime Status Lookup Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f6fd113f Record session persistence guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed PHP language-server status lookup failures from a previous project tab from surfacing in the active workspace.
+
+#### Implementation Choice
+
+- Fix the PHP runtime status effect catch so it returns when the effect is no longer active or the captured workspace root is no longer current.
+- Keep the active-root status-root update and Language Server error report for genuine active-workspace failures.
+- Add a regression where `/workspace-a` runtime status lookup remains pending, the user switches to `/workspace-b`, and the stale `/workspace-a` rejection cannot create a Language Server notice in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale PHP runtime status lookup failures do not surface after switching project tabs.
+- Existing manual PHP start/stop stale guards still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale PHP language server status errors after switching project tabs|ignores manual PHP language server start errors after switching project tabs|ignores manual PHP language server stop errors after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `5c4d38aa Guard PHP runtime status lookup by active workspace`.
