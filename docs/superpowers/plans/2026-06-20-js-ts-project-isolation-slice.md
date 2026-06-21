@@ -6645,4 +6645,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Resolve Capability Advertisement
 
-- Pending commit after broader Tauri verification.
+- Committed as `dbfc6546 Advertise TypeScript inlay resolve fields`.
