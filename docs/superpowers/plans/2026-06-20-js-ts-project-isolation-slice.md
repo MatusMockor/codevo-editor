@@ -7568,4 +7568,6 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test` (65 files, 968 tests)
 - PASS: `git diff --check`
 
-### Commit Status: Pending
+### Commit Status: PHP Monaco Semantic Token Providers
+
+- Committed as `24b0b392 Register PHP semantic token providers`.
