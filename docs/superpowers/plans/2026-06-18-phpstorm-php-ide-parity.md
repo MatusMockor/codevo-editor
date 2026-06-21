@@ -4308,3 +4308,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `2140450c Complete Laravel named controller groups`.
+
+## Slice: Laravel Named Controller Route Actions - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `43f0277d Record Laravel named controller groups commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Resolve Laravel controller group action strings when route methods use PHP 8 named `action:` arguments.
+
+### Implementation Choice
+
+- Add a top-level call argument-name helper for string literals.
+- Treat route action strings inside controller groups as valid when they are either the existing second positional argument or an explicit named `action:` argument.
+- Keep unsupported named arguments such as `label:` ignored.
+- Add domain coverage for `Route::get(action: 'method', uri: ...)` and unsupported named string arguments.
+- Update workbench go-to-definition coverage so a named `action:` route opens the indexed controller method before LSP fallback.
+
+### Acceptance Criteria
+
+- `Route::get(action: 'show', uri: ...)` inside a controller group resolves to the grouped controller method.
+- Unsupported named route strings such as `label: 'notAction'` remain ordinary string/class identifiers.
+- Existing positional controller group route action behavior remains unchanged.
+- Go to Definition from a named `action:` route opens the indexed controller method without LSP fallback.
+- Focused/full navigation and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx -t "Laravel controller group route action strings|resolves Laravel controller group route action strings"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `4ddfcdbe Complete Laravel named controller route actions`.
