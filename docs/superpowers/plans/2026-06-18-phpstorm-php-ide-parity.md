@@ -6934,4 +6934,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `b6627d54 Cover Laravel enforceMorphMap inference`.
