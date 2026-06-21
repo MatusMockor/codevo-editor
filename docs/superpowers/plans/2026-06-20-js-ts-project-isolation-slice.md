@@ -4025,3 +4025,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test -- src/components/EditorSurface.test.tsx src/components/typescriptJavascriptDefaults.test.ts`
 - PASS: `npm run check`
 - PASS: `git diff --check`
+
+### Commit Status: EditorSurface JS/TS Defaults Runtime Root Guard
+
+- Committed as `5cb6a37f Root JS TS editor defaults by workspace`.
