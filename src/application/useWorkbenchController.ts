@@ -5586,6 +5586,89 @@ export function useWorkbenchController(
     ],
   );
 
+  const applyPhpRenameEdits = useCallback(
+    async (oldPath: string, newPath: string) => {
+      if (
+        !workspaceRoot ||
+        !workspaceDescriptor?.php ||
+        !isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) ||
+        !canUseLanguageServerFeature(
+          languageServerRuntimeStatus.capabilities,
+          "willRenameFiles",
+        )
+      ) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const requestedSessionId = languageServerRuntimeStatus.sessionId;
+      const isRequestedPhpSessionActive = () =>
+        isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
+
+      try {
+        const edit = await languageServerFeaturesGateway.willRenameFiles(
+          requestedRoot,
+          oldPath,
+          newPath,
+        );
+
+        if (!isRequestedPhpSessionActive()) {
+          return;
+        }
+
+        if (!edit) {
+          return;
+        }
+
+        const rootEdit = workspaceEditForRoot(edit, requestedRoot);
+        const openDocumentPaths = Object.keys(documentsRef.current);
+        const editedOpenPaths = applyWorkspaceEditToOpenDocuments(
+          rootEdit,
+          requestedRoot,
+          documentVersionsByUriRef.current,
+        );
+        const changedClosedFiles = await workspaceFiles.applyWorkspaceEdit(
+          requestedRoot,
+          rootEdit,
+          openDocumentPaths,
+        );
+
+        if (!isRequestedPhpSessionActive()) {
+          return;
+        }
+
+        const changedFiles = changedClosedFiles + editedOpenPaths.length;
+
+        if (changedFiles > 0) {
+          setMessage(
+            `Updated ${changedFiles} PHP rename reference${changedFiles === 1 ? "" : "s"}.`,
+          );
+        }
+      } catch (error) {
+        if (!isRequestedPhpSessionActive()) {
+          return;
+        }
+
+        reportError("PHP Rename", error);
+      }
+    },
+    [
+      applyWorkspaceEditToOpenDocuments,
+      isLanguageServerSessionActiveForRoot,
+      languageServerFeaturesGateway,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      reportError,
+      workspaceDescriptor?.php,
+      workspaceFiles,
+      workspaceRoot,
+    ],
+  );
+
   const notifyJavaScriptTypeScriptFileRenamed = useCallback(
     async (oldPath: string, newPath: string) => {
       if (
@@ -5640,6 +5723,62 @@ export function useWorkbenchController(
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       reportError,
+      workspaceRoot,
+    ],
+  );
+
+  const notifyPhpFileRenamed = useCallback(
+    async (oldPath: string, newPath: string) => {
+      if (
+        !workspaceRoot ||
+        !workspaceDescriptor?.php ||
+        !isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) ||
+        !canUseLanguageServerFeature(
+          languageServerRuntimeStatus.capabilities,
+          "didRenameFiles",
+        )
+      ) {
+        return;
+      }
+
+      const requestedRoot = workspaceRoot;
+      const requestedSessionId = languageServerRuntimeStatus.sessionId;
+      const isRequestedPhpSessionActive = () =>
+        isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      try {
+        await languageServerFeaturesGateway.didRenameFiles(
+          requestedRoot,
+          oldPath,
+          newPath,
+        );
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+      } catch (error) {
+        if (!isRequestedPhpSessionActive()) {
+          return;
+        }
+
+        reportError("PHP Rename", error);
+      }
+    },
+    [
+      isLanguageServerSessionActiveForRoot,
+      languageServerFeaturesGateway,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      reportError,
+      workspaceDescriptor?.php,
       workspaceRoot,
     ],
   );
@@ -13829,6 +13968,10 @@ export function useWorkbenchController(
     const nextPath = joinWorkspacePath(parentPath, nextName);
 
     try {
+      if (isLanguageServerDocument(activeDocument)) {
+        await applyPhpRenameEdits(activeDocument.path, nextPath);
+      }
+
       if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
         await applyJavaScriptTypeScriptRenameEdits(activeDocument.path, nextPath);
       }
@@ -13838,6 +13981,10 @@ export function useWorkbenchController(
       }
 
       await workspaceFiles.renamePath(activeDocument.path, nextPath);
+      if (isLanguageServerDocument(activeDocument)) {
+        await notifyPhpFileRenamed(activeDocument.path, nextPath);
+      }
+
       if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
         await notifyJavaScriptTypeScriptFileRenamed(activeDocument.path, nextPath);
       }
@@ -13882,7 +14029,9 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     applyJavaScriptTypeScriptRenameEdits,
+    applyPhpRenameEdits,
     notifyJavaScriptTypeScriptFileRenamed,
+    notifyPhpFileRenamed,
     prompter,
     refreshDirectory,
     reportErrorForActiveWorkspaceRoot,

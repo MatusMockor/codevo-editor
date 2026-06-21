@@ -7869,6 +7869,224 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
   });
 
+  it("asks the PHP language server for file rename edits before renaming a PHP file", async () => {
+    const oldPath = "/workspace/src/User.php";
+    const newPath = "/workspace/src/Account.php";
+    const consumerPath = "/workspace/src/Consumer.php";
+    const edit = {
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.willRenameFiles).mockResolvedValue(
+      edit,
+    );
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 31,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "<?php\nclass User {}\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.php");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(languageServerFeaturesGateway.willRenameFiles).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+      newPath,
+    );
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, [oldPath]);
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(languageServerFeaturesGateway.didRenameFiles).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+      newPath,
+    );
+  });
+
+  it("notifies the PHP language server after rename when only did-rename is supported", async () => {
+    const oldPath = "/workspace/src/User.php";
+    const newPath = "/workspace/src/Account.php";
+    const languageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 32,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "<?php\nclass User {}\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.php");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(languageServerFeaturesGateway.willRenameFiles).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(languageServerFeaturesGateway.didRenameFiles).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+      newPath,
+    );
+  });
+
+  it("drops stale PHP rename edits after switching project tabs", async () => {
+    const oldPath = "/workspace-a/src/User.php";
+    const newPath = "/workspace-a/src/Account.php";
+    const consumerPath = "/workspace-a/src/Consumer.php";
+    const renameEdit = createDeferred<LanguageServerWorkspaceEdit | null>();
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.willRenameFiles).mockImplementationOnce(
+      () => renameEdit.promise,
+    );
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 33,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "<?php\nclass User {}\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.php");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(languageServerFeaturesGateway.willRenameFiles).toHaveBeenCalledWith(
+        "/workspace-a",
+        oldPath,
+        newPath,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    renameEdit.resolve({
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    });
+    await act(async () => {
+      await renamePromise;
+    });
+
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).not.toHaveBeenCalled();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
   it("ignores stale rename errors after switching project tabs", async () => {
     const oldPath = "/workspace-a/src/User.php";
     const newPath = "/workspace-a/src/Account.php";

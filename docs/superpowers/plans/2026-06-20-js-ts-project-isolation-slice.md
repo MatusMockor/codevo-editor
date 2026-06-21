@@ -6884,3 +6884,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS Completion InsertTextMode Capability Advertisement
 
 - Committed as `a4590878 Advertise TypeScript completion insert text modes`.
+
+## Next Slice: PHP File Rename Controller Wiring
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `58ea6175 Record TypeScript insert text mode capability commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend file rename commands now exist, but the file rename workflow only called JS/TS `willRenameFiles` and `didRenameFiles`.
+- PhpStorm-like PHP rename behavior needs PHP language-server hooks before and after filesystem rename.
+- The same root/session guard pattern used by JS/TS prevents stale rename edits or notifications from leaking across workspace tabs.
+
+### Implementation Choice
+
+- Add PHP pre-rename `willRenameFiles` handling beside the JS/TS rename edit helper.
+- Add PHP post-rename `didRenameFiles` notification beside the JS/TS rename notification helper.
+- Wire both into `file.rename` only for PHP language-server documents.
+- Reuse existing PHP workspace edit application, workspace root filtering, document version guards, and active session checks.
+
+### Acceptance Criteria
+
+- PHP rename asks the PHP language server for workspace edits before filesystem rename when `willRenameFiles` is supported.
+- PHP rename notifies the PHP language server after filesystem rename when `didRenameFiles` is supported.
+- Stale PHP rename edits are dropped after switching workspace tabs.
+- Focused and full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP File Rename Controller Wiring
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP language server.*rename|stale PHP rename"` (3 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx` (339 tests)
+- PASS: `npm test` (65 files, 900 tests)
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP File Rename Controller Wiring
+
+- Pending commit after verification.
