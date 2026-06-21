@@ -5977,3 +5977,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `1421efa5 Guard stale PHP collection model traversal`.
+
+## Slice: Stale PHP Method Return Type Traversal Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c5451178 Record stale PHP collection model guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP method return type traversal from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `resolvePhpMethodReturnType`.
+- Guard after framework-bound concrete resolution, after class member reads, after morph-map resolution, after return expression resolution, after inherited template resolution, after trait/mixin/supertype recursion, after failed reads, and before bound-concrete fallback returns.
+- Add a preview regression where method completions start from a repository call in `/workspace-a`, the repository class read is delayed, the workspace switches to `/workspace-b`, and the delayed source extends `BaseCommentRepository`.
+- Assert the stale completion request returns no suggestions and does not continue into `/workspace-b` base repository reads.
+
+### Acceptance Criteria
+
+- Stale PHP method return type traversal stops after tab switch.
+- Stale return type inference does not start inherited repository reads in the newly active workspace.
+- Existing PHP method return completion behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP method return type traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

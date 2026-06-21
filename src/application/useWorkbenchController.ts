@@ -8004,7 +8004,12 @@ export function useWorkbenchController(
       lateStaticClassName = className,
       templateTypes: ReadonlyMap<string, string> = new Map(),
     ): Promise<string | null> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return null;
       }
 
@@ -8037,6 +8042,10 @@ export function useWorkbenchController(
         const boundConcreteClassName =
           await resolvePhpFrameworkBoundConcrete(normalizedClassName);
 
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
         if (
           !boundConcreteClassName ||
           boundConcreteClassName.toLowerCase() === visitedKey
@@ -8044,12 +8053,18 @@ export function useWorkbenchController(
           return null;
         }
 
-        return resolvePhpMethodReturnType(
+        const boundReturnType = await resolvePhpMethodReturnType(
           boundConcreteClassName,
           methodName,
           visitedClassNames,
           boundConcreteClassName,
         );
+
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        return boundReturnType;
       };
 
       const resolveReturnExpressionType = async (
@@ -8169,11 +8184,20 @@ export function useWorkbenchController(
       };
 
       for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
         try {
           const { content, members } = await readPhpClassMembersFromPath(
             path,
             normalizedClassName,
           );
+
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           const method = members.find(
             (candidate) =>
               candidate.name.toLowerCase() === methodName.toLowerCase(),
@@ -8199,6 +8223,10 @@ export function useWorkbenchController(
               const morphMapModelType =
                 await resolvePhpLaravelProjectMorphMapModelType();
 
+              if (!isRequestedRootActive()) {
+                return null;
+              }
+
               if (morphMapModelType) {
                 return `Illuminate\\Database\\Eloquent\\Relations\\MorphTo<${morphMapModelType}>`;
               }
@@ -8214,6 +8242,10 @@ export function useWorkbenchController(
                 expression,
               );
 
+              if (!isRequestedRootActive()) {
+                return null;
+              }
+
               if (expressionReturnType) {
                 return expressionReturnType;
               }
@@ -8228,6 +8260,11 @@ export function useWorkbenchController(
                   resolvedTraitName,
                 )
               : new Map<string, string>();
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             const traitReturnType = resolvedTraitName
               ? await resolvePhpMethodReturnType(
                   resolvedTraitName,
@@ -8237,6 +8274,10 @@ export function useWorkbenchController(
                   traitTemplateTypes,
                 )
               : null;
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
 
             if (traitReturnType) {
               return traitReturnType;
@@ -8251,6 +8292,11 @@ export function useWorkbenchController(
                   resolvedMixinName,
                 )
               : new Map<string, string>();
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             const mixinReturnType = resolvedMixinName
               ? await resolvePhpMethodReturnType(
                   resolvedMixinName,
@@ -8260,6 +8306,10 @@ export function useWorkbenchController(
                   mixinTemplateTypes,
                 )
               : null;
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
 
             if (mixinReturnType) {
               return mixinReturnType;
@@ -8281,6 +8331,11 @@ export function useWorkbenchController(
                 content,
                 resolvedSuperTypeName,
               );
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             const superTypeReturnType = await resolvePhpMethodReturnType(
               resolvedSuperTypeName,
               methodName,
@@ -8289,15 +8344,31 @@ export function useWorkbenchController(
               superTypeTemplateTypes,
             );
 
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             if (superTypeReturnType) {
               return superTypeReturnType;
             }
           }
 
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           return resolveBoundConcreteReturnType();
         } catch {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           continue;
         }
+      }
+
+      if (!isRequestedRootActive()) {
+        return null;
       }
 
       return resolveBoundConcreteReturnType();

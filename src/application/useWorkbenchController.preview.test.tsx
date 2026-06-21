@@ -12287,6 +12287,107 @@ class CommentsService extends BaseCommentsService
     expect(workspaceBBaseServiceReadCount).toBe(0);
   });
 
+  it("stops stale PHP method return type traversal after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const repositoryPath = "/workspace-a/app/Repositories/CommentRepository.php";
+    const workspaceBBaseRepositoryPath =
+      "/workspace-b/app/Repositories/BaseCommentRepository.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Repositories\\CommentRepository;
+
+class CommentController
+{
+    public function __construct(
+        private readonly CommentRepository $comments,
+    ) {}
+
+    public function show(): void
+    {
+        $comment = $this->comments->findOrFail(1);
+        $comment->get
+    }
+}
+`;
+    const staleRepositoryRead = createDeferred<string>();
+    let workspaceBBaseRepositoryReadCount = 0;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === repositoryPath) {
+        return staleRepositoryRead.promise;
+      }
+
+      if (path === workspaceBBaseRepositoryPath) {
+        workspaceBBaseRepositoryReadCount += 1;
+        return `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Comment;
+
+class BaseCommentRepository
+{
+    public function findOrFail(int $id): Comment {}
+}
+`;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    await act(async () => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->get"),
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(repositoryPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleRepositoryRead.resolve(`<?php
+namespace App\\Repositories;
+
+class CommentRepository extends BaseCommentRepository
+{
+}
+`);
+
+    expect(completionsPromise).not.toBeNull();
+    await expect(completionsPromise).resolves.toEqual([]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(workspaceBBaseRepositoryReadCount).toBe(0);
+  });
+
   it("keeps late-static fluent return types bound to the receiver class", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const baseCommentPath = "/workspace/app/Models/BaseComment.php";
