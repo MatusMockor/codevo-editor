@@ -296,7 +296,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       .subscribeWorkspaceEdits((event) => {
         void applyWorkspaceEditEvent(monaco, context, event).catch((error) => {
           if (event.rootPath) {
-            reportErrorForActiveRoot(context, event.rootPath, error);
+            reportErrorForActiveWorkspaceEditEvent(context, event, error);
             return;
           }
 
@@ -385,7 +385,7 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
           );
         }
       } catch (error) {
-        reportErrorForActiveRoot(context, payload.rootPath, error);
+        reportErrorForStoredPayload(context, payload, error);
       }
     },
   });
@@ -709,7 +709,7 @@ async function provideHover(
 
     return hover ? { contents: [{ value: hover.contents }] } : null;
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -772,7 +772,7 @@ async function provideCompletionItems(
       }),
     };
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return { suggestions: [] };
   }
 }
@@ -846,7 +846,7 @@ async function resolveCompletionItem(
       ),
     };
   } catch (error) {
-    reportErrorForActiveRoot(context, backedItem.__workspaceRoot, error);
+    reportErrorForStoredPayload(context, backedItem, error);
     return item;
   }
 }
@@ -879,7 +879,7 @@ async function provideDefinition(
 
     return toMonacoLocations(monaco, locations);
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -912,7 +912,7 @@ async function provideDeclaration(
 
     return toMonacoLocations(monaco, locations);
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -950,7 +950,7 @@ async function provideImplementation(
 
     return toMonacoLocations(monaco, locations);
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -983,7 +983,7 @@ async function provideTypeDefinition(
 
     return toMonacoLocations(monaco, locations);
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1025,7 +1025,7 @@ async function provideSignatureHelp(
 
     return signatureHelp ? toMonacoSignatureHelp(signatureHelp) : null;
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1136,7 +1136,7 @@ async function provideReferences(
 
     return toMonacoLocations(monaco, locations, request.rootPath);
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1176,7 +1176,7 @@ async function provideDocumentHighlights(
       toMonacoDocumentHighlight(monaco, highlight),
     );
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1219,7 +1219,7 @@ async function provideDocumentLinks(
       ),
     };
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return emptyLinksList();
   }
 }
@@ -1251,7 +1251,7 @@ async function provideDocumentSymbols(
 
     return symbols.map((symbol) => toMonacoDocumentSymbol(monaco, symbol));
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1281,7 +1281,7 @@ async function provideWorkspaceSymbols(
       toMonacoWorkspaceSymbol(monaco, symbol, request.rootPath),
     );
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return [];
   }
 }
@@ -1339,7 +1339,7 @@ async function resolveDocumentLink(
       ),
     };
   } catch (error) {
-    reportErrorForActiveRoot(context, backedLink.__workspaceRoot, error);
+    reportErrorForStoredPayload(context, backedLink, error);
     return link;
   }
 }
@@ -1371,7 +1371,7 @@ async function provideFoldingRanges(
 
     return ranges.map((range) => toMonacoFoldingRange(monaco, range));
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1413,7 +1413,7 @@ async function provideRenameEdits(
         )
       : null;
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1452,7 +1452,7 @@ async function provideSelectionRanges(
       flattenSelectionRange(monaco, selectionRange),
     );
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1483,7 +1483,7 @@ async function provideDocumentSemanticTokens(
 
     return toMonacoSemanticTokens(tokens);
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1516,7 +1516,7 @@ async function provideDocumentRangeSemanticTokens(
 
     return toMonacoSemanticTokens(tokens);
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1554,7 +1554,7 @@ async function provideLinkedEditingRanges(
 
     return toMonacoLinkedEditingRanges(monaco, ranges);
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1650,7 +1650,7 @@ async function provideCodeActions(
       dispose: () => undefined,
     };
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return emptyCodeActionList();
   }
 }
@@ -1716,7 +1716,7 @@ async function resolveCodeAction(
 
     return mapped ? { ...action, ...mapped } : action;
   } catch (error) {
-    reportErrorForActiveRoot(context, backedAction.__workspaceRoot, error);
+    reportErrorForStoredPayload(context, backedAction, error);
     return action;
   }
 }
@@ -1759,7 +1759,7 @@ async function provideCodeLenses(
       dispose: () => undefined,
     };
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return emptyCodeLensList();
   }
 }
@@ -1817,7 +1817,7 @@ async function resolveCodeLens(
       ),
     };
   } catch (error) {
-    reportErrorForActiveRoot(context, backedCodeLens.__workspaceRoot, error);
+    reportErrorForStoredPayload(context, backedCodeLens, error);
     return codeLens;
   }
 }
@@ -1851,7 +1851,7 @@ async function provideDocumentFormattingEdits(
 
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return [];
   }
 }
@@ -1887,7 +1887,7 @@ async function provideDocumentRangeFormattingEdits(
 
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return [];
   }
 }
@@ -1928,7 +1928,7 @@ async function provideOnTypeFormattingEdits(
 
     return edits.map((edit) => toMonacoTextEdit(monaco, edit));
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return [];
   }
 }
@@ -1973,7 +1973,7 @@ async function provideInlayHints(
       dispose: () => undefined,
     };
   } catch (error) {
-    reportErrorForActiveRoot(context, request.rootPath, error);
+    reportErrorForActiveRequest(context, request, error);
     return emptyInlayHintList();
   }
 }
@@ -2028,7 +2028,7 @@ async function resolveInlayHint(
       backedHint.__sourcePath,
     );
   } catch (error) {
-    reportErrorForActiveRoot(context, backedHint.__workspaceRoot, error);
+    reportErrorForStoredPayload(context, backedHint, error);
     return hint;
   }
 }
@@ -2288,12 +2288,43 @@ function isStoredLanguageServerPayloadActive(
   return runningRuntimeSessionIdForRoot(context, rootPath) === sessionId;
 }
 
-function reportErrorForActiveRoot(
+function reportErrorForActiveRequest(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
-  rootPath: string,
+  request: { rootPath: string; sessionId?: number },
   error: unknown,
 ): void {
-  if (!isStoredWorkspaceRootActive(context, rootPath)) {
+  if (!isFeatureRequestActive(context, request)) {
+    return;
+  }
+
+  context.reportError(error);
+}
+
+function reportErrorForStoredPayload(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  payload: StoredLanguageServerPayloadRequest,
+  error: unknown,
+): void {
+  const rootPath = payload.rootPath ?? payload.__workspaceRoot;
+  const sessionId = payload.sessionId ?? payload.__languageServerSessionId;
+
+  if (!rootPath || sessionId == null) {
+    return;
+  }
+
+  if (!isStoredLanguageServerPayloadActive(context, rootPath, sessionId)) {
+    return;
+  }
+
+  context.reportError(error);
+}
+
+function reportErrorForActiveWorkspaceEditEvent(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+  event: LanguageServerWorkspaceEditEvent,
+  error: unknown,
+): void {
+  if (!isWorkspaceEditEventActive(context, event)) {
     return;
   }
 
