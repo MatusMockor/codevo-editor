@@ -13783,6 +13783,479 @@ function helper_call(): string
     );
   });
 
+  it("opens PHP declarations through workbench commands", async () => {
+    const sourcePath = "/workspace/app/Services/UserService.php";
+    const targetPath = "/workspace/app/Contracts/UserRepository.php";
+    const source = `<?php
+
+$repository->findUser();
+`;
+    const target = `<?php
+
+interface UserRepository
+{
+    public function findUser(): User;
+}
+`;
+    const cursorPosition = positionAfter(source, "findUs");
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 701,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.declaration).mockResolvedValue([
+      {
+        range: range(4, 20, 4, 28),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === targetPath) {
+          return target;
+        }
+
+        return "";
+      }),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(languageServerFeaturesGateway.declaration).toHaveBeenCalledWith(
+      "/workspace",
+      {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      },
+    );
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: targetPath,
+      position: {
+        column: 21,
+        lineNumber: 5,
+      },
+    });
+    expect(getWorkbench().message).toBe(
+      "Opened declaration UserRepository.php:5:21",
+    );
+  });
+
+  it("opens PHP type definitions through workbench commands", async () => {
+    const sourcePath = "/workspace/app/Services/UserService.php";
+    const targetPath = "/workspace/app/Models/User.php";
+    const source = `<?php
+
+$user = $repository->findUser();
+$user->name;
+`;
+    const target = `<?php
+
+final class User
+{
+    public string $name;
+}
+`;
+    const cursorPosition = positionAfter(source, "$user->na");
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 702,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.typeDefinition).mockResolvedValue([
+      {
+        range: range(2, 12, 2, 16),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === targetPath) {
+          return target;
+        }
+
+        return "";
+      }),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToTypeDefinition",
+    );
+
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(languageServerFeaturesGateway.typeDefinition).toHaveBeenCalledWith(
+      "/workspace",
+      {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      },
+    );
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: targetPath,
+      position: {
+        column: 13,
+        lineNumber: 3,
+      },
+    });
+    expect(getWorkbench().message).toBe("Opened type definition User.php:3:13");
+  });
+
+  it("disables PHP declaration commands when capability gating fails", async () => {
+    const sourcePath = "/workspace/app/Services/UserService.php";
+    const source = `<?php
+
+$repository->findUser();
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => source),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          typeDefinition: true,
+        },
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 703,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToDeclaration")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+
+  it("disables PHP type definition commands when root gating fails", async () => {
+    const sourcePath = "/workspace/app/Services/UserService.php";
+    const source = `<?php
+
+$repository->findUser();
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => source),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          typeDefinition: true,
+        },
+        kind: "running",
+        rootPath: "/workspace-b",
+        sessionId: 704,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToTypeDefinition")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP declaration results after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/app/Services/UserService.php";
+    const targetPath = "/workspace-a/app/Contracts/UserRepository.php";
+    const source = `<?php
+
+$repository->findUser();
+`;
+    const cursorPosition = positionAfter(source, "findUs");
+    const declarationResult =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["declaration"]>>
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 705,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.declaration,
+    ).mockImplementationOnce(async () => declarationResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "<?php\ninterface UserRepository {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(languageServerFeaturesGateway.declaration).toHaveBeenCalledWith(
+        "/workspace-a",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    declarationResult.resolve([
+      {
+        range: range(1, 10, 1, 24),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe(
+      "Opened declaration UserRepository.php:2:11",
+    );
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP type definition results after same-root session restart", async () => {
+    const sourcePath = "/workspace/app/Services/UserService.php";
+    const targetPath = "/workspace/app/Models/User.php";
+    const source = `<?php
+
+$user = $repository->findUser();
+$user->name;
+`;
+    const cursorPosition = positionAfter(source, "$user->na");
+    const typeDefinitionResult =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["typeDefinition"]>>
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(706)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(706)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.typeDefinition,
+    ).mockImplementationOnce(async () => typeDefinitionResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "<?php\nfinal class User {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      readTextFile,
+      runtimeStatus: runningStatus(706),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToTypeDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(languageServerFeaturesGateway.typeDefinition).toHaveBeenCalledWith(
+        "/workspace",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(707));
+    });
+    await flushAsyncTurns();
+
+    typeDefinitionResult.resolve([
+      {
+        range: range(1, 12, 1, 16),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().activePath).toBe(sourcePath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened type definition User.php:2:13");
+  });
+
   it("opens JavaScript and TypeScript source definitions through workbench commands", async () => {
     const sourcePath = "/workspace/src/main.ts";
     const targetPath = "/workspace/packages/user/src/user.ts";

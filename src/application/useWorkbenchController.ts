@@ -12989,7 +12989,10 @@ export function useWorkbenchController(
   );
 
   const goToLanguageServerLocation = useCallback(async (
-    feature: Extract<LanguageServerFeature, "definition" | "implementation">,
+    feature: Extract<
+      LanguageServerFeature,
+      "declaration" | "definition" | "implementation" | "typeDefinition"
+    >,
     label: string,
     requestedPosition?: EditorPosition,
   ): Promise<boolean> => {
@@ -13574,18 +13577,38 @@ export function useWorkbenchController(
   }, [goToJavaScriptTypeScriptLanguageServerLocation]);
 
   const goToDeclaration = useCallback(async () => {
-    await goToJavaScriptTypeScriptLanguageServerLocation(
-      "declaration",
-      "declaration",
-    );
-  }, [goToJavaScriptTypeScriptLanguageServerLocation]);
+    const openedJavaScriptTypeScriptTarget =
+      await goToJavaScriptTypeScriptLanguageServerLocation(
+        "declaration",
+        "declaration",
+      );
+
+    if (openedJavaScriptTypeScriptTarget) {
+      return;
+    }
+
+    await goToLanguageServerLocation("declaration", "declaration");
+  }, [
+    goToJavaScriptTypeScriptLanguageServerLocation,
+    goToLanguageServerLocation,
+  ]);
 
   const goToTypeDefinition = useCallback(async () => {
-    await goToJavaScriptTypeScriptLanguageServerLocation(
-      "typeDefinition",
-      "type definition",
-    );
-  }, [goToJavaScriptTypeScriptLanguageServerLocation]);
+    const openedJavaScriptTypeScriptTarget =
+      await goToJavaScriptTypeScriptLanguageServerLocation(
+        "typeDefinition",
+        "type definition",
+      );
+
+    if (openedJavaScriptTypeScriptTarget) {
+      return;
+    }
+
+    await goToLanguageServerLocation("typeDefinition", "type definition");
+  }, [
+    goToJavaScriptTypeScriptLanguageServerLocation,
+    goToLanguageServerLocation,
+  ]);
 
   const goToImplementation = useCallback(async () => {
     const openedJavaScriptTypeScriptTarget =
@@ -15072,21 +15095,38 @@ export function useWorkbenchController(
       title: "Go to Declaration",
       category: "Editor",
       shortcut: shortcut("editor.goToDeclaration"),
-      isEnabled: () =>
-        Boolean(activeDocument) &&
-        Boolean(
-          activeDocument &&
-            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
-        ) &&
-        isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        ) &&
-        canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "declaration",
-        ),
+      isEnabled: () => {
+        if (!activeDocument) {
+          return false;
+        }
+
+        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+          return (
+            isRunningLanguageServerForWorkspace(
+              javaScriptTypeScriptLanguageServerRuntimeStatus,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+              workspaceRoot,
+            ) &&
+            canUseLanguageServerFeature(
+              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+              "declaration",
+            )
+          );
+        }
+
+        return (
+          isLanguageServerDocument(activeDocument) &&
+          isRunningLanguageServerForWorkspace(
+            languageServerRuntimeStatus,
+            languageServerRuntimeStatusRoot,
+            workspaceRoot,
+          ) &&
+          canUseLanguageServerFeature(
+            languageServerRuntimeStatus.capabilities,
+            "declaration",
+          )
+        );
+      },
       run: goToDeclaration,
     });
 
@@ -15095,21 +15135,38 @@ export function useWorkbenchController(
       title: "Go to Type Definition",
       category: "Editor",
       shortcut: shortcut("editor.goToTypeDefinition"),
-      isEnabled: () =>
-        Boolean(activeDocument) &&
-        Boolean(
-          activeDocument &&
-            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
-        ) &&
-        isRunningLanguageServerForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-          workspaceRoot,
-        ) &&
-        canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "typeDefinition",
-        ),
+      isEnabled: () => {
+        if (!activeDocument) {
+          return false;
+        }
+
+        if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+          return (
+            isRunningLanguageServerForWorkspace(
+              javaScriptTypeScriptLanguageServerRuntimeStatus,
+              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+              workspaceRoot,
+            ) &&
+            canUseLanguageServerFeature(
+              javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+              "typeDefinition",
+            )
+          );
+        }
+
+        return (
+          isLanguageServerDocument(activeDocument) &&
+          isRunningLanguageServerForWorkspace(
+            languageServerRuntimeStatus,
+            languageServerRuntimeStatusRoot,
+            workspaceRoot,
+          ) &&
+          canUseLanguageServerFeature(
+            languageServerRuntimeStatus.capabilities,
+            "typeDefinition",
+          )
+        );
+      },
       run: goToTypeDefinition,
     });
 

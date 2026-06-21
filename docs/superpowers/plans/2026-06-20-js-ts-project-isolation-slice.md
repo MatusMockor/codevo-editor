@@ -7045,3 +7045,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Definition And Implementation Providers
 
 - Committed as `2f8b8294 Register PHP definition implementation providers`.
+
+## Next Slice: PHP Go To Declaration And Type Definition Commands
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `32de37c7 Record PHP definition implementation provider commit`
+- Worktree had only delegated controller changes before this slice documentation was added.
+
+### Why This Slice
+
+- PHP declaration and type-definition are now wired through the backend, gateway, and Monaco provider.
+- The workbench commands still only routed declaration and type-definition navigation through the JS/TS runtime.
+- PhpStorm-like PHP workflows need the same command/keybinding path to reach PHPactor navigation answers.
+
+### Implementation Choice
+
+- Extend the existing PHP language-server go-to helper to support declaration and type-definition in addition to definition and implementation.
+- Keep JS/TS command behavior unchanged while falling back to PHP LSP for eligible PHP documents.
+- Reuse existing PHP runtime root/session capability gates and stale async result protection.
+
+### Acceptance Criteria
+
+- `editor.goToDeclaration` is enabled for PHP documents only when the active PHP runtime/root advertises declaration support.
+- `editor.goToTypeDefinition` is enabled for PHP documents only when the active PHP runtime/root advertises type-definition support.
+- Successful PHP command runs open and reveal in-root declaration/type-definition targets.
+- Stale async results after workspace-tab switch or same-root session restart do not open files, reveal targets, or add navigation history.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Go To Declaration And Type Definition Commands
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP declaration|PHP type definition"` (6 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx` (348 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 917 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Go To Declaration And Type Definition Commands
+
+- Pending commit after verification.
