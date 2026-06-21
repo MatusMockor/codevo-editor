@@ -5615,3 +5615,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `f2fac6ea Guard stale Laravel model attribute targets`.
+
+## Slice: Stale Laravel Dynamic Where Target Candidate Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `73395720 Record stale Laravel model attribute guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale Laravel dynamic-where target candidate reads after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `openPhpLaravelDynamicWhereTarget`.
+- Guard before each class source read, after source reads, before target opens, and after failed candidate reads.
+- Add a preview regression where Go to Definition starts on `Comment::whereContent()` in `/workspace-a`, the dynamic-where model source read is delayed, the workspace switches to `/workspace-b`, and the delayed read fails.
+- Assert no additional package candidate read is started after the tab switch.
+
+### Acceptance Criteria
+
+- Stale Laravel dynamic-where target candidate reads stop after tab switch.
+- Stale dynamic-where targets are not opened or revealed in the active workspace.
+- Existing Laravel dynamic-where definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel dynamic where target candidates"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `226dd56f Guard stale Laravel dynamic where targets`.
