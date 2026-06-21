@@ -1905,6 +1905,81 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale PHP did-save errors after same-root session restart", async () => {
+    const path = "/workspace/src/User.php";
+    const didSave = createDeferred<void>();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(341)),
+      openLog: vi.fn(async () => "/tmp/phpactor.log"),
+      start: vi.fn(async () => runningStatus(341)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async () => "<?php\nfinal class User {}\n"),
+      runtimeStatus: runningStatus(341),
+    });
+    vi.mocked(dependencies.documentSyncGateway.didSave).mockImplementationOnce(
+      () => didSave.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.save",
+    );
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.documentSyncGateway.didSave).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({
+          path,
+          text: "<?php\nfinal class User {}\n",
+        }),
+      );
+    });
+
+    act(() => {
+      publishStatus?.(runningStatus(342));
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      didSave.reject(new Error("stale php did save"));
+      await savePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().message).toBe("Saved User.php");
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("stale php did save"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale save errors after switching project tabs", async () => {
     const path = "/workspace-a/src/User.php";
     const save = createDeferred<void>();

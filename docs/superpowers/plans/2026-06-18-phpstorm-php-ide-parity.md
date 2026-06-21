@@ -7656,3 +7656,40 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `84638690 Guard LSP didSave across workspace switches`.
+
+## Slice: PHP DidSave Same-Root Restart Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1789c618 Record LSP didSave workspace switch guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down PHP `didSave` stale-error handling after a same-root PHP language server session restart.
+
+### Implementation Choice
+
+- Add the PHP counterpart to the existing JS/TS same-root didSave restart regression.
+- Keep production code unchanged because the previous didSave guard already checks root, session, and document sync generation.
+
+### Acceptance Criteria
+
+- A stale PHP didSave rejection from an old same-root session does not surface as a notice.
+- The save command still completes with the expected saved message.
+- Existing JS/TS didSave restart coverage remains green.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "did-save errors after same-root session restart"`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
