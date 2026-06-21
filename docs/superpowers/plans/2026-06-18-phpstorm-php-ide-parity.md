@@ -3883,3 +3883,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `ac9d0221 Resolve chained Laravel controller route groups`.
+
+## Slice: Laravel Signed URL Route Names - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `080d903a Record chained Laravel controller route group commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Provide Laravel named-route completions for signed URL generation calls.
+
+### Implementation Choice
+
+- Add `URL::signedRoute`, `URL::temporarySignedRoute`, `Uri::signedRoute`, and `Uri::temporarySignedRoute` to named-route reference detection.
+- Keep the existing first-argument route-name behavior for `route`, `to_route`, `redirect()->route`, `Redirect::route`, `URL::route`, and `Route::has`.
+- Add parser coverage for each signed-route variant.
+- Add workbench coverage proving route-name completions work inside `URL::temporarySignedRoute('comments.uns', ...)`.
+
+### Acceptance Criteria
+
+- Signed-route string literals produce named-route reference contexts.
+- Laravel named-route completions work inside signed URL route calls.
+- Existing named-route helper and Redirect facade route completions still pass.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "supported first string arguments|signed URL route strings|Redirect facade route strings|suggests Laravel named routes inside route helper strings"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `bd714103 Complete Laravel signed route names`.
