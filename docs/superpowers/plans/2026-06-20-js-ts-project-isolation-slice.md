@@ -8738,3 +8738,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Mail Manager Maintenance Mailer Names
 
 - Committed as `fa484f3e Extend Laravel mailer navigation calls`.
+
+## Next Slice: Laravel Broadcast Manager Connection Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1a4f8b52 Record Laravel mailer call extension commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel broadcast connection names are configured under `config/broadcasting.php` and exposed through Broadcast manager calls such as `Broadcast::connection(...)`, `Broadcast::driver(...)`, `Broadcast::purge(...)`, and `Broadcast::setDefaultDriver(...)`.
+- This matches the existing config-derived connection-name slices and keeps fluent `via(...)` / `broadcastVia(...)` receiver anchoring for a separate follow-up.
+
+### Implementation Choice
+
+- Add a focused Broadcast connection string detector for supported Broadcast facade manager calls and named arguments.
+- Map a connection name to `broadcasting.connections.<connection>` for target lookup.
+- Suggest connection names from exact `broadcasting.connections.*` config targets and navigate to the connection key in `config/broadcasting.php`.
+
+### Verification: Laravel Broadcast Manager Connection Names
+
+- `npm test -- src/domain/phpLaravelBroadcasting.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Broadcast connection names"` passed: 2 passed, 413 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpLaravelBroadcasting.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 415 passed.
+- `npm test` passed: 77 files, 1104 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Broadcast Manager Connection Names
+
+- Committed as `6a09d53d Add Laravel broadcast connection navigation`.
