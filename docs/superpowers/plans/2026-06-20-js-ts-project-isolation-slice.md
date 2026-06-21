@@ -4069,3 +4069,40 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Provider Code Action Root Guard Coverage
 
 - Committed as `672d3db2 Cover PHP code action runtime roots`.
+
+## Next Slice: PHP Provider Lazy Code Action Root Guard Coverage
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f15c4f84 Record PHP code action root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP LSP-backed code action requests are now directly covered for rootless and mismatched runtime statuses.
+- The same provider also has lazy code action resolve and command-backed edit paths that reuse stored workspace-root payloads.
+- Those lazy paths already check the current runtime root before asking the gateway, but did not have direct rootless/mismatched runtime coverage.
+
+### Implementation Choice
+
+- Extend the Monaco test mock so it stores the registered PHP language server command handler.
+- Add direct regressions proving rootless and mismatched runtime statuses do not call `resolveCodeAction`.
+- Add direct regressions proving rootless and mismatched runtime statuses do not execute command-backed PHP LSP actions.
+- Keep the slice coverage-only because the production guard was already in place.
+
+### Acceptance Criteria
+
+- Rootless PHP runtime status does not resolve backed code actions or execute command-backed actions.
+- Mismatched-root PHP runtime status does not resolve backed code actions or execute command-backed actions.
+- Focused/full PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Provider Lazy Code Action Root Guard Coverage
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "resolve or execute PHP code-action commands"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`

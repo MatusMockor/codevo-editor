@@ -1846,6 +1846,79 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("does not resolve or execute PHP code-action commands when the runtime status belongs to another workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      resolvedCodeAction: {
+        command: null,
+        data: null,
+        edit: workspaceEdit(
+          "file:///project/src/User.php",
+          "use App\\Models\\User;\n",
+        ),
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Import User",
+      },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      runtimeStatus: {
+        ...runningStatus(),
+        rootPath: "/other",
+      },
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const backedAction = backedCodeAction();
+
+    await expect(
+      registered.codeActionProvider.resolveCodeAction(backedAction),
+    ).resolves.toBe(backedAction);
+    if (!registered.commandRun) {
+      throw new Error("PHP language server command was not registered");
+    }
+    await registered.commandRun(null, phpCommandPayload());
+
+    expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
+    expect(gateway.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("does not resolve or execute PHP code-action commands when the runtime status has no explicit workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      resolvedCodeAction: {
+        command: null,
+        data: null,
+        edit: workspaceEdit(
+          "file:///project/src/User.php",
+          "use App\\Models\\User;\n",
+        ),
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Import User",
+      },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      runtimeStatus: rootlessRunningStatus(),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const backedAction = backedCodeAction();
+
+    await expect(
+      registered.codeActionProvider.resolveCodeAction(backedAction),
+    ).resolves.toBe(backedAction);
+    if (!registered.commandRun) {
+      throw new Error("PHP language server command was not registered");
+    }
+    await registered.commandRun(null, phpCommandPayload());
+
+    expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
+    expect(gateway.executeCommand).not.toHaveBeenCalled();
+  });
+
   it("provides a quick fix for unexpected bare PHP identifiers", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();
@@ -1933,6 +2006,7 @@ function createRegisteredProviders() {
     codeActionMetadata: any;
     codeActionProvider: any;
     commandDispose: ReturnType<typeof vi.fn>;
+    commandRun: ((accessor: unknown, payload?: unknown) => unknown) | null;
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
     completionProvider: any;
@@ -1952,6 +2026,7 @@ function createRegisteredProviders() {
     codeActionMetadata: null,
     codeActionProvider: null,
     commandDispose,
+    commandRun: null,
     completionDispose,
     completionLanguage: null,
     completionProvider: null,
@@ -1986,7 +2061,10 @@ function createRegisteredProviders() {
       }
     },
     editor: {
-      addCommand: vi.fn(() => ({ dispose: commandDispose })),
+      addCommand: vi.fn((command) => {
+        registered.commandRun = command.run;
+        return { dispose: commandDispose };
+      }),
       getModels: vi.fn(() => []),
     },
     languages: {
@@ -2164,6 +2242,38 @@ function featuresGateway(
     ),
     resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
     resolveDocumentLink: vi.fn(async (_rootPath, link) => link),
+  };
+}
+
+function backedCodeAction() {
+  return {
+    __languageServerAction: {
+      command: null,
+      data: { id: "add-import" },
+      edit: null,
+      isPreferred: true,
+      kind: "quickfix",
+      title: "Import User",
+    },
+    __workspaceEditContext: {
+      path: "/project/src/User.php",
+      versionId: 42,
+    },
+    __workspaceRoot: "/project",
+    diagnostics: [],
+    kind: "quickfix",
+    title: "Import User",
+  };
+}
+
+function phpCommandPayload(rootPath = "/project") {
+  return {
+    command: {
+      arguments: [],
+      command: "phpactor.fixAll",
+      title: "Fix all",
+    },
+    rootPath,
   };
 }
 
