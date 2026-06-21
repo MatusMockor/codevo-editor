@@ -7208,4 +7208,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Folding Range Provider
 
-- Pending commit after verification.
+- Committed as `abcf51a2 Register PHP folding range provider`.
