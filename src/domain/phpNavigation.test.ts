@@ -78,6 +78,7 @@ class CommentController
 /**
  * @method static object fromNamed(string $name)
  * @method publish(bool $quietly = false)
+ * @method static findForSlug(string $slug)
  */
 class CommentFactory
 {
@@ -91,6 +92,10 @@ class CommentFactory
     expect(phpDocMethodPositionOrNull(source, "publish")).toEqual({
       column: 12,
       lineNumber: 4,
+    });
+    expect(phpDocMethodPositionOrNull(source, "findForSlug")).toEqual({
+      column: 19,
+      lineNumber: 5,
     });
     expect(phpDocMethodPositionOrNull(source, "missing")).toBeNull();
   });

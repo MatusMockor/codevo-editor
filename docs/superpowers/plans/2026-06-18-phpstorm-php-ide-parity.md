@@ -6422,3 +6422,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `b6deb264 Support returnless PHPDoc magic methods`.
+
+## Slice: Returnless PHPDoc Magic Method Navigation Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `63ed26d5 Record returnless PHPDoc magic method commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down Cmd+B / Go to Definition behavior for static PHPDoc magic methods that omit explicit return types.
+
+### Implementation Choice
+
+- Extend domain navigation coverage for `@method static findForSlug(...)`.
+- Extend the workbench PHPDoc magic method definition regression so `CommentFactory::findForSlug()` opens the returnless PHPDoc method line.
+- Keep the slice coverage-only because the current navigation parser already accepted optional return types.
+
+### Acceptance Criteria
+
+- Returnless static PHPDoc magic methods have discoverable definition positions.
+- Workbench Go to Definition opens the returnless PHPDoc method annotation.
+- Existing PHPDoc magic method navigation remains unchanged.
+- Focused/full navigation and preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc magic method definitions"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
