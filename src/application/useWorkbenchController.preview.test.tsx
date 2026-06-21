@@ -32695,6 +32695,200 @@ return [
     });
   });
 
+  it("suggests Laravel Redis connection names from database config", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/RedisController.php";
+    const configRoot = "/workspace/config";
+    const databaseConfigPath = "/workspace/config/database.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Redis;
+
+class RedisController
+{
+    public function connect(): void
+    {
+        Redis::connection('ca');
+        Redis::connection(name: 'de');
+    }
+}
+`;
+    const databaseConfigSource = `<?php
+
+return [
+    'default' => 'mysql',
+    'connections' => [
+        'mysql' => [
+            'driver' => 'mysql',
+        ],
+    ],
+    'redis' => [
+        'client' => env('REDIS_CLIENT', 'phpredis'),
+        'options' => [
+            'cluster' => env('REDIS_CLUSTER', 'redis'),
+        ],
+        'default' => [
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+        ],
+        'cache' => [
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot
+          ? [fileEntry(databaseConfigPath, "database.php")]
+          : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === databaseConfigPath) {
+          return databaseConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "RedisController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Redis::connection('ca"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/database.php",
+        insertText: "cache",
+        kind: "config",
+        name: "cache",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Redis::connection(name: 'de"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/database.php",
+        insertText: "default",
+        kind: "config",
+        name: "default",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Redis connection names before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/RedisController.php";
+    const databaseConfigPath = "/workspace/config/database.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Redis;
+
+class RedisController
+{
+    public function connect(): mixed
+    {
+        return Redis::connection('cache')->get('key');
+    }
+}
+`;
+    const databaseConfigSource = `<?php
+
+return [
+    'redis' => [
+        'client' => env('REDIS_CLIENT', 'phpredis'),
+        'default' => [
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+        ],
+        'cache' => [
+            'host' => env('REDIS_HOST', '127.0.0.1'),
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === databaseConfigPath) {
+          return databaseConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "RedisController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Redis::connection('cache"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(databaseConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: databaseConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+  });
+
   it("suggests Laravel Broadcast connection names from broadcasting config", async () => {
     const controllerPath =
       "/workspace/app/Http/Controllers/BroadcastController.php";

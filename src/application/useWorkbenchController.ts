@@ -266,6 +266,12 @@ import {
   phpLaravelQueueConnectionReferenceContextAt,
 } from "../domain/phpLaravelQueue";
 import {
+  phpLaravelRedisConnectionCompletionInsertText,
+  phpLaravelRedisConnectionConfigKey,
+  phpLaravelRedisConnectionNameFromConfigKey,
+  phpLaravelRedisConnectionReferenceContextAt,
+} from "../domain/phpLaravelRedis";
+import {
   phpLaravelStorageDiskCompletionInsertText,
   phpLaravelStorageDiskConfigKey,
   phpLaravelStorageDiskNameFromConfigKey,
@@ -447,6 +453,10 @@ interface PhpLaravelBroadcastConnectionTarget extends PhpLaravelConfigTarget {
 }
 
 interface PhpLaravelQueueConnectionTarget extends PhpLaravelConfigTarget {
+  connectionName: string;
+}
+
+interface PhpLaravelRedisConnectionTarget extends PhpLaravelConfigTarget {
   connectionName: string;
 }
 
@@ -8314,6 +8324,56 @@ export function useWorkbenchController(
     [findPhpLaravelConfigTarget],
   );
 
+  const collectPhpLaravelRedisConnectionTargets =
+    useCallback(async (): Promise<PhpLaravelRedisConnectionTarget[]> => {
+      const targets = new Map<string, PhpLaravelRedisConnectionTarget>();
+
+      for (const target of await collectPhpLaravelConfigTargets()) {
+        const connectionName = phpLaravelRedisConnectionNameFromConfigKey(
+          target.key,
+        );
+
+        if (!connectionName) {
+          continue;
+        }
+
+        const key = connectionName.toLowerCase();
+
+        if (!targets.has(key)) {
+          targets.set(key, {
+            ...target,
+            connectionName,
+          });
+        }
+      }
+
+      return Array.from(targets.values()).sort((left, right) =>
+        left.connectionName.localeCompare(right.connectionName),
+      );
+    }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelRedisConnectionTarget = useCallback(
+    async (
+      connectionName: string,
+    ): Promise<PhpLaravelRedisConnectionTarget | null> => {
+      const configKey = phpLaravelRedisConnectionConfigKey(connectionName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            connectionName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const collectPhpLaravelMailMailerTargets = useCallback(async (): Promise<
     PhpLaravelMailMailerTarget[]
   > => {
@@ -12994,6 +13054,35 @@ export function useWorkbenchController(
           }));
       }
 
+      const redisConnectionContext =
+        phpLaravelRedisConnectionReferenceContextAt(source, position);
+
+      if (isLaravelFrameworkActive && redisConnectionContext && activeDocument) {
+        const normalizedPrefix =
+          redisConnectionContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelRedisConnectionTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.connectionName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelRedisConnectionCompletionInsertText(
+              target.connectionName,
+            ),
+            kind: "config",
+            name: target.connectionName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const mailMailerContext = phpLaravelMailMailerReferenceContextAt(
         source,
         position,
@@ -13272,6 +13361,7 @@ export function useWorkbenchController(
       collectPhpLaravelMailMailerTargets,
       collectPhpLaravelPasswordBrokerTargets,
       collectPhpLaravelQueueConnectionTargets,
+      collectPhpLaravelRedisConnectionTargets,
       collectPhpLaravelStorageDiskTargets,
       collectPhpLaravelTranslationTargets,
       collectPhpLaravelRelationCompletionsForClass,
@@ -14898,6 +14988,51 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelRedisConnectionDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelRedisConnectionString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelRedisConnectionTarget(
+        context.connectionName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(
+          `No Laravel Redis connection ${context.connectionName} found.`,
+        );
+        return false;
+      }
+
+      return openNavigationTarget(
+        target.path,
+        target.position,
+        target.connectionName,
+      );
+    },
+    [
+      activeDocument,
+      findPhpLaravelRedisConnectionTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelMailMailerDefinition = useCallback(
     async (
       context: Extract<
@@ -15209,6 +15344,10 @@ export function useWorkbenchController(
 
     if (context.kind === "laravelQueueConnectionString") {
       return goToPhpLaravelQueueConnectionDefinition(context);
+    }
+
+    if (context.kind === "laravelRedisConnectionString") {
+      return goToPhpLaravelRedisConnectionDefinition(context);
     }
 
     if (context.kind === "laravelMailMailerString") {
@@ -15802,6 +15941,10 @@ export function useWorkbenchController(
           return goToPhpLaravelQueueConnectionDefinition(context);
         }
 
+        if (context.kind === "laravelRedisConnectionString") {
+          return goToPhpLaravelRedisConnectionDefinition(context);
+        }
+
         if (context.kind === "laravelMailMailerString") {
           return goToPhpLaravelMailMailerDefinition(context);
         }
@@ -15937,6 +16080,7 @@ export function useWorkbenchController(
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelPasswordBrokerDefinition,
     goToPhpLaravelQueueConnectionDefinition,
+    goToPhpLaravelRedisConnectionDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelStorageDiskDefinition,
     goToPhpLaravelTranslationDefinition,

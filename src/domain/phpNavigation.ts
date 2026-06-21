@@ -23,6 +23,7 @@ import { phpLaravelMailMailerReferenceContextAt } from "./phpLaravelMail";
 import { phpLaravelPasswordBrokerReferenceContextAt } from "./phpLaravelPassword";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
 import { phpLaravelQueueConnectionReferenceContextAt } from "./phpLaravelQueue";
+import { phpLaravelRedisConnectionReferenceContextAt } from "./phpLaravelRedis";
 import { phpLaravelStorageDiskReferenceContextAt } from "./phpLaravelStorage";
 import { phpLaravelTranslationReferenceContextAt } from "./phpLaravelTranslations";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
@@ -84,6 +85,10 @@ export type PhpIdentifierContext =
   | {
       brokerName: string;
       kind: "laravelPasswordBrokerString";
+    }
+  | {
+      connectionName: string;
+      kind: "laravelRedisConnectionString";
     }
   | {
       channelName: string;
@@ -279,6 +284,18 @@ export function phpIdentifierContextAt(
     return {
       brokerName: passwordBrokerReference.brokerName,
       kind: "laravelPasswordBrokerString",
+    };
+  }
+
+  const redisConnectionReference = phpLaravelRedisConnectionReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (redisConnectionReference) {
+    return {
+      connectionName: redisConnectionReference.connectionName,
+      kind: "laravelRedisConnectionString",
     };
   }
 
