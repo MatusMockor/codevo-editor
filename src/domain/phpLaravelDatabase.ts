@@ -228,6 +228,12 @@ interface PhpStringLiteralContext {
   value: string;
 }
 
+interface PhpClassDeclaration {
+  bodyOpenOffset: number;
+  parentClass: string;
+  startOffset: number;
+}
+
 function isEloquentModelConnectionPropertyAt(
   source: string,
   quoteStart: number,
@@ -236,10 +242,24 @@ function isEloquentModelConnectionPropertyAt(
     return false;
   }
 
-  const classMatch = nearestClassDeclarationBeforeOffset(source, quoteStart);
-  const parentClass = classMatch?.[1] ?? null;
+  const classDeclaration = enclosingClassDeclarationAt(source, quoteStart);
 
-  return Boolean(parentClass && isEloquentModelParentClass(parentClass));
+  if (
+    !classDeclaration ||
+    !isClassBodyTopLevelOffset(
+      source,
+      classDeclaration.bodyOpenOffset,
+      quoteStart,
+    )
+  ) {
+    return false;
+  }
+
+  return isEloquentModelParentClass(
+    source,
+    classDeclaration.parentClass,
+    classDeclaration.startOffset,
+  );
 }
 
 function isConnectionPropertyDeclarationBeforeOffset(
@@ -254,34 +274,151 @@ function isConnectionPropertyDeclarationBeforeOffset(
   );
   const statementPrefix = beforeLiteral.slice(statementStart + 1);
 
-  return /^\s*(?:public|protected)\s+(?:static\s+)?(?:\??[A-Za-z_\\][A-Za-z0-9_\\]*\s+)?\$connection\s*=\s*$/.test(
+  return /^\s*(?:public|protected)\s+(?:(?:\??string|string\s*\|\s*null|null\s*\|\s*string)\s+)?\$connection\s*=\s*$/.test(
     statementPrefix,
   );
 }
 
-function nearestClassDeclarationBeforeOffset(
+function enclosingClassDeclarationAt(
   source: string,
   offset: number,
-): RegExpExecArray | null {
+): PhpClassDeclaration | null {
+  const maskedSource = maskPhpCommentsAndStrings(source);
   const classPattern =
     /\bclass\s+[A-Za-z_][A-Za-z0-9_]*\s+extends\s+((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)/g;
-  const beforeOffset = source.slice(0, offset);
-  let current: RegExpExecArray | null = null;
+  const beforeOffset = maskedSource.slice(0, offset);
+  let current: PhpClassDeclaration | null = null;
   let match: RegExpExecArray | null;
 
   while ((match = classPattern.exec(beforeOffset))) {
-    current = match;
+    const bodyOpenOffset = maskedSource.indexOf("{", classPattern.lastIndex);
+
+    if (bodyOpenOffset < 0 || bodyOpenOffset > offset) {
+      continue;
+    }
+
+    const bodyCloseOffset = matchingBraceOffset(maskedSource, bodyOpenOffset);
+
+    if (bodyCloseOffset !== null && offset > bodyCloseOffset) {
+      continue;
+    }
+
+    current = {
+      bodyOpenOffset,
+      parentClass: match[1] ?? "",
+      startOffset: match.index,
+    };
   }
 
   return current;
 }
 
-function isEloquentModelParentClass(parentClass: string): boolean {
+function isEloquentModelParentClass(
+  source: string,
+  parentClass: string,
+  classStartOffset: number,
+): boolean {
   const normalizedClassName = parentClass.replace(/^\\/, "").toLowerCase();
 
+  if (normalizedClassName === "illuminate\\database\\eloquent\\model") {
+    return true;
+  }
+
+  if (parentClass.includes("\\")) {
+    return false;
+  }
+
   return (
-    normalizedClassName === "model" ||
-    normalizedClassName === "illuminate\\database\\eloquent\\model"
+    resolveImportedClassName(source, parentClass, classStartOffset) ===
+    "illuminate\\database\\eloquent\\model"
+  );
+}
+
+function resolveImportedClassName(
+  source: string,
+  shortName: string,
+  beforeOffset: number,
+): string | null {
+  const maskedSource = maskPhpCommentsAndStrings(source).slice(0, beforeOffset);
+  const importPattern =
+    /\buse\s+((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;/gi;
+  const normalizedShortName = shortName.toLowerCase();
+  let match: RegExpExecArray | null;
+
+  while ((match = importPattern.exec(maskedSource))) {
+    const importedClass = match[1] ?? "";
+    const alias =
+      match[2] ??
+      importedClass.replace(/^\\/, "").split("\\").filter(Boolean).pop() ??
+      "";
+
+    if (alias.toLowerCase() !== normalizedShortName) {
+      continue;
+    }
+
+    return importedClass.replace(/^\\/, "").toLowerCase();
+  }
+
+  return null;
+}
+
+function isClassBodyTopLevelOffset(
+  source: string,
+  bodyOpenOffset: number,
+  targetOffset: number,
+): boolean {
+  const maskedSource = maskPhpCommentsAndStrings(source);
+  let depth = 1;
+
+  for (let index = bodyOpenOffset + 1; index < targetOffset; index += 1) {
+    const character = maskedSource[index] ?? "";
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth -= 1;
+
+      if (depth <= 0) {
+        return false;
+      }
+    }
+  }
+
+  return depth === 1;
+}
+
+function matchingBraceOffset(source: string, openOffset: number): number | null {
+  let depth = 0;
+
+  for (let index = openOffset; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== "}") {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth === 0) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function maskPhpCommentsAndStrings(source: string): string {
+  return source.replace(
+    /'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|\/\/[^\r\n]*|#[^\r\n]*|\/\*[\s\S]*?\*\//g,
+    (match) => " ".repeat(match.length),
   );
 }
 
