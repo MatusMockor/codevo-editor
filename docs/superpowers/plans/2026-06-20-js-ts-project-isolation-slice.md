@@ -6555,3 +6555,22 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - Queued PHP `didOpen` bails after sync generation, active root, or PHP runtime session changes.
 - Queued JS/TS `didOpen` bails after sync generation, active root, or JS/TS runtime session changes.
 - Regression tests cover switching project tabs while a queued `didOpen` is waiting behind a pending `didClose`.
+
+### Completed Slice: Queued didOpen Workspace-Tab Guard
+
+- PHP and JS/TS `didOpen` paths now capture document sync generation, active root, and runtime session before enqueueing the open notification.
+- Queued `didOpen` callbacks now bail if they run after a workspace-tab switch, sync reset, or same-root runtime session restart.
+- Pending open-attempt bookkeeping prevents stale callbacks from clearing newer sync state for the same root/path after a reset or restart.
+- Added regressions for close-then-reopen of the same file while `didClose` is pending, followed by a workspace-tab switch before the queued `didOpen` can run.
+
+### Verification: Queued didOpen Workspace-Tab Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "queued .*didOpen|didOpen before first-use|didSave after switching project tabs"` (8 tests)
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx` (336 tests)
+- PASS: `npm test` (65 files, 883 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Queued didOpen Workspace-Tab Guard
+
+- Pending commit after full frontend verification.
