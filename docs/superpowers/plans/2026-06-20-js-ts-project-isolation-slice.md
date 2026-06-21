@@ -4270,4 +4270,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JavaScript TypeScript Hover Definition Tab Switch Coverage
 
-- Pending commit.
+- Committed as `0d613175 Cover JavaScript TypeScript hover definition tab switches`.
