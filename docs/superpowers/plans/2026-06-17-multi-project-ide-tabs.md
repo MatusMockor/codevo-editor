@@ -340,3 +340,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `49377f28 Cover active workspace disposal fallback`.
+
+### Slice: Last Workspace Runtime Disposal Fallback Coverage - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `79e9bb97 Record active workspace disposal fallback commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prove closing the final workspace tab still falls back to explicit runtime stops when unified workspace disposal fails.
+
+#### Implementation Choice
+
+- Add controller coverage for a last-tab close where `disposeWorkspace` rejects.
+- Verify fallback cleanup stops the PHP language server, JavaScript/TypeScript language server, and terminal sessions for the closed root, then clears the active workspace and tab list.
+
+#### Acceptance Criteria
+
+- `closeWorkspaceTab` keeps the final tab close path resilient when the workspace runtime disposal gateway rejects.
+- The fallback targets the closed root.
+- The workbench ends with no active workspace and no workspace tabs.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "falls back to explicit runtime stops when last project disposal fails|clears the workbench and stops runtime when the last project tab closes"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Pending implementation commit.

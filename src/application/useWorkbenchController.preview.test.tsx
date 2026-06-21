@@ -2693,6 +2693,40 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("falls back to explicit runtime stops when last project disposal fails", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+    });
+    await flushAsyncTurns();
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockRejectedValueOnce(new Error("dispose failed"));
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace",
+    );
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().workspaceTabs).toEqual([]);
+  });
+
   it("loads the Git original content for active editor change markers", async () => {
     const file = fileEntry("/workspace/src/User.php", "User.php");
     const change = {
