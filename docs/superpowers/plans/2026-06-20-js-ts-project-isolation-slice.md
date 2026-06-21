@@ -7328,4 +7328,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Document Symbol Provider
 
-- Pending commit after verification.
+- Committed as `ba5293bd Register PHP document symbol provider`.
