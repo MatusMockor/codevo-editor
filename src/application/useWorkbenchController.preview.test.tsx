@@ -10049,6 +10049,11 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().callHierarchyView?.item.name).toBe("loadUser");
     expect(getWorkbench().activePath).toBe(path);
     expect(readTextFile).not.toHaveBeenCalledWith(staleCallerPath);
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
   });
 
   it("drops stale JavaScript and TypeScript call hierarchy errors after switching project tabs", async () => {
@@ -10657,6 +10662,11 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().typeHierarchyView?.item.name).toBe("User");
     expect(getWorkbench().activePath).toBe(path);
     expect(readTextFile).not.toHaveBeenCalledWith(staleSubtypePath);
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
   });
 
   it("drops stale JavaScript and TypeScript type hierarchy errors after switching project tabs", async () => {
@@ -12030,6 +12040,11 @@ function helper_call(): string
     expect(getWorkbench().editorRevealTarget).toBeNull();
     expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
     expect(getWorkbench().message).not.toBe("Opened declaration user.d.ts:1:14");
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
   });
 
   it("opens JavaScript and TypeScript type definitions through workbench commands", async () => {

@@ -963,12 +963,17 @@ export function useWorkbenchController(
       };
     }, [activeDocument]);
 
-  const recordCurrentNavigationLocation = useCallback(() => {
-    const location = currentNavigationLocation();
+  const recordNavigationLocationSnapshot = useCallback((
+    location: NavigationLocation | null,
+  ) => {
     setNavigationHistory((current) =>
       recordNavigationLocation(current, location),
     );
-  }, [currentNavigationLocation]);
+  }, []);
+
+  const recordCurrentNavigationLocation = useCallback(() => {
+    recordNavigationLocationSnapshot(currentNavigationLocation());
+  }, [currentNavigationLocation, recordNavigationLocationSnapshot]);
 
   const clearLanguageServerDiagnostics = useCallback(() => {
     setLanguageServerDiagnosticsByPath({});
@@ -5809,7 +5814,7 @@ export function useWorkbenchController(
       position: EditorPosition,
       label: string,
     ): Promise<boolean> => {
-      recordCurrentNavigationLocation();
+      const previousLocation = currentNavigationLocation();
 
       const opened = await openPathForNavigation(path);
 
@@ -5817,6 +5822,7 @@ export function useWorkbenchController(
         return false;
       }
 
+      recordNavigationLocationSnapshot(previousLocation);
       setEditorRevealTarget({
         path,
         position,
@@ -5826,7 +5832,11 @@ export function useWorkbenchController(
       );
       return true;
     },
-    [openPathForNavigation, recordCurrentNavigationLocation],
+    [
+      currentNavigationLocation,
+      openPathForNavigation,
+      recordNavigationLocationSnapshot,
+    ],
   );
 
   const openProblemNotice = useCallback(
@@ -12484,7 +12494,7 @@ export function useWorkbenchController(
         return false;
       }
 
-      recordCurrentNavigationLocation();
+      const previousLocation = currentNavigationLocation();
       const opened = await openPathForNavigation(targetPath);
 
       if (!opened) {
@@ -12495,6 +12505,7 @@ export function useWorkbenchController(
         return false;
       }
 
+      recordNavigationLocationSnapshot(previousLocation);
       const targetPosition = toEditorPosition(target.range.start);
       setEditorRevealTarget({
         path: targetPath,
@@ -12522,7 +12533,8 @@ export function useWorkbenchController(
     languageServerRuntimeStatusRoot,
     openImplementationTarget,
     openPathForNavigation,
-    recordCurrentNavigationLocation,
+    currentNavigationLocation,
+    recordNavigationLocationSnapshot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     workspaceRoot,
   ]);
@@ -12636,8 +12648,7 @@ export function useWorkbenchController(
             return false;
           }
 
-          setImplementationChooser(null);
-          recordCurrentNavigationLocation();
+          const previousLocation = currentNavigationLocation();
           const opened = await openPathForNavigation(onlyTarget.path);
 
           if (!opened) {
@@ -12648,6 +12659,8 @@ export function useWorkbenchController(
             return false;
           }
 
+          recordNavigationLocationSnapshot(previousLocation);
+          setImplementationChooser(null);
           setEditorRevealTarget({
             path: onlyTarget.path,
             position: onlyTarget.position,
@@ -12673,12 +12686,11 @@ export function useWorkbenchController(
         return false;
       }
 
-      recordCurrentNavigationLocation();
-
       if (!isRequestedJavaScriptTypeScriptSessionActive()) {
         return false;
       }
 
+      const previousLocation = currentNavigationLocation();
       const opened = await openPathForNavigation(targetPath);
 
       if (!opened) {
@@ -12689,6 +12701,7 @@ export function useWorkbenchController(
         return false;
       }
 
+      recordNavigationLocationSnapshot(previousLocation);
       const targetPosition = toEditorPosition(target.range.start);
       setEditorRevealTarget({
         path: targetPath,
@@ -12719,7 +12732,8 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     openPathForNavigation,
-    recordCurrentNavigationLocation,
+    currentNavigationLocation,
+    recordNavigationLocationSnapshot,
     reportErrorForActiveWorkspaceRoot,
     workspaceRoot,
   ]);
