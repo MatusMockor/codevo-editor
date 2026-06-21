@@ -17,6 +17,7 @@ import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
 import { phpLaravelDatabaseConnectionReferenceContextAt } from "./phpLaravelDatabase";
 import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
+import { phpLaravelQueueConnectionReferenceContextAt } from "./phpLaravelQueue";
 import { phpLaravelStorageDiskReferenceContextAt } from "./phpLaravelStorage";
 import { phpLaravelTranslationReferenceContextAt } from "./phpLaravelTranslations";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
@@ -54,6 +55,10 @@ export type PhpIdentifierContext =
   | {
       connectionName: string;
       kind: "laravelDatabaseConnectionString";
+    }
+  | {
+      connectionName: string;
+      kind: "laravelQueueConnectionString";
     }
   | {
       envName: string;
@@ -191,6 +196,18 @@ export function phpIdentifierContextAt(
     return {
       connectionName: databaseConnectionReference.connectionName,
       kind: "laravelDatabaseConnectionString",
+    };
+  }
+
+  const queueConnectionReference = phpLaravelQueueConnectionReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (queueConnectionReference) {
+    return {
+      connectionName: queueConnectionReference.connectionName,
+      kind: "laravelQueueConnectionString",
     };
   }
 

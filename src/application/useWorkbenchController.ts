@@ -230,6 +230,12 @@ import {
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
 import {
+  phpLaravelQueueConnectionCompletionInsertText,
+  phpLaravelQueueConnectionConfigKey,
+  phpLaravelQueueConnectionNameFromConfigKey,
+  phpLaravelQueueConnectionReferenceContextAt,
+} from "../domain/phpLaravelQueue";
+import {
   phpLaravelStorageDiskCompletionInsertText,
   phpLaravelStorageDiskConfigKey,
   phpLaravelStorageDiskNameFromConfigKey,
@@ -399,6 +405,10 @@ interface PhpLaravelCacheStoreTarget extends PhpLaravelConfigTarget {
 }
 
 interface PhpLaravelDatabaseConnectionTarget extends PhpLaravelConfigTarget {
+  connectionName: string;
+}
+
+interface PhpLaravelQueueConnectionTarget extends PhpLaravelConfigTarget {
   connectionName: string;
 }
 
@@ -8107,6 +8117,56 @@ export function useWorkbenchController(
     [findPhpLaravelConfigTarget],
   );
 
+  const collectPhpLaravelQueueConnectionTargets =
+    useCallback(async (): Promise<PhpLaravelQueueConnectionTarget[]> => {
+      const targets = new Map<string, PhpLaravelQueueConnectionTarget>();
+
+      for (const target of await collectPhpLaravelConfigTargets()) {
+        const connectionName = phpLaravelQueueConnectionNameFromConfigKey(
+          target.key,
+        );
+
+        if (!connectionName) {
+          continue;
+        }
+
+        const key = connectionName.toLowerCase();
+
+        if (!targets.has(key)) {
+          targets.set(key, {
+            ...target,
+            connectionName,
+          });
+        }
+      }
+
+      return Array.from(targets.values()).sort((left, right) =>
+        left.connectionName.localeCompare(right.connectionName),
+      );
+    }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelQueueConnectionTarget = useCallback(
+    async (
+      connectionName: string,
+    ): Promise<PhpLaravelQueueConnectionTarget | null> => {
+      const configKey = phpLaravelQueueConnectionConfigKey(connectionName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            connectionName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const collectPhpLaravelStorageDiskTargets = useCallback(async (): Promise<
     PhpLaravelStorageDiskTarget[]
   > => {
@@ -12552,6 +12612,34 @@ export function useWorkbenchController(
           }));
       }
 
+      const queueConnectionContext =
+        phpLaravelQueueConnectionReferenceContextAt(source, position);
+
+      if (isLaravelFrameworkActive && queueConnectionContext && activeDocument) {
+        const normalizedPrefix = queueConnectionContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelQueueConnectionTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.connectionName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelQueueConnectionCompletionInsertText(
+              target.connectionName,
+            ),
+            kind: "config",
+            name: target.connectionName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const storageDiskContext = phpLaravelStorageDiskReferenceContextAt(
         source,
         position,
@@ -12734,6 +12822,7 @@ export function useWorkbenchController(
       collectPhpLaravelConfigTargets,
       collectPhpLaravelDatabaseConnectionTargets,
       collectPhpLaravelEnvTargets,
+      collectPhpLaravelQueueConnectionTargets,
       collectPhpLaravelStorageDiskTargets,
       collectPhpLaravelTranslationTargets,
       collectPhpLaravelRelationCompletionsForClass,
@@ -14233,6 +14322,51 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelQueueConnectionDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelQueueConnectionString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelQueueConnectionTarget(
+        context.connectionName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(
+          `No Laravel queue connection ${context.connectionName} found.`,
+        );
+        return false;
+      }
+
+      return openNavigationTarget(
+        target.path,
+        target.position,
+        target.connectionName,
+      );
+    },
+    [
+      activeDocument,
+      findPhpLaravelQueueConnectionTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelStorageDiskDefinition = useCallback(
     async (
       context: Extract<
@@ -14415,6 +14549,10 @@ export function useWorkbenchController(
 
     if (context.kind === "laravelDatabaseConnectionString") {
       return goToPhpLaravelDatabaseConnectionDefinition(context);
+    }
+
+    if (context.kind === "laravelQueueConnectionString") {
+      return goToPhpLaravelQueueConnectionDefinition(context);
     }
 
     if (context.kind === "laravelStorageDiskString") {
@@ -14981,6 +15119,10 @@ export function useWorkbenchController(
           return goToPhpLaravelDatabaseConnectionDefinition(context);
         }
 
+        if (context.kind === "laravelQueueConnectionString") {
+          return goToPhpLaravelQueueConnectionDefinition(context);
+        }
+
         if (context.kind === "laravelStorageDiskString") {
           return goToPhpLaravelStorageDiskDefinition(context);
         }
@@ -15098,6 +15240,7 @@ export function useWorkbenchController(
     goToPhpLaravelDatabaseConnectionDefinition,
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
+    goToPhpLaravelQueueConnectionDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelStorageDiskDefinition,
     goToPhpLaravelTranslationDefinition,

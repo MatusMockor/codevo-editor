@@ -32695,6 +32695,261 @@ return [
     });
   });
 
+  it("suggests Laravel Queue connection names from queue config", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/QueueController.php";
+    const configRoot = "/workspace/config";
+    const queueConfigPath = "/workspace/config/queue.php";
+    const controllerSource = `<?php
+
+use App\\Jobs\\ProcessPodcast;
+use Illuminate\\Support\\Facades\\Bus;
+use Illuminate\\Support\\Facades\\Queue;
+
+class QueueController
+{
+    public function connections(): void
+    {
+        Queue::connection('re');
+        Queue::connected('sy');
+        ProcessPodcast::dispatch()->onConnection('sq');
+        Bus::chain([])->allOnConnection('re');
+        Queue::route(ProcessPodcast::class, connection: 'da');
+        Queue::route(ProcessPodcast::class, 'emails', 're');
+    }
+}
+`;
+    const queueConfigSource = `<?php
+
+return [
+    'default' => 'sync',
+    'connections' => [
+        'sync' => [
+            'driver' => 'sync',
+        ],
+        'redis' => [
+            'driver' => 'redis',
+        ],
+        'sqs' => [
+            'driver' => 'sqs',
+        ],
+        'database' => [
+            'driver' => 'database',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot ? [fileEntry(queueConfigPath, "queue.php")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === queueConfigPath) {
+          return queueConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "QueueController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Queue::connection('re"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/queue.php",
+        insertText: "redis",
+        kind: "config",
+        name: "redis",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Queue::connected('sy"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/queue.php",
+        insertText: "sync",
+        kind: "config",
+        name: "sync",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "onConnection('sq"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/queue.php",
+        insertText: "sqs",
+        kind: "config",
+        name: "sqs",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "allOnConnection('re"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/queue.php",
+        insertText: "redis",
+        kind: "config",
+        name: "redis",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "connection: 'da"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/queue.php",
+        insertText: "database",
+        kind: "config",
+        name: "database",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "'emails', 're"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/queue.php",
+        insertText: "redis",
+        kind: "config",
+        name: "redis",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Queue connection names before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/QueueController.php";
+    const queueConfigPath = "/workspace/config/queue.php";
+    const controllerSource = `<?php
+
+use App\\Jobs\\ProcessPodcast;
+
+class QueueController
+{
+    public function dispatch(): void
+    {
+        ProcessPodcast::dispatch()->onConnection('redis');
+    }
+}
+`;
+    const queueConfigSource = `<?php
+
+return [
+    'default' => 'sync',
+    'connections' => [
+        'sync' => [
+            'driver' => 'sync',
+        ],
+        'redis' => [
+            'driver' => 'redis',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === queueConfigPath) {
+          return queueConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "QueueController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "onConnection('redis"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(queueConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: queueConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+  });
+
   it("suggests Laravel Storage disk names from filesystem config", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/UploadController.php";
     const configRoot = "/workspace/config";
