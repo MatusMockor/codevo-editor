@@ -2151,6 +2151,37 @@ class Album
     ]);
   });
 
+  it("extracts PHPDoc magic methods without explicit return types", () => {
+    expect(
+      phpMethodCompletionsFromSource(
+        `<?php
+/**
+ * @method whereActive(bool $value = true)
+ * @method static findForSlug(string $slug)
+ */
+class Album
+{
+}
+`,
+        "App\\Models\\Album",
+      ),
+    ).toEqual([
+      {
+        declaringClassName: "App\\Models\\Album",
+        name: "whereActive",
+        parameters: "bool $value = true",
+        returnType: null,
+      },
+      {
+        declaringClassName: "App\\Models\\Album",
+        isStatic: true,
+        name: "findForSlug",
+        parameters: "string $slug",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("uses PHPDoc parameter types when method parameters are untyped", () => {
     expect(
       phpMethodCompletionsFromSource(

@@ -6382,3 +6382,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `7151cbb8 Guard stale Laravel container binding search`.
+
+## Slice: Returnless PHPDoc Magic Method Completions - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e8ec223f Record stale Laravel container binding guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Improve PhpStorm-like PHPDoc magic method support for projects that omit explicit return types in `@method` annotations.
+
+### Implementation Choice
+
+- Replace the narrow `@method returnType name(...)` parser with a tolerant line parser that finds the method name before `(`.
+- Treat a leading `static` token as the magic-method static modifier.
+- Preserve explicit return types when present and use `null` when the PHPDoc line omits the return type.
+- Add domain coverage for returnless instance and static `@method` annotations.
+- Add workbench preview coverage proving inferred interface PHPDoc methods without return types appear in method completions.
+
+### Acceptance Criteria
+
+- Returnless PHPDoc magic methods appear in PHP method completions.
+- Existing PHPDoc magic method parsing with explicit return types remains unchanged.
+- Focused/full PHP method completion tests, preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/application/useWorkbenchController.preview.test.tsx -t "returnless PHPDoc|PHPDoc magic methods without explicit return types"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -204,20 +204,27 @@ function phpDocMethodCompletionsFromSource(
   const members: PhpMethodCompletion[] = [];
 
   for (const match of source.matchAll(
-    /@method\s+(static\s+)?([^\s(]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/g,
+    /@method\s+([^\r\n*]*?)([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/g,
   )) {
-    const name = match[3];
+    const name = match[2];
 
     if (!name) {
       continue;
     }
 
+    const prefix = normalizeWhitespace(match[1] ?? "");
+    const prefixParts = prefix ? prefix.split(" ") : [];
+    const isStatic = prefixParts[0]?.toLowerCase() === "static";
+    const returnType = normalizeReturnType(
+      (isStatic ? prefixParts.slice(1) : prefixParts).join(" "),
+    );
+
     members.push({
       declaringClassName,
-      ...(match[1] ? { isStatic: true } : {}),
+      ...(isStatic ? { isStatic: true } : {}),
       name,
-      parameters: normalizeWhitespace(match[4] ?? ""),
-      returnType: normalizeReturnType(match[2] ?? null),
+      parameters: normalizeWhitespace(match[3] ?? ""),
+      returnType,
     });
   }
 

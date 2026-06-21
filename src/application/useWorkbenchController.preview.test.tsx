@@ -14920,6 +14920,110 @@ interface PublishesComments
     ]);
   });
 
+  it("offers returnless PHPDoc method completions on inferred receivers", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const interfacePath = "/workspace/app/Contracts/ArchivesComments.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->arc
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 7,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+        {
+          column: 11,
+          containerName: null,
+          fullyQualifiedName: "App\\Contracts\\ArchivesComments",
+          kind: "interface",
+          lineNumber: 7,
+          name: "ArchivesComments",
+          path: interfacePath,
+          relativePath: "app/Contracts/ArchivesComments.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+use App\\Contracts\\ArchivesComments;
+
+class Comment implements ArchivesComments
+{
+}
+`;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+/**
+ * @method archive(bool $quietly = false)
+ */
+interface ArchivesComments
+{
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$comment->arc"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Contracts\\ArchivesComments",
+        name: "archive",
+        parameters: "bool $quietly = false",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("suppresses PHPDoc mixin member-method diagnostics on inferred receivers", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
