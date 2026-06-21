@@ -1862,7 +1862,7 @@ fn text_document_completion(
         });
     };
 
-    parse_completion_result(&result)
+    filter_lsp_completion_list_to_workspace(&root_path, parse_completion_result(&result)?)
 }
 
 #[tauri::command]
@@ -1901,6 +1901,7 @@ fn text_document_completion_resolve(
     };
 
     serde_json::from_value::<LanguageServerCompletionItem>(result)
+        .map(|item| filter_lsp_completion_item_to_workspace(&root_path, item))
         .map_err(|error| format!("Language server returned a malformed completion item: {error}"))
 }
 
@@ -1937,7 +1938,7 @@ fn text_document_definition(
         return Ok(Vec::new());
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -1954,7 +1955,7 @@ fn text_document_declaration(
         return Ok(Vec::new());
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -2023,7 +2024,7 @@ fn text_document_implementation(
         None => return Ok(Vec::new()),
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -2058,7 +2059,7 @@ fn text_document_type_definition(
         return Ok(Vec::new());
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -2092,7 +2093,7 @@ fn text_document_references(
         return Ok(Vec::new());
     };
 
-    parse_definition_result(&result)
+    filter_lsp_locations_to_workspace(&root_path, parse_definition_result(&result)?)
 }
 
 #[tauri::command]
@@ -2166,7 +2167,10 @@ fn text_document_rename(
         return Ok(None);
     };
 
-    parse_workspace_edit_result(&result)
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_workspace_edit_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2204,6 +2208,7 @@ fn text_document_code_actions(
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Vec<LanguageServerCodeAction>, String> {
     ensure_lsp_path_in_workspace(&root_path, &path)?;
+    ensure_lsp_code_action_context_payloads_in_workspace(&root_path, &context)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
@@ -2211,7 +2216,7 @@ fn text_document_code_actions(
         return Ok(Vec::new());
     };
 
-    parse_code_action_result(&result)
+    filter_lsp_code_actions_to_workspace(&root_path, parse_code_action_result(&result)?)
 }
 
 #[tauri::command]
@@ -2248,8 +2253,10 @@ fn text_document_code_action_resolve(
         return Ok(action);
     };
 
-    serde_json::from_value::<LanguageServerCodeAction>(result)
-        .map_err(|error| format!("Language server returned a malformed code action: {error}"))
+    let resolved = serde_json::from_value::<LanguageServerCodeAction>(result)
+        .map_err(|error| format!("Language server returned a malformed code action: {error}"))?;
+
+    Ok(filter_lsp_code_action_to_workspace(&root_path, resolved)?.unwrap_or(action))
 }
 
 #[tauri::command]
@@ -2286,8 +2293,10 @@ fn text_document_code_lenses(
         return Ok(Vec::new());
     };
 
-    serde_json::from_value::<Vec<LanguageServerCodeLens>>(result)
-        .map_err(|error| format!("Language server returned malformed code lenses: {error}"))
+    let lenses = serde_json::from_value::<Vec<LanguageServerCodeLens>>(result)
+        .map_err(|error| format!("Language server returned malformed code lenses: {error}"))?;
+
+    filter_lsp_code_lenses_to_workspace(&root_path, lenses)
 }
 
 #[tauri::command]
@@ -2324,8 +2333,10 @@ fn text_document_code_lens_resolve(
         return Ok(lens);
     };
 
-    serde_json::from_value::<LanguageServerCodeLens>(result)
-        .map_err(|error| format!("Language server returned a malformed code lens: {error}"))
+    let resolved = serde_json::from_value::<LanguageServerCodeLens>(result)
+        .map_err(|error| format!("Language server returned a malformed code lens: {error}"))?;
+
+    Ok(filter_lsp_code_lens_to_workspace(&root_path, resolved).unwrap_or(lens))
 }
 
 #[tauri::command]
@@ -2362,7 +2373,10 @@ fn text_document_prepare_call_hierarchy(
         return Ok(Vec::new());
     };
 
-    parse_call_hierarchy_items_result(&result)
+    filter_lsp_call_hierarchy_items_to_workspace(
+        &root_path,
+        parse_call_hierarchy_items_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2399,7 +2413,7 @@ fn text_document_incoming_calls(
         return Ok(Vec::new());
     };
 
-    parse_incoming_calls_result(&result)
+    filter_lsp_incoming_calls_to_workspace(&root_path, parse_incoming_calls_result(&result)?)
 }
 
 #[tauri::command]
@@ -2433,7 +2447,7 @@ fn text_document_outgoing_calls(
         return Ok(Vec::new());
     };
 
-    parse_outgoing_calls_result(&result)
+    filter_lsp_outgoing_calls_to_workspace(&root_path, parse_outgoing_calls_result(&result)?)
 }
 
 #[tauri::command]
@@ -2467,7 +2481,10 @@ fn text_document_prepare_type_hierarchy(
         return Ok(Vec::new());
     };
 
-    parse_type_hierarchy_items_result(&result)
+    filter_lsp_type_hierarchy_items_to_workspace(
+        &root_path,
+        parse_type_hierarchy_items_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2504,7 +2521,10 @@ fn text_document_type_hierarchy_supertypes(
         return Ok(Vec::new());
     };
 
-    parse_type_hierarchy_items_result(&result)
+    filter_lsp_type_hierarchy_items_to_workspace(
+        &root_path,
+        parse_type_hierarchy_items_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2541,7 +2561,10 @@ fn text_document_type_hierarchy_subtypes(
         return Ok(Vec::new());
     };
 
-    parse_type_hierarchy_items_result(&result)
+    filter_lsp_type_hierarchy_items_to_workspace(
+        &root_path,
+        parse_type_hierarchy_items_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2578,7 +2601,10 @@ fn language_server_execute_command(
         return Ok(None);
     };
 
-    parse_optional_workspace_edit_result(&result)
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_optional_workspace_edit_result(&result)?,
+    )
 }
 
 #[tauri::command]
@@ -2868,7 +2894,10 @@ fn text_document_inlay_hints(
         return Ok(Vec::new());
     };
 
-    parse_inlay_hints_result(&result)
+    Ok(filter_lsp_inlay_hints_to_workspace(
+        &root_path,
+        parse_inlay_hints_result(&result)?,
+    ))
 }
 
 #[tauri::command]
@@ -2877,13 +2906,18 @@ fn text_document_inlay_hint_resolve(
     hint: LanguageServerInlayHint,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerInlayHint, String> {
+    ensure_lsp_inlay_hint_payload_in_workspace(&root_path, &hint)?;
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_inlay_hint(&hint);
     let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
         return Ok(hint);
     };
 
-    parse_inlay_hint_result(&result)
+    Ok(filter_lsp_inlay_hint_to_workspace(
+        &root_path,
+        parse_inlay_hint_result(&result)?,
+    ))
 }
 
 #[tauri::command]
@@ -3009,7 +3043,7 @@ fn text_document_document_links(
         return Ok(Vec::new());
     };
 
-    parse_document_links_result(&result)
+    filter_lsp_document_links_to_workspace(&root_path, parse_document_links_result(&result)?)
 }
 
 #[tauri::command]
@@ -3043,8 +3077,10 @@ fn text_document_document_link_resolve(
         return Ok(link);
     };
 
-    serde_json::from_value::<LanguageServerDocumentLink>(result)
-        .map_err(|error| format!("Language server returned a malformed document link: {error}"))
+    let resolved = serde_json::from_value::<LanguageServerDocumentLink>(result)
+        .map_err(|error| format!("Language server returned a malformed document link: {error}"))?;
+
+    Ok(filter_lsp_document_link_to_workspace(&root_path, resolved).unwrap_or(link))
 }
 
 #[tauri::command]
@@ -3113,7 +3149,7 @@ fn workspace_symbols(
         return Ok(Vec::new());
     };
 
-    parse_workspace_symbols_result(&result)
+    filter_lsp_workspace_symbols_to_workspace(&root_path, parse_workspace_symbols_result(&result)?)
 }
 
 #[tauri::command]
