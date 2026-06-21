@@ -6577,3 +6577,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `93c25008 Support Laravel loadMorph aggregate relation strings`.
+
+## Slice: Laravel Legacy Action-Array Named Routes - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c958d4eb Record Laravel loadMorph aggregate relation string commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Make Laravel named-route completion and navigation discover routes declared with legacy action arrays like `['as' => 'comments.index', 'uses' => ...]`.
+
+### Implementation Choice
+
+- Add action-array name extraction for standard `Route::*` definition methods.
+- Support both positional second action arrays and named `action:` arrays.
+- Preserve group name prefixes for action-array routes.
+- Expand workbench route discovery search terms to include single- and double-quoted `as` action array keys.
+- Tighten string-map parsing so dynamic concatenated values are not treated as literal names.
+
+### Acceptance Criteria
+
+- Legacy action-array route names are extracted with accurate definition positions.
+- Group prefixes combine with action-array route names.
+- Named-route completion discovers action-array route files through text search.
+- Focused/full route tests, named-route preview coverage, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "legacy Laravel route action arrays"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "legacy route action arrays"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel named routes"`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

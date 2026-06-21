@@ -437,6 +437,38 @@ Route::get('/ignored', IgnoredController::class)->name(label: 'comments.ignored'
     ]);
   });
 
+  it("extracts literal names from legacy Laravel route action arrays", () => {
+    const source = `<?php
+Route::get('/comments', ['as' => 'comments.index', 'uses' => CommentController::class]);
+Route::post('/comments', ['uses' => CommentController::class, 'as' => 'comments.store']);
+Route::get(uri: '/comments/{comment}', action: ['uses' => CommentController::class, 'as' => 'comments.show']);
+Route::get('/ignored', ['uses' => CommentController::class, 'name' => 'comments.ignored']);
+Route::get('/dynamic', ['uses' => CommentController::class, 'as' => 'comments.' . $suffix]);
+Route::group(['as' => 'admin.'], function () {
+    Route::get('/admin/comments', ['as' => 'comments.admin', 'uses' => CommentController::class]);
+});
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "comments.index",
+        position: positionOf(source, "comments.index"),
+      },
+      {
+        name: "comments.store",
+        position: positionOf(source, "comments.store"),
+      },
+      {
+        name: "comments.show",
+        position: positionOf(source, "comments.show"),
+      },
+      {
+        name: "admin.comments.admin",
+        position: positionOf(source, "comments.admin"),
+      },
+    ]);
+  });
+
   it("combines group prefixes and ignores dynamic/unrelated route names", () => {
     const source = `<?php
 Route::name('admin.')->group(function () {

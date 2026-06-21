@@ -209,6 +209,22 @@ export function phpLaravelNamedRouteDefinitions(
       continue;
     }
 
+    const actionNameLiteral = laravelRouteActionArrayNameLiteralAtOpenParen(
+      source,
+      openParen,
+      closeParen,
+    );
+
+    if (actionNameLiteral) {
+      definitions.push({
+        name: `${routeNamePrefixAtOffset(routeGroups, routeStart)}${
+          actionNameLiteral.value
+        }`,
+        position: editorPositionAtOffset(source, actionNameLiteral.quoteStart + 1),
+      });
+      continue;
+    }
+
     const chainStart = closeParen + 1;
     const chainEnd = phpStatementEndOffset(source, chainStart);
     const chainSource = source.slice(chainStart, chainEnd);
@@ -238,6 +254,47 @@ export function phpLaravelNamedRouteDefinitions(
   }
 
   return definitions;
+}
+
+function laravelRouteActionArrayNameLiteralAtOpenParen(
+  source: string,
+  openParen: number,
+  closeParen: number,
+): PhpStringLiteral | null {
+  const actionArgumentStart =
+    topLevelArgumentValueStartAt(source, openParen, closeParen, {
+      namedArgumentNames: ["action"],
+    }) ??
+    topLevelArgumentValueStartAt(source, openParen, closeParen, {
+      argumentIndex: 1,
+    });
+
+  if (actionArgumentStart === null || source[actionArgumentStart] !== "[") {
+    return null;
+  }
+
+  const actionArrayEnd = matchingBracketOffset(
+    source,
+    actionArgumentStart,
+    "[",
+    "]",
+  );
+
+  if (actionArrayEnd === null || actionArrayEnd > closeParen) {
+    return null;
+  }
+
+  const afterActionArray = source.slice(actionArrayEnd + 1, closeParen);
+
+  if (!/^\s*(?:,|$)/.test(afterActionArray)) {
+    return null;
+  }
+
+  return (
+    topLevelArrayStringEntries(source, actionArgumentStart, actionArrayEnd).find(
+      (entry) => entry.key.value.toLowerCase() === "as",
+    )?.value ?? null
+  );
 }
 
 function laravelResourceRouteActionsForMethod(
@@ -551,13 +608,24 @@ function topLevelArrayStringEntries(
 
     if (
       value?.closed &&
-      !(value.quote === "\"" && hasPhpVariableInterpolation(value.value))
+      !(value.quote === "\"" && hasPhpVariableInterpolation(value.value)) &&
+      isTopLevelArrayStringEntryValueEnd(source, value, arrayClose)
     ) {
       entries.push({ key, value });
     }
   }
 
   return entries;
+}
+
+function isTopLevelArrayStringEntryValueEnd(
+  source: string,
+  value: PhpStringLiteral,
+  arrayClose: number,
+): boolean {
+  const valueEnd = skipWhitespace(source, value.quoteEnd + 1);
+
+  return valueEnd === arrayClose || source[valueEnd] === ",";
 }
 
 function topLevelStringLiterals(
@@ -933,6 +1001,102 @@ function namedArgumentNameBeforeLiteral(
   const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/.exec(prefix);
 
   return match?.[1] ?? undefined;
+}
+
+function topLevelArgumentValueStartAt(
+  source: string,
+  openParenOffset: number,
+  closeParenOffset: number,
+  options: {
+    argumentIndex?: number;
+    namedArgumentNames?: readonly string[];
+  },
+): number | null {
+  let argumentIndex = 0;
+  let argumentStart = openParenOffset + 1;
+  let depth = 0;
+  let quote: "'" | "\"" | null = null;
+
+  const argumentValueStart = (
+    startOffset: number,
+    endOffset: number,
+  ): number | null => {
+    const start = skipWhitespace(source, startOffset);
+
+    if (start >= endOffset) {
+      return null;
+    }
+
+    const namedMatch = /^([A-Za-z_][A-Za-z0-9_]*)\s*:(?!:)\s*/.exec(
+      source.slice(start, Math.min(endOffset, start + 96)),
+    );
+    const namedValueStart = namedMatch?.[0] ? start + namedMatch[0].length : null;
+    const namedArgumentName = namedMatch?.[1]?.toLowerCase() ?? null;
+
+    if (
+      namedValueStart !== null &&
+      options.namedArgumentNames?.some(
+        (name) => name.toLowerCase() === namedArgumentName,
+      )
+    ) {
+      return namedValueStart;
+    }
+
+    if (
+      options.argumentIndex !== undefined &&
+      argumentIndex === options.argumentIndex
+    ) {
+      return namedValueStart ?? start;
+    }
+
+    return null;
+  };
+
+  for (let index = openParenOffset + 1; index <= closeParenOffset; index += 1) {
+    const character = source[index] ?? "";
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (index === closeParenOffset || (character === "," && depth === 0)) {
+      const valueStart = argumentValueStart(argumentStart, index);
+
+      if (valueStart !== null) {
+        return valueStart;
+      }
+
+      argumentIndex += 1;
+      argumentStart = index + 1;
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+  }
+
+  return null;
 }
 
 function isSupportedNamedRouteArgumentName(

@@ -23659,6 +23659,80 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
     ]);
   });
 
+  it("suggests Laravel named routes from legacy route action arrays", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const routesPath = "/workspace/routes/web.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function index(): string
+    {
+        return route('comments.in');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === routesPath) {
+          return `<?php
+Route::get('/comments', ['as' => 'comments.index', 'uses' => CommentController::class]);
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "'as' =>"
+          ? [
+              {
+                column: 24,
+                lineNumber: 2,
+                lineText:
+                  "Route::get('/comments', ['as' => 'comments.index', 'uses' => CommentController::class]);",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.in"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "routes/web.php",
+        insertText: "index",
+        kind: "route",
+        name: "comments.index",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("suggests Laravel named routes inside Redirect facade route strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace/routes/web.php";

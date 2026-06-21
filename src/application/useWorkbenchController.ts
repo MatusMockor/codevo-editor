@@ -6635,6 +6635,8 @@ export function useWorkbenchController(
       const searchResults = await Promise.all(
         [
           "->name(",
+          "'as' =>",
+          "\"as\" =>",
           "Route::resource",
           "Route::apiResource",
           "Route::singleton",
