@@ -22269,6 +22269,100 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
     });
   });
 
+  it("drops stale Laravel named route definition targets after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const routesPath = "/workspace-a/routes/web.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): string
+    {
+        return route('comments.show');
+    }
+}
+`;
+    const staleRoutesRead = createDeferred<string>();
+    let routesReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === routesPath) {
+          routesReadCount += 1;
+          return staleRoutesRead.promise;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "->name("
+          ? [
+              {
+                column: 5,
+                lineNumber: 3,
+                lineText: "    ->name('comments.show');",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "comments.show"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(routesReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleRoutesRead.resolve(`<?php
+Route::get('/comments/{comment}', [CommentController::class, 'show'])
+    ->name('comments.show');
+`);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(routesPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("resolves imported FormRequest to vendor instead of a local substring class", async () => {
     const requestPath = "/workspace/app/Http/Request/AiHub/StoreCommentRequest.php";
     const baseRequestPath = "/workspace/app/Http/Request/BaseFormRequest.php";

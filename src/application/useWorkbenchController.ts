@@ -6378,7 +6378,11 @@ export function useWorkbenchController(
       currentSource: string,
       currentPath: string,
     ): Promise<PhpLaravelNamedRouteTarget[]> => {
-      if (!isLaravelFrameworkActive || !workspaceRoot) {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isLaravelFrameworkActive || !requestedRoot) {
         return [];
       }
 
@@ -6405,7 +6409,7 @@ export function useWorkbenchController(
 
       addDefinitions(
         currentPath,
-        workspaceRoot ? relativeWorkspacePath(workspaceRoot, currentPath) : null,
+        relativeWorkspacePath(requestedRoot, currentPath),
         currentSource,
       );
 
@@ -6419,11 +6423,20 @@ export function useWorkbenchController(
           "Route::resources",
           "Route::apiResources",
           "Route::softDeletableResources",
-        ].map((query) => textSearch.searchText(workspaceRoot, query, 200)),
+        ].map((query) => textSearch.searchText(requestedRoot, query, 200)),
       );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
       const visitedPaths = new Set([currentPath]);
 
       for (const result of searchResults.flat()) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
           continue;
         }
@@ -6431,14 +6444,28 @@ export function useWorkbenchController(
         visitedPaths.add(result.path);
 
         try {
+          const content = await readNavigationFileContent(result.path);
+
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           addDefinitions(
             result.path,
             result.relativePath,
-            await readNavigationFileContent(result.path),
+            content,
           );
         } catch {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           continue;
         }
+      }
+
+      if (!isRequestedRootActive()) {
+        return [];
       }
 
       return Array.from(targets.values()).sort((left, right) => {
@@ -10999,7 +11026,11 @@ export function useWorkbenchController(
     async (
       context: Extract<PhpIdentifierContext, { kind: "laravelNamedRouteString" }>,
     ): Promise<boolean> => {
-      if (!activeDocument || !isLaravelFrameworkActive) {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
         return false;
       }
 
@@ -11007,12 +11038,21 @@ export function useWorkbenchController(
         activeDocument.content,
         activeDocument.path,
       );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       const target = routes.find(
         (route) => route.name.toLowerCase() === context.routeName.toLowerCase(),
       );
 
       if (!target) {
         setMessage(`No Laravel route named ${context.routeName} found.`);
+        return false;
+      }
+
+      if (!isRequestedRootActive()) {
         return false;
       }
 
@@ -11023,6 +11063,7 @@ export function useWorkbenchController(
       collectPhpLaravelNamedRouteTargets,
       isLaravelFrameworkActive,
       openNavigationTarget,
+      workspaceRoot,
     ],
   );
 

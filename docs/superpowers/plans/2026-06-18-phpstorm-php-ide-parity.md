@@ -5694,3 +5694,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `1d80f537 Guard stale Laravel request method hint targets`.
+
+## Slice: Stale Laravel Named Route Definition Target Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a7c9aea4 Record stale Laravel request method hint guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale Laravel named-route definition targets from opening after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root in `collectPhpLaravelNamedRouteTargets`.
+- Guard after named-route text search, before route file reads, after route file reads, after failed reads, and before returning sorted targets.
+- Guard `goToPhpLaravelNamedRouteDefinition` after target collection and immediately before opening the route definition.
+- Add a preview regression where Go to Definition starts on `route('comments.show')` in `/workspace-a`, the route definition file read is delayed, the workspace switches to `/workspace-b`, and the delayed read resolves.
+
+### Acceptance Criteria
+
+- Stale Laravel named-route targets are ignored after tab switch.
+- Stale named-route definition files are not opened or revealed in the active workspace.
+- Existing Laravel named-route definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale Laravel named route definition"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
