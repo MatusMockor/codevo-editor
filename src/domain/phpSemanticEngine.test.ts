@@ -1107,6 +1107,28 @@ class Comment extends Model
             ->union($this->posts()->select('posts.*'))
             ->unionAll($this->posts()->select('posts.*'))
             ->first();
+        $relationMethodJoinedPost = $this->posts()
+            ->addSelect('posts.*')
+            ->selectSub($this->posts()->selectRaw('count(*)'), 'post_count')
+            ->selectExpression('1', 'one')
+            ->fromSub($this->posts()->select('posts.*'), 'posts')
+            ->fromRaw('posts')
+            ->useIndex('posts_created_at_index')
+            ->forceIndex('posts_created_at_index')
+            ->ignoreIndex('posts_created_at_index')
+            ->joinWhere('comments', 'comments.post_id', '=', 'posts.id')
+            ->joinSub($this->posts()->select('id'), 'recent_posts', 'recent_posts.id', '=', 'posts.id')
+            ->joinLateral($this->posts()->select('id'), 'lateral_posts')
+            ->leftJoinWhere('comments as left_comments', 'left_comments.post_id', '=', 'posts.id')
+            ->leftJoinSub($this->posts()->select('id'), 'left_posts', 'left_posts.id', '=', 'posts.id')
+            ->leftJoinLateral($this->posts()->select('id'), 'left_lateral_posts')
+            ->rightJoinWhere('comments as right_comments', 'right_comments.post_id', '=', 'posts.id')
+            ->rightJoinSub($this->posts()->select('id'), 'right_posts', 'right_posts.id', '=', 'posts.id')
+            ->crossJoinSub($this->posts()->select('id'), 'cross_posts')
+            ->straightJoin('comments as straight_comments', 'straight_comments.post_id', '=', 'posts.id')
+            ->straightJoinWhere('comments as straight_where_comments', 'straight_where_comments.post_id', '=', 'posts.id')
+            ->straightJoinSub($this->posts()->select('id'), 'straight_posts', 'straight_posts.id', '=', 'posts.id')
+            ->first();
         $relationMethodRawFilteredPost = $this->posts()
             ->selectRaw('posts.*')
             ->whereRaw('published = 1')
@@ -1277,6 +1299,7 @@ class Comment extends Model
         $relationMethodReorderedPost->tit
         $relationMethodLockedPost->tit
         $relationMethodControlledPost->tit
+        $relationMethodJoinedPost->tit
         $relationMethodRawFilteredPost->tit
         $relationMethodExistsFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
@@ -1535,6 +1558,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodControlledPost->tit"),
         "relationMethodControlledPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodJoinedPost->tit"),
+        "relationMethodJoinedPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
