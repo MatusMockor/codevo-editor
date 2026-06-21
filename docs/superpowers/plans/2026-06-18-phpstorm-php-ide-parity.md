@@ -4477,3 +4477,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `4e1f676b Complete Laravel late named relation strings`.
+
+## Slice: Trait Host Constant Diagnostics - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `99adadf9 Record Laravel late named relation strings commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Improve PHPactor trait host-context reconciliation beyond methods and properties by handling class constants declared on trait host classes.
+
+### Implementation Choice
+
+- Add a PHPactor trait host-constant diagnostic parser for `self::`, `static::`, and `parent::` constant reads.
+- Filter host-constant diagnostics only when contextual analysis proves a concrete class or enum using the trait exposes the constant.
+- Reuse the existing class hierarchy traversal shape for traits, mixins, supertypes, intermediate traits, and descendant classes.
+- Keep unconfirmed constant diagnostics visible, including method-call lookalikes such as `static::HOST_STATE()`.
+- Add preview coverage for a trait using `static::HOST_STATE` where the host class declares `private const HOST_STATE`.
+
+### Acceptance Criteria
+
+- `static::HOST_STATE` inside a trait is not reported when a real host declares `HOST_STATE`.
+- Alternate PHPactor wording for trait constants is recognized.
+- Missing or method-call-like constants are not suppressed.
+- Existing trait host-method and host-property diagnostic behavior remains unchanged.
+- Focused/full diagnostic and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts -t "trait host-constant"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "trait host-constant"`
+- PASS: `npm test -- src/domain/phpLanguageServerDiagnosticFilters.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `74fdef20 Reconcile trait host constant diagnostics`.
