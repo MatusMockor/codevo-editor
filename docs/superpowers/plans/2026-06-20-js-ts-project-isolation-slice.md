@@ -8947,3 +8947,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Request User Guard Names
 
 - Committed as `5b9c43df Support Laravel request user guard navigation`.
+
+## Next Slice: Laravel Route Middleware Guard Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `606a2de2 Record Laravel request user guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel route middleware strings commonly reference guards through `auth:<guard>` and `guest:<guard>`.
+- These guard names map to the same `auth.guards.<guard>` config targets as Auth facade/helper calls.
+- This adds coverage for a common route file workflow where the guard name is a segment inside a middleware string.
+
+### Implementation Choice
+
+- Extend the Auth guard detector with route middleware segment parsing for scalar and direct short-array middleware arguments.
+- Accept `Route::middleware('auth:admin')`, `Route::get(...)->middleware('auth:admin')`, `Route::middleware(['auth:admin'])`, `guest:<guard>`, and comma-separated guard lists.
+- Reject middleware strings without guard segments, invalid guard names, and generic `$router->middleware(...)` calls not rooted in a `Route::` chain.
+
+### Verification: Laravel Route Middleware Guard Names
+
+- `npm test -- src/domain/phpLaravelAuth.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Auth"` passed: 3 passed, 417 skipped.
+- `npm test -- src/domain/phpNavigation.test.ts` passed: 27 passed.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 420 passed.
+- `npm test -- src/domain/phpLaravelAuth.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test` passed: 79 files, 1118 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Route Middleware Guard Names
+
+- Committed as `31702fbe Support Laravel route middleware guard navigation`.
