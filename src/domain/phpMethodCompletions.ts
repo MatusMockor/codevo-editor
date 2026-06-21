@@ -29,7 +29,7 @@ export interface PhpMethodCompletion {
   declaringClassName: string;
   insertText?: string;
   isStatic?: boolean;
-  kind?: "property" | "relation" | "route" | "scope" | "view";
+  kind?: "config" | "property" | "relation" | "route" | "scope" | "view";
   name: string;
   parameters: string;
   returnType: string | null;

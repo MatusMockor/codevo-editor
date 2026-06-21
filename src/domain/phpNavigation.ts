@@ -12,6 +12,7 @@ import {
   type PhpProjectDescriptor,
   type Psr4Root,
 } from "./workspace";
+import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 
@@ -36,6 +37,10 @@ export type PhpIdentifierContext =
   | {
       kind: "laravelNamedRouteString";
       routeName: string;
+    }
+  | {
+      configKey: string;
+      kind: "laravelConfigString";
     }
   | {
       kind: "laravelViewString";
@@ -109,6 +114,15 @@ export function phpIdentifierContextAt(
     return {
       kind: "laravelNamedRouteString",
       routeName: namedRoute.name,
+    };
+  }
+
+  const configReference = phpLaravelConfigReferenceContextAt(source, position);
+
+  if (configReference) {
+    return {
+      configKey: configReference.key,
+      kind: "laravelConfigString",
     };
   }
 

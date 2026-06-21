@@ -761,6 +761,65 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("inserts Laravel config key completions as plain string suffixes", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "config/app.php",
+        insertText: "name",
+        kind: "config" as const,
+        name: "app.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction name(): string\n{\n    return config('app.na');\n}\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    return config('app.na');",
+        word: {
+          endColumn: 30,
+          startColumn: 28,
+        },
+      }),
+      {
+        column: 30,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        command: undefined,
+        detail: "Laravel config - config/app.php",
+        documentation: "Laravel config\n\napp.name",
+        insertText: "name",
+        insertTextRules: 4,
+        kind: 12,
+        label: {
+          description: "config - config/app.php",
+          detail: "",
+          label: "app.name",
+        },
+      }),
+    ]);
+  });
+
   it("inserts Laravel view name completions as plain string suffixes", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [

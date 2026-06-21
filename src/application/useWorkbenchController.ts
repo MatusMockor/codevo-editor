@@ -202,6 +202,15 @@ import {
   type PhpLaravelNamedRouteDefinition,
 } from "../domain/phpLaravelRoutes";
 import {
+  phpLaravelConfigCompletionInsertText,
+  phpLaravelConfigFileNameFromRelativePath,
+  phpLaravelConfigKeyCandidateRelativePath,
+  phpLaravelConfigKeysFromSource,
+  phpLaravelConfigReferenceContextAt,
+  phpLaravelConfigTargetFromSource,
+  type PhpLaravelConfigTarget,
+} from "../domain/phpLaravelConfig";
+import {
   phpLaravelViewCompletionInsertText,
   phpLaravelViewNameCandidateRelativePaths,
   phpLaravelViewNameFromRelativePath,
@@ -343,6 +352,8 @@ interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
 interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
   position: EditorPosition;
 }
+
+type PhpLaravelConfigNavigationTarget = PhpLaravelConfigTarget;
 
 interface CachedWorkspaceWorkbenchState {
   activePath: string | null;
@@ -7756,6 +7767,165 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const findPhpLaravelConfigTarget = useCallback(
+    async (
+      configKey: string,
+    ): Promise<PhpLaravelConfigNavigationTarget | null> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isLaravelFrameworkActive || !requestedRoot) {
+        return null;
+      }
+
+      const relativePath = phpLaravelConfigKeyCandidateRelativePath(configKey);
+
+      if (!relativePath) {
+        return null;
+      }
+
+      const fileName = phpLaravelConfigFileNameFromRelativePath(relativePath);
+
+      if (!fileName) {
+        return null;
+      }
+
+      const path = joinWorkspacePath(requestedRoot, relativePath);
+
+      try {
+        const content = await readNavigationFileContent(path);
+
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        const target = phpLaravelConfigTargetFromSource(
+          content,
+          fileName,
+          configKey,
+        );
+
+        if (!target) {
+          return null;
+        }
+
+        return {
+          ...target,
+          path,
+          relativePath,
+        };
+      } catch {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        return null;
+      }
+    },
+    [
+      isLaravelFrameworkActive,
+      readNavigationFileContent,
+      workspaceRoot,
+    ],
+  );
+
+  const collectPhpLaravelConfigTargets = useCallback(async (): Promise<
+    PhpLaravelConfigTarget[]
+  > => {
+    const requestedRoot = workspaceRoot;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!isLaravelFrameworkActive || !requestedRoot) {
+      return [];
+    }
+
+    const targets = new Map<string, PhpLaravelConfigTarget>();
+    const configRoot = joinWorkspacePath(requestedRoot, "config");
+
+    let entries: FileEntry[];
+
+    try {
+      entries = await workspaceFiles.readDirectory(configRoot);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      return [];
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    for (const entry of entries) {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      if (entry.kind === "directory") {
+        continue;
+      }
+
+      const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
+      const fileName = phpLaravelConfigFileNameFromRelativePath(relativePath);
+
+      if (!fileName) {
+        continue;
+      }
+
+      const rememberTarget = (target: PhpLaravelConfigTarget) => {
+        const key = target.key.toLowerCase();
+
+        if (!targets.has(key)) {
+          targets.set(key, target);
+        }
+      };
+
+      rememberTarget({
+        key: fileName,
+        path: entry.path,
+        position: { column: 1, lineNumber: 1 },
+        relativePath,
+      });
+
+      try {
+        const content = await readNavigationFileContent(entry.path);
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        for (const target of phpLaravelConfigKeysFromSource(content, fileName)) {
+          rememberTarget({
+            ...target,
+            path: entry.path,
+            relativePath,
+          });
+        }
+      } catch {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+      }
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    return Array.from(targets.values()).sort((left, right) =>
+      left.key.localeCompare(right.key),
+    );
+  }, [
+    isLaravelFrameworkActive,
+    readNavigationFileContent,
+    workspaceFiles,
+    workspaceRoot,
+  ]);
+
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
       const methodLookup = methodName.toLowerCase();
@@ -11526,6 +11696,34 @@ export function useWorkbenchController(
           }));
       }
 
+      const configContext = phpLaravelConfigReferenceContextAt(source, position);
+
+      if (isLaravelFrameworkActive && configContext && activeDocument) {
+        const normalizedPrefix = configContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelConfigTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.key.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelConfigCompletionInsertText(
+              target.key,
+              configContext.prefix,
+            ),
+            kind: "config",
+            name: target.key,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const viewContext = phpLaravelViewReferenceContextAt(source, position);
 
       if (isLaravelFrameworkActive && viewContext && activeDocument) {
@@ -11674,6 +11872,7 @@ export function useWorkbenchController(
         .slice(0, 80);
     },
     [
+      collectPhpLaravelConfigTargets,
       collectPhpLaravelRelationCompletionsForClass,
       collectPhpLaravelNamedRouteTargets,
       collectPhpLaravelViewTargets,
@@ -13055,6 +13254,40 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelConfigDefinition = useCallback(
+    async (
+      context: Extract<PhpIdentifierContext, { kind: "laravelConfigString" }>,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelConfigTarget(context.configKey);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(`No Laravel config key ${context.configKey} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.key);
+    },
+    [
+      activeDocument,
+      findPhpLaravelConfigTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpClassIdentifierDefinition = useCallback(
     async (name: string): Promise<boolean> => {
       if (!activeDocument) {
@@ -13109,6 +13342,10 @@ export function useWorkbenchController(
       return goToPhpLaravelNamedRouteDefinition(context);
     }
 
+    if (context.kind === "laravelConfigString") {
+      return goToPhpLaravelConfigDefinition(context);
+    }
+
     if (context.kind === "laravelViewString") {
       return goToPhpLaravelViewDefinition(context);
     }
@@ -13138,6 +13375,7 @@ export function useWorkbenchController(
     return false;
   }, [
     activeDocument,
+    goToPhpLaravelConfigDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelViewDefinition,
@@ -13644,6 +13882,10 @@ export function useWorkbenchController(
           return goToPhpLaravelNamedRouteDefinition(context);
         }
 
+        if (context.kind === "laravelConfigString") {
+          return goToPhpLaravelConfigDefinition(context);
+        }
+
         if (context.kind === "laravelViewString") {
           return goToPhpLaravelViewDefinition(context);
         }
@@ -13752,6 +13994,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpClassIdentifierDefinition,
+    goToPhpLaravelConfigDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelViewDefinition,

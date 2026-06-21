@@ -31602,6 +31602,309 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
     });
   });
 
+  it("suggests Laravel config keys inside config helper strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const configRoot = "/workspace/config";
+    const appConfigPath = "/workspace/config/app.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.na');
+    }
+}
+`;
+    const appConfigSource = `<?php
+
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+    'mail' => [
+        'from' => [
+            'address' => 'hello@example.com',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot
+          ? [
+              fileEntry(appConfigPath, "app.php"),
+              fileEntry("/workspace/config/ignored.txt", "ignored.txt"),
+            ]
+          : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === appConfigPath) {
+          return appConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "app.na"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/app.php",
+        insertText: "name",
+        kind: "config",
+        name: "app.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("stops stale Laravel config completions after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const configRoot = "/workspace-a/config";
+    const appConfigPath = "/workspace-a/config/app.php";
+    const configDirectoryRead = createDeferred<FileEntry[]>();
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.na');
+    }
+}
+`;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot ? configDirectoryRead.promise : [],
+      ),
+      readTextFile: vi.fn(async (path: string) =>
+        path === controllerPath ? controllerSource : "",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "app.na"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(completionsPromise).not.toBeNull();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    configDirectoryRead.resolve([fileEntry(appConfigPath, "app.php")]);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
+  it("opens Laravel config keys before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const appConfigPath = "/workspace/config/app.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.name');
+    }
+}
+`;
+    const appConfigSource = `<?php
+
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === appConfigPath) {
+          return appConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "app.name"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(appConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: appConfigPath,
+      position: {
+        column: 6,
+        lineNumber: 4,
+      },
+    });
+  });
+
+  it("drops stale Laravel config targets after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const appConfigPath = "/workspace-a/config/app.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.name');
+    }
+}
+`;
+    const staleConfigRead = createDeferred<string>();
+    let configReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === appConfigPath) {
+          configReadCount += 1;
+          return staleConfigRead.promise;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "app.name"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(configReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleConfigRead.resolve(`<?php
+
+return [
+    'name' => 'Stale',
+];
+`);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(appConfigPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("suggests Laravel Blade views inside view helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const viewsRoot = "/workspace/resources/views";

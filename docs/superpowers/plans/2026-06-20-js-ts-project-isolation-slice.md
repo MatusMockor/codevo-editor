@@ -7861,3 +7861,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Guard Stale Laravel Blade View Completions
 
 - Committed as `e19b820f Guard stale Laravel Blade view completions`.
+
+## Next Slice: Laravel Config Key Navigation And Completion
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6335a730 Record stale Blade view completion guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel config keys are a common controller/service workflow and currently fall through to generic PHP/LSP behavior.
+- Local `config/*.php` parsing can provide useful PhpStorm-like navigation and completion without waiting for a broader Laravel index.
+- The async config directory/file reads need the same workspace-tab stale guards as Blade view completion and navigation.
+
+### Implementation Choice
+
+- Add a narrow domain helper for Laravel config string contexts in `config(...)`, `Config::get(...)`, `Config::has(...)`, `config()->get(...)`, and `config()->has(...)`.
+- Map `config('app.name')` to `config/app.php` and scan returned PHP arrays for nested string keys and positions.
+- Suggest config keys from top-level `config/*.php` files using dotted suffix insert text.
+- Keep custom config repositories, dynamic/interpolated keys, update arrays such as `config(['app.name' => ...])`, and non-top-level config directories out of scope.
+
+### Acceptance Criteria
+
+- Cmd+B on `config('app.name')` opens `config/app.php` at the `'name'` key before LSP fallback.
+- Completion inside `config('app.na')` suggests `app.name` with insert text `name`.
+- Stale workspace-tab completion and target reads return no stale suggestions or navigation.
+- Focused domain/provider/preview tests, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel Config Key Navigation And Completion
+
+- `npm test -- src/domain/phpLaravelConfig.test.ts` passed: 6 passed.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts -t "Laravel config|Laravel view|Laravel route"` passed: 3 passed, 128 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel config|Laravel Blade views|Laravel Route::view"` passed: 7 passed, 368 skipped.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts` passed: 131 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 375 passed.
+- `npm run check` passed.
+- `npm test` passed: 67 files, 1013 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Config Key Navigation And Completion
+
+- Pending commit.
