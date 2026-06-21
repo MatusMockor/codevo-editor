@@ -7775,4 +7775,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `94771f09 Cover PHPStan Psalm class-string preview inference`.
