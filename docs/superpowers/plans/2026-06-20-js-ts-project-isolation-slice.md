@@ -5025,3 +5025,49 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Settings Save Continuation Guard
 
 - Committed as `59d25b98 Guard settings save continuations by workspace`.
+
+## Next Slice: Workspace Trust Toggle Continuation Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `73a2a908 Record settings save continuation guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 842 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Workspace trust toggle already ignored stale `setTrust` errors after tab switches.
+- After a successful trust revoke, it stopped the PHP runtime and then refreshed the PHP language-server plan.
+- If the user switched tabs while the runtime stop was pending, the stale toggle could still continue into PHP plan work for the inactive workspace.
+
+### Implementation Choice
+
+- Stop the PHP language server using the requested trust-toggle root.
+- Check the active workspace root after runtime stop.
+- Check the active workspace root after PHP language-server plan refresh.
+- Add a preview regression where `/workspace-a` trust revoke blocks on PHP runtime stop, the user switches to `/workspace-b`, and the stale completion must not request a PHP plan for `/workspace-a`.
+
+### Acceptance Criteria
+
+- Stale trust toggles do not continue PHP language-server planning for inactive workspaces.
+- Existing stale trust error behavior remains green.
+- PHP language-server lifecycle tests remain green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Workspace Trust Toggle Continuation Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace trust|trust toggles|PHP runtime|workspace detection"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace trust|workspace tab|project tab|PHP language server|Language Server|managed PHPactor|manual PHP"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 843 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Workspace Trust Toggle Continuation Guard
+
+- Pending commit.

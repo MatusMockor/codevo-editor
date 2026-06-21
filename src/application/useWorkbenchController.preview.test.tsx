@@ -707,6 +707,68 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("does not continue stale workspace trust toggles after stopping PHP runtime", async () => {
+    const stopRuntime = createDeferred<LanguageServerRuntimeStatus>();
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      stop: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          return stopRuntime.promise;
+        }
+
+        return { kind: "stopped" as const, rootPath };
+      }),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(
+      dependencies.languageServerGateway.planPhpLanguageServer,
+    ).mockClear();
+
+    let trustPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      trustPromise = getWorkbench().toggleWorkspaceTrust();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      stopRuntime.resolve({ kind: "stopped", rootPath: "/workspace-a" });
+      await trustPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      vi
+        .mocked(dependencies.languageServerGateway.planPhpLanguageServer)
+        .mock.calls.some(([rootPath]) => rootPath === "/workspace-a"),
+    ).toBe(false);
+  });
+
   it("ignores stale workspace detection errors after switching project tabs", async () => {
     const workspaceADetection =
       createDeferred<

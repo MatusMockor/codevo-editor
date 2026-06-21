@@ -13530,7 +13530,11 @@ export function useWorkbenchController(
       );
 
       if (!trust.trusted) {
-        await stopLanguageServerRuntime();
+        await stopLanguageServerRuntime(requestedRoot);
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
       }
 
       if (!workspaceDescriptor?.php) {
@@ -13538,6 +13542,10 @@ export function useWorkbenchController(
       }
 
       await refreshLanguageServerPlan(requestedRoot);
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(
         requestedRoot,
