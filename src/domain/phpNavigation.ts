@@ -12,6 +12,7 @@ import {
   type PhpProjectDescriptor,
   type Psr4Root,
 } from "./workspace";
+import { phpLaravelBroadcastConnectionReferenceContextAt } from "./phpLaravelBroadcasting";
 import { phpLaravelCacheStoreReferenceContextAt } from "./phpLaravelCache";
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
 import { phpLaravelDatabaseConnectionReferenceContextAt } from "./phpLaravelDatabase";
@@ -57,6 +58,10 @@ export type PhpIdentifierContext =
   | {
       connectionName: string;
       kind: "laravelDatabaseConnectionString";
+    }
+  | {
+      connectionName: string;
+      kind: "laravelBroadcastConnectionString";
     }
   | {
       connectionName: string;
@@ -206,6 +211,16 @@ export function phpIdentifierContextAt(
     return {
       connectionName: databaseConnectionReference.connectionName,
       kind: "laravelDatabaseConnectionString",
+    };
+  }
+
+  const broadcastConnectionReference =
+    phpLaravelBroadcastConnectionReferenceContextAt(source, position);
+
+  if (broadcastConnectionReference) {
+    return {
+      connectionName: broadcastConnectionReference.connectionName,
+      kind: "laravelBroadcastConnectionString",
     };
   }
 

@@ -32695,6 +32695,213 @@ return [
     });
   });
 
+  it("suggests Laravel Broadcast connection names from broadcasting config", async () => {
+    const controllerPath =
+      "/workspace/app/Http/Controllers/BroadcastController.php";
+    const configRoot = "/workspace/config";
+    const broadcastConfigPath = "/workspace/config/broadcasting.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Broadcast;
+
+class BroadcastController
+{
+    public function connect(): void
+    {
+        Broadcast::connection('pu');
+        Broadcast::driver('re');
+        Broadcast::purge('lo');
+        Broadcast::setDefaultDriver('pu');
+    }
+}
+`;
+    const broadcastConfigSource = `<?php
+
+return [
+    'default' => 'reverb',
+    'connections' => [
+        'reverb' => [
+            'driver' => 'reverb',
+        ],
+        'pusher' => [
+            'driver' => 'pusher',
+        ],
+        'log' => [
+            'driver' => 'log',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot
+          ? [fileEntry(broadcastConfigPath, "broadcasting.php")]
+          : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === broadcastConfigPath) {
+          return broadcastConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "BroadcastController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Broadcast::connection('pu"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/broadcasting.php",
+        insertText: "pusher",
+        kind: "config",
+        name: "pusher",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Broadcast::driver('re"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/broadcasting.php",
+        insertText: "reverb",
+        kind: "config",
+        name: "reverb",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Broadcast::purge('lo"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/broadcasting.php",
+        insertText: "log",
+        kind: "config",
+        name: "log",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Broadcast connection names before LSP fallback", async () => {
+    const controllerPath =
+      "/workspace/app/Http/Controllers/BroadcastController.php";
+    const broadcastConfigPath = "/workspace/config/broadcasting.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Broadcast;
+
+class BroadcastController
+{
+    public function connect(): void
+    {
+        Broadcast::connection('pusher');
+    }
+}
+`;
+    const broadcastConfigSource = `<?php
+
+return [
+    'default' => 'reverb',
+    'connections' => [
+        'reverb' => [
+            'driver' => 'reverb',
+        ],
+        'pusher' => [
+            'driver' => 'pusher',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === broadcastConfigPath) {
+          return broadcastConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "BroadcastController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Broadcast::connection('pusher"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(broadcastConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: broadcastConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+  });
+
   it("suggests Laravel Queue connection names from queue config", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/QueueController.php";
     const configRoot = "/workspace/config";

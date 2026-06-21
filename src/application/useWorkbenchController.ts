@@ -202,6 +202,12 @@ import {
   type PhpLaravelNamedRouteDefinition,
 } from "../domain/phpLaravelRoutes";
 import {
+  phpLaravelBroadcastConnectionCompletionInsertText,
+  phpLaravelBroadcastConnectionConfigKey,
+  phpLaravelBroadcastConnectionNameFromConfigKey,
+  phpLaravelBroadcastConnectionReferenceContextAt,
+} from "../domain/phpLaravelBroadcasting";
+import {
   phpLaravelCacheStoreCompletionInsertText,
   phpLaravelCacheStoreConfigKey,
   phpLaravelCacheStoreNameFromConfigKey,
@@ -417,6 +423,10 @@ interface PhpLaravelCacheStoreTarget extends PhpLaravelConfigTarget {
 }
 
 interface PhpLaravelDatabaseConnectionTarget extends PhpLaravelConfigTarget {
+  connectionName: string;
+}
+
+interface PhpLaravelBroadcastConnectionTarget extends PhpLaravelConfigTarget {
   connectionName: string;
 }
 
@@ -8137,6 +8147,56 @@ export function useWorkbenchController(
     [findPhpLaravelConfigTarget],
   );
 
+  const collectPhpLaravelBroadcastConnectionTargets =
+    useCallback(async (): Promise<PhpLaravelBroadcastConnectionTarget[]> => {
+      const targets = new Map<string, PhpLaravelBroadcastConnectionTarget>();
+
+      for (const target of await collectPhpLaravelConfigTargets()) {
+        const connectionName = phpLaravelBroadcastConnectionNameFromConfigKey(
+          target.key,
+        );
+
+        if (!connectionName) {
+          continue;
+        }
+
+        const key = connectionName.toLowerCase();
+
+        if (!targets.has(key)) {
+          targets.set(key, {
+            ...target,
+            connectionName,
+          });
+        }
+      }
+
+      return Array.from(targets.values()).sort((left, right) =>
+        left.connectionName.localeCompare(right.connectionName),
+      );
+    }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelBroadcastConnectionTarget = useCallback(
+    async (
+      connectionName: string,
+    ): Promise<PhpLaravelBroadcastConnectionTarget | null> => {
+      const configKey = phpLaravelBroadcastConnectionConfigKey(connectionName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            connectionName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const collectPhpLaravelQueueConnectionTargets =
     useCallback(async (): Promise<PhpLaravelQueueConnectionTarget[]> => {
       const targets = new Map<string, PhpLaravelQueueConnectionTarget>();
@@ -12726,6 +12786,39 @@ export function useWorkbenchController(
           }));
       }
 
+      const broadcastConnectionContext =
+        phpLaravelBroadcastConnectionReferenceContextAt(source, position);
+
+      if (
+        isLaravelFrameworkActive &&
+        broadcastConnectionContext &&
+        activeDocument
+      ) {
+        const normalizedPrefix =
+          broadcastConnectionContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelBroadcastConnectionTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.connectionName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelBroadcastConnectionCompletionInsertText(
+              target.connectionName,
+            ),
+            kind: "config",
+            name: target.connectionName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const queueConnectionContext =
         phpLaravelQueueConnectionReferenceContextAt(source, position);
 
@@ -12993,6 +13086,7 @@ export function useWorkbenchController(
     },
     [
       collectPhpLaravelCacheStoreTargets,
+      collectPhpLaravelBroadcastConnectionTargets,
       collectPhpLaravelConfigTargets,
       collectPhpLaravelDatabaseConnectionTargets,
       collectPhpLaravelEnvTargets,
@@ -14498,6 +14592,51 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelBroadcastConnectionDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelBroadcastConnectionString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelBroadcastConnectionTarget(
+        context.connectionName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(
+          `No Laravel broadcast connection ${context.connectionName} found.`,
+        );
+        return false;
+      }
+
+      return openNavigationTarget(
+        target.path,
+        target.position,
+        target.connectionName,
+      );
+    },
+    [
+      activeDocument,
+      findPhpLaravelBroadcastConnectionTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelQueueConnectionDefinition = useCallback(
     async (
       context: Extract<
@@ -14805,6 +14944,10 @@ export function useWorkbenchController(
       return goToPhpLaravelDatabaseConnectionDefinition(context);
     }
 
+    if (context.kind === "laravelBroadcastConnectionString") {
+      return goToPhpLaravelBroadcastConnectionDefinition(context);
+    }
+
     if (context.kind === "laravelQueueConnectionString") {
       return goToPhpLaravelQueueConnectionDefinition(context);
     }
@@ -14851,6 +14994,7 @@ export function useWorkbenchController(
   }, [
     activeDocument,
     goToPhpLaravelCacheStoreDefinition,
+    goToPhpLaravelBroadcastConnectionDefinition,
     goToPhpLaravelConfigDefinition,
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelLogChannelDefinition,
@@ -15383,6 +15527,10 @@ export function useWorkbenchController(
           return goToPhpLaravelDatabaseConnectionDefinition(context);
         }
 
+        if (context.kind === "laravelBroadcastConnectionString") {
+          return goToPhpLaravelBroadcastConnectionDefinition(context);
+        }
+
         if (context.kind === "laravelQueueConnectionString") {
           return goToPhpLaravelQueueConnectionDefinition(context);
         }
@@ -15508,6 +15656,7 @@ export function useWorkbenchController(
     activeDocument,
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelCacheStoreDefinition,
+    goToPhpLaravelBroadcastConnectionDefinition,
     goToPhpLaravelConfigDefinition,
     goToPhpLaravelDatabaseConnectionDefinition,
     goToPhpLaravelEnvDefinition,
