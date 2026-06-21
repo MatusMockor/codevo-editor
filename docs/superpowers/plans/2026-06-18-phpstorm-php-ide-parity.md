@@ -7494,3 +7494,45 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `fb136eb7 Support PHPStan Psalm PHPDoc template tags`.
+
+## Slice: JavaScript TypeScript Queued DidChange Workspace Switch Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9397be3f Record PHPStan Psalm PHPDoc template tag commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 814 tests)
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prevent queued JavaScript/TypeScript LSP `didChange` calls from leaking into a previous workspace after a tab switch while `didOpen` is still pending.
+
+### Implementation Choice
+
+- Add a JS/TS document sync generation counter.
+- Invalidate the generation when JS/TS document sync state resets or when synced JS/TS documents for a root are being closed.
+- Capture the generation when enqueueing a JS/TS `didChange` and re-check it inside the queued callback before sending to the language server.
+- Add a regression where `didChange` is queued behind a pending `didOpen`, the user switches workspace tabs, and the old-root `didChange` must not fire.
+
+### Acceptance Criteria
+
+- Queued JS/TS edits behind a pending `didOpen` are dropped after switching workspace tabs.
+- Existing didOpen-before-didChange sequencing still works when the workspace remains active.
+- Existing stale same-root didOpen/didChange protections remain intact.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "queued JavaScript and TypeScript edits"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript and TypeScript didOpen|pending JavaScript and TypeScript edits|queued JavaScript and TypeScript edits|same-root did-open failure|did-change errors"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -617,6 +617,7 @@ export function useWorkbenchController(
   const javaScriptTypeScriptDocumentSyncQueuesRef = useRef<
     Record<string, Promise<void>>
   >({});
+  const javaScriptTypeScriptDocumentSyncGenerationRef = useRef(0);
   const javaScriptTypeScriptRuntimeStatusByRootRef = useRef<
     Record<string, LanguageServerRuntimeStatus>
   >({});
@@ -1820,6 +1821,7 @@ export function useWorkbenchController(
   }, [clearDocumentChangeTimer]);
 
   const resetJavaScriptTypeScriptLanguageServerDocuments = useCallback(() => {
+    javaScriptTypeScriptDocumentSyncGenerationRef.current += 1;
     Object.keys(javaScriptTypeScriptDocumentChangeTimersRef.current).forEach(
       clearJavaScriptTypeScriptDocumentChangeTimer,
     );
@@ -2311,13 +2313,27 @@ export function useWorkbenchController(
           }
 
           const requestedSessionId = currentRuntimeStatus.sessionId;
+          const requestedSyncGeneration =
+            javaScriptTypeScriptDocumentSyncGenerationRef.current;
 
-          void enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
-            javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
+          void enqueueJavaScriptTypeScriptDocumentSync(syncKey, async () => {
+            if (
+              javaScriptTypeScriptDocumentSyncGenerationRef.current !==
+                requestedSyncGeneration ||
+              !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+              !isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
+                rootPath,
+                requestedSessionId,
+              )
+            ) {
+              return;
+            }
+
+            await javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
               rootPath,
               pendingDocument,
-            ),
-          ).catch((error) => {
+            );
+          }).catch((error) => {
             if (
               !isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
                 rootPath,
@@ -2774,6 +2790,10 @@ export function useWorkbenchController(
 
         return path ? [{ key, path }] : [];
       });
+
+      if (syncedDocuments.length > 0) {
+        javaScriptTypeScriptDocumentSyncGenerationRef.current += 1;
+      }
 
       await Promise.all(
         syncedDocuments.map(async ({ key, path }) => {

@@ -2686,6 +2686,70 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.documentSyncGateway.didChange).not.toHaveBeenCalled();
   });
 
+  it("does not flush queued JavaScript and TypeScript edits after switching project tabs while didOpen is pending", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 55,
+    };
+    const path = "/workspace-a/src/App.ts";
+    const didOpen = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+    vi.mocked(syncGateway.didOpen).mockImplementation(
+      async () => didOpen.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+
+    expect(syncGateway.didChange).not.toHaveBeenCalled();
+
+    let switchPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    act(() => {
+      didOpen.resolve(undefined);
+    });
+    await act(async () => {
+      await switchPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(syncGateway.didChange).not.toHaveBeenCalled();
+  });
+
   it("suspends the previous project runtimes when background engines are disabled", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
