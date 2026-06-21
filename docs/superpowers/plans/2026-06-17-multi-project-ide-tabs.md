@@ -535,3 +535,42 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `8834fa70 Guard PHP completions after workspace loss`.
+
+### Slice: PHP Signature Help Active Workspace Loss Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b78a29b0 Record PHP completion root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent stale typed PHP signature help from returning after the active project tab closes while parameter hint lookup is in flight.
+
+#### Implementation Choice
+
+- Re-check the captured active workspace root after the async PHP method signature provider resolves.
+- Suppress stale signature provider errors once the captured root is no longer active.
+- Add a regression that starts signature help under `/project`, clears the active workspace root before the delayed signature response, and verifies Monaco receives `null`.
+
+#### Acceptance Criteria
+
+- PHP signature help returns `null` after `getWorkspaceRoot()` becomes `null` mid-request.
+- Stale signature provider failures are not reported after active-root loss.
+- Existing typed signature mapping still passes.
+- Generic PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "drops in-flight PHP signature help when no project tab is active|maps typed PHP method signatures to Monaco parameter hints"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `410a3bb5 Guard PHP signature help after workspace loss`.
