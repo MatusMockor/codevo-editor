@@ -2640,6 +2640,70 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("does not flush queued PHP edits after switching project tabs while didOpen is pending", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 56,
+    };
+    const path = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const didOpen = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".php") ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    vi.mocked(syncGateway.didOpen).mockImplementation(
+      async () => didOpen.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n$comment->forceDelete();\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+
+    expect(syncGateway.didChange).not.toHaveBeenCalled();
+
+    let switchPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    act(() => {
+      didOpen.resolve(undefined);
+    });
+    await act(async () => {
+      await switchPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(syncGateway.didChange).not.toHaveBeenCalled();
+  });
+
   it("does not flush pending JavaScript and TypeScript edits after switching project tabs", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),

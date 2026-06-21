@@ -7536,3 +7536,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `e2ec9eaf Guard queued JavaScript TypeScript didChange across workspace switches`.
+
+## Slice: PHP Queued DidChange Workspace Switch Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1517e2b0 Record JavaScript TypeScript queued didChange guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prevent queued PHP LSP `didChange` calls from leaking into a previous workspace after a tab switch while `didOpen` is still pending.
+
+### Implementation Choice
+
+- Add a PHP document sync generation counter mirroring the JS/TS guard.
+- Invalidate PHP document sync generation on reset and when synced PHP documents for a root are being closed.
+- Capture the generation when enqueueing PHP `didChange` and re-check it inside the queued callback alongside root/session freshness.
+- Add the PHP version of the pending `didOpen` plus workspace switch regression.
+
+### Acceptance Criteria
+
+- Queued PHP edits behind a pending `didOpen` are dropped after switching workspace tabs.
+- Existing PHP didOpen-before-didChange sequencing still works when the workspace remains active.
+- Existing JS/TS queued didChange guard remains green.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "queued PHP edits"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP didOpen|queued PHP edits|queued JavaScript and TypeScript edits|pending JavaScript and TypeScript edits"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

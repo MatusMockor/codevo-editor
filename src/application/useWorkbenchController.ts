@@ -593,6 +593,7 @@ export function useWorkbenchController(
   >({});
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const documentSyncGenerationRef = useRef(0);
   const languageServerRuntimeStatusByRootRef = useRef<
     Record<string, LanguageServerRuntimeStatus>
   >({});
@@ -1811,6 +1812,7 @@ export function useWorkbenchController(
   );
 
   const resetLanguageServerDocuments = useCallback(() => {
+    documentSyncGenerationRef.current += 1;
     Object.keys(documentChangeTimersRef.current).forEach(clearDocumentChangeTimer);
     syncedDocumentPathsRef.current.clear();
     syncedDocumentContentRef.current = {};
@@ -2225,15 +2227,43 @@ export function useWorkbenchController(
           return;
         }
 
-        void enqueueDocumentSync(syncKey, () =>
-          languageServerDocumentSyncGateway.didChange(rootPath, pendingDocument),
-        )
-          .catch(reportLanguageServerError);
+        const requestedSessionId =
+          languageServerRuntimeStatus?.kind === "running"
+            ? languageServerRuntimeStatus.sessionId
+            : null;
+
+        if (requestedSessionId === null) {
+          return;
+        }
+
+        const requestedSyncGeneration = documentSyncGenerationRef.current;
+
+        void enqueueDocumentSync(syncKey, async () => {
+          if (
+            documentSyncGenerationRef.current !== requestedSyncGeneration ||
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+            !isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
+          ) {
+            return;
+          }
+
+          await languageServerDocumentSyncGateway.didChange(
+            rootPath,
+            pendingDocument,
+          );
+        }).catch((error) => {
+          if (!isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)) {
+            return;
+          }
+
+          reportLanguageServerError(error);
+        });
       }, 150);
     },
     [
       clearDocumentChangeTimer,
       enqueueDocumentSync,
+      isLanguageServerSessionCurrentForRoot,
       languageServerDocumentSyncGateway,
       languageServerRuntimeStatus,
       languageServerRuntimeStatusRoot,
@@ -2746,6 +2776,10 @@ export function useWorkbenchController(
           return path ? [{ key, path }] : [];
         },
       );
+
+      if (syncedDocuments.length > 0) {
+        documentSyncGenerationRef.current += 1;
+      }
 
       await Promise.all(
         syncedDocuments.map(async ({ key, path }) => {
