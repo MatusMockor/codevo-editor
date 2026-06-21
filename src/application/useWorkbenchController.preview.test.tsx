@@ -31677,6 +31677,71 @@ class CommentController
     ]);
   });
 
+  it("stops stale Laravel Blade view completions after switching project tabs", async () => {
+    const controllerPath =
+      "/workspace-a/app/Http/Controllers/CommentController.php";
+    const viewsRoot = "/workspace-a/resources/views";
+    const viewDirectoryRead = createDeferred<FileEntry[]>();
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        return view('comments.sh');
+    }
+}
+`;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === viewsRoot ? viewDirectoryRead.promise : [],
+      ),
+      readTextFile: vi.fn(async (path: string) =>
+        path === controllerPath ? controllerSource : "",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.sh"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(completionsPromise).not.toBeNull();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    viewDirectoryRead.resolve([
+      fileEntry("/workspace-a/resources/views/comments/show.blade.php", "show.blade.php"),
+    ]);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
   it("opens Laravel Blade views before LSP fallback", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const viewPath = "/workspace/resources/views/comments/show.blade.php";

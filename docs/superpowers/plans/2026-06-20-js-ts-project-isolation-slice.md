@@ -7822,3 +7822,40 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Blade View-Name Navigation And Completion
 
 - Committed as `4829b352 Add Laravel Blade view navigation`.
+
+## Next Slice: Guard Stale Laravel Blade View Completions
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1fb9839c Record Laravel Blade view navigation commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Blade view-name completion now walks `resources/views` asynchronously.
+- Workspace-tab switches during that directory traversal must not leak suggestions from the old workspace into the new active tab.
+- A focused stale-completion regression keeps the newly added Laravel view intelligence aligned with the broader workspace isolation goal.
+
+### Implementation Choice
+
+- Add a preview regression where a view-name completion request starts in `/workspace-a`, blocks on `resources/views`, then the active tab switches to `/workspace-b`.
+- Resolve the old directory traversal afterward and assert the completion result is empty.
+- Keep production behavior unchanged unless the regression exposes a missing guard.
+
+### Acceptance Criteria
+
+- Delayed Laravel Blade view completion traversal returns no stale suggestions after workspace-tab switch.
+- Existing Laravel Blade view navigation/completion behavior remains unchanged.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Guard Stale Laravel Blade View Completions
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Blade views|stale Laravel Blade view|Laravel Route::view"` passed: 5 passed, 366 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 371 passed.
+- `npm run check` passed.
+- `npm test` passed: 66 files, 1002 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Pending
