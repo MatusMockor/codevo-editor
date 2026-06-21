@@ -3824,3 +3824,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
 - PASS: `npm run check`
 - PASS: `git diff --check`
+
+### Commit Status: Workspace Runtime Status Helper Root Fallback
+
+- Committed as `1842d91f Restrict runtime status root fallback`.
