@@ -2190,6 +2190,7 @@ export function useWorkbenchController(
     setOpenPaths([]);
     setActivePath(null);
     setPreviewPath(null);
+    setEditorRevealTarget(null);
     setNavigationHistory(createNavigationHistory());
     setSidebarView("files");
     setBottomPanelView("problems");
@@ -3210,6 +3211,7 @@ export function useWorkbenchController(
         setBottomPanelVisible(false);
       }
 
+      setEditorRevealTarget(null);
       setLoadingDirectories(new Set());
       applyWorkspaceSettings(workspaceSettings);
       setIntelligenceMode(workspaceSettings.intelligenceMode);

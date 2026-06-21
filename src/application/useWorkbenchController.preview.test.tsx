@@ -4249,6 +4249,27 @@ describe("useWorkbenchController preview tabs", () => {
       getWorkbench().setTextSearchQuery("needle");
       getWorkbench().showBottomPanelView("terminal");
     });
+    await act(async () => {
+      await getWorkbench().openPhpFileOutlineNode({
+        children: [],
+        column: 7,
+        fullyQualifiedName: "App\\Services\\UserService",
+        id: "class:App\\Services\\UserService",
+        kind: "class",
+        label: "UserService",
+        lineNumber: 5,
+        path: "/workspace/app/Services/UserService.php",
+        relativePath: "app/Services/UserService.php",
+      });
+    });
+
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: "/workspace/app/Services/UserService.php",
+      position: {
+        column: 7,
+        lineNumber: 5,
+      },
+    });
 
     await act(async () => {
       await getWorkbench().closeWorkspaceTab("/workspace");
@@ -4265,6 +4286,7 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(getWorkbench().workspaceRoot).toBeNull();
     expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
     expect(getWorkbench().bottomPanelVisible).toBe(false);
     expect(getWorkbench().bottomPanelView).toBe("problems");
     expect(getWorkbench().phpTree.nodes).toEqual([]);
