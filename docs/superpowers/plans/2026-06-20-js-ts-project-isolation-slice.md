@@ -5509,3 +5509,45 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Bottom Panel Clear Reset Guard
 
 - Committed as `17df1def Hide bottom panel when clearing workspace`.
+
+## Next Slice: Editor Reveal Target Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `42fca7da Record bottom panel clear reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 851 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `editorRevealTarget` was not cleared when opening or clearing a workspace.
+- A reveal target from a previous project tab could survive into the next workspace or into the no-workspace state after closing the last tab.
+
+### Implementation Choice
+
+- Clear `editorRevealTarget` when clearing the active workspace.
+- Clear `editorRevealTarget` after applying cached/fresh workspace state during workspace open.
+- Extend the last-tab-close regression by creating a reveal target through a PHP outline node and asserting it is cleared after close.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears active editor reveal targets.
+- Opening another workspace clears stale reveal targets regardless of cached/fresh workspace state.
+- Existing navigation/reveal regressions remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Editor Reveal Target Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (317 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 851 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Editor Reveal Target Reset Guard
+
+- Committed as `ef9af570 Clear editor reveal target on workspace reset`.
