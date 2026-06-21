@@ -6688,4 +6688,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco References Provider
 
-- Pending commit after full frontend verification.
+- Committed as `8152989c Register PHP references provider`.
