@@ -30,11 +30,7 @@ import {
 } from "../domain/languageServerFeatures";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
-import { phpLaravelConfigReferenceContextAt } from "../domain/phpLaravelConfig";
-import { phpLaravelEnvReferenceContextAt } from "../domain/phpLaravelEnv";
-import { phpLaravelRelationStringCompletionContextAt } from "../domain/phpNavigation";
-import { phpLaravelTranslationReferenceContextAt } from "../domain/phpLaravelTranslations";
-import { phpLaravelViewReferenceContextAt } from "../domain/phpLaravelViews";
+import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import {
   phpMemberAccessCompletionContextAt,
   phpMethodParameters,
@@ -2618,26 +2614,12 @@ async function provideCompletionItems(
     source,
     position,
   );
-  const relationStringCompletionContext =
-    phpLaravelRelationStringCompletionContextAt(source, position);
-  const envStringCompletionContext =
-    phpLaravelEnvReferenceContextAt(source, position);
-  const translationStringCompletionContext =
-    phpLaravelTranslationReferenceContextAt(source, position);
-  const configStringCompletionContext =
-    phpLaravelConfigReferenceContextAt(source, position);
-  const viewStringCompletionContext =
-    phpLaravelViewReferenceContextAt(source, position);
   const isMemberOrStaticAccessCompletion = Boolean(
     memberAccessCompletionContext || staticAccessCompletionContext,
   );
   const isScopedCompletion = Boolean(
     isMemberOrStaticAccessCompletion ||
-      relationStringCompletionContext ||
-      envStringCompletionContext ||
-      translationStringCompletionContext ||
-      configStringCompletionContext ||
-      viewStringCompletionContext,
+      phpLaravelScopedStringCompletionContextAt(source, position),
   );
   const variableSuggestions: Monaco.languages.CompletionItem[] =
     methodSuggestions.length > 0 || isScopedCompletion

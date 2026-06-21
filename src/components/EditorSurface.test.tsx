@@ -540,6 +540,81 @@ interface ParserFactory
     );
   });
 
+  it("reopens PHP suggestions when IDE readiness changes in Laravel scoped strings", async () => {
+    const content = "<?php\nAuth::guard('ad');\n";
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "AuthController.php",
+      path: "/workspace/src/AuthController.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => content),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    editor.getPosition.mockReturnValue({
+      column: 16,
+      lineNumber: 2,
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const render = (phpIdeReadinessVersion: number) =>
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          phpIdeReadinessVersion={phpIdeReadinessVersion}
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+
+    await act(async () => {
+      render(0);
+      await Promise.resolve();
+    });
+    editor.trigger.mockClear();
+
+    await act(async () => {
+      render(1);
+      await Promise.resolve();
+    });
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "mockor.phpIdeReadiness",
+      "editor.action.triggerSuggest",
+      {},
+    );
+  });
+
   it("reopens PHP suggestions when the IDE method provider becomes ready", async () => {
     const content = "<?php\n$comment->\n";
     const activeDocument: EditorDocument = {

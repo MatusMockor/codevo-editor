@@ -1463,6 +1463,45 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(providePhpMethodCompletions).toHaveBeenCalled();
   });
 
+  it("does not offer local variables as a fallback inside Laravel scoped strings", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = `<?php
+function show($user): void
+{
+    Auth::guard('ad');
+}
+`;
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          content: source,
+          lineContent: "    Auth::guard('ad');",
+          word: {
+            endColumn: 20,
+            startColumn: 18,
+          },
+        }),
+        {
+          column: 20,
+          lineNumber: 4,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [],
+    });
+    expect(providePhpMethodCompletions).toHaveBeenCalled();
+  });
+
   it("filters PHP LSP locals and keywords inside member access completions", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({

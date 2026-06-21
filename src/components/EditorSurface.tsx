@@ -41,11 +41,7 @@ import {
   phpMemberAccessCompletionContextAt,
   phpStaticAccessCompletionContextAt,
 } from "../domain/phpMethodCompletions";
-import { phpLaravelConfigReferenceContextAt } from "../domain/phpLaravelConfig";
-import { phpLaravelEnvReferenceContextAt } from "../domain/phpLaravelEnv";
-import { phpLaravelRelationStringCompletionContextAt } from "../domain/phpNavigation";
-import { phpLaravelTranslationReferenceContextAt } from "../domain/phpLaravelTranslations";
-import { phpLaravelViewReferenceContextAt } from "../domain/phpLaravelViews";
+import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { MonacoAppTheme } from "../domain/settings";
 import {
@@ -302,11 +298,7 @@ export function EditorSurface({
     const isPhpCompletionContext = Boolean(
       phpMemberAccessCompletionContextAt(source, position) ||
         phpStaticAccessCompletionContextAt(source, position) ||
-        phpLaravelRelationStringCompletionContextAt(source, position) ||
-        phpLaravelTranslationReferenceContextAt(source, position) ||
-        phpLaravelEnvReferenceContextAt(source, position) ||
-        phpLaravelConfigReferenceContextAt(source, position) ||
-        phpLaravelViewReferenceContextAt(source, position),
+        phpLaravelScopedStringCompletionContextAt(source, position),
     );
 
     if (!isPhpCompletionContext) {
