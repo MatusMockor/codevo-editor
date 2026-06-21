@@ -4686,3 +4686,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `2262d399 Resolve morph map class-string constants`.
+
+## Slice: Laravel Morph Map Array Constants - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1ae5650c Record morph map class-string constants commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Resolve Laravel `morphTo()` fallback targets when `Relation::morphMap()` receives a local array class constant.
+
+### Implementation Choice
+
+- Allow morph map argument extraction to resolve class-constant array bodies such as `self::MORPH_MAP`.
+- Reuse existing class-body and class-constant statement parsing instead of adding a broad parser.
+- Keep inline arrays, named `map:` arguments, direct `Post::class`, string class names, and class-string constant map values unchanged.
+- Add semantic coverage for relation-property and terminal-chain inference through a service-provider `private const MORPH_MAP = ['post' => Post::class]`.
+
+### Acceptance Criteria
+
+- `Relation::morphMap(self::MORPH_MAP)` resolves the inline array body stored in `MORPH_MAP`.
+- `$comment->commentable`, `$this->morphTo()->first()`, and `$comment->commentable->...` infer `App\Models\Post` when the resolved morph map has one target.
+- Existing direct morph map, class-string constant value, and ambiguous multi-target morphTo behavior remains unchanged.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- FAIL then fixed: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morph maps from local array constants"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morph map"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `76205e39 Resolve morph map array constants`.
