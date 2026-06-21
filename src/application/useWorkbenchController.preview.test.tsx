@@ -34565,11 +34565,15 @@ return [
     const controllerSource = `<?php
 
 use Illuminate\\Support\\Facades\\Auth;
+use Illuminate\\Container\\Attributes\\Authenticated;
+use Illuminate\\Container\\Attributes\\CurrentUser;
 
 class AuthController
 {
-    public function login(): void
-    {
+    public function login(
+        #[Authenticated('ad')] mixed $user,
+        #[CurrentUser('we')] mixed $currentUser,
+    ): void {
         Auth::guard('ad');
         Auth::shouldUse('we');
         Auth::setDefaultDriver(name: 'ad');
@@ -34748,6 +34752,36 @@ return [
         returnType: null,
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Authenticated('ad"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "admin",
+        kind: "config",
+        name: "admin",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "CurrentUser('we"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "web",
+        kind: "config",
+        name: "web",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
   });
 
   it("opens Laravel Auth guard names before LSP fallback", async () => {
@@ -34755,13 +34789,12 @@ return [
     const authConfigPath = "/workspace/config/auth.php";
     const controllerSource = `<?php
 
-use Illuminate\\Support\\Facades\\Auth;
+use Illuminate\\Container\\Attributes\\CurrentUser;
 
 class AuthController
 {
-    public function login(): void
+    public function login(#[CurrentUser('admin')] mixed $user): void
     {
-        request()->user('admin');
     }
 }
 `;
@@ -34820,7 +34853,7 @@ return [
     });
     act(() => {
       getWorkbench().updateActiveEditorPosition(
-        positionAfter(controllerSource, "request()->user('admin"),
+        positionAfter(controllerSource, "CurrentUser('admin"),
       );
     });
 

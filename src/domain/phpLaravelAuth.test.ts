@@ -34,15 +34,22 @@ describe("phpLaravelAuth", () => {
       ["Route::middleware(['auth:web,admin'])", "Route::middleware(auth)"],
       ["#[Auth('admin')]\nclass Controller {}", "#[Auth]"],
       [
+        "#[Authenticated('admin')]\nclass Controller {}",
+        "#[Authenticated]",
+      ],
+      ["#[CurrentUser(guard: 'admin')]\nclass Controller {}", "#[CurrentUser]"],
+      [
         "#[\\Illuminate\\Container\\Attributes\\Auth(guard: 'admin')]\nclass Controller {}",
         "#[Auth]",
+      ],
+      [
+        "#[\\Illuminate\\Container\\Attributes\\Authenticated(guard: 'admin')]\nclass Controller {}",
+        "#[Authenticated]",
       ],
     ] as const;
 
     for (const [expression, call] of samples) {
-      const imports = expression.startsWith("#[Auth(")
-        ? "use Illuminate\\Container\\Attributes\\Auth;\n\n"
-        : "";
+      const imports = laravelAttributeImportForExpression(expression);
       const source = `<?php\n\n${imports}return ${expression};\n`;
 
       expect(
@@ -75,6 +82,25 @@ class Controller {}
       guardName: "admin",
       prefix: "admin",
     });
+
+    const aliasedAuthenticatedAttribute = `<?php
+
+use Illuminate\\Container\\Attributes\\CurrentUser as UserFromGuard;
+
+#[UserFromGuard('admin')]
+class Controller {}
+`;
+
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        aliasedAuthenticatedAttribute,
+        positionAfter(aliasedAuthenticatedAttribute, "admin"),
+      ),
+    ).toMatchObject({
+      call: "#[CurrentUser]",
+      guardName: "admin",
+      prefix: "admin",
+    });
   });
 
   it("ignores unsupported arguments, interpolation, invalid names, and non-auth calls", () => {
@@ -92,8 +118,10 @@ class Controller {}
     const genericUserMember = `<?php\n\n$userRepository->user('admin');\n`;
     const wrongRequestUserArgument = `<?php\n\n$request->user(name: 'admin');\n`;
     const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Auth;\n\n#[Auth(name: 'admin')]\nclass Controller {}\n`;
+    const wrongAuthenticatedAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Authenticated;\n\n#[Authenticated(name: 'admin')]\nclass Controller {}\n`;
     const nestedAttributeCall = `<?php\n\n#[Example(Auth('admin'))]\nclass Controller {}\n`;
     const foreignAttribute = `<?php\n\nuse App\\Attributes\\Auth;\n\n#[Auth('admin')]\nclass Controller {}\n`;
+    const foreignCurrentUserAttribute = `<?php\n\nuse App\\Attributes\\CurrentUser;\n\n#[CurrentUser('admin')]\nclass Controller {}\n`;
 
     expect(
       phpLaravelAuthGuardReferenceContextAt(
@@ -181,6 +209,12 @@ class Controller {}
     ).toBeNull();
     expect(
       phpLaravelAuthGuardReferenceContextAt(
+        wrongAuthenticatedAttributeArgument,
+        positionAfter(wrongAuthenticatedAttributeArgument, "admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
         nestedAttributeCall,
         positionAfter(nestedAttributeCall, "admin"),
       ),
@@ -189,6 +223,12 @@ class Controller {}
       phpLaravelAuthGuardReferenceContextAt(
         foreignAttribute,
         positionAfter(foreignAttribute, "admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        foreignCurrentUserAttribute,
+        positionAfter(foreignCurrentUserAttribute, "admin"),
       ),
     ).toBeNull();
   });
@@ -232,4 +272,18 @@ function positionAfter(source: string, token: string) {
   }
 
   return { column, lineNumber };
+}
+
+function laravelAttributeImportForExpression(expression: string): string {
+  if (expression.startsWith("#[Authenticated(")) {
+    return "use Illuminate\\Container\\Attributes\\Authenticated;\n\n";
+  }
+
+  if (expression.startsWith("#[CurrentUser(")) {
+    return "use Illuminate\\Container\\Attributes\\CurrentUser;\n\n";
+  }
+
+  return expression.startsWith("#[Auth(")
+    ? "use Illuminate\\Container\\Attributes\\Auth;\n\n"
+    : "";
 }

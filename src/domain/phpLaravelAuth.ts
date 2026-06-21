@@ -10,6 +10,10 @@ import {
 
 const laravelAuthGuardConfigPrefix = "auth.guards.";
 const laravelAuthAttributeClass = "Illuminate\\Container\\Attributes\\Auth";
+const laravelAuthenticatedAttributeClass =
+  "Illuminate\\Container\\Attributes\\Authenticated";
+const laravelCurrentUserAttributeClass =
+  "Illuminate\\Container\\Attributes\\CurrentUser";
 const authGuardStaticCallMethods = {
   guard: "Auth::guard",
   setdefaultdriver: "Auth::setDefaultDriver",
@@ -34,6 +38,8 @@ type AuthGuardMiddlewareName = keyof typeof authGuardMiddlewareCallMethods;
 
 export type PhpLaravelAuthGuardReferenceCall =
   | "#[Auth]"
+  | "#[Authenticated]"
+  | "#[CurrentUser]"
   | (typeof authGuardStaticCallMethods)[AuthGuardStaticMethodName]
   | (typeof authGuardHelperCallMethods)[AuthGuardHelperMethodName]
   | (typeof authGuardRequestCallMethods)[AuthGuardRequestMethodName]
@@ -113,6 +119,8 @@ function phpLaravelAuthAttributeGuardReferenceContextAt(
 ): PhpLaravelAuthGuardReferenceContext | null {
   const argument = phpStringAttributeArgumentContextAt(source, position, [
     laravelAuthAttributeClass,
+    laravelAuthenticatedAttributeClass,
+    laravelCurrentUserAttributeClass,
   ]);
 
   if (!argument) {
@@ -130,11 +138,34 @@ function phpLaravelAuthAttributeGuardReferenceContextAt(
   }
 
   return {
-    call: "#[Auth]",
+    call: laravelAuthAttributeGuardCall(argument.resolvedAttributeName),
     guardName,
     position: argument.position,
     prefix: argument.prefix,
   };
+}
+
+function laravelAuthAttributeGuardCall(
+  attributeName: string,
+): Extract<
+  PhpLaravelAuthGuardReferenceCall,
+  "#[Auth]" | "#[Authenticated]" | "#[CurrentUser]"
+> {
+  const normalizedAttributeName = attributeName.toLowerCase();
+
+  if (
+    normalizedAttributeName === laravelAuthenticatedAttributeClass.toLowerCase()
+  ) {
+    return "#[Authenticated]";
+  }
+
+  if (
+    normalizedAttributeName === laravelCurrentUserAttributeClass.toLowerCase()
+  ) {
+    return "#[CurrentUser]";
+  }
+
+  return "#[Auth]";
 }
 
 function phpLaravelAuthMiddlewareGuardReferenceContext(
