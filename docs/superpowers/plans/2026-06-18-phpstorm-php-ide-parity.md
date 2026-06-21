@@ -4727,3 +4727,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `76205e39 Resolve morph map array constants`.
+
+## Slice: Laravel Morph Map Array Constant Values - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `610deb30 Record morph map array constants commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock the combined Laravel morph map path where an array class constant contains class-string constant values.
+
+### Implementation Choice
+
+- Add semantic regression coverage for `Relation::morphMap(self::MORPH_MAP)` when `MORPH_MAP` contains `'post' => self::POST_MODEL`.
+- Keep this as a test-only slice because the previous class-string value and array-constant resolvers already compose correctly.
+- Cover relation-property and terminal-chain inference through the combined provider constant setup.
+
+### Acceptance Criteria
+
+- `private const MORPH_MAP = ['post' => self::POST_MODEL]` resolves through `Relation::morphMap(self::MORPH_MAP)`.
+- `$comment->commentable`, `$this->morphTo()->first()`, and `$comment->commentable->...` infer `App\Models\Post`.
+- Existing direct morph map, class-string constant value, array constant, and ambiguous multi-target morphTo behavior remains unchanged.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "array constants with class-string constant values"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morph map"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `c2b27554 Cover morph map array constant values`.
