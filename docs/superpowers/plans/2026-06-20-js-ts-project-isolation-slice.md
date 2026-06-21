@@ -5468,3 +5468,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Workspace UI Search Reset Guard
 
 - Committed as `2c0d571e Reset workspace UI state on last tab close`.
+
+## Next Slice: Bottom Panel Clear Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `508d847e Record workspace UI reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 851 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `clearActiveWorkspace` reset the bottom panel view to Problems but did not hide the bottom panel.
+- Closing the last project tab could leave a visible bottom panel from the previous workspace even though no workspace was active.
+
+### Implementation Choice
+
+- Hide the bottom panel when clearing the active workspace.
+- Extend the last-tab-close regression to open the terminal panel before closing and assert the panel is hidden afterward.
+
+### Acceptance Criteria
+
+- Closing the last project tab hides the bottom panel.
+- Closing the last project tab resets the bottom panel view to Problems.
+- Existing workspace UI and PHP state reset assertions remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Bottom Panel Clear Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (317 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 851 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Bottom Panel Clear Reset Guard
+
+- Committed as `17df1def Hide bottom panel when clearing workspace`.
