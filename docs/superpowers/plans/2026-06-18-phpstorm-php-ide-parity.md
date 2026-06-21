@@ -3104,3 +3104,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `184dc8cd Recognize Laravel JSON query helpers`.
+
+## Slice: Laravel Date-Part OrWhere Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5e2509bf Record Laravel JSON helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize Laravel date-part `orWhere` helpers as builder-preserving methods so date filters do not break model-aware inference.
+
+### Implementation Choice
+
+- Add `orWhereDay`, `orWhereMonth`, `orWhereTime`, and `orWhereYear` to Eloquent static/fluent builder recognition.
+- Add the same fluent date-part helpers to base query-builder recognition.
+- Cover classifier behavior, Eloquent builder return-type preservation, and relation-method semantic inference through a date-part helper chain ending in `first()`.
+
+### Acceptance Criteria
+
+- Date-part `orWhere` helpers are recognized as Laravel Eloquent builder method names.
+- Base query-builder classifiers recognize the same fluent date-part helpers.
+- Eloquent builder calls through these helpers preserve `Builder<Model>` inference.
+- Relation-method chains through these helpers infer the related model after `first()`.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "raw query builder|local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending implementation commit.

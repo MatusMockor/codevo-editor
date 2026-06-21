@@ -1134,6 +1134,18 @@ class Comment extends Model
             ->whereJsonLength('meta->tags', '>', 0)
             ->orWhereJsonLength('meta->tags', '>', 1)
             ->first();
+        $relationMethodDatePartFilteredPost = $this->posts()
+            ->whereDate('published_at', '>=', '2026-01-01')
+            ->orWhereDate('published_at', '<', '2027-01-01')
+            ->whereDay('published_at', '>=', 1)
+            ->orWhereDay('published_at', '<=', 31)
+            ->whereMonth('published_at', '>=', 1)
+            ->orWhereMonth('published_at', '<=', 12)
+            ->whereTime('published_at', '>=', '08:00:00')
+            ->orWhereTime('published_at', '<=', '18:00:00')
+            ->whereYear('published_at', '>=', 2026)
+            ->orWhereYear('published_at', '<=', 2027)
+            ->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
@@ -1191,6 +1203,7 @@ class Comment extends Model
         $relationMethodColumnFilteredPost->tit
         $relationMethodLikeFilteredPost->tit
         $relationMethodJsonFilteredPost->tit
+        $relationMethodDatePartFilteredPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
@@ -1455,6 +1468,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodJsonFilteredPost->tit"),
         "relationMethodJsonFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodDatePartFilteredPost->tit"),
+        "relationMethodDatePartFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
