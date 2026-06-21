@@ -14792,6 +14792,15 @@ export function useWorkbenchController(
         })
         .then((status) => {
           if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            if (
+              workspaceRootKeysEqual(
+                autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+                requestedRoot,
+              )
+            ) {
+              autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
+            }
+
             return;
           }
 
@@ -14824,13 +14833,22 @@ export function useWorkbenchController(
             requestedRoot,
           );
         })
-        .catch((error) =>
+        .catch((error) => {
+          if (
+            workspaceRootKeysEqual(
+              autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+              requestedRoot,
+            )
+          ) {
+            autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
+          }
+
           reportErrorForActiveWorkspaceRoot(
             requestedRoot,
             "JavaScript/TypeScript",
             error,
-          ),
-        );
+          );
+        });
     })();
 
     return () => {

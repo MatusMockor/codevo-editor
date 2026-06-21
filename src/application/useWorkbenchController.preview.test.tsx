@@ -5907,6 +5907,100 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("clears stale JavaScript and TypeScript autostart failures after switching project tabs", async () => {
+    const workspaceAStart = createDeferred<LanguageServerRuntimeStatus>();
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    let workspaceAStartAttempts = 0;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async (rootPath) => {
+          if (rootPath === "/workspace-a") {
+            workspaceAStartAttempts += 1;
+
+            if (workspaceAStartAttempts === 1) {
+              return workspaceAStart.promise;
+            }
+          }
+
+          return runningStatus(rootPath, 70 + workspaceAStartAttempts);
+        }),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptLanguageServerPlan:
+        readyJavaScriptTypeScriptPlan("/workspace-a"),
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+      ).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({
+          typeScriptVersionPreference: "bundled",
+        }),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      workspaceAStart.reject(new Error("stale JS autostart"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale JS autostart");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("stale JS autostart"),
+      ),
+    ).toBe(false);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await vi.waitFor(() => {
+      expect(
+        vi
+          .mocked(dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start)
+          .mock.calls.filter(([rootPath]) => rootPath === "/workspace-a"),
+      ).toHaveLength(2);
+    });
+  });
+
   it("does not let a rootless JavaScript and TypeScript status probe suppress autostart", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {

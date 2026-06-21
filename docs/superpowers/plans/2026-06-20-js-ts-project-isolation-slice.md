@@ -4568,3 +4568,48 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Quick Open Result Active Workspace Guard
 
 - Committed as `b586f283 Guard Quick Open result opens by active workspace`.
+
+## Next Slice: JavaScript TypeScript Autostart Cleanup Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `bea24771 Record Quick Open guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 834 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- JS/TS autostart already guarded stale error reporting by active workspace root.
+- If a startup promise resolved or rejected after switching tabs, the old root could remain recorded as auto-starting.
+- Returning to that project could then skip a fresh autostart because `autoStartedJavaScriptTypeScriptLanguageServerRootRef` still pointed at the stale root.
+
+### Implementation Choice
+
+- Clear the JS/TS autostart root ref before returning from stale success callbacks.
+- Clear the same ref before handling startup failures.
+- Keep active-root error reporting as-is.
+- Add a preview regression where `/workspace-a` startup rejects after switching to `/workspace-b`, then switching back to `/workspace-a` can start again.
+
+### Acceptance Criteria
+
+- Stale JS/TS autostart failures do not create active-workspace notices after switching tabs.
+- Stale JS/TS autostart failures do not leave the original workspace stuck as auto-starting.
+- Existing JS/TS autostart probe and runtime lifecycle tests remain green.
+- Focused/broader/full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: JavaScript TypeScript Autostart Cleanup Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript and TypeScript.*autostart|rootless JavaScript and TypeScript status probe|initial runtime status"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "autostart|runtime status|runtime subscription|JavaScript and TypeScript service"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status: JavaScript TypeScript Autostart Cleanup Guard
+
+- Pending commit.
