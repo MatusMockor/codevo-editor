@@ -1090,6 +1090,24 @@ class Comment extends Model
         $relationMethodFirstWherePost = $this->posts()->firstWhere('published', true);
         $relationMethodFirstOrPost = $this->posts()->firstOr(fn () => new Post());
         $relationMethodFirstOrNewPost = $this->posts()->firstOrNew(['title' => 'Draft']);
+        $relationMethodRelationshipQueriedPost = $this->posts()
+            ->has('comments')
+            ->orHas('comments')
+            ->doesntHave('comments')
+            ->orDoesntHave('comments')
+            ->hasMorph('commentable', [Post::class])
+            ->orHasMorph('commentable', [Post::class])
+            ->doesntHaveMorph('commentable', [Post::class])
+            ->orDoesntHaveMorph('commentable', [Post::class])
+            ->whereRelation('comments', 'approved', true)
+            ->orWhereRelation('comments', 'flagged', false)
+            ->whereDoesntHave('comments')
+            ->orWhereDoesntHave('comments')
+            ->whereDoesntHaveMorph('commentable', [Post::class])
+            ->orWhereDoesntHaveMorph('commentable', [Post::class])
+            ->whereMorphRelation('commentable', [Post::class], 'visible', true)
+            ->orWhereMorphRelation('commentable', [Post::class], 'featured', true)
+            ->first();
         $relationMethodLatestPost = $this->posts()->latest()->first();
         $relationMethodOldestPost = $this->posts()->oldest()->first();
         $relationMethodRandomPost = $this->posts()->inRandomOrder()->first();
@@ -1305,6 +1323,7 @@ class Comment extends Model
         $relationMethodFirstWherePost->tit
         $relationMethodFirstOrPost->tit
         $relationMethodFirstOrNewPost->tit
+        $relationMethodRelationshipQueriedPost->tit
         $relationMethodLatestPost->tit
         $relationMethodOldestPost->tit
         $relationMethodRandomPost->tit
@@ -1517,6 +1536,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodFirstOrNewPost->tit"),
         "relationMethodFirstOrNewPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodRelationshipQueriedPost->tit"),
+        "relationMethodRelationshipQueriedPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");

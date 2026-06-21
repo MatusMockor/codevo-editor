@@ -3638,3 +3638,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `e6567bfa Recognize Laravel negated where helpers`.
+
+## Slice: Laravel Relationship Query Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ede3d786 Record Laravel negated where helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize additional Laravel relationship query helpers as Eloquent builder-preserving methods.
+
+### Implementation Choice
+
+- Add missing `orHas`, `orDoesntHave`, and `orWhereRelation` to Eloquent static/fluent builder recognition.
+- Expand classifier and return-type preservation coverage for relationship query variants including `orHasMorph`, `orDoesntHaveMorph`, `whereRelation`, `orWhereRelation`, `whereDoesntHave`, `orWhereDoesntHave`, and morph relation variants.
+- Cover relation-method semantic inference through a relationship query chain ending in `first()`.
+
+### Acceptance Criteria
+
+- Relationship query helper variants are recognized as Laravel Eloquent builder method names.
+- Eloquent builder calls through these helpers preserve `Builder<Model>` inference.
+- Relation-method chains through these helpers infer the related model after `first()`.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending implementation commit.
