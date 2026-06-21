@@ -1125,8 +1125,11 @@ class Comment extends Model
             ->whereNotLike('slug', '%draft%')
             ->orWhereNotLike('body', '%deprecated%')
             ->whereAny(['title', 'summary'], 'like', '%tips%')
+            ->orWhereAny(['title', 'summary'], 'like', '%news%')
             ->whereAll(['title', 'summary'], 'like', '%Laravel%')
+            ->orWhereAll(['title', 'summary'], 'like', '%PHP%')
             ->whereNone(['slug', 'body'], 'like', '%archived%')
+            ->orWhereNone(['slug', 'body'], 'like', '%deleted%')
             ->first();
         $relationMethodJsonFilteredPost = $this->posts()
             ->whereJsonContains('meta->tags', 'php')
