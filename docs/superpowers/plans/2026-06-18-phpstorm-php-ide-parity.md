@@ -5457,3 +5457,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `ac3f8326 Guard stale PHP method provider results`.
+
+## Slice: Stale Contextual PHP Class Navigation Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c84e17bb Record stale PHP method provider guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale contextual PHP class navigation targets from opening after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root, descriptor, and source path in `openPhpClassTarget`.
+- Guard after indexed project-symbol search, before opening indexed targets, before PSR-4 fallback reads, after fallback reads, and before continuing after fallback errors.
+- Use the captured root and descriptor for all candidate resolution.
+- Add a preview regression where Go to Definition starts on `CommentsAgent` in `/workspace-a`, switches to `/workspace-b`, then resolves the stale index target to an external file that would otherwise open in the active workspace.
+
+### Acceptance Criteria
+
+- Stale contextual PHP class targets are ignored after tab switch.
+- Stale external targets are not read, opened, or revealed in the active workspace.
+- Existing indexed and contextual PHP definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "contextual PHP class targets"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `20dbbd02 Guard stale contextual PHP class navigation`.
