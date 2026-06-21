@@ -1533,3 +1533,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `5f98c6b0 Guard directory loads by active workspace`.
+
+### Slice: Session Persistence Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1a8f42f4 Record directory load guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed session auto-save failures from a previous project tab from surfacing in the active workspace.
+
+#### Implementation Choice
+
+- Capture the session persistence root inside the session effect.
+- Replace the catch-side global Session report with `reportErrorForActiveWorkspaceRoot`.
+- Add a regression where `/workspace-a` opens a file and starts session persistence, the user switches to `/workspace-b`, and the stale `/workspace-a` rejection cannot create a Session notice in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale session persistence failures do not surface after switching project tabs.
+- Existing workspace settings save and restored workspace behavior still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale session persistence errors after switching project tabs|ignores stale workspace settings save errors after switching project tabs|keeps restored workspaces lightweight in editor mode"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `36ce9204 Guard session persistence by active workspace`.
