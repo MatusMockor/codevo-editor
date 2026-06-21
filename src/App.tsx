@@ -773,10 +773,13 @@ function App() {
         activeLanguage={activeLanguage}
         activePath={workbench.activePath}
         dirtyCount={workbench.dirtyCount}
+        errorCount={workbench.diagnosticsSummary.errors}
         intelligenceMode={workbench.intelligenceMode}
         message={workbench.message}
         onChangeVisibility={workbench.setStatusBarItemVisibility}
+        onShowProblems={() => workbench.showBottomPanelView("problems")}
         statusBar={workbench.workspaceSettings.statusBar}
+        warningCount={workbench.diagnosticsSummary.warnings}
         workspaceRoot={workbench.workspaceRoot}
         workspaceInfoLabel={workspaceLabel}
         ideActivityLabel={ideActivity.label}

@@ -1,3 +1,4 @@
+import { CircleX, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import type {
@@ -9,11 +10,13 @@ interface StatusBarProps {
   activeLanguage: string | null;
   activePath: string | null;
   dirtyCount: number;
+  errorCount?: number;
   ideActivityLabel: string | null;
   ideActivityState: IdeActivityState | null;
   intelligenceMode: IntelligenceMode;
   message: string | null;
   statusBar: StatusBarItemVisibility;
+  warningCount?: number;
   workspaceInfoLabel: string | null;
   workspaceRoot: string | null;
   workspaceTrustLabel: string | null;
@@ -21,6 +24,7 @@ interface StatusBarProps {
     key: keyof StatusBarItemVisibility,
     visible: boolean,
   ): void;
+  onShowProblems?(): void;
 }
 
 const statusBarItems: Array<{
@@ -42,12 +46,15 @@ export function StatusBar({
   activeLanguage,
   activePath,
   dirtyCount,
+  errorCount = 0,
   ideActivityLabel,
   ideActivityState,
   intelligenceMode,
   message,
   onChangeVisibility,
+  onShowProblems,
   statusBar,
+  warningCount = 0,
   workspaceInfoLabel,
   workspaceRoot,
   workspaceTrustLabel,
@@ -92,8 +99,36 @@ export function StatusBar({
     });
   };
 
+  const problemsTitle =
+    errorCount === 0 && warningCount === 0
+      ? "No problems"
+      : `${errorCount} ${pluralize(errorCount, "error")}, ${warningCount} ${pluralize(warningCount, "warning")}`;
+
   return (
     <footer className="status-bar" onContextMenu={openMenu}>
+      <button
+        aria-label={problemsTitle}
+        className="status-problems"
+        onClick={onShowProblems}
+        style={{
+          alignItems: "center",
+          background: "transparent",
+          border: "none",
+          color: "inherit",
+          cursor: "pointer",
+          display: "inline-flex",
+          font: "inherit",
+          gap: 4,
+          padding: "0 12px",
+        }}
+        title={problemsTitle}
+        type="button"
+      >
+        <CircleX aria-hidden="true" size={13} />
+        {errorCount}
+        <TriangleAlert aria-hidden="true" size={13} />
+        {warningCount}
+      </button>
       {statusBar.activePath ? (
         <span title={activePathLabel}>
           {activePathLabel}
@@ -153,6 +188,10 @@ export function StatusBar({
 }
 
 export type IdeActivityState = "active" | "idle" | "problem" | "scanning";
+
+function pluralize(count: number, noun: string): string {
+  return count === 1 ? noun : `${noun}s`;
+}
 
 function formatMode(mode: IntelligenceMode): string {
   if (mode === "lightSmart") {

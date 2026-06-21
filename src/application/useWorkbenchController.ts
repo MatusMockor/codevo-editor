@@ -112,6 +112,15 @@ import {
   type KeymapCommandId,
 } from "../domain/keymap";
 import {
+  summarizeDiagnostics,
+  type DiagnosticsSummary,
+} from "../domain/diagnosticsSummary";
+import {
+  nextProblemLocation,
+  previousProblemLocation,
+  type ProblemLocation,
+} from "../domain/problemNavigation";
+import {
   implementationChooserTitle,
   implementationTargetFromProjectSymbol,
   implementationTargetFromLocation,
@@ -715,6 +724,8 @@ export function useWorkbenchController(
     useState<TypeHierarchyView | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
+  const noticesRef = useRef<WorkbenchNotice[]>(notices);
+  noticesRef.current = notices;
   const [appSettings, setAppSettings] =
     useState<AppSettings>(defaultAppSettings);
   const [workspaceSettings, setWorkspaceSettings] =
@@ -6820,6 +6831,57 @@ export function useWorkbenchController(
     },
     [openNavigationTarget],
   );
+
+  const currentProblemLocation = useCallback((): ProblemLocation | null => {
+    const path = activeDocumentRef.current?.path;
+
+    if (!path) {
+      return null;
+    }
+
+    const position = activeEditorPositionRef.current ?? {
+      column: 1,
+      lineNumber: 1,
+    };
+
+    return {
+      path,
+      position: { column: position.column, lineNumber: position.lineNumber },
+    };
+  }, []);
+
+  const goToProblemLocation = useCallback(
+    async (location: ProblemLocation | null): Promise<boolean> => {
+      if (!location) {
+        return false;
+      }
+
+      const opened = await openNavigationTarget(
+        location.path,
+        location.position,
+        "problem",
+      );
+
+      if (opened) {
+        activeEditorPositionRef.current = location.position;
+      }
+
+      return opened;
+    },
+    [openNavigationTarget],
+  );
+
+  const goToNextProblem = useCallback(async (): Promise<boolean> => {
+    return goToProblemLocation(
+      nextProblemLocation(noticesRef.current, currentProblemLocation()),
+    );
+  }, [currentProblemLocation, goToProblemLocation]);
+
+  const goToPreviousProblem = useCallback(async (): Promise<boolean> => {
+    return goToProblemLocation(
+      previousProblemLocation(noticesRef.current, currentProblemLocation()),
+    );
+  }, [currentProblemLocation, goToProblemLocation]);
 
   const readNavigationFileContent = useCallback(
     async (path: string): Promise<string> => {
@@ -19072,6 +19134,18 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.nextProblem")) {
+        event.preventDefault();
+        void goToNextProblem();
+        return;
+      }
+
+      if (matches("editor.previousProblem")) {
+        event.preventDefault();
+        void goToPreviousProblem();
+        return;
+      }
+
       if (matches("navigation.back")) {
         event.preventDefault();
         void navigateBackward();
@@ -19143,6 +19217,8 @@ export function useWorkbenchController(
     goToDeclaration,
     goToDefinition,
     goToImplementation,
+    goToNextProblem,
+    goToPreviousProblem,
     goToSourceDefinition,
     goToTypeDefinition,
     navigateBackward,
@@ -20107,6 +20183,10 @@ export function useWorkbenchController(
       ),
     [javaScriptTypeScriptDiagnosticsByPath, languageServerDiagnosticsByPath],
   );
+  const diagnosticsSummary = useMemo<DiagnosticsSummary>(
+    () => summarizeDiagnostics(notices),
+    [notices],
+  );
 
   return {
     activeDocument,
@@ -20138,6 +20218,7 @@ export function useWorkbenchController(
     commitGitChanges,
     commandContext,
     commands: commandRegistry.list(),
+    diagnosticsSummary,
     dirtyCount,
     entriesByDirectory,
     expandedDirectories,
@@ -20152,6 +20233,8 @@ export function useWorkbenchController(
       flushPendingJavaScriptTypeScriptDocumentChange,
     goToDefinition,
     goToImplementationAt,
+    goToNextProblem,
+    goToPreviousProblem,
     clearEditorRevealTarget: () => setEditorRevealTarget(null),
     bottomPanelVisible,
     bottomPanelView,

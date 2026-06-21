@@ -1960,6 +1960,275 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("aggregates diagnostic severity counts for the active workspace only", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 401)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, 401)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const activePath = "/workspace-a/app/Models/User.php";
+    const inactivePath = "/workspace-b/app/Models/Post.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-b", 402));
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Active error",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            character: 4,
+            line: 2,
+            message: "Active warning",
+            severity: "warning",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 401,
+        uri: fileUriFromPath(activePath),
+        version: null,
+      });
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Inactive error should not count",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-b",
+        sessionId: 402,
+        uri: fileUriFromPath(inactivePath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 1,
+    });
+  });
+
+  it("reports zero diagnostics when the active workspace has none", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
+  it("navigates next and previous through active workspace problems with wrap-around", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 501)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, 501)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const firstPath = "/workspace-a/app/Models/Account.php";
+    const secondPath = "/workspace-a/app/Models/Zone.php";
+    const inactivePath = "/workspace-b/app/Models/Comment.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\n`),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-b", 502));
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 2,
+            line: 4,
+            message: "First problem",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 501,
+        uri: fileUriFromPath(firstPath),
+        version: null,
+      });
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 9,
+            message: "Second problem",
+            severity: "warning",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 501,
+        uri: fileUriFromPath(secondPath),
+        version: null,
+      });
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Inactive problem",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-b",
+        sessionId: 502,
+        uri: fileUriFromPath(inactivePath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().goToNextProblem();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: firstPath,
+      position: { column: 3, lineNumber: 5 },
+    });
+
+    await act(async () => {
+      await getWorkbench().goToNextProblem();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: secondPath,
+      position: { column: 1, lineNumber: 10 },
+    });
+
+    await act(async () => {
+      await getWorkbench().goToNextProblem();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: firstPath,
+      position: { column: 3, lineNumber: 5 },
+    });
+
+    await act(async () => {
+      await getWorkbench().goToPreviousProblem();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: secondPath,
+      position: { column: 1, lineNumber: 10 },
+    });
+
+    expect(getWorkbench().editorRevealTarget?.path).not.toBe(inactivePath);
+  });
+
+  it("does nothing when navigating problems with no diagnostics", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().goToNextProblem();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("does not sync JavaScript and TypeScript documents with a runtime from another project tab", async () => {
     let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
       null;

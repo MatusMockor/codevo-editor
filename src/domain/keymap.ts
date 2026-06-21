@@ -61,6 +61,18 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "F8",
+    id: "editor.nextProblem",
+    label: "Go to Next Problem",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Shift+F8",
+    id: "editor.previousProblem",
+    label: "Go to Previous Problem",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Alt+ArrowUp",
     id: "editor.extendSelection",
     label: "Extend Selection",

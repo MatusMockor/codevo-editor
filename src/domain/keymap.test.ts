@@ -19,6 +19,8 @@ describe("keymap", () => {
       "editor.goToSourceDefinition": "",
       "editor.goToSymbol": "Cmd+T",
       "editor.goToTypeDefinition": "",
+      "editor.nextProblem": "F8",
+      "editor.previousProblem": "Shift+F8",
       "editor.quickFix": "Alt+Enter",
       "file.quickOpen": "Cmd+P",
       "navigation.back": "Cmd+[",
@@ -65,6 +67,17 @@ describe("keymap", () => {
     expect(matchesShortcut(keyEvent({ key: "Enter", altKey: true }), "")).toBe(
       false,
     );
+  });
+
+  it("matches the next and previous problem function keys", () => {
+    expect(matchesShortcut(keyEvent({ key: "F8" }), "F8")).toBe(true);
+    expect(
+      matchesShortcut(keyEvent({ key: "F8", shiftKey: true }), "Shift+F8"),
+    ).toBe(true);
+    expect(matchesShortcut(keyEvent({ key: "F8", shiftKey: true }), "F8")).toBe(
+      false,
+    );
+    expect(matchesShortcut(keyEvent({ key: "F8" }), "Shift+F8")).toBe(false);
   });
 });
 

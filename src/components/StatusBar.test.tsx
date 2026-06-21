@@ -50,6 +50,76 @@ describe("StatusBar", () => {
     expect(host.textContent).not.toContain("Index: 608 files");
   });
 
+  it("shows aggregated error and warning counts and opens problems on click", async () => {
+    const onShowProblems = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="typescript"
+          activePath="/workspace/src/App.ts"
+          dirtyCount={0}
+          errorCount={5}
+          warningCount={3}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="basic"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          onShowProblems={onShowProblems}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const problems = host.querySelector<HTMLButtonElement>(
+      ".status-problems",
+    );
+
+    expect(problems).not.toBeNull();
+    expect(problems?.textContent).toContain("5");
+    expect(problems?.textContent).toContain("3");
+
+    await act(async () => {
+      problems?.click();
+    });
+
+    expect(onShowProblems).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the problems item with zero counts as a no-problems affordance", async () => {
+    await act(async () => {
+      root.render(
+        <StatusBar
+          activeLanguage="typescript"
+          activePath="/workspace/src/App.ts"
+          dirtyCount={0}
+          errorCount={0}
+          warningCount={0}
+          ideActivityLabel={null}
+          ideActivityState={null}
+          intelligenceMode="basic"
+          message={null}
+          onChangeVisibility={vi.fn()}
+          onShowProblems={vi.fn()}
+          statusBar={defaultStatusBarItemVisibility()}
+          workspaceInfoLabel={null}
+          workspaceRoot="/workspace"
+          workspaceTrustLabel="Trusted"
+        />,
+      );
+    });
+
+    const problems = host.querySelector<HTMLButtonElement>(".status-problems");
+
+    expect(problems).not.toBeNull();
+    expect(problems?.textContent).toContain("0");
+    expect(problems?.getAttribute("title")).toBe("No problems");
+  });
+
   it("shows JS/TS project scope alongside per-project server activity", async () => {
     await act(async () => {
       root.render(
