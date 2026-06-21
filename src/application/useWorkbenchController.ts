@@ -5674,11 +5674,16 @@ export function useWorkbenchController(
 
   const openTextSearchResult = useCallback(
     async (result: TextSearchResult) => {
-      await openFile({
+      const opened = await openFile({
         kind: "file",
         name: getFileName(result.path),
         path: result.path,
       });
+
+      if (!opened) {
+        return;
+      }
+
       setTextSearchOpen(false);
       setMessage(
         `Opened ${result.relativePath}:${result.lineNumber}:${result.column}`,

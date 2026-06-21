@@ -4482,3 +4482,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Autostart Active Workspace Guard
 
 - Committed as `fec5f2cc Guard PHP autostart errors by active workspace`.
+
+## Next Slice: Text Search Result Active Workspace Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1043a3db Record PHP autostart guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 832 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- A read-only explorer audit found that `openTextSearchResult` ignored the boolean result from `openFile`.
+- `openFile` already rejects paths owned by inactive workspace tabs, but the text-search callback still closed the panel and set an `Opened ...` message.
+- `openClassSearchResult` already had the correct guard, so text search should mirror that behavior.
+
+### Implementation Choice
+
+- Capture the result of `openFile` in `openTextSearchResult`.
+- Return early when the file was not opened.
+- Add a preview regression where `/workspace-b` receives a stale text-search result for `/workspace-a`.
+
+### Acceptance Criteria
+
+- Stale text-search results from inactive workspace tabs do not activate the stale file.
+- The text-search panel stays open when the stale result is rejected.
+- The active workspace message does not claim that the stale result opened.
+- Focused/broader/full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: Text Search Result Active Workspace Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "text search|inactive project tabs|stale open file"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "text search|Quick Open|Open Class|open file|inactive project tabs"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status: Text Search Result Active Workspace Guard
+
+- Pending commit.
