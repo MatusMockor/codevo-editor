@@ -4441,4 +4441,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Runtime Subscription Active Workspace Guard
 
-- Pending commit.
+- Committed as `c33f2b7c Guard runtime subscription errors by active workspace`.
