@@ -15,6 +15,7 @@ import {
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
 import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
+import { phpLaravelTranslationReferenceContextAt } from "./phpLaravelTranslations";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 
 export type PhpIdentifierContext =
@@ -46,6 +47,10 @@ export type PhpIdentifierContext =
   | {
       envName: string;
       kind: "laravelEnvString";
+    }
+  | {
+      kind: "laravelTranslationString";
+      translationKey: string;
     }
   | {
       kind: "laravelViewString";
@@ -119,6 +124,18 @@ export function phpIdentifierContextAt(
     return {
       kind: "laravelNamedRouteString",
       routeName: namedRoute.name,
+    };
+  }
+
+  const translationReference = phpLaravelTranslationReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (translationReference) {
+    return {
+      kind: "laravelTranslationString",
+      translationKey: translationReference.key,
     };
   }
 

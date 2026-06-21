@@ -8028,3 +8028,49 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Env Example Fallback
 
 - Committed as `a67c372f Use env example as Laravel env fallback`.
+
+## Next Slice: Laravel Translation Key Navigation And Completion
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9f729984 Record Laravel env fallback commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel translation helper strings such as `__('messages.welcome')` and `trans('messages.welcome')` are a common PHP/Laravel workflow and previously fell through to generic PHP/LSP behavior.
+- PHP array translation files can be parsed locally without introducing a broader Laravel translation index.
+- Translation discovery reads locale directories and translation files asynchronously, so it needs the same workspace-tab stale guards as config/env/view completions.
+
+### Implementation Choice
+
+- Add a narrow translation helper context for `__`, `trans`, `trans_choice`, and `Lang::get`.
+- Support PHP-array translation files in discovered `lang/{locale}` and `resources/lang/{locale}` directories.
+- Reuse the tested PHP-array key scanner through translation-domain wrapper helpers.
+- Defer JSON sentence translations, package namespace keys, default-locale inference, and slash-style nested translation file paths.
+
+### Acceptance Criteria
+
+- Cmd+B on `__('messages.welcome')` opens the matching translation PHP array key before LSP fallback.
+- Completion inside `__('messages.we')` suggests `messages.welcome` with insert text `welcome`.
+- Locale directory discovery is not hard-coded to `en`.
+- Stale workspace-tab translation completion and target reads return no stale suggestions or navigation.
+- Focused domain/provider/preview tests, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel Translation Key Navigation And Completion
+
+- `npm test -- src/domain/phpLaravelTranslations.test.ts` passed: 6 passed.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts -t "Laravel translation|Laravel env|Laravel config"` passed: 3 passed, 130 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel translation|Laravel env"` passed before locale-discovery refactor: 10 passed, 376 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel translation"` passed after locale-discovery refactor: 5 passed, 382 skipped.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts` passed: 133 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 387 passed.
+- `npm run check` passed.
+- `npm test` passed: 69 files, 1038 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Translation Key Navigation And Completion
+
+- Pending commit.

@@ -31983,6 +31983,409 @@ return [
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  it("suggests Laravel translation keys inside translation helper strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace/lang";
+    const langRoot = "/workspace/lang/en";
+    const messagesPath = "/workspace/lang/en/messages.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('messages.we');
+    }
+}
+`;
+    const messagesSource = `<?php
+
+return [
+    'welcome' => 'Welcome',
+    'nested' => [
+        'label' => 'Nested',
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase
+          ? [directoryEntry(langRoot, "en")]
+          : path === langRoot
+            ? [fileEntry(messagesPath, "messages.php")]
+            : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === messagesPath) {
+          return messagesSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "messages.we"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "lang/en/messages.php",
+        insertText: "welcome",
+        kind: "translation",
+        name: "messages.welcome",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("suggests Laravel translation keys from discovered locale directories", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace/lang";
+    const langRoot = "/workspace/lang/sk";
+    const messagesPath = "/workspace/lang/sk/messages.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('messages.vi');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase
+          ? [directoryEntry(langRoot, "sk")]
+          : path === langRoot
+            ? [fileEntry(messagesPath, "messages.php")]
+            : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === messagesPath) {
+          return `<?php
+
+return [
+    'vitajte' => 'Vitajte',
+];
+`;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "messages.vi"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "lang/sk/messages.php",
+        insertText: "vitajte",
+        kind: "translation",
+        name: "messages.vitajte",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("stops stale Laravel translation completions after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace-a/lang";
+    const langRoot = "/workspace-a/lang/en";
+    const messagesPath = "/workspace-a/lang/en/messages.php";
+    const staleMessagesRead = createDeferred<string>();
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('messages.we');
+    }
+}
+`;
+    let messagesReadCount = 0;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase
+          ? [directoryEntry(langRoot, "en")]
+          : path === langRoot
+            ? [fileEntry(messagesPath, "messages.php")]
+            : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === messagesPath) {
+          messagesReadCount += 1;
+          return staleMessagesRead.promise;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "messages.we"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(messagesReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleMessagesRead.resolve(`<?php
+
+return [
+    'welcome' => 'Stale',
+];
+`);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
+  it("opens Laravel translation keys before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace/lang";
+    const langRoot = "/workspace/lang/en";
+    const messagesPath = "/workspace/lang/en/messages.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('messages.welcome');
+    }
+}
+`;
+    const messagesSource = `<?php
+
+return [
+    'welcome' => 'Welcome',
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase ? [directoryEntry(langRoot, "en")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === messagesPath) {
+          return messagesSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "messages.welcome"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(messagesPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: messagesPath,
+      position: {
+        column: 6,
+        lineNumber: 4,
+      },
+    });
+  });
+
+  it("drops stale Laravel translation targets after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace-a/lang";
+    const langRoot = "/workspace-a/lang/en";
+    const messagesPath = "/workspace-a/lang/en/messages.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('messages.welcome');
+    }
+}
+`;
+    const staleMessagesRead = createDeferred<string>();
+    let messagesReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase ? [directoryEntry(langRoot, "en")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === messagesPath) {
+          messagesReadCount += 1;
+          return staleMessagesRead.promise;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "messages.welcome"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(messagesReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleMessagesRead.resolve(`<?php
+
+return [
+    'welcome' => 'Stale',
+];
+`);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(messagesPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("suggests Laravel env keys inside env helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const envPath = "/workspace/.env";

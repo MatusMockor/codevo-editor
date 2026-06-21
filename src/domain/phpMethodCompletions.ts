@@ -36,6 +36,7 @@ export interface PhpMethodCompletion {
     | "relation"
     | "route"
     | "scope"
+    | "translation"
     | "view";
   name: string;
   parameters: string;

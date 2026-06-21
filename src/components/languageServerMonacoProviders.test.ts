@@ -879,6 +879,65 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("inserts Laravel translation key completions as plain string suffixes", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "lang/en/messages.php",
+        insertText: "welcome",
+        kind: "translation" as const,
+        name: "messages.welcome",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction label(): string\n{\n    return __('messages.we');\n}\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    return __('messages.we');",
+        word: {
+          endColumn: 27,
+          startColumn: 25,
+        },
+      }),
+      {
+        column: 27,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        command: undefined,
+        detail: "Laravel translation - lang/en/messages.php",
+        documentation: "Laravel translation\n\nmessages.welcome",
+        insertText: "welcome",
+        insertTextRules: 4,
+        kind: 12,
+        label: {
+          description: "translation - lang/en/messages.php",
+          detail: "",
+          label: "messages.welcome",
+        },
+      }),
+    ]);
+  });
+
   it("inserts Laravel view name completions as plain string suffixes", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [

@@ -218,6 +218,16 @@ import {
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
 import {
+  isUsableLaravelTranslationLocale,
+  phpLaravelTranslationCompletionInsertText,
+  phpLaravelTranslationFileNameFromKey,
+  phpLaravelTranslationFileNameFromRelativePath,
+  phpLaravelTranslationKeysFromSource,
+  phpLaravelTranslationReferenceContextAt,
+  phpLaravelTranslationTargetFromSource,
+  type PhpLaravelTranslationTarget,
+} from "../domain/phpLaravelTranslations";
+import {
   phpLaravelViewCompletionInsertText,
   phpLaravelViewNameCandidateRelativePaths,
   phpLaravelViewNameFromRelativePath,
@@ -363,6 +373,8 @@ interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
 type PhpLaravelConfigNavigationTarget = PhpLaravelConfigTarget;
 
 type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
+
+type PhpLaravelTranslationNavigationTarget = PhpLaravelTranslationTarget;
 
 interface CachedWorkspaceWorkbenchState {
   activePath: string | null;
@@ -8030,6 +8042,245 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const collectPhpLaravelTranslationLocaleRoots = useCallback(async (): Promise<
+    string[]
+  > => {
+    const requestedRoot = workspaceRoot;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!isLaravelFrameworkActive || !requestedRoot) {
+      return [];
+    }
+
+    const localeRoots: string[] = [];
+
+    for (const translationBase of ["lang", "resources/lang"]) {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      try {
+        const entries = await workspaceFiles.readDirectory(
+          joinWorkspacePath(requestedRoot, translationBase),
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        for (const entry of entries) {
+          if (
+            entry.kind === "directory" &&
+            isUsableLaravelTranslationLocale(entry.name)
+          ) {
+            localeRoots.push(`${translationBase}/${entry.name}`);
+          }
+        }
+      } catch {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+      }
+    }
+
+    return localeRoots.sort((left, right) => {
+      const leftLocale = getFileName(left);
+      const rightLocale = getFileName(right);
+
+      if (leftLocale === "en" && rightLocale !== "en") {
+        return -1;
+      }
+
+      if (rightLocale === "en" && leftLocale !== "en") {
+        return 1;
+      }
+
+      return left.localeCompare(right);
+    });
+  }, [
+    isLaravelFrameworkActive,
+    workspaceFiles,
+    workspaceRoot,
+  ]);
+
+  const findPhpLaravelTranslationTarget = useCallback(
+    async (
+      translationKey: string,
+    ): Promise<PhpLaravelTranslationNavigationTarget | null> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isLaravelFrameworkActive || !requestedRoot) {
+        return null;
+      }
+
+      const fileName = phpLaravelTranslationFileNameFromKey(translationKey);
+
+      if (!fileName) {
+        return null;
+      }
+
+      const translationRoots = await collectPhpLaravelTranslationLocaleRoots();
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      for (const translationRoot of translationRoots) {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        const relativePath = `${translationRoot}/${fileName}.php`;
+        const path = joinWorkspacePath(requestedRoot, relativePath);
+
+        try {
+          const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
+          const target = phpLaravelTranslationTargetFromSource(
+            content,
+            fileName,
+            translationKey,
+          );
+
+          if (!target) {
+            continue;
+          }
+
+          return {
+            key: target.key,
+            path,
+            position: target.position,
+            relativePath,
+          };
+        } catch {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+        }
+      }
+
+      return null;
+    },
+    [
+      collectPhpLaravelTranslationLocaleRoots,
+      isLaravelFrameworkActive,
+      readNavigationFileContent,
+      workspaceRoot,
+    ],
+  );
+
+  const collectPhpLaravelTranslationTargets = useCallback(async (): Promise<
+    PhpLaravelTranslationTarget[]
+  > => {
+    const requestedRoot = workspaceRoot;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!isLaravelFrameworkActive || !requestedRoot) {
+      return [];
+    }
+
+    const targets = new Map<string, PhpLaravelTranslationTarget>();
+
+    const translationRoots = await collectPhpLaravelTranslationLocaleRoots();
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    for (const translationRoot of translationRoots) {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      const rootPath = joinWorkspacePath(requestedRoot, translationRoot);
+      let entries: FileEntry[];
+
+      try {
+        entries = await workspaceFiles.readDirectory(rootPath);
+      } catch {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        continue;
+      }
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      for (const entry of entries) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        if (entry.kind === "directory") {
+          continue;
+        }
+
+        const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
+        const fileName =
+          phpLaravelTranslationFileNameFromRelativePath(relativePath);
+
+        if (!fileName) {
+          continue;
+        }
+
+        try {
+          const content = await readNavigationFileContent(entry.path);
+
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
+          for (const target of phpLaravelTranslationKeysFromSource(
+            content,
+            fileName,
+          )) {
+            const key = target.key.toLowerCase();
+
+            if (targets.has(key)) {
+              continue;
+            }
+
+            targets.set(key, {
+              key: target.key,
+              path: entry.path,
+              position: target.position,
+              relativePath,
+            });
+          }
+        } catch {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+        }
+      }
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    return Array.from(targets.values()).sort((left, right) =>
+      left.key.localeCompare(right.key),
+    );
+  }, [
+    collectPhpLaravelTranslationLocaleRoots,
+    isLaravelFrameworkActive,
+    readNavigationFileContent,
+    workspaceFiles,
+    workspaceRoot,
+  ]);
+
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
       const methodLookup = methodName.toLowerCase();
@@ -11800,6 +12051,37 @@ export function useWorkbenchController(
           }));
       }
 
+      const translationContext = phpLaravelTranslationReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && translationContext && activeDocument) {
+        const normalizedPrefix = translationContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelTranslationTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.key.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelTranslationCompletionInsertText(
+              target.key,
+              translationContext.prefix,
+            ),
+            kind: "translation",
+            name: target.key,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const envContext = phpLaravelEnvReferenceContextAt(source, position);
 
       if (isLaravelFrameworkActive && envContext && activeDocument) {
@@ -12003,6 +12285,7 @@ export function useWorkbenchController(
     [
       collectPhpLaravelConfigTargets,
       collectPhpLaravelEnvTargets,
+      collectPhpLaravelTranslationTargets,
       collectPhpLaravelRelationCompletionsForClass,
       collectPhpLaravelNamedRouteTargets,
       collectPhpLaravelViewTargets,
@@ -13452,6 +13735,45 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelTranslationDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelTranslationString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelTranslationTarget(
+        context.translationKey,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(`No Laravel translation key ${context.translationKey} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.key);
+    },
+    [
+      activeDocument,
+      findPhpLaravelTranslationTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpClassIdentifierDefinition = useCallback(
     async (name: string): Promise<boolean> => {
       if (!activeDocument) {
@@ -13506,6 +13828,10 @@ export function useWorkbenchController(
       return goToPhpLaravelNamedRouteDefinition(context);
     }
 
+    if (context.kind === "laravelTranslationString") {
+      return goToPhpLaravelTranslationDefinition(context);
+    }
+
     if (context.kind === "laravelEnvString") {
       return goToPhpLaravelEnvDefinition(context);
     }
@@ -13547,6 +13873,7 @@ export function useWorkbenchController(
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
+    goToPhpLaravelTranslationDefinition,
     goToPhpLaravelViewDefinition,
     goToPhpMemberPropertyDefinition,
     goToPhpMethodCallDefinition,
@@ -14051,6 +14378,10 @@ export function useWorkbenchController(
           return goToPhpLaravelNamedRouteDefinition(context);
         }
 
+        if (context.kind === "laravelTranslationString") {
+          return goToPhpLaravelTranslationDefinition(context);
+        }
+
         if (context.kind === "laravelEnvString") {
           return goToPhpLaravelEnvDefinition(context);
         }
@@ -14171,6 +14502,7 @@ export function useWorkbenchController(
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
+    goToPhpLaravelTranslationDefinition,
     goToPhpLaravelViewDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
