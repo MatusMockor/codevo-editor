@@ -16576,6 +16576,110 @@ class CommentController
     );
   });
 
+  it("stops stale Laravel relation property owner traversal after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const workspaceACommentPath = "/workspace-a/app/Models/Comment.php";
+    const workspaceBBaseCommentPath = "/workspace-b/app/Models/BaseComment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): void
+    {
+        Comment::with('children.parent')->first();
+    }
+}
+`;
+    const staleOwnerRead = createDeferred<string>();
+    let workspaceACommentReadCount = 0;
+    let workspaceBBaseCommentReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === workspaceACommentPath) {
+          workspaceACommentReadCount += 1;
+          return staleOwnerRead.promise;
+        }
+
+        if (path === workspaceBBaseCommentPath) {
+          workspaceBBaseCommentReadCount += 1;
+          return `<?php
+namespace App\\Models;
+
+class BaseComment
+{
+    public function children()
+    {
+        return $this->hasMany(Comment::class);
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "children.parent"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(workspaceACommentReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleOwnerRead.resolve(`<?php
+namespace App\\Models;
+
+class Comment extends BaseComment
+{
+}
+`);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(workspaceBBaseCommentReadCount).toBe(0);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("opens Laravel relation methods from model property access", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const commentPath = "/workspace/app/Models/Comment.php";

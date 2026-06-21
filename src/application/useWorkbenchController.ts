@@ -8425,7 +8425,12 @@ export function useWorkbenchController(
       includeCollectionRelations = false,
       visitedClassNames = new Set<string>(),
     ): Promise<string | null> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return null;
       }
 
@@ -8438,12 +8443,25 @@ export function useWorkbenchController(
 
       visitedClassNames.add(visitedKey);
 
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
       for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
         try {
           const { content, members } = await readPhpClassMembersFromPath(
             path,
             normalizedClassName,
           );
+
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           const matchingMembers = members.filter(
             (candidate) =>
               candidate.name.toLowerCase() === propertyName.toLowerCase(),
@@ -8525,6 +8543,10 @@ export function useWorkbenchController(
               const morphMapModelType =
                 await resolvePhpLaravelProjectMorphMapModelType();
 
+              if (!isRequestedRootActive()) {
+                return null;
+              }
+
               if (morphMapModelType) {
                 return morphMapModelType;
               }
@@ -8542,6 +8564,10 @@ export function useWorkbenchController(
                 )
               : null;
 
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             if (traitType) {
               return traitType;
             }
@@ -8557,6 +8583,10 @@ export function useWorkbenchController(
                   visitedClassNames,
                 )
               : null;
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
 
             if (mixinType) {
               return mixinType;
@@ -8577,6 +8607,10 @@ export function useWorkbenchController(
                 )
               : null;
 
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             if (superTypePropertyType) {
               return superTypePropertyType;
             }
@@ -8584,8 +8618,16 @@ export function useWorkbenchController(
 
           return null;
         } catch {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           continue;
         }
+      }
+
+      if (!isRequestedRootActive()) {
+        return null;
       }
 
       return null;

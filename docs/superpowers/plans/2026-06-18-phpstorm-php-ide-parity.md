@@ -5897,3 +5897,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `a0124315 Guard stale PHP method completion traversal`.
+
+## Slice: Stale PHP Property Relation Traversal Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b81f5de7 Record stale PHP method completion guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP property/relation type traversal from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `resolvePhpClassPropertyOrRelationType`.
+- Guard before class source reads, after member reads, after morph-map resolution, after trait/mixin/supertype recursion, after failed reads, and before returning from the resolver.
+- Add a preview regression where Go to Definition starts on `Comment::with('children.parent')` in `/workspace-a`, the owner model read is delayed, the workspace switches to `/workspace-b`, and the delayed owner source extends `BaseComment`.
+- Assert the stale resolver does not continue into `/workspace-b` base model reads or reveal a target.
+
+### Acceptance Criteria
+
+- Stale PHP property/relation type traversal stops after tab switch.
+- Stale relation owner resolution does not start inherited model reads in the newly active workspace.
+- Existing Laravel relation-string definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale Laravel relation property owner traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
