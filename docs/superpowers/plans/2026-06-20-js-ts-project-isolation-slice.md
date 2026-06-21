@@ -9321,3 +9321,38 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Authenticated Attribute Guard Targets
 
 - Committed as `e4d211cd Support Laravel authenticated guard attributes`.
+
+## Next Slice: Laravel Cache Memo Store References
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `49225d66 Record Laravel authenticated attribute commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel 13 documents `Cache::memo('redis')` as a memoized cache driver over a named underlying cache store.
+- The cache store detector already handled `Cache::store(...)`, `Cache::driver(...)`, and helper variants, but missed this documented facade call.
+- This keeps cache store completion and Go to Definition aligned with current Laravel APIs without adding new target plumbing.
+
+### Implementation Choice
+
+- Add `Cache::memo` to the cache store call detector.
+- Resolve the call before accepting named arguments so method-specific names can be enforced.
+- Accept `driver:` for `Cache::driver(...)` / `Cache::memo(...)` and `name:` for `Cache::store(...)` / `cache()->store(...)`.
+- Keep the `#[Cache(store: ...)]` contextual attribute path unchanged because it uses the documented attribute constructor parameter.
+
+### Verification: Laravel Cache Memo Store References
+
+- `npm test -- src/domain/phpLaravelCache.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Cache"` passed: 2 passed, 425 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 427 passed.
+- `npm test` passed: 80 files, 1140 tests.
+- `npm run check` passed.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Cache Memo Store References
+
+- Committed as `3f787991 Support Laravel cache memo store references`.
