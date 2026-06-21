@@ -8685,6 +8685,58 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("does not continue stale settings saves after app settings persistence resolves", async () => {
+    const appSettingsSave = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.smartModeGateway.setMode).mockClear();
+    vi.mocked(dependencies.settingsGateway.saveAppSettings).mockClear();
+    vi.mocked(dependencies.settingsGateway.saveAppSettings).mockImplementationOnce(
+      async () => appSettingsSave.promise,
+    );
+
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        {
+          ...getWorkbench().workspaceSettings,
+          intelligenceMode: "fullSmart",
+        },
+        getWorkbench().workspaceTrust?.trusted ?? null,
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      appSettingsSave.resolve(undefined);
+      await savePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      vi
+        .mocked(dependencies.smartModeGateway.setMode)
+        .mock.calls.some(([mode]) => mode === "fullSmart"),
+    ).toBe(false);
+    expect(getWorkbench().message).not.toBe("Settings saved.");
+  });
+
   it("ignores stale status bar setting rollbacks after switching project tabs", async () => {
     const statusBarSave = createDeferred<void>();
     const workspaceSettings = {

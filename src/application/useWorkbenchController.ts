@@ -13575,12 +13575,20 @@ export function useWorkbenchController(
           return;
         }
 
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
         if (previousAppSettings.runtimePolicy !== nextAppSettings.runtimePolicy) {
           await stopBackgroundProjectRuntimes(
             nextAppSettings.runtimePolicy,
             requestedRoot,
             null,
           );
+
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
         }
 
         const previousMode = intelligenceModeRef.current;
@@ -13590,6 +13598,11 @@ export function useWorkbenchController(
           const smartMode = await smartModeGateway.setMode(
             nextWorkspaceSettings.intelligenceMode,
           );
+
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
+
           nextMode = smartMode.mode;
         }
 
@@ -13611,7 +13624,11 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptValidation;
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
-          await stopLanguageServerRuntime();
+          await stopLanguageServerRuntime(requestedRoot);
+
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
         }
 
         if (!shouldStartLanguageServer(previousMode) && shouldStartLanguageServer(nextMode)) {
@@ -13668,6 +13685,10 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptVersion,
           );
 
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
+
           if (
             isLanguageServerActiveForWorkspace(
               javaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -13681,6 +13702,10 @@ export function useWorkbenchController(
             )
           ) {
             await stopJavaScriptTypeScriptLanguageServerRuntime(requestedRoot);
+
+            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+              return;
+            }
           }
         }
 
@@ -13697,19 +13722,35 @@ export function useWorkbenchController(
 
           if (!trust.trusted) {
             await stopLanguageServerRuntime(requestedRoot);
+
+            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+              return;
+            }
           }
 
           if (workspaceDescriptor?.php) {
             await refreshLanguageServerPlan(requestedRoot);
+
+            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+              return;
+            }
           }
         }
 
         if (!shouldIndexWorkspace(previousMode) && shouldIndexWorkspace(nextMode)) {
           await startInitialIndexScan(requestedRoot);
+
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
         }
 
         if (shouldIndexWorkspace(previousMode) && !shouldIndexWorkspace(nextMode)) {
           await clearWorkspaceIndex(requestedRoot);
+
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
         }
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {

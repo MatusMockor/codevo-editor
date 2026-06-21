@@ -4978,3 +4978,50 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Workspace Directory Open Continuation Guard
 
 - Committed as `91542fe4 Guard workspace directory open continuations`.
+
+## Next Slice: Settings Save Continuation Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5e8e8cce Record workspace directory open guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 841 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `saveWorkbenchSettings` already guarded later workspace-settings persistence and final success messages.
+- Early awaits, including app-settings persistence, runtime-policy cleanup, and smart-mode resolution, could still continue after switching project tabs.
+- The PHP language-server stop path also used the implicit current root instead of the requested settings-save root.
+
+### Implementation Choice
+
+- Check the requested workspace root immediately after app-settings persistence.
+- Add active-root checks after runtime policy cleanup and smart-mode resolution.
+- Stop the PHP language server with the requested root when settings disable smart mode.
+- Add active-root checks after PHP/JS runtime stop, trust refresh, and index transitions before continuing.
+- Add a preview regression where app-settings persistence resolves after switching tabs and verify the stale save does not invoke `setMode("fullSmart")`.
+
+### Acceptance Criteria
+
+- Stale settings saves do not continue into smart-mode application for inactive workspaces.
+- Stale settings saves do not publish `Settings saved.` into the active workspace.
+- Existing settings, IDE mode, runtime policy, and workspace tab tests remain green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Settings Save Continuation Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "settings saves|workspace settings save|stale configuration|Settings saved|status bar setting"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Settings|settings|IDE Mode|smart mode|workspace tab|project tab|configuration|runtime policy"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 842 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Settings Save Continuation Guard
+
+- Pending commit.
