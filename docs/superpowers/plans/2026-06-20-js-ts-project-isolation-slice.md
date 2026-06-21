@@ -7408,4 +7408,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco On-Type Formatting Provider
 
-- Pending commit after verification.
+- Committed as `d2c937b6 Register PHP on type formatting provider`.
