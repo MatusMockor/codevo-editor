@@ -185,4 +185,4 @@ This prevents project A diagnostics, completion, or implementation results from 
 
 #### Commit Status
 
-- Pending implementation commit.
+- Committed as `8548e8b8 Guard diagnostics by workspace root`.
