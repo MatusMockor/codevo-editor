@@ -31846,7 +31846,7 @@ return [
     ]);
   });
 
-  it("suggests Laravel typed config repository keys", async () => {
+  it("suggests Laravel config repository keys", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const configRoot = "/workspace/config";
     const appConfigPath = "/workspace/config/app.php";
@@ -31859,6 +31859,11 @@ class AppController
     public function name(): string
     {
         return Config::string('app.na');
+    }
+
+    public function rename(): void
+    {
+        Config::set('app.na', 'Codevo');
     }
 
     public function senderAddress(): string
@@ -31913,6 +31918,21 @@ return [
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "app.na"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/app.php",
+        insertText: "name",
+        kind: "config",
+        name: "app.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Config::set('app.na"),
       ),
     ).resolves.toEqual([
       {
@@ -32432,6 +32452,87 @@ return [
     act(() => {
       getWorkbench().updateActiveEditorPosition(
         positionAfter(controllerSource, "app.name"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(appConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: appConfigPath,
+      position: {
+        column: 6,
+        lineNumber: 4,
+      },
+    });
+  });
+
+  it("opens Laravel config set keys before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const appConfigPath = "/workspace/config/app.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Config;
+
+class AppController
+{
+    public function name(): void
+    {
+        Config::set('app.name', 'Codevo');
+    }
+}
+`;
+    const appConfigSource = `<?php
+
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === appConfigPath) {
+          return appConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Config::set('app.name"),
       );
     });
 

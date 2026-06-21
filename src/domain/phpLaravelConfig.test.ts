@@ -38,8 +38,11 @@ return config('app.name');
     const samples: Array<[string, string]> = [
       ["Config::get('app.name')", "Config::get"],
       ["Config::has('app.name')", "Config::has"],
+      ["Config::set('app.name', 'Codevo')", "Config::set"],
+      ["Config::set(key: 'app.name', value: 'Codevo')", "Config::set"],
       ["config()->get('app.name')", "config()->get"],
       ["config()->has('app.name')", "config()->has"],
+      ["config()->set('app.name', 'Codevo')", "config()->set"],
       ["config(key: 'app.name')", "config"],
     ];
 
@@ -139,6 +142,7 @@ class Controller {}
     const nestedUpdateArray = `<?php\n\nconfig(['app' => ['name' => 'Codevo']]);\n`;
     const wrongUpdateArrayCall = `<?php\n\ntrans(['app.name' => 'Codevo']);\n`;
     const repositoryArrayArgument = `<?php\n\nConfig::get(['app.name' => 'Codevo']);\n`;
+    const repositoryValueArgument = `<?php\n\nConfig::set('app.label', value: 'app.name');\n`;
 
     expect(
       phpLaravelConfigReferenceContextAt(
@@ -198,6 +202,12 @@ class Controller {}
       phpLaravelConfigReferenceContextAt(
         repositoryArrayArgument,
         positionAfter(repositoryArrayArgument, "app.name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        repositoryValueArgument,
+        positionAfter(repositoryValueArgument, "app.name"),
       ),
     ).toBeNull();
   });
