@@ -1670,6 +1670,23 @@ function phpLaravelMorphMapModelClassNameFromExpression(
     return isLaravelModelType(resolvedClassName) ? resolvedClassName : null;
   }
 
+  const declaringClassName = phpLaravelClassNameContainingExpression(
+    source,
+    expression,
+  );
+  const classStringConstant = declaringClassName
+    ? phpClassStringExpressionValue(source, expression, declaringClassName)
+    : null;
+
+  if (classStringConstant) {
+    const resolvedClassName = classStringConstant.includes("\\")
+      ? classStringConstant.replace(/^\\+/, "")
+      : (resolvePhpClassName(source, classStringConstant)?.replace(/^\\+/, "") ??
+        classStringConstant);
+
+    return isLaravelModelType(resolvedClassName) ? resolvedClassName : null;
+  }
+
   const stringClassName = phpStringLiteralValue(expression)?.replace(/^\\+/, "");
 
   if (!stringClassName) {
