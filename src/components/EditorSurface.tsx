@@ -951,6 +951,7 @@ export function EditorSurface({
           autoIndent: "full",
           automaticLayout: true,
           detectIndentation: false,
+          domReadOnly: activeDocument.readOnly === true,
           fontFamily:
             "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
           fontSize: 13,
@@ -962,6 +963,7 @@ export function EditorSurface({
           parameterHints: { enabled: true, cycle: true },
           quickSuggestions: { other: true, comments: false, strings: true },
           quickSuggestionsDelay: 10,
+          readOnly: activeDocument.readOnly === true,
           scrollBeyondLastLine: false,
           smoothScrolling: true,
           suggestOnTriggerCharacters: true,

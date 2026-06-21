@@ -6498,3 +6498,60 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Language Server Settings Backend Activation
 
 - Committed in integrated PHP LSP checkpoint as `a3409cd5 Wire PHP workspace edits and LSP settings`.
+
+## Next Slice: JS/TS External Navigation Read-Only Isolation
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `140d8cdc Record PHP LSP workspace edit settings commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- Earlier backend work allowed JS/TS definition, declaration, implementation, and type-definition results to preserve legitimate external file URI targets such as dependency `.d.ts` files.
+- Those files should behave like VS Code library/dependency navigation targets: inspectable, but not owned by the active project workspace.
+- Without a read-only/open-document boundary, an external target could enter save, autosave, document-sync, or runtime-resync paths for the active workspace root.
+
+### Implementation Choice
+
+- Add optional `readOnly` metadata to editor documents.
+- Mark JS/TS navigation targets outside the active workspace root as read-only while keeping in-workspace targets editable.
+- Skip writes, autosave, dirty command state, editor content updates, JS/TS didOpen/didChange/didSave/didClose, flush, and runtime-resync work for read-only or outside-root JS/TS documents.
+- Pass Monaco `readOnly` and `domReadOnly` options when the active document is read-only.
+
+### Acceptance Criteria
+
+- External JS/TS definition/declaration/type-definition targets open read-only and do not send `didOpen` for the external path.
+- Editing/saving a read-only external JS/TS target does not write to the workspace or send sync notifications.
+- Runtime resync while an external target is active syncs workspace-local JS/TS documents but not the external active document.
+- EditorSurface sets Monaco read-only options for read-only documents.
+- Focused controller/EditorSurface tests, `npm run check`, touched frontend tests, full `npm test`, and `git diff --check` pass.
+
+### Verification: JS/TS External Navigation Read-Only Isolation
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "external JavaScript TypeScript"` (3 tests)
+- PASS: `npm test -- src/components/EditorSurface.test.tsx -t "read-only"` (1 test)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript TypeScript document sync|definitions|didSave"` (14 tests)
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx src/components/EditorSurface.test.tsx` (352 tests)
+- PASS: `npm test` (65 files, 881 tests)
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS External Navigation Read-Only Isolation
+
+- Pending commit after full frontend verification.
+
+## Next Slice: Queued didOpen Workspace-Tab Guard
+
+### Why This Slice
+
+- A follow-up audit found that PHP and JS/TS `didOpen` calls are queued per document and can run after a workspace-tab switch if they were waiting behind a pending `didClose`.
+- Existing delayed `didChange`, flush, and save paths already capture generation/root/session guards, but queued `didOpen` still needs the same stale-work guard inside the queued callback.
+
+### Candidate Acceptance Criteria
+
+- Queued PHP `didOpen` bails after sync generation, active root, or PHP runtime session changes.
+- Queued JS/TS `didOpen` bails after sync generation, active root, or JS/TS runtime session changes.
+- Regression tests cover switching project tabs while a queued `didOpen` is waiting behind a pending `didClose`.

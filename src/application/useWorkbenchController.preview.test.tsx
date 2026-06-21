@@ -12224,6 +12224,7 @@ describe("useWorkbenchController preview tabs", () => {
       path: sourcePath,
     });
     expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().activeDocument?.readOnly).toBeUndefined();
     expect(getWorkbench().editorRevealTarget).toEqual({
       path: targetPath,
       position: {
@@ -12231,6 +12232,333 @@ describe("useWorkbenchController preview tabs", () => {
         lineNumber: 1,
       },
     });
+  });
+
+  it("external JavaScript TypeScript definitions open read-only without syncing the external document", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const externalPath = "/external/types/pkg.d.ts";
+    const source = "import { ExternalUser } from 'pkg';\nnew ExternalUser();\n";
+    const external = "export declare class ExternalUser {}\n";
+    const cursorPosition = positionAfter(source, "ExternalUs");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+        definition: true,
+        typeDefinition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 801,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    ).mockResolvedValue([
+      {
+        range: range(0, 21, 0, 33),
+        uri: fileUriFromPath(externalPath),
+      },
+    ]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.declaration,
+    ).mockResolvedValue([
+      {
+        range: range(0, 21, 0, 33),
+        uri: fileUriFromPath(externalPath),
+      },
+    ]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeDefinition,
+    ).mockResolvedValue([
+      {
+        range: range(0, 21, 0, 33),
+        uri: fileUriFromPath(externalPath),
+      },
+    ]);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === externalPath) {
+          return external;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "main.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+    const cases = [
+      {
+        commandId: "editor.goToDefinition",
+        feature: javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+      },
+      {
+        commandId: "editor.goToDeclaration",
+        feature: javaScriptTypeScriptLanguageServerFeaturesGateway.declaration,
+      },
+      {
+        commandId: "editor.goToTypeDefinition",
+        feature: javaScriptTypeScriptLanguageServerFeaturesGateway.typeDefinition,
+      },
+    ];
+
+    for (const { commandId, feature } of cases) {
+      act(() => {
+        getWorkbench().setActivePath(sourcePath);
+        getWorkbench().updateActiveEditorPosition(cursorPosition);
+      });
+      await flushAsyncTurns();
+      vi.mocked(syncGateway.didOpen).mockClear();
+
+      await act(async () => {
+        await getWorkbench().commands
+          .find((candidate) => candidate.id === commandId)
+          ?.run();
+      });
+      await flushAsyncTurns(24);
+
+      expect(feature).toHaveBeenCalledWith("/workspace", {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      });
+      expect(getWorkbench().activePath).toBe(externalPath);
+      expect(getWorkbench().activeDocument).toEqual(
+        expect.objectContaining({
+          path: externalPath,
+          readOnly: true,
+        }),
+      );
+      expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path: externalPath }),
+      );
+    }
+  });
+
+  it("external JavaScript TypeScript document sync skips edit save flush and close for read-only targets", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const externalPath = "/external/types/pkg.d.ts";
+    const source = "import { ExternalUser } from 'pkg';\nnew ExternalUser();\n";
+    const external = "export declare class ExternalUser {}\n";
+    const cursorPosition = positionAfter(source, "ExternalUs");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 802,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    ).mockResolvedValue([
+      {
+        range: range(0, 21, 0, 33),
+        uri: fileUriFromPath(externalPath),
+      },
+    ]);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === externalPath) {
+          return external;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+    await flushAsyncTurns(24);
+
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+    vi.mocked(syncGateway.didOpen).mockClear();
+    vi.mocked(syncGateway.didChange).mockClear();
+    vi.mocked(syncGateway.didSave).mockClear();
+    vi.mocked(syncGateway.didClose).mockClear();
+    vi.mocked(dependencies.workspaceGateways.files.writeTextFile).mockClear();
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export declare const changed: true;\n");
+    });
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.save")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+      await getWorkbench().flushPendingJavaScriptTypeScriptLanguageServerDocument(
+        externalPath,
+      );
+    });
+    act(() => {
+      getWorkbench().closeDocument(externalPath);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activeDocument?.path).not.toBe(externalPath);
+    expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
+    expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path: externalPath }),
+    );
+    expect(syncGateway.didChange).not.toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path: externalPath }),
+    );
+    expect(syncGateway.didSave).not.toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path: externalPath }),
+    );
+    expect(syncGateway.didClose).not.toHaveBeenCalledWith(
+      "/workspace",
+      externalPath,
+    );
+  });
+
+  it("external JavaScript TypeScript document sync skips active external target during runtime resync", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const externalPath = "/external/types/pkg.d.ts";
+    const source = "import { ExternalUser } from 'pkg';\nnew ExternalUser();\n";
+    const cursorPosition = positionAfter(source, "ExternalUs");
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(803)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(803)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    ).mockResolvedValue([
+      {
+        range: range(0, 21, 0, 33),
+        uri: fileUriFromPath(externalPath),
+      },
+    ]);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(803),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(803),
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === externalPath) {
+          return "export declare class ExternalUser {}\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activeDocument).toEqual(
+      expect.objectContaining({
+        path: externalPath,
+        readOnly: true,
+      }),
+    );
+
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+    vi.mocked(syncGateway.didOpen).mockClear();
+
+    act(() => {
+      publishStatus?.(runningStatus(804));
+    });
+    await flushAsyncTurns(24);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path: sourcePath }),
+    );
+    expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path: externalPath }),
+    );
+    expect(getWorkbench().activePath).toBe(externalPath);
   });
 
   it("clears the active editor position before JavaScript and TypeScript navigation in another project tab", async () => {

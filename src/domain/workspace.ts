@@ -160,6 +160,7 @@ export interface EditorDocument {
   content: string;
   savedContent: string;
   language: string;
+  readOnly?: boolean;
 }
 
 export type IntelligenceMode = "basic" | "lightSmart" | "fullSmart";

@@ -302,7 +302,12 @@ export interface WorkbenchWorkspaceGateways {
 
 interface OpenFileOptions {
   pin?: boolean;
+  readOnly?: boolean;
   recordNavigation?: boolean;
+}
+
+interface OpenNavigationOptions {
+  readOnly?: boolean;
 }
 
 interface OpenWorkspacePathOptions {
@@ -692,7 +697,9 @@ export function useWorkbenchController(
   const openDocuments = openDocumentPaths
     .map((path) => documents[path])
     .filter((document): document is EditorDocument => Boolean(document));
-  const dirtyCount = openDocuments.filter(isDirty).length;
+  const dirtyCount = openDocuments.filter(
+    (document) => !document.readOnly && isDirty(document),
+  ).length;
   const hasOpenJavaScriptTypeScriptDocument = openDocuments.some(
     (document) =>
       isJavaScriptTypeScriptLanguageServerDocument(document) &&
@@ -2187,7 +2194,7 @@ export function useWorkbenchController(
         return;
       }
 
-      if (!rootPath || !isJavaScriptTypeScriptLanguageServerDocument(document)) {
+      if (!isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document)) {
         return;
       }
 
@@ -2452,6 +2459,7 @@ export function useWorkbenchController(
       if (
         !rootPath ||
         !syncKey ||
+        !isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document) ||
         !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
       ) {
         return;
@@ -2656,6 +2664,10 @@ export function useWorkbenchController(
         return;
       }
 
+      if (!isSessionPathInWorkspace(rootPath, path)) {
+        return;
+      }
+
       if (
         !rootPath ||
         !isRunningLanguageServerForWorkspace(
@@ -2688,7 +2700,7 @@ export function useWorkbenchController(
 
         if (
           document &&
-          isJavaScriptTypeScriptLanguageServerDocument(document)
+          isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document)
         ) {
           await syncOpenJavaScriptTypeScriptDocument(document);
         }
@@ -2842,7 +2854,10 @@ export function useWorkbenchController(
         return;
       }
 
-      if (!rootPath || !isJavaScriptTypeScriptLanguageServerDocument(document)) {
+      if (
+        !rootPath ||
+        !isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document)
+      ) {
         return;
       }
 
@@ -3113,7 +3128,9 @@ export function useWorkbenchController(
       ).flatMap((key) => {
         const path = languageServerPathFromDocumentSyncKey(rootPath, key);
 
-        return path ? [{ key, path }] : [];
+        return path && isSessionPathInWorkspace(rootPath, path)
+          ? [{ key, path }]
+          : [];
       });
 
       if (syncedDocuments.length > 0) {
@@ -3953,6 +3970,28 @@ export function useWorkbenchController(
       }
 
       if (documents[entry.path]) {
+        if (options.readOnly === true && !documents[entry.path].readOnly) {
+          const readOnlyDocument = {
+            ...documents[entry.path],
+            readOnly: true,
+          };
+          activeDocumentRef.current =
+            activeDocumentRef.current?.path === entry.path
+              ? readOnlyDocument
+              : activeDocumentRef.current;
+          documentsRef.current = {
+            ...documentsRef.current,
+            [entry.path]: readOnlyDocument,
+          };
+          setDocuments((current) => ({
+            ...current,
+            [entry.path]: {
+              ...(current[entry.path] ?? documents[entry.path]),
+              readOnly: true,
+            },
+          }));
+        }
+
         if (shouldRecordNavigation && activePath !== entry.path) {
           recordCurrentNavigationLocation();
         }
@@ -3995,6 +4034,7 @@ export function useWorkbenchController(
           content,
           savedContent: content,
           language: detectLanguage(entry.path),
+          readOnly: options.readOnly === true ? true : undefined,
         };
 
         if (shouldRecordNavigation) {
@@ -5554,7 +5594,7 @@ export function useWorkbenchController(
   );
 
   const saveActiveDocument = useCallback(async () => {
-    if (!activeDocument) {
+    if (!activeDocument || activeDocument.readOnly) {
       return;
     }
 
@@ -5603,7 +5643,7 @@ export function useWorkbenchController(
       return;
     }
 
-    if (!activeDocument || !isDirty(activeDocument)) {
+    if (!activeDocument || activeDocument.readOnly || !isDirty(activeDocument)) {
       return;
     }
 
@@ -5832,7 +5872,7 @@ export function useWorkbenchController(
 
   const updateActiveDocument = useCallback(
     (content: string) => {
-      if (!activeDocument) {
+      if (!activeDocument || activeDocument.readOnly) {
         return;
       }
 
@@ -6016,14 +6056,17 @@ export function useWorkbenchController(
   }, []);
 
   const openPathForNavigation = useCallback(
-    async (path: string): Promise<boolean> => {
+    async (
+      path: string,
+      options: OpenNavigationOptions = {},
+    ): Promise<boolean> => {
       const opened = await openFile(
         {
           kind: "file",
           name: getFileName(path),
           path,
         },
-        { recordNavigation: false },
+        { readOnly: options.readOnly, recordNavigation: false },
       );
 
       if (!opened) {
@@ -6040,10 +6083,11 @@ export function useWorkbenchController(
       path: string,
       position: EditorPosition,
       label: string,
+      options: OpenNavigationOptions = {},
     ): Promise<boolean> => {
       const previousLocation = currentNavigationLocation();
 
-      const opened = await openPathForNavigation(path);
+      const opened = await openPathForNavigation(path, options);
 
       if (!opened) {
         return false;
@@ -12592,13 +12636,21 @@ export function useWorkbenchController(
         target.path,
         target.position,
         target.label,
+        {
+          readOnly: workspaceRoot
+            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+                workspaceRoot,
+                target.path,
+              )
+            : false,
+        },
       );
 
       if (opened) {
         setImplementationChooser(null);
       }
     },
-    [openNavigationTarget],
+    [openNavigationTarget, workspaceRoot],
   );
 
   const goToLanguageServerLocation = useCallback(async (
@@ -12876,7 +12928,12 @@ export function useWorkbenchController(
           }
 
           const previousLocation = currentNavigationLocation();
-          const opened = await openPathForNavigation(onlyTarget.path);
+          const opened = await openPathForNavigation(onlyTarget.path, {
+            readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+              requestedRoot,
+              onlyTarget.path,
+            ),
+          });
 
           if (!opened) {
             return false;
@@ -12918,7 +12975,12 @@ export function useWorkbenchController(
       }
 
       const previousLocation = currentNavigationLocation();
-      const opened = await openPathForNavigation(targetPath);
+      const opened = await openPathForNavigation(targetPath, {
+        readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+          requestedRoot,
+          targetPath,
+        ),
+      });
 
       if (!opened) {
         return false;
@@ -13259,13 +13321,21 @@ export function useWorkbenchController(
         path,
         toEditorPosition(row.range.start),
         row.label,
+        {
+          readOnly: workspaceRoot
+            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+                workspaceRoot,
+                path,
+              )
+            : false,
+        },
       );
 
       if (opened) {
         setCallHierarchyView(null);
       }
     },
-    [openNavigationTarget],
+    [openNavigationTarget, workspaceRoot],
   );
 
   const openTypeHierarchyRow = useCallback(
@@ -13281,13 +13351,21 @@ export function useWorkbenchController(
         path,
         toEditorPosition(row.range.start),
         row.label,
+        {
+          readOnly: workspaceRoot
+            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+                workspaceRoot,
+                path,
+              )
+            : false,
+        },
       );
 
       if (opened) {
         setTypeHierarchyView(null);
       }
     },
-    [openNavigationTarget],
+    [openNavigationTarget, workspaceRoot],
   );
 
   const openCallHierarchy = useCallback(async () => {
@@ -13544,7 +13622,14 @@ export function useWorkbenchController(
 
   const applyNavigationLocation = useCallback(
     async (location: NavigationLocation) => {
-      const opened = await openPathForNavigation(location.path);
+      const opened = await openPathForNavigation(location.path, {
+        readOnly: workspaceRoot
+          ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+              workspaceRoot,
+              location.path,
+            )
+          : false,
+      });
 
       if (!opened) {
         return;
@@ -13552,7 +13637,7 @@ export function useWorkbenchController(
 
       setEditorRevealTarget(location);
     },
-    [openPathForNavigation],
+    [openPathForNavigation, workspaceRoot],
   );
 
   const navigateBackward = useCallback(async () => {
@@ -15027,7 +15112,9 @@ export function useWorkbenchController(
   const commandContext = {
     hasWorkspace: Boolean(workspaceRoot),
     hasActiveDocument: Boolean(activeDocument),
-    activeDocumentDirty: Boolean(activeDocument && isDirty(activeDocument)),
+    activeDocumentDirty: Boolean(
+      activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
+    ),
   };
 
   useEffect(() => {
@@ -16380,6 +16467,7 @@ export function useWorkbenchController(
 
   useEffect(() => {
     if (
+      !workspaceRoot ||
       !isRunningLanguageServerForWorkspace(
         javaScriptTypeScriptLanguageServerRuntimeStatus,
         javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
@@ -16410,10 +16498,18 @@ export function useWorkbenchController(
 
     const documentsToSync = openDocumentPaths
       .map((path) => documents[path])
-      .filter((document): document is EditorDocument => Boolean(document));
+      .filter(
+        (document): document is EditorDocument =>
+          Boolean(document) &&
+          isJavaScriptTypeScriptDocumentSyncableForRoot(
+            workspaceRoot,
+            document,
+          ),
+      );
 
     if (
       activeDocument &&
+      isJavaScriptTypeScriptDocumentSyncableForRoot(workspaceRoot, activeDocument) &&
       !documentsToSync.some((document) => document.path === activeDocument.path)
     ) {
       documentsToSync.push(activeDocument);
@@ -16470,6 +16566,7 @@ export function useWorkbenchController(
 
   useEffect(() => {
     if (
+      !workspaceRoot ||
       !isRunningLanguageServerForWorkspace(
         javaScriptTypeScriptLanguageServerRuntimeStatus,
         javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
@@ -16481,10 +16578,18 @@ export function useWorkbenchController(
 
     const documentsToSync = openDocumentPaths
       .map((path) => documents[path])
-      .filter((document): document is EditorDocument => Boolean(document));
+      .filter(
+        (document): document is EditorDocument =>
+          Boolean(document) &&
+          isJavaScriptTypeScriptDocumentSyncableForRoot(
+            workspaceRoot,
+            document,
+          ),
+      );
 
     if (
       activeDocument &&
+      isJavaScriptTypeScriptDocumentSyncableForRoot(workspaceRoot, activeDocument) &&
       !documentsToSync.some((document) => document.path === activeDocument.path)
     ) {
       documentsToSync.push(activeDocument);
@@ -17966,6 +18071,33 @@ function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
   }
 
   return candidate.startsWith(`${root}/`);
+}
+
+function isJavaScriptTypeScriptDocumentSyncableForRoot(
+  rootPath: string,
+  document: EditorDocument,
+): boolean {
+  return (
+    document.readOnly !== true &&
+    isJavaScriptTypeScriptLanguageServerDocument(document) &&
+    isSessionPathInWorkspace(rootPath, document.path)
+  );
+}
+
+function shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+  rootPath: string,
+  path: string,
+): boolean {
+  return (
+    isJavaScriptTypeScriptNavigationPath(path) &&
+    !isSessionPathInWorkspace(rootPath, path)
+  );
+}
+
+function isJavaScriptTypeScriptNavigationPath(path: string): boolean {
+  const language = detectLanguage(path);
+
+  return language === "javascript" || language === "typescript";
 }
 
 function normalizedSessionPath(path: string): string {

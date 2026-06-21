@@ -186,6 +186,66 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("passes Monaco read-only options for read-only documents", async () => {
+    const activeDocument: EditorDocument = {
+      content: "declare const value: string;\n",
+      language: "typescript",
+      name: "pkg.d.ts",
+      path: "/external/types/pkg.d.ts",
+      readOnly: true,
+      savedContent: "declare const value: string;\n",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({
+        domReadOnly: true,
+        readOnly: true,
+      }),
+    );
+  });
+
   it("keeps Monaco JavaScript and TypeScript built-ins active unless the managed runtime matches the workspace", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
