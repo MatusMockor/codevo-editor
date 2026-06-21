@@ -5255,3 +5255,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `eb2c7ec5 Cover stale source definition tab results`.
+
+## Slice: Stale Indexed PHP Implementation Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `933fa512 Record stale source definition result guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down indexed PHP Go to Implementation fallback isolation when project-symbol results arrive after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested document and workspace root before indexed PHP implementation fallback starts async work.
+- Drop stale results after symbol search, before/after implementation source reads, after inheritance checks, and before chooser/open side effects.
+- Add a preview controller regression that starts indexed Go to Implementation in `/workspace-a`, switches to `/workspace-b`, then resolves the stale project-symbol search.
+- Assert the stale implementation file is not read, the active workspace remains `/workspace-b`, the target is not opened, and no implementation chooser is shown.
+
+### Acceptance Criteria
+
+- Delayed indexed PHP implementation results from an inactive project tab are ignored.
+- Stale implementation candidates from the previous tab do not trigger source reads after tab switch.
+- The active workspace remains `/workspace-b`.
+- Existing indexed implementation open and chooser behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "indexed PHP implementation"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `52660175 Guard stale indexed PHP implementation results`.
