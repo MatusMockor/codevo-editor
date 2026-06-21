@@ -892,6 +892,10 @@ async function provideSignatureHelp(
       position,
     );
 
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return null;
+    }
+
     if (!signature) {
       return null;
     }
@@ -916,7 +920,9 @@ async function provideSignatureHelp(
       },
     };
   } catch (error) {
-    context.reportError(error);
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
     return null;
   }
 }

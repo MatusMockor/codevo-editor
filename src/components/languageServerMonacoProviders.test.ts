@@ -11,6 +11,7 @@ import type {
   LanguageServerCapabilities,
   LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
+import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
@@ -1463,6 +1464,61 @@ describe("registerLanguageServerMonacoProviders", () => {
         ],
       },
     });
+    expect(providePhpMethodSignature).toHaveBeenCalled();
+  });
+
+  it("drops in-flight PHP signature help when no project tab is active", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const signature = createDeferred<PhpMethodSignature | null>();
+    const providePhpMethodSignature = vi.fn(async () => signature.promise);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nfunction store(StoreCommentRequest $request): void\n{\n    $request->get($key,\n}\n",
+      },
+      getWorkspaceRoot: () => activeRoot,
+      providePhpMethodSignature,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const signaturePromise = registered.signatureProvider.provideSignatureHelp(
+      model(),
+      {
+        column: 24,
+        lineNumber: 4,
+      },
+    );
+
+    await Promise.resolve();
+    activeRoot = null;
+    signature.resolve({
+      argumentIndex: 1,
+      method: {
+        declaringClassName: "Symfony\\Component\\HttpFoundation\\Request",
+        name: "get",
+        parameters: "string $key, mixed $default = null",
+        returnType: "mixed",
+      },
+      parameters: [
+        {
+          defaultValue: null,
+          name: "$key",
+          optional: false,
+          raw: "string $key",
+          type: "string",
+        },
+        {
+          defaultValue: "null",
+          name: "$default",
+          optional: true,
+          raw: "mixed $default = null",
+          type: "mixed",
+        },
+      ],
+    });
+
+    await expect(signaturePromise).resolves.toBeNull();
     expect(providePhpMethodSignature).toHaveBeenCalled();
   });
 
