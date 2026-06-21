@@ -9180,3 +9180,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Harden Laravel Contextual Attribute Resolution
 
 - Committed as `1e7db277 Harden Laravel contextual attribute resolution`.
+
+## Next Slice: Laravel Config Update Array Keys
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `403ed030 Record Laravel contextual attribute hardening`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel documents runtime configuration updates through `config(['app.timezone' => 'America/Chicago'])`.
+- The array key is a normal dotted config key and should get the same completions and Go to Definition behavior as `config('app.timezone')`.
+- The prior config detector intentionally ignored update arrays, leaving a common Laravel helper shape unsupported.
+
+### Implementation Choice
+
+- Add a shared PHP string-array-key argument helper alongside the existing direct string argument and array element helpers.
+- Detect only top-level string keys in direct short-array call arguments.
+- Extend Laravel config reference detection for keys in `config([...])` and `config(key: [...])`.
+- Keep array values, list elements, nested arrays, non-config calls, and repository array arguments out of scope.
+- Reuse existing config target collection, insertion text, and Go to Definition plumbing.
+
+### Verification: Laravel Config Update Array Keys
+
+- `npm test -- src/domain/phpStringArgumentContext.test.ts src/domain/phpLaravelConfig.test.ts` passed: 2 files, 19 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "config"` passed: 20 passed, 405 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 425 passed.
+- `npm test` passed: 80 files, 1138 tests.
+- `npm run check` passed.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Config Update Array Keys
+
+- Committed as `5f8747ee Support Laravel config update array keys`.
