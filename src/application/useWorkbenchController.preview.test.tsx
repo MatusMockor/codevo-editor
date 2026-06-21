@@ -18355,7 +18355,7 @@ Route::post('/reactions', [ReactionController::class, 'store']);
 use App\\Http\\Controllers\\communication\\CommentController;
 
 Route::prefix('admin/comments')->controller(controller: CommentController::class)->group(function () {
-    Route::get('/comments/{comment}', 'show');
+    Route::get(action: 'show', uri: '/comments/{comment}');
     Route::post('/comments', 'store');
 });
 `;

@@ -994,6 +994,12 @@ function laravelControllerGroupRouteCallForAction(
       continue;
     }
 
+    const argumentName = topLevelCallArgumentNameAtOffset(
+      source,
+      openParen,
+      closeParen,
+      literal.quoteStart,
+    );
     const argumentIndex = topLevelCallArgumentIndexAt(
       source,
       openParen,
@@ -1001,7 +1007,7 @@ function laravelControllerGroupRouteCallForAction(
       literal.quoteStart,
     );
 
-    if (argumentIndex === 1) {
+    if (argumentIndex === 1 || argumentName?.toLowerCase() === "action") {
       return { routeStart };
     }
   }
@@ -1088,6 +1094,37 @@ function topLevelCallArgumentIndexAt(
   });
 
   return found ?? argumentIndex;
+}
+
+function topLevelCallArgumentNameAtOffset(
+  source: string,
+  openParen: number,
+  closeParen: number,
+  targetOffset: number,
+): string | null {
+  let argumentStart = openParen + 1;
+  let foundStart: number | null = null;
+
+  scanTopLevel(source, openParen + 1, closeParen, (index, character) => {
+    if (foundStart !== null) {
+      return;
+    }
+
+    if (index >= targetOffset) {
+      foundStart = argumentStart;
+      return;
+    }
+
+    if (character === ",") {
+      argumentStart = index + 1;
+    }
+  });
+
+  const start = foundStart ?? argumentStart;
+  const prefix = source.slice(start, targetOffset);
+  const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/.exec(prefix);
+
+  return match?.[1] ?? null;
 }
 
 function stringLiteralAtOffset(

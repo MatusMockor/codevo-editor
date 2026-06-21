@@ -956,6 +956,10 @@ Route::controller(controller: CommentController::class)->group(function () {
 Route::prefix('admin/comments')->controller(controller: CommentController::class)->group(function () {
     Route::get('/archive', 'archive');
 });
+Route::controller(CommentController::class)->group(function () {
+    Route::get(action: 'namedAction', uri: '/named-action');
+    Route::get(label: 'notAction', uri: '/ignored');
+});
 `;
 
     expect(
@@ -992,6 +996,19 @@ Route::prefix('admin/comments')->controller(controller: CommentController::class
       className: "CommentController",
       kind: "laravelRouteActionMethod",
       methodName: "archive",
+    });
+    expect(
+      phpIdentifierContextAt(routeSource, positionAfter(routeSource, "'namedAction")),
+    ).toEqual({
+      className: "CommentController",
+      kind: "laravelRouteActionMethod",
+      methodName: "namedAction",
+    });
+    expect(
+      phpIdentifierContextAt(routeSource, positionAfter(routeSource, "'notAction")),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "notAction",
     });
   });
 
