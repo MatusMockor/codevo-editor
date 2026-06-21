@@ -6659,3 +6659,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `4aaea98a Add JavaScript TypeScript go to declaration command`.
+
+## Slice: JavaScript TypeScript Go to Type Definition Command - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `caa05c53 Record JavaScript TypeScript declaration command commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Expose a command-palette action for JS/TS Go to Type Definition using the existing language-server type-definition capability.
+
+### Implementation Choice
+
+- Extend the shared JS/TS language-server navigation helper to accept `typeDefinition`.
+- Add `goToTypeDefinition` and register `editor.goToTypeDefinition` when the active JS/TS runtime advertises type-definition support.
+- Add preview coverage for successful type-definition navigation and stale workspace-tab results after switching project tabs.
+
+### Acceptance Criteria
+
+- JS/TS type-definition command is visible/enabled only for active JS/TS language-server documents with type-definition capability.
+- Running the command calls the JS/TS type-definition gateway and opens the returned target.
+- Type-definition results are dropped after switching workspace tabs.
+- Focused type-definition tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript and TypeScript type definition"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -12132,7 +12132,11 @@ export function useWorkbenchController(
   const goToJavaScriptTypeScriptLanguageServerLocation = useCallback(async (
     feature: Extract<
       LanguageServerFeature,
-      "declaration" | "definition" | "implementation" | "sourceDefinition"
+      | "declaration"
+      | "definition"
+      | "implementation"
+      | "sourceDefinition"
+      | "typeDefinition"
     >,
     label: string,
     requestedPosition?: EditorPosition,
@@ -12537,6 +12541,13 @@ export function useWorkbenchController(
     await goToJavaScriptTypeScriptLanguageServerLocation(
       "declaration",
       "declaration",
+    );
+  }, [goToJavaScriptTypeScriptLanguageServerLocation]);
+
+  const goToTypeDefinition = useCallback(async () => {
+    await goToJavaScriptTypeScriptLanguageServerLocation(
+      "typeDefinition",
+      "type definition",
     );
   }, [goToJavaScriptTypeScriptLanguageServerLocation]);
 
@@ -13909,6 +13920,28 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.goToTypeDefinition",
+      title: "Go to Type Definition",
+      category: "Editor",
+      isEnabled: () =>
+        Boolean(activeDocument) &&
+        Boolean(
+          activeDocument &&
+            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
+        ) &&
+        isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) &&
+        canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "typeDefinition",
+        ),
+      run: goToTypeDefinition,
+    });
+
+    registry.register({
       id: "editor.goToImplementation",
       title: "Go to Implementation",
       category: "Editor",
@@ -14209,6 +14242,7 @@ export function useWorkbenchController(
     goToDefinition,
     goToImplementation,
     goToSourceDefinition,
+    goToTypeDefinition,
     gitDiffLoading,
     navigateBackward,
     navigateForwardInHistory,
