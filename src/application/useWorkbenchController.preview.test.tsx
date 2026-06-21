@@ -2012,6 +2012,87 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("reports the same PHP runtime crash once per project tab", async () => {
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => ({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath,
+        sessionId: 231,
+      })),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishStatus?.({
+        kind: "crashed",
+        message: "phpactor crashed",
+        rootPath: "/workspace-a",
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("phpactor crashed"),
+      ),
+    ).toBe(true);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("phpactor crashed"),
+      ),
+    ).toBe(false);
+
+    act(() => {
+      publishStatus?.({
+        kind: "crashed",
+        message: "phpactor crashed",
+        rootPath: "/workspace-b",
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("phpactor crashed"),
+      ),
+    ).toBe(true);
+  });
+
   it("ignores stale JavaScript and TypeScript runtime subscription errors after switching project tabs", async () => {
     const subscription = createDeferred<() => void>();
     const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =

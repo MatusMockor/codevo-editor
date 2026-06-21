@@ -2171,6 +2171,7 @@ export function useWorkbenchController(
     languageServerRuntimeStatusByRootRef.current = {};
     javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
     javaScriptTypeScriptDiagnosticsByRootRef.current = {};
+    lastLanguageServerCrashRef.current = null;
     openFileRequestTokenRef.current += 1;
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
@@ -3195,6 +3196,7 @@ export function useWorkbenchController(
 
       setWorkspaceRoot(path);
       currentWorkspaceRootRef.current = path;
+      lastLanguageServerCrashRef.current = null;
       restoreJavaScriptTypeScriptDiagnosticsForRoot(path);
 
       if (cachedWorkspaceState) {
