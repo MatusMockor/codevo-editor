@@ -8027,4 +8027,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Laravel Env Example Fallback
 
-- Pending commit.
+- Committed as `a67c372f Use env example as Laravel env fallback`.
