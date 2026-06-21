@@ -5424,3 +5424,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Workspace Clear Reset Guard
 
 - Committed as `5e34f045 Reset PHP workspace state on last tab close`.
+
+## Next Slice: Workspace UI Search Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e663d153 Record PHP workspace clear reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 851 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Closing/opening workspace reset panel visibility but left some search query/loading/result state alive.
+- Quick Open and Text Search query text could survive closing the last project tab.
+- Open workspace reset class-search query/results but did not consistently reset Quick Open/Text Search state.
+
+### Implementation Choice
+
+- Reset Class Open query/loading/results when clearing the active workspace.
+- Reset Quick Open query/loading/results when clearing or opening a workspace.
+- Reset Text Search query/loading/results when clearing or opening a workspace.
+- Extend the last-tab-close regression to seed Quick Open, Class Open, Text Search, and PHP tree state before close, then assert they are cleared.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears search panel open/query/loading state.
+- Opening another workspace does not inherit Quick Open or Text Search query/loading/result state.
+- PHP tree reset from the previous slice remains covered in the same close regression.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Workspace UI Search Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (317 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 851 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Workspace UI Search Reset Guard
+
+- Committed as `2c0d571e Reset workspace UI state on last tab close`.
