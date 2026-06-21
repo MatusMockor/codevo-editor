@@ -1461,6 +1461,10 @@ function isRuntimeActiveForRoot(
   context: LanguageServerMonacoProviderContext,
   rootPath: string,
 ): boolean {
+  if (!isStoredWorkspaceRootActive(context, rootPath)) {
+    return false;
+  }
+
   const status = context.getRuntimeStatus();
 
   return (
@@ -1476,7 +1480,7 @@ function isStoredWorkspaceRootActive(
 ): boolean {
   const activeRootPath = context.getWorkspaceRoot?.() ?? null;
 
-  return !activeRootPath || workspaceRootKeysEqual(activeRootPath, rootPath);
+  return Boolean(activeRootPath && workspaceRootKeysEqual(activeRootPath, rootPath));
 }
 
 function isPathInWorkspaceRoot(rootPath: string, path: string): boolean {

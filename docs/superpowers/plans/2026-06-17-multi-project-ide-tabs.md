@@ -378,3 +378,44 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `82cdcf27 Cover final workspace disposal fallback`.
+
+### Slice: PHP Code Action Stored Payload Root Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b10bc30a Record final workspace disposal fallback commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+- Delegation note: subagent spawn was attempted for parallel JS/TS isolation audit, but the agent thread limit was reached, so the main agent implemented this tightly scoped slice directly.
+
+#### Goal
+
+- Prevent stale PHP code-action stored payloads from resolving or executing after all project tabs are closed.
+
+#### Implementation Choice
+
+- Make the generic PHP Monaco provider treat a missing active workspace root as inactive for stored workspace payloads.
+- Reuse that active-root guard inside the PHP runtime-active check used by code-action resolve and execute-command paths.
+- Add a regression proving PHP code-action resolve and execute-command are skipped when `getWorkspaceRoot()` returns `null`, even if the runtime status still looks running for the stale root.
+
+#### Acceptance Criteria
+
+- PHP code-action resolve does not call the LSP gateway when no project tab is active.
+- PHP execute-command does not call the LSP gateway when no project tab is active.
+- Existing wrong-root and rootless-runtime PHP guards still pass.
+- Generic PHP provider tests, JS/TS provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "does not resolve or execute PHP code-action commands when no project tab is active|does not resolve or execute PHP code-action commands when the runtime status belongs to another workspace root|does not resolve or execute PHP code-action commands when the runtime status has no explicit workspace root"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Pending implementation commit.

@@ -1919,6 +1919,41 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.executeCommand).not.toHaveBeenCalled();
   });
 
+  it("does not resolve or execute PHP code-action commands when no project tab is active", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      resolvedCodeAction: {
+        command: null,
+        data: null,
+        edit: workspaceEdit(
+          "file:///project/src/User.php",
+          "use App\\Models\\User;\n",
+        ),
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Import User",
+      },
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => null,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const backedAction = backedCodeAction();
+
+    await expect(
+      registered.codeActionProvider.resolveCodeAction(backedAction),
+    ).resolves.toBe(backedAction);
+    if (!registered.commandRun) {
+      throw new Error("PHP language server command was not registered");
+    }
+    await registered.commandRun(null, phpCommandPayload());
+
+    expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
+    expect(gateway.executeCommand).not.toHaveBeenCalled();
+  });
+
   it("provides a quick fix for unexpected bare PHP identifiers", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();
