@@ -14,6 +14,7 @@ import {
 } from "./workspace";
 import { phpLaravelCacheStoreReferenceContextAt } from "./phpLaravelCache";
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
+import { phpLaravelDatabaseConnectionReferenceContextAt } from "./phpLaravelDatabase";
 import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
 import { phpLaravelStorageDiskReferenceContextAt } from "./phpLaravelStorage";
@@ -49,6 +50,10 @@ export type PhpIdentifierContext =
   | {
       kind: "laravelCacheStoreString";
       storeName: string;
+    }
+  | {
+      connectionName: string;
+      kind: "laravelDatabaseConnectionString";
     }
   | {
       envName: string;
@@ -176,6 +181,16 @@ export function phpIdentifierContextAt(
     return {
       kind: "laravelCacheStoreString",
       storeName: cacheStoreReference.storeName,
+    };
+  }
+
+  const databaseConnectionReference =
+    phpLaravelDatabaseConnectionReferenceContextAt(source, position);
+
+  if (databaseConnectionReference) {
+    return {
+      connectionName: databaseConnectionReference.connectionName,
+      kind: "laravelDatabaseConnectionString",
     };
   }
 

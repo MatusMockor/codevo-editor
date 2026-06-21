@@ -208,6 +208,12 @@ import {
   phpLaravelCacheStoreReferenceContextAt,
 } from "../domain/phpLaravelCache";
 import {
+  phpLaravelDatabaseConnectionCompletionInsertText,
+  phpLaravelDatabaseConnectionConfigKey,
+  phpLaravelDatabaseConnectionNameFromConfigKey,
+  phpLaravelDatabaseConnectionReferenceContextAt,
+} from "../domain/phpLaravelDatabase";
+import {
   phpLaravelConfigCompletionInsertText,
   phpLaravelConfigFileNameFromRelativePath,
   phpLaravelConfigKeyCandidateRelativePath,
@@ -390,6 +396,10 @@ type PhpLaravelConfigNavigationTarget = PhpLaravelConfigTarget;
 
 interface PhpLaravelCacheStoreTarget extends PhpLaravelConfigTarget {
   storeName: string;
+}
+
+interface PhpLaravelDatabaseConnectionTarget extends PhpLaravelConfigTarget {
+  connectionName: string;
 }
 
 interface PhpLaravelStorageDiskTarget extends PhpLaravelConfigTarget {
@@ -8047,6 +8057,56 @@ export function useWorkbenchController(
     [findPhpLaravelConfigTarget],
   );
 
+  const collectPhpLaravelDatabaseConnectionTargets =
+    useCallback(async (): Promise<PhpLaravelDatabaseConnectionTarget[]> => {
+      const targets = new Map<string, PhpLaravelDatabaseConnectionTarget>();
+
+      for (const target of await collectPhpLaravelConfigTargets()) {
+        const connectionName = phpLaravelDatabaseConnectionNameFromConfigKey(
+          target.key,
+        );
+
+        if (!connectionName) {
+          continue;
+        }
+
+        const key = connectionName.toLowerCase();
+
+        if (!targets.has(key)) {
+          targets.set(key, {
+            ...target,
+            connectionName,
+          });
+        }
+      }
+
+      return Array.from(targets.values()).sort((left, right) =>
+        left.connectionName.localeCompare(right.connectionName),
+      );
+    }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelDatabaseConnectionTarget = useCallback(
+    async (
+      connectionName: string,
+    ): Promise<PhpLaravelDatabaseConnectionTarget | null> => {
+      const configKey = phpLaravelDatabaseConnectionConfigKey(connectionName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            connectionName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const collectPhpLaravelStorageDiskTargets = useCallback(async (): Promise<
     PhpLaravelStorageDiskTarget[]
   > => {
@@ -12459,6 +12519,39 @@ export function useWorkbenchController(
           }));
       }
 
+      const databaseConnectionContext =
+        phpLaravelDatabaseConnectionReferenceContextAt(source, position);
+
+      if (
+        isLaravelFrameworkActive &&
+        databaseConnectionContext &&
+        activeDocument
+      ) {
+        const normalizedPrefix =
+          databaseConnectionContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelDatabaseConnectionTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.connectionName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelDatabaseConnectionCompletionInsertText(
+              target.connectionName,
+            ),
+            kind: "config",
+            name: target.connectionName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const storageDiskContext = phpLaravelStorageDiskReferenceContextAt(
         source,
         position,
@@ -12639,6 +12732,7 @@ export function useWorkbenchController(
     [
       collectPhpLaravelCacheStoreTargets,
       collectPhpLaravelConfigTargets,
+      collectPhpLaravelDatabaseConnectionTargets,
       collectPhpLaravelEnvTargets,
       collectPhpLaravelStorageDiskTargets,
       collectPhpLaravelTranslationTargets,
@@ -14094,6 +14188,51 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelDatabaseConnectionDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelDatabaseConnectionString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelDatabaseConnectionTarget(
+        context.connectionName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(
+          `No Laravel database connection ${context.connectionName} found.`,
+        );
+        return false;
+      }
+
+      return openNavigationTarget(
+        target.path,
+        target.position,
+        target.connectionName,
+      );
+    },
+    [
+      activeDocument,
+      findPhpLaravelDatabaseConnectionTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelStorageDiskDefinition = useCallback(
     async (
       context: Extract<
@@ -14272,6 +14411,10 @@ export function useWorkbenchController(
 
     if (context.kind === "laravelCacheStoreString") {
       return goToPhpLaravelCacheStoreDefinition(context);
+    }
+
+    if (context.kind === "laravelDatabaseConnectionString") {
+      return goToPhpLaravelDatabaseConnectionDefinition(context);
     }
 
     if (context.kind === "laravelStorageDiskString") {
@@ -14834,6 +14977,10 @@ export function useWorkbenchController(
           return goToPhpLaravelCacheStoreDefinition(context);
         }
 
+        if (context.kind === "laravelDatabaseConnectionString") {
+          return goToPhpLaravelDatabaseConnectionDefinition(context);
+        }
+
         if (context.kind === "laravelStorageDiskString") {
           return goToPhpLaravelStorageDiskDefinition(context);
         }
@@ -14948,6 +15095,7 @@ export function useWorkbenchController(
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelConfigDefinition,
+    goToPhpLaravelDatabaseConnectionDefinition,
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
