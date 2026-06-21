@@ -4887,3 +4887,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `69430235 Resolve project morph map completions`.
+
+## Slice: Laravel Project Morph Map Edit Refresh - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3faab39e Record PHP signature help tab switch commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Keep Laravel project morph-map completions current after editing an open service provider file.
+
+### Implementation Choice
+
+- Add a workbench preview regression that first resolves `mappedOwner()->first()` through an `AppServiceProvider.php` morph map pointing at `User`.
+- Open and edit the provider document so the morph map points at `Post`.
+- Verify the next controller completion resolves `Post::getTitle()` instead of the stale cached `User::getName()`.
+- Clear the project morph-map model-type cache when a PHP document is edited.
+
+### Acceptance Criteria
+
+- Editing an open PHP provider document invalidates cached project morph-map inference.
+- Workbench completions update from the old morph-map target to the edited target without requiring an index reset or workspace reload.
+- Existing project morph-map completions, semantic morph-map behavior, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- FAIL then fixed: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "refreshes Laravel morph map completions after editing service provider files"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "morph map completions"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morph map"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `7a22c697 Refresh project morph maps after edits`.
