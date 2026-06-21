@@ -3757,4 +3757,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending implementation commit.
+- Committed as `eb39dcf8 Treat Laravel mutation helpers as terminals`.
