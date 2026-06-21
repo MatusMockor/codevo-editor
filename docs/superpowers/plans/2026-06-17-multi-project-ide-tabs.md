@@ -877,3 +877,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `b3c28189 Cover TypeScript workspace symbols without active workspace`.
+
+### Slice: Normalized Index Root PHP Refresh Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `06b1b787 Record TypeScript workspace symbol root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent active PHP tree and file-outline refreshes from being skipped when index progress reports the active workspace root with a harmless trailing slash difference.
+
+#### Implementation Choice
+
+- Replace direct `indexProgress.rootPath !== workspaceRoot` checks with `workspaceRootKeysEqual`.
+- Add a controller regression where the active workspace is `/workspace`, index progress starts with `/workspace/`, and the PHP sidebar still refreshes the PHP tree for `/workspace`.
+
+#### Acceptance Criteria
+
+- Index progress rooted at `/workspace/` is treated as active for `/workspace`.
+- PHP tree refreshes are not skipped for equivalent workspace root spellings.
+- Existing restored IDE indexing behavior still passes.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "refreshes the PHP tree for index progress roots that only differ by a trailing slash|starts indexing when a restored workspace is already in IDE mode"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `0e99c5db Normalize index progress roots for PHP refreshes`.
