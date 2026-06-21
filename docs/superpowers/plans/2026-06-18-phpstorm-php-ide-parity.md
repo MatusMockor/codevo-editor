@@ -5337,3 +5337,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `22d7320c Guard stale PHP language server navigation results`.
+
+## Slice: Stale Implementation Chooser Target Read Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `434dcfd2 Record stale PHP language server navigation guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale implementation chooser target source reads when project tabs switch while multi-target implementation metadata is being assembled.
+
+### Implementation Choice
+
+- Let `implementationTargetsFromLocations` accept a session/root guard and process targets sequentially.
+- Check the guard before each target source read and again before converting a location into an implementation target.
+- Pass the PHP and JavaScript/TypeScript session-active guards into their respective implementation chooser paths.
+- Add a preview regression where a delayed first JS/TS implementation target read is interrupted by switching from `/workspace-a` to `/workspace-b`, proving the second stale target is never read.
+
+### Acceptance Criteria
+
+- Stale implementation chooser target reads stop after tab switch.
+- No implementation chooser is shown for stale multi-target results.
+- Existing JS/TS and PHP implementation chooser behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "implementation chooser targets"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `c209c481 Stop stale implementation chooser target reads`.
