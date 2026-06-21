@@ -8310,4 +8310,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Guard Stale Laravel JSON Translation Discovery
 
-- Pending commit.
+- Committed as `c85d9e16 Guard stale Laravel JSON translation discovery`.
