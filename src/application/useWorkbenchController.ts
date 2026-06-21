@@ -2199,6 +2199,8 @@ export function useWorkbenchController(
     setSelectedGitChange(null);
     setGitDiffPreview(null);
     setEditorGitBaselinesByPath({});
+    setJavaScriptTypeScriptFileOutlinesByPath({});
+    setLoadingJavaScriptTypeScriptFileOutlinePaths(new Set());
     setClassOpenOpen(false);
     setQuickOpenOpen(false);
     setTextSearchOpen(false);
@@ -3223,9 +3225,11 @@ export function useWorkbenchController(
       setEditorGitBaselinesByPath({});
       setPhpFileOutlinesByPath({});
       setPhpInheritedFileOutlinesByPath({});
+      setJavaScriptTypeScriptFileOutlinesByPath({});
       setExpandedPhpFilePaths(new Set());
       setLoadingPhpFileOutlinePaths(new Set());
       setLoadingInheritedPhpFileOutlinePaths(new Set());
+      setLoadingJavaScriptTypeScriptFileOutlinePaths(new Set());
       setPhpFileOutlineExpandedNodeIds(new Set());
       setClassOpenOpen(false);
       setClassOpenQuery("");

@@ -9592,6 +9592,106 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("reloads JavaScript and TypeScript file structure after closing and reopening a workspace", async () => {
+    const path = "/workspace/src/userService.ts";
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 13,
+    };
+    const firstSymbols = [
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "FirstUserService",
+        range: range(1, 0, 6, 1),
+        selectionRange: range(1, 13, 1, 29),
+      },
+    ];
+    const secondSymbols = [
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "SecondUserService",
+        range: range(1, 0, 6, 1),
+        selectionRange: range(1, 13, 1, 30),
+      },
+    ];
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+    )
+      .mockResolvedValueOnce(firstSymbols)
+      .mockResolvedValueOnce(secondSymbols);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => "export class UserService {}"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.fileStructure")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+    ).toHaveBeenCalledTimes(1);
+    expect(getWorkbench().fileStructureOutline?.nodes[0]?.label).toBe(
+      "FirstUserService",
+    );
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.fileStructure")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+    ).toHaveBeenCalledTimes(2);
+    expect(getWorkbench().fileStructureOutline?.nodes[0]?.label).toBe(
+      "SecondUserService",
+    );
+  });
+
   it("drops stale JavaScript and TypeScript file structure after same-root session restart", async () => {
     const path = "/workspace/src/userService.ts";
     const documentSymbols =
