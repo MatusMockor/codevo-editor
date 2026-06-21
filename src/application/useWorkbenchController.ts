@@ -11434,11 +11434,19 @@ export function useWorkbenchController(
       return;
     }
 
+    const requestedRoot = workspaceRoot;
+
     try {
-      const status = await languageServerRuntimeGateway.start(workspaceRoot);
-      handleLanguageServerRuntimeStatus(status, workspaceRoot);
+      const status = await languageServerRuntimeGateway.start(requestedRoot);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      handleLanguageServerRuntimeStatus(status, requestedRoot);
     } catch (error) {
-      reportLanguageServerError(error);
+      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        reportLanguageServerError(error);
+      }
     }
   }, [
     handleLanguageServerRuntimeStatus,

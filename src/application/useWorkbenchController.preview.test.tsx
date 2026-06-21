@@ -3943,6 +3943,64 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores manual PHP language server start errors after switching project tabs", async () => {
+    const languageServerStart = createDeferred<LanguageServerRuntimeStatus>();
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => languageServerStart.promise),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerRuntimeGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns();
+
+    let startPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      startPromise = getWorkbench().startLanguageServer();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(languageServerRuntimeGateway.start).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      languageServerStart.reject(new Error("stale PHP start"));
+      await startPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale PHP start"),
+      ),
+    ).toBe(false);
+  });
+
   it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {
