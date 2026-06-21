@@ -8468,3 +8468,35 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Storage Disk Names
 
 - Committed as `b21eb550 Add Laravel storage disk navigation`.
+
+## Next Slice: Extract PHP String Argument Context Helper
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `46473f89 Record Laravel storage disk commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Storage disk navigation added a focused Laravel string-argument detector, but the low-level PHP string/argument parsing is reusable for follow-up Laravel Cache and Database name slices.
+- Extracting that parsing boundary now prevents the next parity slices from copying hundreds of helper lines.
+
+### Implementation Choice
+
+- Add `phpStringArgumentContextAt(...)` as a generic domain helper for string literal argument context: value, prefix, position, argument index, named argument, and open paren.
+- Refactor `phpLaravelStorage.ts` to keep only Storage-specific call and disk-name logic.
+
+### Verification: Extract PHP String Argument Context Helper
+
+- `npm test -- src/domain/phpLaravelStorage.test.ts src/application/useWorkbenchController.preview.test.tsx -t "Storage disk"` passed: 3 passed, 404 skipped.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 403 passed.
+- `npm test -- src/domain/phpLaravelStorage.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test` passed: 70 files, 1062 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Extract PHP String Argument Context Helper
+
+- Committed as `04746a30 Extract PHP string argument context helper`.
