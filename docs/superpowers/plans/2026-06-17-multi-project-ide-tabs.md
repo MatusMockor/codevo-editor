@@ -10,10 +10,12 @@ The first implementation slice adds persistent project tabs and safe single-acti
 
 - The React workbench is currently a single active workspace controller.
 - Workspace settings are already persisted per root path, so IDE mode, auto save, status-bar visibility, and session tabs can be isolated by workspace.
-- The terminal backend already supports multiple sessions by `sessionId`, and the frontend disposes the active terminal session when `rootPath` changes.
-- The PHP language-server backend is still a singleton: `LanguageServerSupervisor` stores `Mutex<Option<RunningSession>>`.
-- LSP document sync and feature requests do not carry a workspace key, so completion/definition/implementation requests cannot be safely routed when more than one project engine is alive.
-- Index events already include `rootPath`, which makes per-workspace index UI routing practical.
+- The terminal backend supports multiple sessions by `sessionId`, and workspace disposal stops sessions rooted in the closed project.
+- PHP and JavaScript/TypeScript language-server backends now use `LanguageServerRegistry` wrappers keyed by normalized workspace root. Each registry entry owns a `LanguageServerSupervisor`, so multiple project engines can be alive without sharing stdin, pending requests, status, or diagnostics sinks.
+- LSP document sync and feature requests carry `rootPath` through Tauri commands, and backend tests cover routing notifications, requests, watched-file changes, server configuration, and workspace folders to the requested root only.
+- Status, diagnostics, refresh, and workspace-edit event payloads include `rootPath`; frontend guards reject diagnostics by root/session/version and apply JS/TS background-tab diagnostics only to open matching tabs.
+- Index events include `rootPath`, and workspace disposal cancels only the requested root's index lifecycle.
+- Remaining risk is mostly orchestration and QA: proving tab switching, background runtime policy, and close/quit cleanup end-to-end across PHP, JS/TS, index, file watchers, terminals, diagnostics, and feature requests.
 
 ## Target Architecture
 
@@ -140,9 +142,9 @@ This prevents project A diagnostics, completion, or implementation results from 
 
 1. Persistent project tabs with safe single-active-workspace switching.
 2. Workspace-scoped LSP gateway types in TypeScript.
-3. Rust `LanguageServerRegistry` replacing singleton supervisor state.
-4. Route document sync and feature requests by root path.
-5. Route diagnostics and status events by root path.
+3. Rust `LanguageServerRegistry` replacing singleton supervisor state. Completed in code; keep adding regression coverage as leak risks appear.
+4. Route document sync and feature requests by root path. Completed in code; continue validating active/background project behavior from the frontend.
+5. Route diagnostics and status events by root path. Completed in code for payloads and guards; continue validating UI notice and Problems routing.
 6. Per-project runtime policy setting: keep alive, suspend on background, or single active engine.
 7. Full manual QA against PhpStorm behavior.
 
@@ -186,3 +188,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `8548e8b8 Guard diagnostics by workspace root`.
+
+### Slice: Workspace LSP Isolation Plan Reconciliation - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `14093157 Record workspace diagnostics guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Keep the multi-project IDE tabs plan aligned with the current workspace-scoped LSP implementation so future slices target remaining leak risks instead of already-completed singleton work.
+
+#### Implementation Choice
+
+- Update `Current State` to reflect existing `LanguageServerRegistry` wrappers for PHP and JS/TS.
+- Record that document sync, feature requests, status, diagnostics, refresh, and workspace-edit events now carry workspace roots.
+- Mark registry, root-routed feature requests, and rooted diagnostics/status phases as completed in code while preserving remaining orchestration and QA risks.
+
+#### Acceptance Criteria
+
+- The plan no longer claims PHP LSP is a singleton.
+- The plan no longer claims document sync and feature requests are rootless.
+- Remaining work is described as orchestration/runtime policy/end-to-end leak validation rather than already-completed registry replacement.
+- `git diff --check` passes.
+
+#### Verification
+
+- PASS: inspected `src-tauri/src/lsp_session.rs` for `LanguageServerRegistry`, rooted event payloads, and registry routing tests.
+- PASS: inspected `src-tauri/src/lib.rs` call-sites showing `root_path` on document sync and feature commands.
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Pending implementation commit.
