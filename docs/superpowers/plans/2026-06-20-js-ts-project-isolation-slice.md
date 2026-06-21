@@ -7449,4 +7449,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco CodeLens Provider
 
-- Pending commit after verification.
+- Committed as `ed69dcf1 Register PHP code lens provider`.
