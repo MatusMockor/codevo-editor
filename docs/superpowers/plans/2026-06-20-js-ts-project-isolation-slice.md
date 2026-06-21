@@ -7004,4 +7004,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Declaration And Type Definition Providers
 
-- Pending commit after verification.
+- Committed as `ec9d4110 Register PHP declaration type definition providers`.
