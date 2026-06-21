@@ -8875,3 +8875,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Auth Guard Names
 
 - Committed as `9d0e8864 Add Laravel auth guard navigation`.
+
+## Next Slice: Laravel Password Broker Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `300078e1 Record Laravel auth guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel password broker names are configured under `config/auth.php` as `auth.passwords.<broker>`.
+- `Password::broker('users')` and `Password::setDefaultDriver('users')` reference those configured broker names.
+- The implementation reuses the existing config target collector / finder and keeps the same stale-root guard behavior after async collection or lookup.
+
+### Implementation Choice
+
+- Add a focused Password broker detector for `Password::broker(...)` and `Password::setDefaultDriver(...)`.
+- Map broker names to `auth.passwords.<broker>` and reject nested config keys such as `auth.passwords.users.provider`.
+- Keep broker action methods such as `Password::sendResetLink(...)`, non-facade member calls, and unrelated Auth config maps out of scope.
+
+### Verification: Laravel Password Broker Names
+
+- `npm test -- src/domain/phpLaravelPassword.test.ts` passed: 4 passed.
+- `npm test -- src/domain/phpNavigation.test.ts` passed: 27 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Password broker"` passed: 2 passed, 417 skipped.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 419 passed.
+- `npm test -- src/domain/phpLaravelPassword.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test` passed: 79 files, 1117 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Password Broker Names
+
+- Committed as `84e2fb1b Add Laravel password broker navigation`.
