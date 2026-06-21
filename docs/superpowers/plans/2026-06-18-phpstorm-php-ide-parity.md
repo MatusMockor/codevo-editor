@@ -5009,3 +5009,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `a2640877 Cover stale type hierarchy tab results`.
+
+## Slice: Stale Call Hierarchy Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ce0c17f1 Record stale type hierarchy result guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down the successful-response side of JavaScript/TypeScript call hierarchy isolation when a project tab switch happens while `prepareCallHierarchy` is in flight.
+
+### Implementation Choice
+
+- Add a preview controller regression for a delayed successful `prepareCallHierarchy` response from an inactive project tab.
+- Start call hierarchy loading in `/workspace-a`, switch to `/workspace-b`, then resolve the stale request with a `staleLoadUser` item.
+- Assert the command resolves, the active workspace remains `/workspace-b`, incoming/outgoing calls are not requested, and no stale call hierarchy view is opened.
+- Keep this as a test-only slice because the controller already guards call hierarchy requests through the requested root/session checks.
+
+### Acceptance Criteria
+
+- A delayed call hierarchy result from an inactive project tab is ignored.
+- The active workspace remains `/workspace-b`.
+- Stale call hierarchy results do not trigger follow-up hierarchy calls or populate the active view.
+- Existing stale call hierarchy error and same-root session restart coverage remain unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "call hierarchy .* switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `e2cba685 Cover stale call hierarchy tab results`.
