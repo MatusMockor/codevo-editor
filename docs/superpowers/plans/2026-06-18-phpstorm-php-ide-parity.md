@@ -4434,3 +4434,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `28afa83e Complete Laravel named relation strings`.
+
+## Slice: Laravel Late Named Relation Strings - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `12e01161 Record Laravel named relation strings commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Support PHP 8 named relation arguments even when `relation:` / `relations:` appear after other named arguments.
+
+### Implementation Choice
+
+- Treat explicit `relation:` and `relations:` relation-string arguments as valid regardless of their top-level argument index.
+- Keep positional relation-string detection limited to the first argument with whitespace-only prefix.
+- Preserve incomplete positional string completion such as `$comment->load('chi`.
+- Add parser coverage for delayed named string relation arguments and delayed named array relation paths.
+- Add workbench coverage proving completions work inside `whereHas(callback: ..., relation: 'attach')`.
+
+### Acceptance Criteria
+
+- `whereHas(callback: ..., relation: '...')` resolves and completes relation names.
+- `with(callback: ..., relations: ['parent.child'])` resolves nested relation paths.
+- Unsupported named arguments such as `label:` remain ignored.
+- Existing positional and first named relation-string behavior remains unchanged.
+- Focused/full navigation and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx -t "relation strings in named arguments|relation string completion contexts in named arguments|completes Laravel relation strings from the owning model"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `4e1f676b Complete Laravel late named relation strings`.
