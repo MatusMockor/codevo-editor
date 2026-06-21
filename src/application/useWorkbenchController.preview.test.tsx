@@ -12782,6 +12782,7 @@ class Comment
     ).toHaveLength(2);
     expect(getWorkbench().activePath).not.toBe(commentPath);
     expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().message ?? "").not.toContain("No relation method found");
   });
 
   it("stops stale Laravel model attribute target candidates after switching project tabs", async () => {
@@ -13026,6 +13027,7 @@ class Comment
     expect(packageCommentReadCount).toBe(packageReadsBeforeSwitch);
     expect(getWorkbench().activePath).not.toBe(packageCommentPath);
     expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().message ?? "").not.toContain("No typed target found");
   });
 
   it("drops stale Laravel request method hint targets after switching project tabs", async () => {

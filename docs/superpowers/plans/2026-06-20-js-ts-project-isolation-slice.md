@@ -4750,3 +4750,49 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Method Definition Miss Message Guard
 
 - Committed as `f3793bbf Guard PHP method definition messages by active workspace`.
+
+## Next Slice: PHP Property Static Definition Miss Message Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `10c14082 Record PHP method definition guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 837 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The previous slice guarded PHP method-call definition miss messages after a workspace tab switch.
+- The adjacent member-property and static-method definition callbacks had the same shape: awaited root-sensitive helpers, then set a miss message if no target opened.
+- Existing stale navigation tests already covered the target refusal, but did not assert that the active workspace message stayed clean.
+
+### Implementation Choice
+
+- Snapshot the requested workspace root in `goToPhpMemberPropertyDefinition` and `goToPhpStaticMethodCallDefinition`.
+- Check active-root freshness after each awaited helper and before setting miss messages.
+- Capture target-open booleans explicitly so stale results can return before message publication.
+- Extend existing stale property and static dynamic-where target tests with miss-message assertions.
+
+### Acceptance Criteria
+
+- Stale contextual PHP property go-to-definition requests do not set relation miss messages in the active tab.
+- Stale static/dynamic-where go-to-definition requests do not set typed-target miss messages in the active tab.
+- Existing PHP definition navigation behavior remains green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Property Static Definition Miss Message Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "contextual PHP method targets|contextual PHP property targets|Laravel dynamic where target candidates|No relation method found|No typed target found"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "go to definition|Go to Definition|definition|contextual PHP|Laravel dynamic where|Laravel model attribute|request method hint"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 837 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Property Static Definition Miss Message Guard
+
+- Pending commit.

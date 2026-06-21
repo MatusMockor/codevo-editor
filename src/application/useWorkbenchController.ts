@@ -11850,6 +11850,10 @@ export function useWorkbenchController(
         return false;
       }
 
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        !requestedRoot ||
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
       const position =
         activeEditorPositionRef.current ?? { column: 1, lineNumber: 1 };
       const receiverType = await resolvePhpExpressionType(
@@ -11857,6 +11861,10 @@ export function useWorkbenchController(
         position,
         context.receiverExpression || `$${context.variableName}`,
       );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
 
       if (!receiverType) {
         setMessage(
@@ -11870,28 +11878,57 @@ export function useWorkbenchController(
         context.propertyName,
       );
 
-      if (
-        propertyExists &&
-        (await openDirectPhpMethodTarget(receiverType, context.propertyName))
-      ) {
-        return true;
+      if (!isRequestedRootActive()) {
+        return false;
       }
 
-      if (
-        propertyExists &&
-        (await openPhpLaravelModelAttributeTarget(
+      if (propertyExists) {
+        const methodTargetOpened = await openDirectPhpMethodTarget(
           receiverType,
           context.propertyName,
-        ))
-      ) {
-        return true;
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (methodTargetOpened) {
+          return true;
+        }
       }
 
-      if (
-        propertyExists &&
-        (await openDirectPhpPropertyTarget(receiverType, context.propertyName))
-      ) {
-        return true;
+      if (propertyExists) {
+        const attributeTargetOpened = await openPhpLaravelModelAttributeTarget(
+          receiverType,
+          context.propertyName,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (attributeTargetOpened) {
+          return true;
+        }
+      }
+
+      if (propertyExists) {
+        const propertyTargetOpened = await openDirectPhpPropertyTarget(
+          receiverType,
+          context.propertyName,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (propertyTargetOpened) {
+          return true;
+        }
+      }
+
+      if (!isRequestedRootActive()) {
+        return false;
       }
 
       setMessage(
@@ -11906,6 +11943,7 @@ export function useWorkbenchController(
       openPhpLaravelModelAttributeTarget,
       phpClassHierarchyHasProperty,
       resolvePhpExpressionType,
+      workspaceRoot,
     ],
   );
 
@@ -11917,6 +11955,10 @@ export function useWorkbenchController(
         return false;
       }
 
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        !requestedRoot ||
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
       const className = resolvePhpClassName(
         activeDocument.content,
         context.className,
@@ -11926,7 +11968,16 @@ export function useWorkbenchController(
         return false;
       }
 
-      if (await openDirectPhpMethodTarget(className, context.methodName)) {
+      const directTargetOpened = await openDirectPhpMethodTarget(
+        className,
+        context.methodName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (directTargetOpened) {
         return true;
       }
 
@@ -11934,26 +11985,54 @@ export function useWorkbenchController(
         ? phpLaravelScopeMethodName(context.methodName)
         : null;
 
-      if (
-        scopeMethodName &&
-        (await openDirectPhpMethodTarget(className, scopeMethodName))
-      ) {
-        return true;
+      if (scopeMethodName) {
+        const scopeTargetOpened = await openDirectPhpMethodTarget(
+          className,
+          scopeMethodName,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (scopeTargetOpened) {
+          return true;
+        }
       }
 
-      if (await openPhpLaravelDynamicWhereTarget(className, context.methodName)) {
+      const dynamicWhereTargetOpened = await openPhpLaravelDynamicWhereTarget(
+        className,
+        context.methodName,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (dynamicWhereTargetOpened) {
         return true;
       }
 
       if (
         isLaravelFrameworkActive &&
-        isLaravelEloquentBuilderMethodName(context.methodName) &&
-        (await openDirectPhpMethodTarget(
+        isLaravelEloquentBuilderMethodName(context.methodName)
+      ) {
+        const builderTargetOpened = await openDirectPhpMethodTarget(
           "Illuminate\\Database\\Eloquent\\Builder",
           context.methodName,
-        ))
-      ) {
-        return true;
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (builderTargetOpened) {
+          return true;
+        }
+      }
+
+      if (!isRequestedRootActive()) {
+        return false;
       }
 
       setMessage(
@@ -11966,6 +12045,7 @@ export function useWorkbenchController(
       isLaravelFrameworkActive,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
+      workspaceRoot,
     ],
   );
 
