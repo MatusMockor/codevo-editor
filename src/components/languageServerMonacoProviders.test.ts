@@ -1656,6 +1656,63 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("drops in-flight PHP LSP code actions when no project tab is active", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const codeActions =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.codeActions).mockImplementationOnce(
+      async () => codeActions.promise,
+    );
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const codeActionsPromise =
+      registered.codeActionProvider.provideCodeActions(
+        model(),
+        new registered.monaco.Range(3, 5, 3, 9),
+        {
+          markers: [],
+          only: "quickfix",
+          trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+        },
+      );
+
+    await Promise.resolve();
+    activeRoot = null;
+    codeActions.resolve([
+      {
+        command: null,
+        data: { id: "stale-import" },
+        edit: null,
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Import User",
+      },
+    ]);
+
+    await expect(codeActionsPromise).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+    expect(gateway.codeActions).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      range(2, 4, 2, 8),
+      {
+        diagnostics: [],
+        only: ["quickfix"],
+        triggerKind: 1,
+      },
+    );
+  });
+
   it("does not request LSP code actions when the PHP runtime status belongs to another workspace root", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({

@@ -151,7 +151,7 @@ export function registerLanguageServerMonacoProviders(
   };
 }
 
-function provideCodeActions(
+async function provideCodeActions(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
@@ -167,36 +167,46 @@ function provideCodeActions(
   const request = featureDocumentRequestContext(context, model, "codeAction");
 
   if (!request) {
-    return Promise.resolve(codeActionList(localActions));
+    return codeActionList(localActions);
   }
 
-  return context.flushPendingDocumentChange(request.path)
-    .then(() =>
-      context.featuresGateway.codeActions(
-        request.rootPath,
-        request.path,
-        toLanguageServerRange(range),
-        toLanguageServerCodeActionContext(monaco, actionContext),
-      ),
-    )
-    .then((actions) =>
-      codeActionList([
-        ...actions.flatMap((action) =>
-          toMonacoCodeAction(
-            monaco,
-            workspaceEditContext(model),
-            request.rootPath,
-            action,
-            actionContext,
-          ),
-        ),
-        ...localActions,
-      ]),
-    )
-    .catch((error) => {
-      context.reportError(error);
+  try {
+    await context.flushPendingDocumentChange(request.path);
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
       return codeActionList(localActions);
-    });
+    }
+
+    const actions = await context.featuresGateway.codeActions(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
+      toLanguageServerCodeActionContext(monaco, actionContext),
+    );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return codeActionList(localActions);
+    }
+
+    return codeActionList([
+      ...actions.flatMap((action) =>
+        toMonacoCodeAction(
+          monaco,
+          workspaceEditContext(model),
+          request.rootPath,
+          action,
+          actionContext,
+        ),
+      ),
+      ...localActions,
+    ]);
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, request.rootPath)) {
+      context.reportError(error);
+    }
+
+    return codeActionList(localActions);
+  }
 }
 
 async function resolveCodeAction(
