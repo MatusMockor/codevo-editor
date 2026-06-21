@@ -93,6 +93,9 @@ describe("phpLaravelRedis", () => {
       phpLaravelRedisConnectionNameFromConfigKey("database.redis.options"),
     ).toBe(null);
     expect(
+      phpLaravelRedisConnectionNameFromConfigKey("database.redis.cluster"),
+    ).toBe(null);
+    expect(
       phpLaravelRedisConnectionNameFromConfigKey("database.redis.clusters"),
     ).toBe(null);
     expect(

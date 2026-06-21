@@ -5,7 +5,12 @@ import {
 } from "./phpStringArgumentContext";
 
 const laravelRedisConnectionConfigPrefix = "database.redis.";
-const reservedRedisConfigKeys = new Set(["client", "clusters", "options"]);
+const reservedRedisConfigKeys = new Set([
+  "client",
+  "cluster",
+  "clusters",
+  "options",
+]);
 const redisConnectionStaticCallMethods = {
   connection: "Redis::connection",
 } as const;
