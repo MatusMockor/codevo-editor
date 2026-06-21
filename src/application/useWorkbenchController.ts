@@ -1478,17 +1478,14 @@ export function useWorkbenchController(
         return;
       }
 
+      if (!workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)) {
+        return;
+      }
+
       const rootedStatus = cachePhpLanguageServerRuntimeStatus(
         statusRootPath,
         status,
       );
-
-      if (
-        currentWorkspaceRootRef.current &&
-        !workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)
-      ) {
-        return;
-      }
 
       setLanguageServerRuntimeStatus(rootedStatus);
       setLanguageServerRuntimeStatusRoot(statusRootPath);
@@ -1535,11 +1532,7 @@ export function useWorkbenchController(
         status,
       );
 
-      if (
-        statusRootPath &&
-        currentWorkspaceRootRef.current &&
-        !workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)
-      ) {
+      if (!workspaceRootKeysEqual(statusRootPath, currentWorkspaceRootRef.current)) {
         if (status.kind !== "running") {
           clearJavaScriptTypeScriptDiagnosticsForRoot(statusRootPath);
         }

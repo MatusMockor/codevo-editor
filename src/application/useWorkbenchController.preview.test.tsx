@@ -1958,6 +1958,109 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("ignores JavaScript and TypeScript runtime status events after the last project tab closes", async () => {
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toBeNull();
+
+    act(() => {
+      publishStatus?.({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 221,
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toBeNull();
+  });
+
+  it("ignores PHP runtime status events after the last project tab closes", async () => {
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().languageServerRuntimeStatus).toBeNull();
+
+    act(() => {
+      publishStatus?.({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 222,
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().languageServerRuntimeStatus).toBeNull();
+  });
+
   it("ignores stale PHP runtime subscription errors after switching project tabs", async () => {
     const subscription = createDeferred<() => void>();
     const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
