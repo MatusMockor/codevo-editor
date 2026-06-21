@@ -3026,7 +3026,7 @@ export function useWorkbenchController(
         }
         await refreshLanguageServerPlan(path);
       } catch (error) {
-        reportError("PHP Tools", error);
+        reportErrorForActiveWorkspaceRoot(path, "PHP Tools", error);
       }
     },
     [

@@ -534,6 +534,60 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale PHP tools detection errors after switching project tabs", async () => {
+    const workspaceATools = createDeferred<{
+      intelephense: null;
+      phpactor: null;
+    }>();
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          return workspaceATools.promise;
+        }
+
+        return {
+          intelephense: null,
+          phpactor: null,
+        };
+      }),
+      installManagedPhpactor: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      phpToolGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await vi.waitFor(() => {
+      expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace-a");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace-b");
+    });
+
+    await act(async () => {
+      workspaceATools.reject(new Error("stale PHP tools"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "PHP Tools" &&
+          notice.message.includes("stale PHP tools"),
+      ),
+    ).toBe(false);
+  });
+
   it("treats trailing-separator project tabs as the active workspace", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
