@@ -6541,7 +6541,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS External Navigation Read-Only Isolation
 
-- Pending commit after full frontend verification.
+- Committed as `deb9f5b8 Open external TypeScript navigation read only`.
 
 ## Next Slice: Queued didOpen Workspace-Tab Guard
 
