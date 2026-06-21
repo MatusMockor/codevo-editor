@@ -219,6 +219,10 @@ import {
 } from "../domain/phpLaravelEnv";
 import {
   isUsableLaravelTranslationLocale,
+  phpLaravelJsonTranslationCompletionInsertText,
+  phpLaravelJsonTranslationKeysFromSource,
+  phpLaravelJsonTranslationLocaleFromRelativePath,
+  phpLaravelJsonTranslationTargetFromSource,
   phpLaravelTranslationCompletionInsertText,
   phpLaravelTranslationFileNameFromKey,
   phpLaravelTranslationFileNameFromRelativePath,
@@ -8104,6 +8108,69 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const collectPhpLaravelJsonTranslationFiles = useCallback(async (): Promise<
+    Array<{ path: string; relativePath: string }>
+  > => {
+    const requestedRoot = workspaceRoot;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!isLaravelFrameworkActive || !requestedRoot) {
+      return [];
+    }
+
+    const files = new Map<string, { path: string; relativePath: string }>();
+
+    for (const translationBase of ["lang", "resources/lang"]) {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      try {
+        const entries = await workspaceFiles.readDirectory(
+          joinWorkspacePath(requestedRoot, translationBase),
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        for (const entry of entries) {
+          if (entry.kind === "directory") {
+            continue;
+          }
+
+          const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
+
+          if (!phpLaravelJsonTranslationLocaleFromRelativePath(relativePath)) {
+            continue;
+          }
+
+          const key = relativePath.toLowerCase();
+
+          if (!files.has(key)) {
+            files.set(key, {
+              path: entry.path,
+              relativePath,
+            });
+          }
+        }
+      } catch {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+      }
+    }
+
+    return Array.from(files.values()).sort((left, right) =>
+      left.relativePath.localeCompare(right.relativePath),
+    );
+  }, [
+    isLaravelFrameworkActive,
+    workspaceFiles,
+    workspaceRoot,
+  ]);
+
   const findPhpLaravelTranslationTarget = useCallback(
     async (
       translationKey: string,
@@ -8118,34 +8185,72 @@ export function useWorkbenchController(
 
       const fileName = phpLaravelTranslationFileNameFromKey(translationKey);
 
-      if (!fileName) {
-        return null;
+      if (fileName) {
+        const translationRoots = await collectPhpLaravelTranslationLocaleRoots();
+
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
+        for (const translationRoot of translationRoots) {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
+          const relativePath = `${translationRoot}/${fileName}.php`;
+          const path = joinWorkspacePath(requestedRoot, relativePath);
+
+          try {
+            const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
+            const target = phpLaravelTranslationTargetFromSource(
+              content,
+              fileName,
+              translationKey,
+            );
+
+            if (!target) {
+              continue;
+            }
+
+            return {
+              key: target.key,
+              path,
+              position: target.position,
+              relativePath,
+            };
+          } catch {
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+          }
+        }
       }
 
-      const translationRoots = await collectPhpLaravelTranslationLocaleRoots();
+      const jsonFiles = await collectPhpLaravelJsonTranslationFiles();
 
       if (!isRequestedRootActive()) {
         return null;
       }
 
-      for (const translationRoot of translationRoots) {
+      for (const jsonFile of jsonFiles) {
         if (!isRequestedRootActive()) {
           return null;
         }
 
-        const relativePath = `${translationRoot}/${fileName}.php`;
-        const path = joinWorkspacePath(requestedRoot, relativePath);
-
         try {
-          const content = await readNavigationFileContent(path);
+          const content = await readNavigationFileContent(jsonFile.path);
 
           if (!isRequestedRootActive()) {
             return null;
           }
 
-          const target = phpLaravelTranslationTargetFromSource(
+          const target = phpLaravelJsonTranslationTargetFromSource(
             content,
-            fileName,
             translationKey,
           );
 
@@ -8155,9 +8260,9 @@ export function useWorkbenchController(
 
           return {
             key: target.key,
-            path,
+            path: jsonFile.path,
             position: target.position,
-            relativePath,
+            relativePath: jsonFile.relativePath,
           };
         } catch {
           if (!isRequestedRootActive()) {
@@ -8169,6 +8274,7 @@ export function useWorkbenchController(
       return null;
     },
     [
+      collectPhpLaravelJsonTranslationFiles,
       collectPhpLaravelTranslationLocaleRoots,
       isLaravelFrameworkActive,
       readNavigationFileContent,
@@ -8266,6 +8372,45 @@ export function useWorkbenchController(
       }
     }
 
+    const jsonFiles = await collectPhpLaravelJsonTranslationFiles();
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    for (const jsonFile of jsonFiles) {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      try {
+        const content = await readNavigationFileContent(jsonFile.path);
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        for (const target of phpLaravelJsonTranslationKeysFromSource(content)) {
+          const key = target.key.toLowerCase();
+
+          if (targets.has(key)) {
+            continue;
+          }
+
+          targets.set(key, {
+            key: target.key,
+            path: jsonFile.path,
+            position: target.position,
+            relativePath: jsonFile.relativePath,
+          });
+        }
+      } catch {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+      }
+    }
+
     if (!isRequestedRootActive()) {
       return [];
     }
@@ -8274,6 +8419,7 @@ export function useWorkbenchController(
       left.key.localeCompare(right.key),
     );
   }, [
+    collectPhpLaravelJsonTranslationFiles,
     collectPhpLaravelTranslationLocaleRoots,
     isLaravelFrameworkActive,
     readNavigationFileContent,
@@ -12071,10 +12217,15 @@ export function useWorkbenchController(
           .slice(0, 80)
           .map((target) => ({
             declaringClassName: target.relativePath,
-            insertText: phpLaravelTranslationCompletionInsertText(
-              target.key,
-              translationContext.prefix,
-            ),
+            insertText: target.relativePath.endsWith(".json")
+              ? phpLaravelJsonTranslationCompletionInsertText(
+                  target.key,
+                  translationContext.prefix,
+                )
+              : phpLaravelTranslationCompletionInsertText(
+                  target.key,
+                  translationContext.prefix,
+                ),
             kind: "translation",
             name: target.key,
             parameters: "",

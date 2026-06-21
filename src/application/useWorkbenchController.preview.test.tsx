@@ -32131,6 +32131,71 @@ return [
     ]);
   });
 
+  it("suggests Laravel JSON translation keys inside translation helper strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace/lang";
+    const jsonPath = "/workspace/lang/es.json";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('I lo');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase ? [fileEntry(jsonPath, "es.json")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === jsonPath) {
+          return `{
+  "I love programming.": "Me encanta programar."
+}
+`;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "I lo"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "lang/es.json",
+        insertText: "love programming.",
+        kind: "translation",
+        name: "I love programming.",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("stops stale Laravel translation completions after switching project tabs", async () => {
     const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
     const langBase = "/workspace-a/lang";
@@ -32208,6 +32273,82 @@ class AppController
 return [
     'welcome' => 'Stale',
 ];
+`);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
+  it("stops stale Laravel JSON translation completions after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace-a/lang";
+    const jsonPath = "/workspace-a/lang/es.json";
+    const staleJsonRead = createDeferred<string>();
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('I lo');
+    }
+}
+`;
+    let jsonReadCount = 0;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase ? [fileEntry(jsonPath, "es.json")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === jsonPath) {
+          jsonReadCount += 1;
+          return staleJsonRead.promise;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "I lo"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(jsonReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleJsonRead.resolve(`{
+  "I love programming.": "Stale"
+}
 `);
 
     await expect(completionsPromise!).resolves.toEqual([]);
@@ -32373,6 +32514,86 @@ return [
       position: {
         column: 6,
         lineNumber: 4,
+      },
+    });
+  });
+
+  it("opens Laravel JSON translation keys before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace/lang";
+    const jsonPath = "/workspace/lang/es.json";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('I love programming.');
+    }
+}
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase ? [fileEntry(jsonPath, "es.json")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === jsonPath) {
+          return `{
+  "I love programming.": "Me encanta programar."
+}
+`;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "I love programming."),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(jsonPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: jsonPath,
+      position: {
+        column: 4,
+        lineNumber: 2,
       },
     });
   });

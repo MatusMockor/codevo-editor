@@ -8191,3 +8191,48 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Translation Lang Facade Calls
 
 - Committed as `3d1a5b6f Support Laravel Lang facade translation keys`.
+
+## Next Slice: Laravel JSON Translation Key Navigation And Completion
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5ce4a2b0 Record Laravel Lang facade commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel supports JSON translation files such as `lang/es.json` for sentence keys like `__('I love programming.')`.
+- The existing translation slice only covered PHP array files under locale directories.
+- JSON translation discovery/reads are asynchronous and must keep the same workspace-tab stale guards.
+
+### Implementation Choice
+
+- Relax translation helper string detection enough to support JSON sentence keys while still ignoring package namespace keys.
+- Add a top-level JSON object key scanner with decoded string keys and source positions.
+- Discover JSON translation files in `lang/{locale}.json` and `resources/lang/{locale}.json`.
+- Prefer PHP array targets when the key maps to a PHP array file; otherwise fall back to JSON files.
+- Use JSON-specific completion insert text so sentence keys work with Monaco's current-word replacement behavior.
+
+### Acceptance Criteria
+
+- Completion inside `__('I lo')` suggests `I love programming.` from `lang/es.json`.
+- Cmd+B on `__('I love programming.')` opens the JSON key before LSP fallback.
+- Stale workspace-tab JSON translation file reads return no stale suggestions.
+- Existing PHP-array translation behavior remains unchanged.
+- Focused domain/preview/provider tests, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel JSON Translation Key Navigation And Completion
+
+- `npm test -- src/domain/phpLaravelTranslations.test.ts` passed: 10 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JSON translation|Laravel translation"` passed: 10 passed, 383 skipped.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts` passed: 133 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 393 passed.
+- `npm run check` passed.
+- `npm test` passed: 69 files, 1048 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel JSON Translation Key Navigation And Completion
+
+- Pending commit.

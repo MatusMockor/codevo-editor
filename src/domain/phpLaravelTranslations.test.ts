@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   isUsableLaravelTranslationKey,
+  phpLaravelJsonTranslationCompletionInsertText,
+  phpLaravelJsonTranslationKeysFromSource,
+  phpLaravelJsonTranslationLocaleFromRelativePath,
+  phpLaravelJsonTranslationTargetFromSource,
   phpLaravelTranslationCompletionInsertText,
   phpLaravelTranslationFileNameFromKey,
   phpLaravelTranslationFileNameFromRelativePath,
@@ -59,9 +63,27 @@ return __('messages.welcome');
     }
   });
 
+  it("detects Laravel JSON sentence translation keys", () => {
+    const source = `<?php
+
+return __('I love programming.');
+`;
+
+    expect(
+      phpLaravelTranslationReferenceContextAt(
+        source,
+        positionAfter(source, "I love"),
+      ),
+    ).toMatchObject({
+      call: "__",
+      key: "I love programming.",
+      prefix: "I love",
+    });
+  });
+
   it("ignores interpolation, invalid keys, and non-translation calls", () => {
     const interpolated = `<?php\n\nreturn __("messages.$key");\n`;
-    const invalid = `<?php\n\nreturn __('messages..welcome');\n`;
+    const invalid = `<?php\n\nreturn __('vendor::messages.welcome');\n`;
     const wrongCall = `<?php\n\nreturn config('messages.welcome');\n`;
 
     expect(
@@ -73,7 +95,7 @@ return __('messages.welcome');
     expect(
       phpLaravelTranslationReferenceContextAt(
         invalid,
-        positionAfter(invalid, "messages."),
+        positionAfter(invalid, "messages.welcome"),
       ),
     ).toBeNull();
     expect(
@@ -104,6 +126,18 @@ return __('messages.welcome');
     ).toBeNull();
     expect(isUsableLaravelTranslationKey("messages.welcome")).toBe(true);
     expect(isUsableLaravelTranslationKey("messages.")).toBe(false);
+  });
+
+  it("maps JSON translation files by locale", () => {
+    expect(phpLaravelJsonTranslationLocaleFromRelativePath("lang/es.json")).toBe(
+      "es",
+    );
+    expect(
+      phpLaravelJsonTranslationLocaleFromRelativePath("resources/lang/sk.json"),
+    ).toBe("sk");
+    expect(
+      phpLaravelJsonTranslationLocaleFromRelativePath("lang/en/messages.php"),
+    ).toBeNull();
   });
 
   it("extracts nested PHP array translation keys", () => {
@@ -137,6 +171,30 @@ return [
     });
   });
 
+  it("extracts top-level JSON translation keys with positions", () => {
+    const source = `{
+  "I love programming.": "Me encanta programar.",
+  "Escaped \\"quote\\"": "Value",
+  "Nested value": { "ignored": true }
+}
+`;
+
+    expect(phpLaravelJsonTranslationKeysFromSource(source)).toEqual([
+      { key: "Escaped \"quote\"", position: { column: 4, lineNumber: 3 } },
+      { key: "I love programming.", position: { column: 4, lineNumber: 2 } },
+      { key: "Nested value", position: { column: 4, lineNumber: 4 } },
+    ]);
+    expect(
+      phpLaravelJsonTranslationTargetFromSource(
+        source,
+        "I love programming.",
+      ),
+    ).toEqual({
+      key: "I love programming.",
+      position: { column: 4, lineNumber: 2 },
+    });
+  });
+
   it("uses dotted-prefix suffix insert text", () => {
     expect(
       phpLaravelTranslationCompletionInsertText(
@@ -147,6 +205,18 @@ return [
     expect(
       phpLaravelTranslationCompletionInsertText("auth.failed", "auth."),
     ).toBe("failed");
+  });
+
+  it("uses current word suffix insert text for JSON translation keys", () => {
+    expect(
+      phpLaravelJsonTranslationCompletionInsertText(
+        "I love programming.",
+        "I love",
+      ),
+    ).toBe("love programming.");
+    expect(
+      phpLaravelJsonTranslationCompletionInsertText("Welcome back", "Wel"),
+    ).toBe("Welcome back");
   });
 });
 

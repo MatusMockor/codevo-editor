@@ -43,6 +43,12 @@ interface PhpArgumentContext {
   openParen: number;
 }
 
+interface ParsedJsonStringLiteral {
+  endOffset: number;
+  quoteStart: number;
+  value: string;
+}
+
 export function phpLaravelTranslationReferenceContextAt(
   source: string,
   position: EditorPosition,
@@ -61,8 +67,8 @@ export function phpLaravelTranslationReferenceContextAt(
   const key = literal.closed ? literal.value : prefix;
 
   if (
-    !isUsableLaravelTranslationKeyPrefix(prefix) ||
-    !isUsableLaravelTranslationKeyPrefix(key)
+    !isUsableLaravelTranslationReferencePrefix(prefix) ||
+    !isUsableLaravelTranslationReferencePrefix(key)
   ) {
     return null;
   }
@@ -90,7 +96,7 @@ export function phpLaravelTranslationReferenceContextAt(
 export function phpLaravelTranslationFileNameFromKey(
   translationKey: string,
 ): string | null {
-  if (!isUsableLaravelTranslationKey(translationKey)) {
+  if (!isUsableLaravelTranslationArrayKey(translationKey)) {
     return null;
   }
 
@@ -118,6 +124,16 @@ export function phpLaravelTranslationFileNameFromRelativePath(
     : null;
 }
 
+export function phpLaravelJsonTranslationLocaleFromRelativePath(
+  relativePath: string,
+): string | null {
+  const normalized = relativePath.split("\\").join("/").replace(/^\/+/, "");
+  const match = /^(?:resources\/)?lang\/([^/]+)\.json$/.exec(normalized);
+  const locale = match?.[1] ?? null;
+
+  return locale && isUsableLaravelTranslationLocale(locale) ? locale : null;
+}
+
 export function phpLaravelTranslationKeysFromSource(
   source: string,
   fileName: string,
@@ -133,6 +149,84 @@ export function phpLaravelTranslationTargetFromSource(
   return phpLaravelConfigTargetFromSource(source, fileName, translationKey);
 }
 
+export function phpLaravelJsonTranslationKeysFromSource(
+  source: string,
+): PhpLaravelTranslationSourceTarget[] {
+  const openOffset = source.indexOf("{");
+
+  if (openOffset < 0) {
+    return [];
+  }
+
+  const closeOffset = matchingJsonBracketOffset(source, openOffset, "{", "}");
+
+  if (closeOffset === null) {
+    return [];
+  }
+
+  const targets = new Map<string, PhpLaravelTranslationSourceTarget>();
+  let index = openOffset + 1;
+
+  while (index < closeOffset) {
+    index = skipJsonWhitespace(source, index, closeOffset);
+
+    if (index >= closeOffset) {
+      break;
+    }
+
+    const key = parseJsonStringLiteralAt(source, index);
+
+    if (!key) {
+      return [];
+    }
+
+    index = skipJsonWhitespace(source, key.endOffset, closeOffset);
+
+    if (source[index] !== ":") {
+      return [];
+    }
+
+    if (isUsableLaravelTranslationJsonKey(key.value) && !targets.has(key.value)) {
+      targets.set(key.value, {
+        key: key.value,
+        position: editorPositionAtOffset(source, key.quoteStart + 1),
+      });
+    }
+
+    index = skipJsonValue(source, index + 1, closeOffset);
+
+    if (index < 0) {
+      return [];
+    }
+
+    index = skipJsonWhitespace(source, index, closeOffset);
+
+    if (source[index] === ",") {
+      index += 1;
+      continue;
+    }
+
+    if (index < closeOffset) {
+      return [];
+    }
+  }
+
+  return Array.from(targets.values()).sort((left, right) =>
+    left.key.localeCompare(right.key),
+  );
+}
+
+export function phpLaravelJsonTranslationTargetFromSource(
+  source: string,
+  translationKey: string,
+): PhpLaravelTranslationSourceTarget | null {
+  return (
+    phpLaravelJsonTranslationKeysFromSource(source).find(
+      (target) => target.key === translationKey,
+    ) ?? null
+  );
+}
+
 export function phpLaravelTranslationCompletionInsertText(
   translationKey: string,
   prefix: string,
@@ -146,16 +240,33 @@ export function phpLaravelTranslationCompletionInsertText(
   return translationKey.slice(lastDotIndex + 1);
 }
 
+export function phpLaravelJsonTranslationCompletionInsertText(
+  translationKey: string,
+  prefix: string,
+): string {
+  const currentWordMatch = /[A-Za-z0-9_]*$/.exec(prefix);
+  const currentWordStart =
+    currentWordMatch?.index === undefined ? prefix.length : currentWordMatch.index;
+
+  return translationKey.slice(currentWordStart);
+}
+
 export function isUsableLaravelTranslationKey(
   translationKey: string,
 ): boolean {
+  return isUsableLaravelTranslationArrayKey(translationKey);
+}
+
+function isUsableLaravelTranslationArrayKey(
+  translationKey: string,
+): boolean {
   return (
-    isUsableLaravelTranslationKeyPrefix(translationKey) &&
+    isUsableLaravelTranslationArrayKeyPrefix(translationKey) &&
     !translationKey.endsWith(".")
   );
 }
 
-function isUsableLaravelTranslationKeyPrefix(translationKey: string): boolean {
+function isUsableLaravelTranslationArrayKeyPrefix(translationKey: string): boolean {
   return (
     translationKey.length > 0 &&
     /^[A-Za-z0-9_.-]+$/.test(translationKey) &&
@@ -170,6 +281,156 @@ function isUsableLaravelTranslationSegment(segment: string): boolean {
 
 export function isUsableLaravelTranslationLocale(locale: string): boolean {
   return /^[A-Za-z0-9_-]+$/.test(locale);
+}
+
+function isUsableLaravelTranslationReferencePrefix(
+  translationKey: string,
+): boolean {
+  return (
+    translationKey.length > 0 &&
+    !translationKey.includes("::") &&
+    !/[\r\n]/.test(translationKey)
+  );
+}
+
+function isUsableLaravelTranslationJsonKey(translationKey: string): boolean {
+  return (
+    isUsableLaravelTranslationReferencePrefix(translationKey) &&
+    !translationKey.trimStart().startsWith("{")
+  );
+}
+
+function parseJsonStringLiteralAt(
+  source: string,
+  offset: number,
+): ParsedJsonStringLiteral | null {
+  if (source[offset] !== "\"") {
+    return null;
+  }
+
+  for (let index = offset + 1; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+
+    if (character !== "\"") {
+      continue;
+    }
+
+    try {
+      const value = JSON.parse(source.slice(offset, index + 1)) as unknown;
+
+      if (typeof value !== "string") {
+        return null;
+      }
+
+      return {
+        endOffset: index + 1,
+        quoteStart: offset,
+        value,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function skipJsonValue(source: string, offset: number, limit: number): number {
+  let index = skipJsonWhitespace(source, offset, limit);
+
+  if (index >= limit) {
+    return -1;
+  }
+
+  const character = source[index] ?? "";
+
+  if (character === "\"") {
+    const literal = parseJsonStringLiteralAt(source, index);
+
+    return literal?.endOffset ?? -1;
+  }
+
+  if (character === "{") {
+    const closeOffset = matchingJsonBracketOffset(source, index, "{", "}");
+
+    return closeOffset === null ? -1 : closeOffset + 1;
+  }
+
+  if (character === "[") {
+    const closeOffset = matchingJsonBracketOffset(source, index, "[", "]");
+
+    return closeOffset === null ? -1 : closeOffset + 1;
+  }
+
+  while (index < limit && !/[,\]}]/.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  return index;
+}
+
+function matchingJsonBracketOffset(
+  source: string,
+  openOffset: number,
+  open: "{" | "[",
+  close: "}" | "]",
+): number | null {
+  let depth = 0;
+  let quote = false;
+
+  for (let index = openOffset; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === "\"") {
+        quote = false;
+      }
+
+      continue;
+    }
+
+    if (character === "\"") {
+      quote = true;
+      continue;
+    }
+
+    if (character === open) {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== close) {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth === 0) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function skipJsonWhitespace(source: string, offset: number, limit: number): number {
+  let index = offset;
+
+  while (index < limit && /\s/.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  return index;
 }
 
 function laravelTranslationReferenceCallAt(
