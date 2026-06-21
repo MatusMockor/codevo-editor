@@ -3185,4 +3185,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending implementation commit.
+- Committed as `b9dc8fe4 Recognize Laravel between query helpers`.
