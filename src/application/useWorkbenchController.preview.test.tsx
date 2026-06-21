@@ -966,6 +966,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(readDirectory).toHaveBeenCalledWith("/workspace-b");
     });
+    expect(getWorkbench().loadingDirectories.has("/workspace-a")).toBe(false);
 
     await act(async () => {
       workspaceADirectory.reject(new Error("stale directory load"));

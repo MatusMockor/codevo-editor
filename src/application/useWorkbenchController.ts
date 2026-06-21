@@ -2183,6 +2183,7 @@ export function useWorkbenchController(
     setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
     setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
     setEntriesByDirectory({});
+    setLoadingDirectories(new Set());
     setExpandedDirectories(new Set());
     setManuallyCollapsedDirectories(new Set());
     setDocuments({});
@@ -3188,6 +3189,7 @@ export function useWorkbenchController(
         setBottomPanelVisible(false);
       }
 
+      setLoadingDirectories(new Set());
       applyWorkspaceSettings(workspaceSettings);
       setIntelligenceMode(workspaceSettings.intelligenceMode);
       setWorkspaceDescriptor(null);
