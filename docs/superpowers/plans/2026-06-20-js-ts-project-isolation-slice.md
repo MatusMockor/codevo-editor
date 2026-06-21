@@ -8500,3 +8500,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Extract PHP String Argument Context Helper
 
 - Committed as `04746a30 Extract PHP string argument context helper`.
+
+## Next Slice: Laravel Cache Store Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8b3efbd8 Record PHP string argument helper commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel cache store names are configured under `config/cache.php` and commonly referenced through `Cache::store(...)`, `Cache::driver(...)`, and `cache()->store(...)`.
+- This is the Cache counterpart to Storage disk-name navigation and uses the shared PHP string argument helper plus the existing config target pipeline.
+
+### Implementation Choice
+
+- Add a focused Cache store string detector for supported Cache facade/helper calls and named arguments.
+- Map a store name to `cache.stores.<store>` for target lookup.
+- Suggest store names from exact `cache.stores.*` config targets and navigate to the store key in `config/cache.php`.
+
+### Verification: Laravel Cache Store Names
+
+- `npm test -- src/domain/phpLaravelCache.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Cache store"` passed: 2 passed, 403 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpLaravelCache.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 405 passed.
+- `npm test` passed: 71 files, 1068 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Cache Store Names
+
+- Committed as `62c80266 Add Laravel cache store navigation`.
