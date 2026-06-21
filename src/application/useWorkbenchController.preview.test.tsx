@@ -3378,6 +3378,42 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace");
   });
 
+  it("refreshes the PHP tree for index progress roots that only differ by a trailing slash", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      getWorkbench().setSidebarView("php");
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.phpTreeGateway.getPhpTree).mockClear();
+    vi.mocked(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).mockResolvedValueOnce({
+      databasePath: "/tmp/index.sqlite",
+      rootPath: "/workspace/",
+      status: "started",
+    });
+
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(dependencies.phpTreeGateway.getPhpTree).toHaveBeenCalledWith(
+      "/workspace",
+    );
+  });
+
   it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {

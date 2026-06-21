@@ -12619,7 +12619,10 @@ export function useWorkbenchController(
       return;
     }
 
-    if (indexProgress.rootPath && indexProgress.rootPath !== workspaceRoot) {
+    if (
+      indexProgress.rootPath &&
+      !workspaceRootKeysEqual(indexProgress.rootPath, workspaceRoot)
+    ) {
       return;
     }
 
@@ -12686,7 +12689,10 @@ export function useWorkbenchController(
       return;
     }
 
-    if (indexProgress.rootPath && indexProgress.rootPath !== workspaceRoot) {
+    if (
+      indexProgress.rootPath &&
+      !workspaceRootKeysEqual(indexProgress.rootPath, workspaceRoot)
+    ) {
       return;
     }
 
