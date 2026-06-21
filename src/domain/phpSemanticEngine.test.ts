@@ -1109,6 +1109,15 @@ class Comment extends Model
             ->orWhereColumn('published_at', 'updated_at')
             ->orWhereNotBetween('score', [0, 10])
             ->first();
+        $relationMethodLikeFilteredPost = $this->posts()
+            ->whereLike('title', '%Laravel%')
+            ->orWhereLike('summary', '%Laravel%')
+            ->whereNotLike('slug', '%draft%')
+            ->orWhereNotLike('body', '%deprecated%')
+            ->whereAny(['title', 'summary'], 'like', '%tips%')
+            ->whereAll(['title', 'summary'], 'like', '%Laravel%')
+            ->whereNone(['slug', 'body'], 'like', '%archived%')
+            ->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
@@ -1164,6 +1173,7 @@ class Comment extends Model
         $relationMethodReorderedPost->tit
         $relationMethodRawFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
+        $relationMethodLikeFilteredPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
@@ -1412,6 +1422,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodColumnFilteredPost->tit"),
         "relationMethodColumnFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodLikeFilteredPost->tit"),
+        "relationMethodLikeFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
