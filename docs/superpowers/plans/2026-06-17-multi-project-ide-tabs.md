@@ -1647,3 +1647,43 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `851d0527 Guard file rename errors by active workspace`.
+
+### Slice: File Delete Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `514ae83c Record file rename guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed file delete failures or success tails from a previous project tab from surfacing in the active workspace.
+
+#### Implementation Choice
+
+- Capture `requestedRoot` in `deleteActiveDocument`.
+- Re-check the active workspace root after filesystem delete, after JS/TS sync/watch notifications, and after directory refresh before mutating active UI state.
+- Replace the catch-side global Delete File report with `reportErrorForActiveWorkspaceRoot`.
+- Add a regression where `/workspace-a` starts deleting a file, the user switches to `/workspace-b`, and the stale `/workspace-a` rejection cannot create a Delete File notice in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale delete failures do not surface after switching project tabs.
+- Stale delete success tails do not close or message the active workspace after a tab switch.
+- Existing JS/TS delete notification ordering and rename stale guards still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale delete errors after switching project tabs|closes a JS TS document before notifying the service that its file was deleted|ignores stale rename errors after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `a0d482a4 Guard file delete errors by active workspace`.
