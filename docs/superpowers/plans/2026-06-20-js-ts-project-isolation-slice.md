@@ -9137,3 +9137,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Contextual Attribute Config Targets
 
 - Committed as `13a54801 Support Laravel contextual attribute config targets`.
+
+## Follow-up Slice: Harden Laravel Contextual Attribute Resolution
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c5e66695 Record Laravel contextual attribute commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- The contextual attribute slice recognized Laravel attributes by short name / FQCN-looking syntax.
+- That unlocked completions and Go to Definition, but it could also treat foreign attributes such as `App\Attributes\Auth` as Laravel container attributes.
+- PHP attribute names are class names, so this needed import-aware class resolution before broadening the feature further.
+
+### Implementation Choice
+
+- Extract class-name resolution from `phpNavigation.ts` into a low-level `phpClassNameResolution.ts` helper and re-export it from `phpNavigation.ts` for existing callers.
+- Resolve PHP attribute names through namespace, simple imports, grouped imports, and aliases.
+- Make Laravel contextual attribute detectors pass exact Laravel FQCNs:
+  - `Illuminate\Container\Attributes\Auth`
+  - `Illuminate\Container\Attributes\Cache`
+  - `Illuminate\Container\Attributes\Config`
+  - `Illuminate\Container\Attributes\DB`
+  - `Illuminate\Container\Attributes\Database`
+  - `Illuminate\Container\Attributes\Log`
+  - `Illuminate\Container\Attributes\Storage`
+- Reject foreign imported/FQCN attributes with the same short names.
+- Keep alias-positive behavior, including `DB as DatabaseConnection`, and derive the `#[DB]` / `#[Database]` call label from the resolved class rather than the syntactic alias.
+
+### Verification: Harden Laravel Contextual Attribute Resolution
+
+- `npm test -- src/domain/phpStringArgumentContext.test.ts src/domain/phpNavigation.test.ts src/domain/phpLaravelAuth.test.ts src/domain/phpLaravelCache.test.ts src/domain/phpLaravelConfig.test.ts src/domain/phpLaravelDatabase.test.ts src/domain/phpLaravelLog.test.ts src/domain/phpLaravelStorage.test.ts` passed: 8 files, 65 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel contextual attributes"` passed: 1 passed, 423 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 424 passed.
+- `npm test` passed: 80 files, 1134 tests.
+- `npm run check` passed.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Harden Laravel Contextual Attribute Resolution
+
+- Committed as `1e7db277 Harden Laravel contextual attribute resolution`.
