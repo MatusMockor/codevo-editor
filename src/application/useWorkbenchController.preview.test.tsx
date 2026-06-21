@@ -3495,6 +3495,76 @@ describe("useWorkbenchController preview tabs", () => {
       expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
       expect(getWorkbench().activeDocument?.content).not.toBe(formatted);
     });
+
+    it("flushes the pending JavaScript and TypeScript document change to the language server before requesting format-on-save edits", async () => {
+      const path = "/workspace/src/App.ts";
+      const unformatted = "export const value=2;\n";
+      const formatted = "export const value = 2;\n";
+      const featuresGatewayInstance = featuresGateway();
+      vi.mocked(featuresGatewayInstance.formatting).mockResolvedValue([
+        wholeDocumentReplacement(unformatted, formatted),
+      ]);
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptLanguageServerFeaturesGateway:
+          featuresGatewayInstance,
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        readTextFile: vi.fn(async () => "export const value=1;\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+        },
+      });
+      const syncGateway =
+        dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      // Type into the model but never let the 150ms debounce timer fire, so a
+      // pending didChange is still queued when the save is requested.
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      vi.mocked(syncGateway.didChange).mockClear();
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      // The pending edit must reach the server before formatting runs, otherwise
+      // the formatter operates on stale content.
+      expect(syncGateway.didChange).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({
+          path,
+          text: unformatted,
+        }),
+      );
+      expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
+        "/workspace",
+        path,
+        expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+      );
+      expect(
+        vi.mocked(syncGateway.didChange).mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        vi.mocked(featuresGatewayInstance.formatting).mock
+          .invocationCallOrder[0],
+      );
+    });
   });
 
   it("does not send PHP didSave after switching project tabs while didOpen is pending", async () => {

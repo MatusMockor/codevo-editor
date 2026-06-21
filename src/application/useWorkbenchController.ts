@@ -6139,6 +6139,18 @@ export function useWorkbenchController(
     ],
   );
 
+  const flushPendingDocumentChangeForFormatOnSave = useCallback(
+    async (plan: FormatOnSavePlan, path: string): Promise<void> => {
+      if (plan.provider === "javaScriptTypeScript") {
+        await flushPendingJavaScriptTypeScriptDocumentChange(path);
+        return;
+      }
+
+      await flushPendingDocumentChange(path);
+    },
+    [flushPendingDocumentChange, flushPendingJavaScriptTypeScriptDocumentChange],
+  );
+
   const formattedContentForSave = useCallback(
     async (
       document: EditorDocument,
@@ -6176,6 +6188,14 @@ export function useWorkbenchController(
           : isLanguageServerSessionActiveForRoot(requestedRoot, plan.sessionId);
 
       try {
+        // Flush any debounced document change so the language server formats the
+        // current content rather than the stale snapshot it last received.
+        await flushPendingDocumentChangeForFormatOnSave(plan, document.path);
+
+        if (!isRequestedSessionActive()) {
+          return document.content;
+        }
+
         const edits = await requestFormatOnSaveEdits(
           plan,
           requestedRoot,
@@ -6196,6 +6216,7 @@ export function useWorkbenchController(
       }
     },
     [
+      flushPendingDocumentChangeForFormatOnSave,
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       isLanguageServerSessionActiveForRoot,
       requestFormatOnSaveEdits,
