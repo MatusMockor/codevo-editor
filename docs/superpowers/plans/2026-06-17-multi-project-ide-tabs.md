@@ -1493,3 +1493,43 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `8fb6121a Guard workspace settings saves by active workspace`.
+
+### Slice: Directory Load Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9fea7410 Record workspace settings save guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed directory load results or failures from a previous project tab from updating the active workspace.
+
+#### Implementation Choice
+
+- Add `workspacePathBelongsToRoot` using normalized root keys and separator-boundary checks.
+- Gate `loadDirectory` success and error side effects on the requested directory still belonging to the active workspace root.
+- Keep loading cleanup keyed by directory path so stale in-flight reads can still clear their own loading marker.
+- Add a regression where `/workspace-a` directory loading remains pending, the user switches to `/workspace-b`, and the stale `/workspace-a` rejection cannot create a Workspace notice in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale directory load failures do not surface after switching project tabs.
+- Stale directory load successes do not write entries into the active workspace state.
+- Existing workspace detection and tab-switch persistence behavior still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale directory load errors after switching project tabs|ignores stale workspace detection errors after switching project tabs|switches between persisted project tabs without stopping another project runtime"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `5f98c6b0 Guard directory loads by active workspace`.
