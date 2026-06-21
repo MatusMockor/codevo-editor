@@ -419,3 +419,40 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `a78a36ba Guard PHP code actions without active workspace`.
+
+### Slice: PHP Selection Range Rootless Active Guard Coverage - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `232af060 Record PHP code action root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prove in-flight PHP selection range requests are dropped when the last project tab closes before the LSP response returns.
+
+#### Implementation Choice
+
+- Add a Monaco provider regression that starts a PHP selection range request under `/project`, clears the active workspace root before the gateway resolves, and verifies the stale result resolves to `null`.
+- Keep the gateway assertion pinned to the original `/project` request root, proving the provider captures request context while still rejecting the response after active-root loss.
+
+#### Acceptance Criteria
+
+- In-flight PHP selection ranges do not reach Monaco after `getWorkspaceRoot()` returns `null`.
+- Existing project-switch selection range guard still passes.
+- Generic PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "drops in-flight PHP selection ranges when no project tab is active|drops in-flight PHP selection ranges after switching project tabs"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `f67f3398 Cover PHP selection ranges without active workspace`.
