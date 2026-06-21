@@ -1808,3 +1808,43 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `91feabf0 Guard file saves by active workspace`.
+
+### Slice: Workspace Settings Rollback Active Root Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `caa4c082 Record file save guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed workspace-settings save failures from rolling back settings in a different active project tab.
+
+#### Implementation Choice
+
+- Make `persistWorkspaceSettings` apply optimistic settings and rollback only when the requested root is still active.
+- Capture `requestedRoot` in `setStatusBarItemVisibility`.
+- Replace the catch-side global Status Bar report with `reportErrorForActiveWorkspaceRoot`.
+- Add a regression where `/workspace-a` starts saving a status bar visibility change, the user switches to `/workspace-b`, updates the same setting there, and the stale `/workspace-a` rejection cannot roll back `/workspace-b` or create a Status Bar notice.
+
+#### Acceptance Criteria
+
+- Stale status-bar settings failures do not create notices after switching project tabs.
+- Stale settings rollbacks from a previous project tab do not mutate the newly active workspace settings.
+- Existing workspace settings and session persistence stale-error guards still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale status bar setting rollbacks after switching project tabs|ignores stale workspace settings save errors after switching project tabs|ignores stale session persistence errors after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `c6c30640 Guard workspace settings rollbacks by active root`.
