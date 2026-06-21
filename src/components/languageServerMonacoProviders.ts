@@ -220,10 +220,22 @@ export function registerLanguageServerMonacoProviders(
           provideReferences(monaco, context, model, position),
       })
     : { dispose: () => undefined };
+  const definition = monaco.languages.registerDefinitionProvider
+    ? monaco.languages.registerDefinitionProvider("php", {
+        provideDefinition: (model, position) =>
+          provideDefinition(monaco, context, model, position),
+      })
+    : { dispose: () => undefined };
   const declaration = monaco.languages.registerDeclarationProvider
     ? monaco.languages.registerDeclarationProvider("php", {
         provideDeclaration: (model, position) =>
           provideDeclaration(monaco, context, model, position),
+      })
+    : { dispose: () => undefined };
+  const implementation = monaco.languages.registerImplementationProvider
+    ? monaco.languages.registerImplementationProvider("php", {
+        provideImplementation: (model, position) =>
+          provideImplementation(monaco, context, model, position),
       })
     : { dispose: () => undefined };
   const typeDefinition = monaco.languages.registerTypeDefinitionProvider
@@ -244,7 +256,9 @@ export function registerLanguageServerMonacoProviders(
       selectionRange.dispose();
       rename.dispose();
       references.dispose();
+      definition.dispose();
       declaration.dispose();
+      implementation.dispose();
       typeDefinition.dispose();
     },
   };
@@ -385,6 +399,40 @@ async function provideDeclaration(
   );
 }
 
+async function provideDefinition(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  return provideNavigationLocations(
+    monaco,
+    context,
+    model,
+    position,
+    "definition",
+    (rootPath, requestPosition) =>
+      context.featuresGateway.definition(rootPath, requestPosition),
+  );
+}
+
+async function provideImplementation(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  return provideNavigationLocations(
+    monaco,
+    context,
+    model,
+    position,
+    "implementation",
+    (rootPath, requestPosition) =>
+      context.featuresGateway.implementation(rootPath, requestPosition),
+  );
+}
+
 async function provideTypeDefinition(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
@@ -407,7 +455,12 @@ async function provideNavigationLocations(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
-  feature: "declaration" | "references" | "typeDefinition",
+  feature:
+    | "declaration"
+    | "definition"
+    | "implementation"
+    | "references"
+    | "typeDefinition",
   requestLocations: (
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
@@ -1895,7 +1948,9 @@ function featureRequestContext(
   feature:
     | "completion"
     | "declaration"
+    | "definition"
     | "hover"
+    | "implementation"
     | "prepareRename"
     | "references"
     | "rename"
@@ -1920,7 +1975,9 @@ function featureDocumentRequestContext(
     | "codeAction"
     | "completion"
     | "declaration"
+    | "definition"
     | "hover"
+    | "implementation"
     | "prepareRename"
     | "references"
     | "rename"

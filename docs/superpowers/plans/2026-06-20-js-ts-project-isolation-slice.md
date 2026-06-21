@@ -7005,3 +7005,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Declaration And Type Definition Providers
 
 - Committed as `ec9d4110 Register PHP declaration type definition providers`.
+
+## Next Slice: PHP Monaco Definition And Implementation Providers
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `bfacd57e Record PHP declaration type definition provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, frontend gateway methods, and runtime capabilities already support `definition` and `implementation`.
+- The PHP Monaco provider still did not register definition or implementation providers, leaving core PhpStorm-like navigation unavailable from Monaco.
+- This follows directly from the completed declaration/type-definition slice and reuses the same root/session isolation mechanics.
+
+### Implementation Choice
+
+- Register optional PHP definition and implementation Monaco providers.
+- Reuse the shared PHP navigation provider flow for feature request context, pending document flush, active session guard, stale result dropping, error reporting, and location mapping.
+- Add focused provider tests for registration/disposal, successful mapping, capability gating, and stale async result dropping.
+
+### Acceptance Criteria
+
+- PHP definition provider routes to `featuresGateway.definition` and maps workspace locations.
+- PHP implementation provider routes to `featuresGateway.implementation` and maps workspace locations.
+- Disabled capabilities and stale root/session responses do not call or return stale results.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Definition And Implementation Providers
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "definition|implementation"` (8 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (74 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 911 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Definition And Implementation Providers
+
+- Pending commit after verification.
