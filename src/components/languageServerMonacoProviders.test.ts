@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import type {
   LanguageServerCompletionList,
+  LanguageServerDocumentHighlight,
   LanguageServerFeaturesGateway,
   LanguageServerHover,
   LanguageServerLocation,
@@ -18,7 +19,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation and type definition providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition and document highlight providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -44,6 +45,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.declarationLanguage).toBe("php");
     expect(registered.implementationLanguage).toBe("php");
     expect(registered.typeDefinitionLanguage).toBe("php");
+    expect(registered.documentHighlightLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
         "quickfix",
@@ -68,6 +70,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.declarationDispose).toHaveBeenCalled();
     expect(registered.implementationDispose).toHaveBeenCalled();
     expect(registered.typeDefinitionDispose).toHaveBeenCalled();
+    expect(registered.documentHighlightDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -3787,6 +3790,218 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("maps PHP document highlights with read, write and text kinds", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(3, 4, 3, 9),
+        },
+        {
+          kind: 3,
+          range: range(7, 8, 7, 13),
+        },
+        {
+          kind: null,
+          range: range(9, 0, 9, 5),
+        },
+        {
+          kind: 99,
+          range: range(11, 2, 11, 7),
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+      ),
+    ).resolves.toEqual([
+      {
+        kind: 2,
+        range: expect.objectContaining({
+          endColumn: 10,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        }),
+      },
+      {
+        kind: 3,
+        range: expect.objectContaining({
+          endColumn: 14,
+          endLineNumber: 8,
+          startColumn: 9,
+          startLineNumber: 8,
+        }),
+      },
+      {
+        kind: 1,
+        range: expect.objectContaining({
+          endColumn: 6,
+          endLineNumber: 10,
+          startColumn: 1,
+          startLineNumber: 10,
+        }),
+      },
+      {
+        kind: 1,
+        range: expect.objectContaining({
+          endColumn: 8,
+          endLineNumber: 12,
+          startColumn: 3,
+          startLineNumber: 12,
+        }),
+      },
+    ]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.documentHighlights).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
+  });
+
+  it("does not request PHP document highlights when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 2,
+          range: range(3, 4, 3, 9),
+        },
+      ],
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({ documentHighlight: false }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+      ),
+    ).resolves.toBeNull();
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.documentHighlights).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway({
+      documentHighlights: [
+        {
+          kind: 3,
+          range: range(7, 8, 7, 13),
+        },
+      ],
+    });
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+      ),
+    ).resolves.toBeNull();
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.documentHighlights).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP document highlights after async response", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionHighlights = createDeferred<LanguageServerDocumentHighlight[]>();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.documentHighlights).mockImplementationOnce(
+      async () => sessionHighlights.promise,
+    );
+    const sessionContext = providerContext({
+      featuresGateway: sessionGateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+    });
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      sessionContext,
+    );
+
+    const sessionPromise =
+      sessionRegistered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+      );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    sessionHighlights.resolve([
+      {
+        kind: 2,
+        range: range(3, 4, 3, 9),
+      },
+    ]);
+
+    await expect(sessionPromise).resolves.toBeNull();
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootHighlights = createDeferred<LanguageServerDocumentHighlight[]>();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.documentHighlights).mockImplementationOnce(
+      async () => rootHighlights.promise,
+    );
+    const rootContext = providerContext({
+      featuresGateway: rootGateway,
+      getWorkspaceRoot: () => activeRoot,
+    });
+    registerLanguageServerMonacoProviders(rootRegistered.monaco, rootContext);
+
+    const rootPromise =
+      rootRegistered.documentHighlightProvider.provideDocumentHighlights(
+        model(),
+        position(),
+      );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rootHighlights.resolve([
+      {
+        kind: 3,
+        range: range(7, 8, 7, 13),
+      },
+    ]);
+
+    await expect(rootPromise).resolves.toBeNull();
+  });
+
 });
 
 function createRegisteredProviders() {
@@ -3794,6 +4009,7 @@ function createRegisteredProviders() {
   const commandDispose = vi.fn();
   const declarationDispose = vi.fn();
   const definitionDispose = vi.fn();
+  const documentHighlightDispose = vi.fn();
   const hoverDispose = vi.fn();
   const implementationDispose = vi.fn();
   const referenceDispose = vi.fn();
@@ -3818,6 +4034,9 @@ function createRegisteredProviders() {
     definitionDispose: ReturnType<typeof vi.fn>;
     definitionLanguage: string | null;
     definitionProvider: any;
+    documentHighlightDispose: ReturnType<typeof vi.fn>;
+    documentHighlightLanguage: string | null;
+    documentHighlightProvider: any;
     hoverDispose: ReturnType<typeof vi.fn>;
     hoverLanguage: string | null;
     hoverProvider: any;
@@ -3856,6 +4075,9 @@ function createRegisteredProviders() {
     definitionDispose,
     definitionLanguage: null,
     definitionProvider: null,
+    documentHighlightDispose,
+    documentHighlightLanguage: null,
+    documentHighlightProvider: null,
     hoverDispose,
     hoverLanguage: null,
     hoverProvider: null,
@@ -3920,6 +4142,11 @@ function createRegisteredProviders() {
         Value: 12,
         Variable: 6,
       },
+      DocumentHighlightKind: {
+        Read: 2,
+        Text: 1,
+        Write: 3,
+      },
       registerCodeActionProvider: vi.fn((language, provider, metadata) => {
         registered.codeActionLanguage = language;
         registered.codeActionProvider = provider;
@@ -3940,6 +4167,11 @@ function createRegisteredProviders() {
         registered.definitionLanguage = language;
         registered.definitionProvider = provider;
         return { dispose: definitionDispose };
+      }),
+      registerDocumentHighlightProvider: vi.fn((language, provider) => {
+        registered.documentHighlightLanguage = language;
+        registered.documentHighlightProvider = provider;
+        return { dispose: documentHighlightDispose };
       }),
       registerHoverProvider: vi.fn((language, provider) => {
         registered.hoverLanguage = language;
@@ -4046,6 +4278,7 @@ function featuresGateway(
     completion: LanguageServerCompletionList;
     declaration: LanguageServerLocation[];
     definition: LanguageServerLocation[];
+    documentHighlights: LanguageServerDocumentHighlight[];
     documentSymbols: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
     >;
@@ -4087,7 +4320,7 @@ function featuresGateway(
     didChangeConfiguration: vi.fn(async () => undefined),
     didChangeWatchedFiles: vi.fn(async () => undefined),
     didRenameFiles: vi.fn(async () => undefined),
-    documentHighlights: vi.fn(async () => []),
+    documentHighlights: vi.fn(async () => responses.documentHighlights ?? []),
     documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => null),

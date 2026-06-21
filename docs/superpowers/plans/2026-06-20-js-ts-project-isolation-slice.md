@@ -7129,3 +7129,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS Document Symbol Deprecation Tags
 
 - Committed as `c413e09e Preserve JS TS document symbol tags`.
+
+## Next Slice: PHP Monaco Document Highlight Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `00a5cfa8 Record JS TS document symbol tag commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support `documentHighlight`.
+- The PHP Monaco provider did not register document highlights, so symbol occurrence highlighting was unavailable in PHP files.
+- PhpStorm-like PHP editing should surface read/write/text highlight information with the same root/session protection used by other PHP LSP providers.
+
+### Implementation Choice
+
+- Register an optional PHP document highlight Monaco provider.
+- Reuse existing PHP request context, pending document flush, runtime capability gate, active session guard, stale result dropping, and error reporting.
+- Map LSP highlight kinds to Monaco read/write/text highlight kinds.
+
+### Acceptance Criteria
+
+- PHP document highlights route to `featuresGateway.documentHighlights` and map ranges/kinds correctly.
+- Disabled capability and stale root/session responses do not call or return stale results.
+- Provider registration is optional and disposed with the rest of the PHP providers.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Document Highlight Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "document highlight|DocumentHighlight"` (4 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (77 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 920 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Document Highlight Provider
+
+- Pending commit after verification.

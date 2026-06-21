@@ -6,6 +6,7 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerDocumentHighlight,
   type LanguageServerFeaturesGateway,
   type LanguageServerLocation,
   type LanguageServerRange,
@@ -244,6 +245,12 @@ export function registerLanguageServerMonacoProviders(
           provideTypeDefinition(monaco, context, model, position),
       })
     : { dispose: () => undefined };
+  const documentHighlight = monaco.languages.registerDocumentHighlightProvider
+    ? monaco.languages.registerDocumentHighlightProvider("php", {
+        provideDocumentHighlights: (model, position) =>
+          provideDocumentHighlights(monaco, context, model, position),
+      })
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -260,6 +267,7 @@ export function registerLanguageServerMonacoProviders(
       declaration.dispose();
       implementation.dispose();
       typeDefinition.dispose();
+      documentHighlight.dispose();
     },
   };
 }
@@ -448,6 +456,46 @@ async function provideTypeDefinition(
     (rootPath, requestPosition) =>
       context.featuresGateway.typeDefinition(rootPath, requestPosition),
   );
+}
+
+async function provideDocumentHighlights(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.DocumentHighlight[] | null> {
+  const request = featureRequestContext(
+    context,
+    model,
+    position,
+    "documentHighlight",
+  );
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const highlights = await context.featuresGateway.documentHighlights(
+      request.rootPath,
+      request.position,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    return highlights.map((highlight) =>
+      toMonacoDocumentHighlight(monaco, highlight),
+    );
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
 }
 
 async function provideNavigationLocations(
@@ -934,6 +982,30 @@ function toMonacoLocation(
       uri: monaco.Uri.file(path),
     },
   ];
+}
+
+function toMonacoDocumentHighlight(
+  monaco: MonacoApi,
+  highlight: LanguageServerDocumentHighlight,
+): Monaco.languages.DocumentHighlight {
+  return {
+    kind: monacoDocumentHighlightKindFromLspKind(monaco, highlight.kind),
+    range: toMonacoRange(monaco, highlight.range),
+  };
+}
+
+function monacoDocumentHighlightKindFromLspKind(
+  monaco: MonacoApi,
+  kind: number | null,
+): Monaco.languages.DocumentHighlightKind {
+  switch (kind) {
+    case 2:
+      return monaco.languages.DocumentHighlightKind.Read;
+    case 3:
+      return monaco.languages.DocumentHighlightKind.Write;
+    default:
+      return monaco.languages.DocumentHighlightKind.Text;
+  }
 }
 
 function toMonacoTextEdit(
@@ -1949,6 +2021,7 @@ function featureRequestContext(
     | "completion"
     | "declaration"
     | "definition"
+    | "documentHighlight"
     | "hover"
     | "implementation"
     | "prepareRename"
@@ -1976,6 +2049,7 @@ function featureDocumentRequestContext(
     | "completion"
     | "declaration"
     | "definition"
+    | "documentHighlight"
     | "hover"
     | "implementation"
     | "prepareRename"
