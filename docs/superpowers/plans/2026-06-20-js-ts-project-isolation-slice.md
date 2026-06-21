@@ -4313,4 +4313,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP DidClose Active Workspace Guard
 
-- Pending commit.
+- Committed as `89ad8cbe Guard PHP didClose errors by active workspace`.
