@@ -6341,3 +6341,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `2f142c95 Guard stale Laravel morph map search`.
+
+## Slice: Stale Laravel Container Binding Search Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d0e15eb6 Record stale Laravel morph map guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale Laravel container binding searches from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root in `resolvePhpFrameworkBoundConcrete`.
+- Run binding text search against the requested root.
+- Guard before cache lookup, after text search, before and after provider reads, after failed reads, and before writing the framework binding cache.
+- Add a preview regression where repository completion inference from `/workspace-a` starts a delayed binding search, the workspace switches to `/workspace-b`, and the delayed search returns a service provider candidate.
+- Assert stale inference resolves without reading or caching the stale provider candidate.
+
+### Acceptance Criteria
+
+- Stale Laravel container binding searches stop after tab switch.
+- Stale binding inference does not read or cache provider files after workspace changes.
+- Existing Laravel container binding completion behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale Laravel container binding search"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -5802,7 +5802,15 @@ export function useWorkbenchController(
 
   const resolvePhpFrameworkBoundConcrete = useCallback(
     async (className: string): Promise<string | null> => {
-      if (!activePhpFrameworkProviders.length || !workspaceRoot) {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (
+        !activePhpFrameworkProviders.length ||
+        !requestedRoot ||
+        !isRequestedRootActive()
+      ) {
         return null;
       }
 
@@ -5826,13 +5834,22 @@ export function useWorkbenchController(
       let concreteClassName: string | null = null;
       const shortName = shortPhpName(normalizedClassName);
       const results = await textSearch.searchText(
-        workspaceRoot,
+        requestedRoot,
         `${shortName}::class`,
         200,
       );
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
       const visitedPaths = new Set<string>();
 
       for (const result of results) {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
         if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
           continue;
         }
@@ -5841,6 +5858,10 @@ export function useWorkbenchController(
 
         try {
           const content = await readNavigationFileContent(result.path);
+
+          if (!isRequestedRootActive()) {
+            return null;
+          }
 
           for (const binding of phpFrameworkContainerBindingsFromSource(
             content,
@@ -5866,12 +5887,20 @@ export function useWorkbenchController(
             }
           }
         } catch {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           continue;
         }
 
         if (concreteClassName) {
           break;
         }
+      }
+
+      if (!isRequestedRootActive()) {
+        return null;
       }
 
       if (concreteClassName) {

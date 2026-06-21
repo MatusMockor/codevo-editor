@@ -13701,6 +13701,158 @@ class Comment
     });
   });
 
+  it("stops stale Laravel container binding search after switching project tabs", async () => {
+    const controllerPath =
+      "/workspace-a/app/Http/Controllers/CommentController.php";
+    const providerPath = "/workspace-a/app/Providers/AppServiceProvider.php";
+    const repositoryInterfacePath =
+      "/workspace-a/app/Contracts/CommentRepositoryInterface.php";
+    const repositoryPath =
+      "/workspace-a/app/Repositories/EloquentCommentRepository.php";
+    const commentPath = "/workspace-a/app/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Http\\Requests\\GetOneCommentRequest;
+
+class CommentController
+{
+    public function __construct(
+        protected readonly CommentRepositoryInterface $commentRepository,
+    ) {}
+
+    public function getOne(GetOneCommentRequest $request): void
+    {
+        $comment = $this->commentRepository->findOrFail($request->getCommentId());
+        $comment->force
+    }
+}
+`;
+    const providerSource = `<?php
+namespace App\\Providers;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Repositories\\EloquentCommentRepository;
+
+class AppServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);
+    }
+}
+`;
+    const staleBindingSearch = createDeferred<TextSearchResult[]>();
+    const searchText = vi.fn(async (_root, query) =>
+      query === "CommentRepositoryInterface::class"
+        ? staleBindingSearch.promise
+        : [],
+    );
+    let providerReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          providerReadCount += 1;
+          return providerSource;
+        }
+
+        if (path === repositoryInterfacePath) {
+          return `<?php
+namespace App\\Contracts;
+
+interface CommentRepositoryInterface
+{
+}
+`;
+        }
+
+        if (path === repositoryPath) {
+          return `<?php
+namespace App\\Repositories;
+
+use App\\Contracts\\CommentRepositoryInterface;
+use App\\Models\\Comment;
+
+class EloquentCommentRepository implements CommentRepositoryInterface
+{
+    public function findOrFail(int $id): Comment
+    {
+    }
+}
+`;
+        }
+
+        if (path === commentPath) {
+          return `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function forceDelete(): bool
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    const completions = getWorkbench().providePhpMethodCompletions(
+      controllerSource,
+      positionAfter(controllerSource, "$comment->force"),
+    );
+    await vi.waitFor(() => {
+      expect(searchText).toHaveBeenCalledWith(
+        "/workspace-a",
+        "CommentRepositoryInterface::class",
+        200,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleBindingSearch.resolve([
+      {
+        column: 26,
+        lineNumber: 11,
+        lineText:
+          "        $this->app->bind(CommentRepositoryInterface::class, EloquentCommentRepository::class);",
+        path: providerPath,
+        relativePath: "app/Providers/AppServiceProvider.php",
+      },
+    ]);
+
+    await expect(completions).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(providerReadCount).toBe(0);
+  });
+
   it("refreshes Laravel container binding completions after editing service provider files", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const providerPath = "/workspace/app/Providers/AppServiceProvider.php";
