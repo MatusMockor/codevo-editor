@@ -2447,8 +2447,19 @@ function toMonacoDocumentSymbol(
     name: symbol.name,
     range: toMonacoRange(monaco, symbol.range),
     selectionRange: toMonacoRange(monaco, symbol.selectionRange),
-    tags: [],
+    tags: toMonacoDocumentSymbolTags(monaco, symbol.tags),
   };
+}
+
+function toMonacoDocumentSymbolTags(
+  monaco: MonacoApi,
+  tags: number[] | undefined,
+): Monaco.languages.SymbolTag[] {
+  return (tags ?? [])
+    .map((tag) =>
+      tag === 1 ? monaco.languages.SymbolTag.Deprecated : undefined,
+    )
+    .filter((tag): tag is Monaco.languages.SymbolTag => tag !== undefined);
 }
 
 function toMonacoWorkspaceSymbol(

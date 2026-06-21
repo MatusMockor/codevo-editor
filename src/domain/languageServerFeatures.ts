@@ -144,6 +144,7 @@ export interface LanguageServerDocumentSymbol {
   name: string;
   range: LanguageServerRange;
   selectionRange: LanguageServerRange;
+  tags?: number[];
 }
 
 export interface LanguageServerDocumentHighlight {

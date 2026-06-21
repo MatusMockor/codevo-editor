@@ -427,6 +427,7 @@ pub struct LanguageServerDocumentSymbol {
     pub name: String,
     pub range: LanguageServerRange,
     pub selection_range: LanguageServerRange,
+    pub tags: Vec<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1867,6 +1868,7 @@ fn parse_hierarchical_document_symbol(value: &Value) -> Option<LanguageServerDoc
     let kind = value.get("kind").and_then(Value::as_u64)? as u32;
     let range = serde_json::from_value(value.get("range")?.clone()).ok()?;
     let selection_range = serde_json::from_value(value.get("selectionRange")?.clone()).ok()?;
+    let tags = parse_document_symbol_tags(value);
     let children = value
         .get("children")
         .and_then(Value::as_array)
@@ -1889,6 +1891,7 @@ fn parse_hierarchical_document_symbol(value: &Value) -> Option<LanguageServerDoc
         name,
         range,
         selection_range,
+        tags,
     })
 }
 
@@ -1897,6 +1900,7 @@ fn parse_symbol_information(value: &Value) -> Option<LanguageServerDocumentSymbo
     let kind = value.get("kind").and_then(Value::as_u64)? as u32;
     let range: LanguageServerRange =
         serde_json::from_value(value.get("location")?.get("range")?.clone()).ok()?;
+    let tags = parse_document_symbol_tags(value);
 
     Some(LanguageServerDocumentSymbol {
         children: Vec::new(),
@@ -1909,7 +1913,21 @@ fn parse_symbol_information(value: &Value) -> Option<LanguageServerDocumentSymbo
         name,
         range: range.clone(),
         selection_range: range,
+        tags,
     })
+}
+
+fn parse_document_symbol_tags(value: &Value) -> Vec<u32> {
+    value
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter()
+                .filter_map(Value::as_u64)
+                .map(|tag| tag as u32)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_workspace_symbol(value: &Value) -> Option<LanguageServerWorkspaceSymbol> {
@@ -3854,6 +3872,7 @@ mod tests {
                     "start": { "line": 1, "character": 13 },
                     "end": { "line": 1, "character": 24 }
                 },
+                "tags": [1],
                 "children": [
                     {
                         "name": "loadUser",
@@ -3874,6 +3893,7 @@ mod tests {
                 "name": "createUser",
                 "kind": 12,
                 "containerName": "UserFactory",
+                "tags": [1],
                 "location": {
                     "uri": "file:///tmp/User.ts",
                     "range": {
@@ -3886,13 +3906,16 @@ mod tests {
         .expect("symbols");
 
         assert_eq!(symbols[0].name, "UserService");
+        assert_eq!(symbols[0].tags, vec![1]);
         assert_eq!(symbols[0].children[0].name, "loadUser");
+        assert_eq!(symbols[0].children[0].tags, Vec::<u32>::new());
         assert_eq!(
             symbols[0].children[0].detail.as_deref(),
             Some("(id: string)")
         );
         assert_eq!(symbols[1].container_name.as_deref(), Some("UserFactory"));
         assert_eq!(symbols[1].selection_range.start.line, 8);
+        assert_eq!(symbols[1].tags, vec![1]);
         assert_eq!(
             parse_document_symbols_result(&json!(null)).expect("null"),
             Vec::new()

@@ -7086,3 +7086,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Go To Declaration And Type Definition Commands
 
 - Committed as `61e10e8a Route PHP declaration type definition commands`.
+
+## Next Slice: JS/TS Document Symbol Deprecation Tags
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `92069fbc Record PHP declaration type definition command commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- JS/TS LSP document symbols can carry LSP symbol tags such as deprecated.
+- The backend/domain/provider path currently drops those tags and Monaco receives `tags: []`.
+- VS Code-like JS/TS symbol navigation should preserve deprecated symbol metadata when the language server provides it.
+
+### Implementation Choice
+
+- Preserve document-symbol tags in the Rust LSP parser for hierarchical `DocumentSymbol` and flat `SymbolInformation` responses.
+- Add optional document-symbol tags to the TypeScript domain model.
+- Map LSP document-symbol tag `1` to Monaco `SymbolTag.Deprecated` while keeping untagged/unknown-tag symbols stable.
+
+### Acceptance Criteria
+
+- JS/TS document symbols returned with `tags: [1]` reach Monaco as deprecated symbols.
+- Untagged symbols still map to `tags: []`.
+- Nested document symbols preserve parent/child tags independently.
+- Rust parser tests cover tags for hierarchical and flat symbol responses.
+- Focused JS/TS provider tests, focused Rust parser tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: JS/TS Document Symbol Deprecation Tags
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "document symbols"` (1 test)
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts` (63 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_features::tests::parses_hierarchical_and_flat_document_symbols` (1 test)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (311 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 917 tests)
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Document Symbol Deprecation Tags
+
+- Pending commit after verification.
