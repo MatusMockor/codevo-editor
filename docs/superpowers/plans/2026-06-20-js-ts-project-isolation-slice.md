@@ -5679,3 +5679,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Crash Dedupe Workspace Reset Guard
 
 - Committed as `6a704fb0 Reset PHP crash dedupe on workspace switches`.
+
+## Next Slice: Workspace Settings Clear Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `fd0df286 Record PHP crash dedupe reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 852 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Closing the last project tab reset `intelligenceMode`, but left `workspaceSettings` and `workspaceSettingsRef` from the closed workspace intact.
+- No-workspace UI and subsequent command paths could still observe the previous workspace's settings.
+
+### Implementation Choice
+
+- Reset workspace settings through `applyWorkspaceSettings(defaultWorkspaceSettings())` when clearing the active workspace.
+- Extend the last-tab-close regression with non-default workspace settings and assert default settings after close.
+
+### Acceptance Criteria
+
+- Closing the last project tab resets workspace settings state and ref to defaults.
+- Intelligence mode, JS/TS validation, and status bar settings no longer leak into the no-workspace state.
+- Existing workspace reset assertions remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Workspace Settings Clear Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (318 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 852 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Workspace Settings Clear Reset Guard
+
+- Committed as `8f369f44 Reset workspace settings on last tab close`.
