@@ -456,3 +456,42 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `f67f3398 Cover PHP selection ranges without active workspace`.
+
+### Slice: PHP Hover Active Workspace Loss Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9407ac56 Record PHP selection range root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent stale PHP hover responses from reaching Monaco after the active project tab closes or the workspace root changes mid-request.
+
+#### Implementation Choice
+
+- Re-check the captured request root after pending document flush and again after the PHP LSP hover response resolves.
+- Suppress stale hover errors once the request root is no longer the active workspace root.
+- Add a regression that starts a hover request under `/project`, clears the active workspace root before the delayed LSP response, and verifies Monaco receives `null`.
+
+#### Acceptance Criteria
+
+- PHP hover does not call the LSP gateway after active-root loss during flush.
+- PHP hover drops in-flight LSP responses after active-root loss.
+- Stale hover failures are not reported after the request root becomes inactive.
+- Generic PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "drops in-flight PHP hover when no project tab is active|flushes pending changes and maps hover responses"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `57b94029 Guard PHP hover after workspace loss`.
