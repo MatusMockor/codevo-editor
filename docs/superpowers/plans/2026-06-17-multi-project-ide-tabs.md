@@ -1454,3 +1454,42 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `53893690 Guard workspace trust toggles by active workspace`.
+
+### Slice: Workspace Settings Save Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e77b13db Record workspace trust toggle guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed workspace settings save failures or follow-up side effects from a previous project tab from changing the active workspace UI.
+
+#### Implementation Choice
+
+- Capture `requestedRoot` at the start of `saveWorkbenchSettings`.
+- Use the captured root for runtime-policy cleanup, workspace settings persistence, JS/TS configuration/runtime refresh, workspace trust changes, PHP plan refresh, and index start/clear actions.
+- Re-check the active workspace root before applying saved mode state, trust results, final success message, or reporting Settings errors.
+- Add a regression where `/workspace-a` starts a workspace settings save, the user switches to `/workspace-b`, and the stale `/workspace-a` rejection cannot create a Settings notice in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale workspace settings save failures do not surface after switching project tabs.
+- Existing JS/TS configuration notification behavior still passes.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale workspace settings save errors after switching project tabs|ignores stale JavaScript and TypeScript configuration errors after same-root session restart|notifies the running JavaScript and TypeScript language service when workspace settings change"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `8fb6121a Guard workspace settings saves by active workspace`.
