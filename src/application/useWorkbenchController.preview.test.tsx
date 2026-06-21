@@ -20015,6 +20015,103 @@ class Builder
     ).resolves.toEqual([]);
   });
 
+  it("stops stale PHP collection model type traversal after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AlbumController.php";
+    const collectionPath = "/workspace-a/app/Collections/AlbumCollection.php";
+    const workspaceBBaseCollectionPath =
+      "/workspace-b/app/Collections/BaseAlbumCollection.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Collections\\AlbumCollection;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        /** @var AlbumCollection $customAlbums */
+        $customAlbum = $customAlbums->first();
+        $customAlbum->get
+    }
+}
+`;
+    const staleCollectionRead = createDeferred<string>();
+    let collectionReadCount = 0;
+    let workspaceBBaseCollectionReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === collectionPath) {
+          collectionReadCount += 1;
+          return staleCollectionRead.promise;
+        }
+
+        if (path === workspaceBBaseCollectionPath) {
+          workspaceBBaseCollectionReadCount += 1;
+          return `<?php
+namespace App\\Collections;
+
+/** @phpstan-extends \\Illuminate\\Database\\Eloquent\\Collection<int, \\App\\Models\\Album> */
+class BaseAlbumCollection
+{
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AlbumController.php"),
+      );
+    });
+
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    await act(async () => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$customAlbum->get"),
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(collectionReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleCollectionRead.resolve(`<?php
+namespace App\\Collections;
+
+class AlbumCollection extends BaseAlbumCollection
+{
+}
+`);
+
+    expect(completionsPromise).not.toBeNull();
+    await expect(completionsPromise).resolves.toEqual([]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(workspaceBBaseCollectionReadCount).toBe(0);
+  });
+
   it("infers Laravel relation query callback builders", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AlbumController.php";
     const albumPath = "/workspace/app/Models/Album.php";

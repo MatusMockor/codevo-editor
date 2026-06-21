@@ -5937,3 +5937,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `c3583f1a Guard stale PHP property relation traversal`.
+
+## Slice: Stale PHP Collection Model Type Traversal Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6aea1328 Record stale PHP property relation guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP collection model type traversal from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `resolvePhpCollectionModelTypeFromClass`.
+- Guard before class source reads, after collection source reads, after parent collection recursion, after failed reads, and before returning the resolved model type.
+- Add a preview regression where method completions start from a documented `AlbumCollection` variable in `/workspace-a`, the collection class read is delayed, the workspace switches to `/workspace-b`, and the delayed source extends `BaseAlbumCollection`.
+- Assert the stale completion request returns no suggestions and does not continue into `/workspace-b` base collection reads.
+
+### Acceptance Criteria
+
+- Stale PHP collection model type traversal stops after tab switch.
+- Stale collection completion requests do not start inherited collection reads in the newly active workspace.
+- Existing Laravel collection model completion behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP collection model type traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

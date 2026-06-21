@@ -8692,7 +8692,12 @@ export function useWorkbenchController(
 
   const resolvePhpCollectionModelTypeFromClass = useCallback(
     async (className: string): Promise<string | null> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return null;
       }
 
@@ -8712,11 +8717,24 @@ export function useWorkbenchController(
 
         visitedClassNames.add(visitedKey);
 
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
         for (const path of await resolvePhpClassSourcePaths(
           normalizedClassName,
         )) {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           try {
             const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             const genericModelType =
               phpClassDocGenericCollectionModelTypeCandidate(content);
             const resolvedGenericModelType = genericModelType
@@ -8735,18 +8753,36 @@ export function useWorkbenchController(
               ? await resolveCollection(resolvedParentClassName)
               : null;
 
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             if (parentModelType) {
               return parentModelType;
             }
           } catch {
+            if (!isRequestedRootActive()) {
+              return null;
+            }
+
             continue;
           }
+        }
+
+        if (!isRequestedRootActive()) {
+          return null;
         }
 
         return null;
       };
 
-      return resolveCollection(className);
+      const modelType = await resolveCollection(className);
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      return modelType;
     },
     [
       readNavigationFileContent,
