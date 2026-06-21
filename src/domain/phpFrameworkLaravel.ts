@@ -1565,6 +1565,7 @@ export function phpLaravelMorphMapEntriesFromSource(
     }
 
     const mapBody = phpLaravelMorphMapArrayBody(
+      source,
       source.slice(openOffset + 1, closeOffset),
     );
 
@@ -1603,7 +1604,10 @@ function phpLaravelRelationClassReference(
   );
 }
 
-function phpLaravelMorphMapArrayBody(argumentsSource: string): string | null {
+function phpLaravelMorphMapArrayBody(
+  source: string,
+  argumentsSource: string,
+): string | null {
   for (const [index, argument] of splitPhpParameterList(
     argumentsSource,
   ).entries()) {
@@ -1624,6 +1628,75 @@ function phpLaravelMorphMapArrayBody(argumentsSource: string): string | null {
 
     if (body !== null) {
       return body;
+    }
+
+    const constantBody = phpLaravelMorphMapArrayConstantBody(source, value);
+
+    if (constantBody !== null) {
+      return constantBody;
+    }
+  }
+
+  return null;
+}
+
+function phpLaravelMorphMapArrayConstantBody(
+  source: string,
+  expression: string,
+): string | null {
+  const declaringClassName = phpLaravelClassNameContainingExpression(
+    source,
+    expression,
+  );
+
+  if (!declaringClassName) {
+    return null;
+  }
+
+  const value = stripOuterParentheses(expression.trim());
+  const constantMatch =
+    /^((?:self|static|parent|\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*(?!class\b)([A-Za-z_][A-Za-z0-9_]*)$/i.exec(
+      value,
+    );
+  const ownerName = constantMatch?.[1]?.replace(/^\\+/, "") ?? null;
+  const constantName = constantMatch?.[2] ?? null;
+  const ownerClassName =
+    ownerName && constantName
+      ? phpClassNameForConstantExpression(source, declaringClassName, ownerName)
+      : null;
+
+  if (!ownerClassName || !constantName) {
+    return null;
+  }
+
+  const body = phpClassBodyForClassName(source, ownerClassName);
+
+  if (!body) {
+    return null;
+  }
+
+  for (const statement of phpClassConstStatements(body)) {
+    for (const item of splitPhpParameterList(statement)) {
+      const assignmentMatch =
+        /^(?:[\s\S]*\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]+)$/.exec(
+          item.trim(),
+        );
+      const name = assignmentMatch?.[1] ?? null;
+      const constantValue = assignmentMatch?.[2]?.trim() ?? null;
+
+      if (
+        !name ||
+        !constantValue ||
+        name.toLowerCase() !== constantName.toLowerCase()
+      ) {
+        continue;
+      }
+
+      const constantBody = phpArrayExpressionBody(constantValue);
+
+      if (constantBody !== null) {
+        return constantBody;
+      }
     }
   }
 

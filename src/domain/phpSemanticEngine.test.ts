@@ -2208,6 +2208,75 @@ class Post extends Model
     ).toBe("App\\Models\\Post");
   });
 
+  it("resolves Laravel morph maps from local array constants", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+use Illuminate\\Database\\Eloquent\\Relations\\Relation;
+
+class AppServiceProvider
+{
+    private const MORPH_MAP = [
+        'post' => Post::class,
+    ];
+
+    public function boot(): void
+    {
+        Relation::morphMap(self::MORPH_MAP);
+    }
+}
+
+class Comment extends Model
+{
+    public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+
+    public function preview(Comment $comment): void
+    {
+        $fromProperty = $comment->commentable;
+        $fromTerminal = $this->morphTo()->first();
+
+        $fromProperty->tit
+        $fromTerminal->tit
+        $comment->commentable->tit
+    }
+}
+
+class Post extends Model
+{
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$comment->commentable->tit"),
+        "$comment->commentable",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromProperty->tit"),
+        "fromProperty",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$fromTerminal->tit"),
+        "fromTerminal",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+  });
+
   it("resolves Laravel repository builder chains from model return expressions", () => {
     const source = `<?php
 namespace App\\Models;
