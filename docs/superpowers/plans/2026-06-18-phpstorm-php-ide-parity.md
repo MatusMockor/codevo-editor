@@ -7052,3 +7052,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `3e3c90ff Guard MorphTo display unions from relation inference`.
+
+## Slice: JavaScript TypeScript Navigation Keymap Binding - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `95ba5955 Record MorphTo display union inference guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Make JS/TS Source Definition, Declaration, and Type Definition commands keyboard-bindable, not only command-palette runnable.
+
+### Implementation Choice
+
+- Add editable keymap entries for `editor.goToSourceDefinition`, `editor.goToDeclaration`, and `editor.goToTypeDefinition`.
+- Use empty default shortcuts to avoid introducing new shortcut conflicts.
+- Surface configured shortcuts in the command registry.
+- Dispatch configured shortcuts through the global keydown handler.
+
+### Acceptance Criteria
+
+- The three JS/TS navigation commands appear in keymap settings.
+- Persisted user shortcuts for those commands can be normalized and matched.
+- Configured shortcuts invoke the corresponding workbench command.
+- Keymap tests, focused JS/TS command tests, full test suite, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/keymap.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript and TypeScript source definition|JavaScript and TypeScript declaration|JavaScript and TypeScript type definition"`
+- PASS: `npm run check`
+- PASS: `npm test`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

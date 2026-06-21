@@ -13879,6 +13879,7 @@ export function useWorkbenchController(
       id: "editor.goToSourceDefinition",
       title: "Go to Source Definition",
       category: "Editor",
+      shortcut: shortcut("editor.goToSourceDefinition"),
       isEnabled: () =>
         Boolean(activeDocument) &&
         Boolean(
@@ -13901,6 +13902,7 @@ export function useWorkbenchController(
       id: "editor.goToDeclaration",
       title: "Go to Declaration",
       category: "Editor",
+      shortcut: shortcut("editor.goToDeclaration"),
       isEnabled: () =>
         Boolean(activeDocument) &&
         Boolean(
@@ -13923,6 +13925,7 @@ export function useWorkbenchController(
       id: "editor.goToTypeDefinition",
       title: "Go to Type Definition",
       category: "Editor",
+      shortcut: shortcut("editor.goToTypeDefinition"),
       isEnabled: () =>
         Boolean(activeDocument) &&
         Boolean(
@@ -14856,6 +14859,24 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.goToSourceDefinition")) {
+        event.preventDefault();
+        void goToSourceDefinition();
+        return;
+      }
+
+      if (matches("editor.goToDeclaration")) {
+        event.preventDefault();
+        void goToDeclaration();
+        return;
+      }
+
+      if (matches("editor.goToTypeDefinition")) {
+        event.preventDefault();
+        void goToTypeDefinition();
+        return;
+      }
+
       if (matches("editor.goToImplementation")) {
         event.preventDefault();
         void goToImplementation();
@@ -14918,8 +14939,11 @@ export function useWorkbenchController(
   }, [
     closeActiveSurface,
     closeFloatingSurface,
+    goToDeclaration,
     goToDefinition,
     goToImplementation,
+    goToSourceDefinition,
+    goToTypeDefinition,
     navigateBackward,
     navigateForwardInHistory,
     openFileStructure,

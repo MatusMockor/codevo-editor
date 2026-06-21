@@ -19,6 +19,24 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "",
+    id: "editor.goToSourceDefinition",
+    label: "Go to Source Definition",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.goToDeclaration",
+    label: "Go to Declaration",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.goToTypeDefinition",
+    label: "Go to Type Definition",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+Alt+B",
     id: "editor.goToImplementation",
     label: "Go to Implementation",
