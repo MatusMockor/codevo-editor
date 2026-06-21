@@ -9059,3 +9059,36 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 - Committed as `1c0ce445 Support Laravel model connection navigation`.
 - Follow-up committed as `ea00168f Harden Laravel model connection detection`.
+
+## Next Slice: Laravel Config-Derived Scoped Completions
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8c23037b Record Laravel model connection hardening`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- The newly added Laravel config-derived string contexts were handled by the workbench controller, but Monaco scoped-completion checks still only recognized the older relation/config/env/translation/view contexts.
+- Without the scoped checks, IDE-readiness retriggering and local-variable fallback suppression could be inconsistent in strings such as `Auth::guard('ad')` or model `$connection = 'my'`.
+
+### Implementation Choice
+
+- Add a shared `phpLaravelScopedStringCompletionContextAt(...)` helper that recognizes named routes, relation strings, and every Laravel config-derived string context.
+- Use that helper in both `EditorSurface` readiness retriggering and Monaco completion fallback suppression.
+- Add focused component tests for Laravel scoped strings.
+
+### Verification: Laravel Config-Derived Scoped Completions
+
+- `npm test -- src/components/EditorSurface.test.tsx -t "Laravel scoped strings"` passed: 1 passed, 18 skipped.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts -t "Laravel scoped strings"` passed: 1 passed, 133 skipped.
+- `npm run check` passed.
+- `npm test -- src/components/EditorSurface.test.tsx src/components/languageServerMonacoProviders.test.ts` passed: 153 passed.
+- `npm test` passed: 80 files, 1128 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Config-Derived Scoped Completions
+
+- Committed as `603304b7 Scope Laravel config-derived completions in Monaco`.
