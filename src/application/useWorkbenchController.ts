@@ -12476,6 +12476,30 @@ export function useWorkbenchController(
             return;
           }
 
+          if (
+            isLanguageServerActive(status) &&
+            !isLanguageServerActiveForWorkspace(
+              status,
+              status.rootPath ?? null,
+              requestedRoot,
+            )
+          ) {
+            if (
+              workspaceRootKeysEqual(
+                autoStartedJavaScriptTypeScriptLanguageServerRootRef.current,
+                requestedRoot,
+              )
+            ) {
+              autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
+            }
+
+            handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
+              runtimeStatusForRequestedRoot(status, requestedRoot),
+              requestedRoot,
+            );
+            return;
+          }
+
           handleJavaScriptTypeScriptLanguageServerRuntimeStatus(
             status,
             requestedRoot,

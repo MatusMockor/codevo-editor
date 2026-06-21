@@ -3868,3 +3868,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Autostart Direct Status Root Guard
 
 - Committed as `d4a6a98e Guard PHP autostart direct roots`.
+
+## Next Slice: JS/TS Autostart Direct Status Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `62b339a2 Record PHP autostart root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- JS/TS autostart already rejects rootless status probes and rootless restart responses.
+- The direct `start(requestedRoot)` autostart response still flowed into the runtime handler unchanged.
+- A malformed rootless or mismatched active `start()` response could be ignored by the handler while leaving the JS/TS autostart marker set, so the workspace would not retry and would not get a usable rooted runtime status.
+
+### Implementation Choice
+
+- Keep rooted direct `start()` responses flowing through the existing runtime handler.
+- When direct JS/TS autostart returns an active status that does not explicitly belong to the requested root, clear the autostart marker and pass a safe requested-root `stopped` status through the existing handler.
+- Use the resulting state change to let the existing autostart effect retry without adding a separate retry loop.
+
+### Acceptance Criteria
+
+- Rooted JS/TS autostart `running` responses still activate the workspace.
+- Rootless active JS/TS autostart responses do not mark the workspace as settled and allow a follow-up rooted `start()` response to activate.
+- Focused JS/TS autostart preview tests, full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: JS/TS Autostart Direct Status Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript and TypeScript autostart|rootless JavaScript and TypeScript status probe"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`

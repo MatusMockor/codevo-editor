@@ -3683,6 +3683,79 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("retries JavaScript and TypeScript autostart after a rootless running response", async () => {
+    const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
+      command: {
+        args: ["--stdio"],
+        executable: "typescript-language-server",
+        workingDirectory: "/workspace",
+      },
+      initializeRequest: {
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {},
+      },
+      message: "TypeScript language server is ready.",
+      provider: "typeScriptLanguageServer",
+      status: "ready",
+    };
+    const rootlessRunningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 67,
+    };
+    const rootedRunningStatus: LanguageServerRuntimeStatus = {
+      ...rootlessRunningStatus,
+      rootPath: "/workspace",
+      sessionId: 68,
+    };
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi
+          .fn<LanguageServerRuntimeGateway["start"]>(
+            async () => rootedRunningStatus,
+          )
+          .mockResolvedValueOnce(rootlessRunningStatus),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      };
+
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(36);
+
+    expect(
+      javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledTimes(2);
+    expect(getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 68,
+      }),
+    );
+  });
+
   it("starts JavaScript and TypeScript language service lazily for inferred workspaces", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
