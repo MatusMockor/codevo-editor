@@ -22,7 +22,10 @@ describe("phpLaravelLog", () => {
     ] as const;
 
     for (const [expression, call] of samples) {
-      const source = `<?php\n\nreturn ${expression};\n`;
+      const imports = expression.startsWith("#[Log(")
+        ? "use Illuminate\\Container\\Attributes\\Log;\n\n"
+        : "";
+      const source = `<?php\n\n${imports}return ${expression};\n`;
 
       expect(
         phpLaravelLogChannelReferenceContextAt(
@@ -35,6 +38,25 @@ describe("phpLaravelLog", () => {
         prefix: "slack",
       });
     }
+
+    const aliasedAttribute = `<?php
+
+use Illuminate\\Container\\Attributes\\Log as LogChannel;
+
+#[LogChannel('slack')]
+class LoggerConsumer {}
+`;
+
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        aliasedAttribute,
+        positionAfter(aliasedAttribute, "slack"),
+      ),
+    ).toMatchObject({
+      call: "#[Log]",
+      channelName: "slack",
+      prefix: "slack",
+    });
   });
 
   it("detects Laravel Log stack channel array strings", () => {
@@ -85,8 +107,9 @@ Log::stack(channels: ['daily']);
     const stackNamedChannel = `<?php\n\nLog::stack(['single'], channel: 'slack');\n`;
     const stackKey = `<?php\n\nLog::stack(['slack' => true]);\n`;
     const stackWrongNamedArg = `<?php\n\nLog::stack(name: ['slack']);\n`;
-    const wrongAttributeArgument = `<?php\n\n#[Log(name: 'slack')]\nclass LoggerConsumer {}\n`;
+    const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Log;\n\n#[Log(name: 'slack')]\nclass LoggerConsumer {}\n`;
     const nestedAttributeCall = `<?php\n\n#[Example(Log('slack'))]\nclass LoggerConsumer {}\n`;
+    const foreignAttribute = `<?php\n\nuse App\\Attributes\\Log;\n\n#[Log('slack')]\nclass LoggerConsumer {}\n`;
 
     expect(
       phpLaravelLogChannelReferenceContextAt(
@@ -146,6 +169,12 @@ Log::stack(channels: ['daily']);
       phpLaravelLogChannelReferenceContextAt(
         nestedAttributeCall,
         positionAfter(nestedAttributeCall, "slack"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        foreignAttribute,
+        positionAfter(foreignAttribute, "slack"),
       ),
     ).toBeNull();
   });

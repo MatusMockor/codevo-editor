@@ -31929,14 +31929,14 @@ return [
     const authConfigPath = "/workspace/config/auth.php";
     const controllerSource = `<?php
 
-use Illuminate\\Container\\Attributes\\Auth;
+use Illuminate\\Container\\Attributes\\Auth as GuardAttribute;
 use Illuminate\\Container\\Attributes\\Config;
 
 class AttributeController
 {
     public function __construct(
         #[Config('app.na')] private string $name,
-        #[Auth('admin')] private mixed $guard,
+        #[GuardAttribute('admin')] private mixed $guard,
     ) {
     }
 }
@@ -32031,7 +32031,7 @@ return [
 
     act(() => {
       getWorkbench().updateActiveEditorPosition(
-        positionAfter(controllerSource, "Auth('admin"),
+        positionAfter(controllerSource, "GuardAttribute('admin"),
       );
     });
 

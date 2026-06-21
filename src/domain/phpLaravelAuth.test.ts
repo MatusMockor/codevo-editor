@@ -40,7 +40,10 @@ describe("phpLaravelAuth", () => {
     ] as const;
 
     for (const [expression, call] of samples) {
-      const source = `<?php\n\nreturn ${expression};\n`;
+      const imports = expression.startsWith("#[Auth(")
+        ? "use Illuminate\\Container\\Attributes\\Auth;\n\n"
+        : "";
+      const source = `<?php\n\n${imports}return ${expression};\n`;
 
       expect(
         phpLaravelAuthGuardReferenceContextAt(
@@ -53,6 +56,25 @@ describe("phpLaravelAuth", () => {
         prefix: "admin",
       });
     }
+
+    const aliasedAttribute = `<?php
+
+use Illuminate\\Container\\Attributes\\Auth as GuardAttribute;
+
+#[GuardAttribute('admin')]
+class Controller {}
+`;
+
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        aliasedAttribute,
+        positionAfter(aliasedAttribute, "admin"),
+      ),
+    ).toMatchObject({
+      call: "#[Auth]",
+      guardName: "admin",
+      prefix: "admin",
+    });
   });
 
   it("ignores unsupported arguments, interpolation, invalid names, and non-auth calls", () => {
@@ -69,8 +91,9 @@ describe("phpLaravelAuth", () => {
     const wrongHelperMember = `<?php\n\n$manager->auth('admin');\n`;
     const genericUserMember = `<?php\n\n$userRepository->user('admin');\n`;
     const wrongRequestUserArgument = `<?php\n\n$request->user(name: 'admin');\n`;
-    const wrongAttributeArgument = `<?php\n\n#[Auth(name: 'admin')]\nclass Controller {}\n`;
+    const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Auth;\n\n#[Auth(name: 'admin')]\nclass Controller {}\n`;
     const nestedAttributeCall = `<?php\n\n#[Example(Auth('admin'))]\nclass Controller {}\n`;
+    const foreignAttribute = `<?php\n\nuse App\\Attributes\\Auth;\n\n#[Auth('admin')]\nclass Controller {}\n`;
 
     expect(
       phpLaravelAuthGuardReferenceContextAt(
@@ -160,6 +183,12 @@ describe("phpLaravelAuth", () => {
       phpLaravelAuthGuardReferenceContextAt(
         nestedAttributeCall,
         positionAfter(nestedAttributeCall, "admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        foreignAttribute,
+        positionAfter(foreignAttribute, "admin"),
       ),
     ).toBeNull();
   });

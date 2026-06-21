@@ -24,7 +24,10 @@ describe("phpLaravelStorage", () => {
     ] as const;
 
     for (const [expression, call] of samples) {
-      const source = `<?php\n\nreturn ${expression};\n`;
+      const imports = expression.startsWith("#[Storage(")
+        ? "use Illuminate\\Container\\Attributes\\Storage;\n\n"
+        : "";
+      const source = `<?php\n\n${imports}return ${expression};\n`;
 
       expect(
         phpLaravelStorageDiskReferenceContextAt(
@@ -37,6 +40,25 @@ describe("phpLaravelStorage", () => {
         prefix: "s3",
       });
     }
+
+    const aliasedAttribute = `<?php
+
+use Illuminate\\Container\\Attributes\\Storage as FilesystemDisk;
+
+#[FilesystemDisk('s3')]
+class FilesystemConsumer {}
+`;
+
+    expect(
+      phpLaravelStorageDiskReferenceContextAt(
+        aliasedAttribute,
+        positionAfter(aliasedAttribute, "s3"),
+      ),
+    ).toMatchObject({
+      call: "#[Storage]",
+      diskName: "s3",
+      prefix: "s3",
+    });
   });
 
   it("ignores unsupported arguments, interpolation, invalid names, and non-storage calls", () => {
@@ -44,8 +66,9 @@ describe("phpLaravelStorage", () => {
     const interpolated = `<?php\n\nStorage::disk("s$name");\n`;
     const invalid = `<?php\n\nStorage::disk('s3/backup');\n`;
     const wrongCall = `<?php\n\nConfig::get('s3');\n`;
-    const wrongAttributeArgument = `<?php\n\n#[Storage(name: 's3')]\nclass FilesystemConsumer {}\n`;
+    const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Storage;\n\n#[Storage(name: 's3')]\nclass FilesystemConsumer {}\n`;
     const nestedAttributeCall = `<?php\n\n#[Example(Storage('s3'))]\nclass FilesystemConsumer {}\n`;
+    const foreignAttribute = `<?php\n\nuse App\\Attributes\\Storage;\n\n#[Storage('s3')]\nclass FilesystemConsumer {}\n`;
 
     expect(
       phpLaravelStorageDiskReferenceContextAt(
@@ -75,6 +98,12 @@ describe("phpLaravelStorage", () => {
       phpLaravelStorageDiskReferenceContextAt(
         nestedAttributeCall,
         positionAfter(nestedAttributeCall, "s3"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelStorageDiskReferenceContextAt(
+        foreignAttribute,
+        positionAfter(foreignAttribute, "s3"),
       ),
     ).toBeNull();
   });

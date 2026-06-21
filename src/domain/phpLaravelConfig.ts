@@ -14,6 +14,7 @@ const laravelConfigRepositoryMethods = [
   "array",
   "collection",
 ] as const;
+const laravelConfigAttributeClass = "Illuminate\\Container\\Attributes\\Config";
 
 type LaravelConfigRepositoryMethod =
   (typeof laravelConfigRepositoryMethods)[number];
@@ -128,7 +129,7 @@ function phpLaravelConfigAttributeReferenceContextAt(
   position: EditorPosition,
 ): PhpLaravelConfigReferenceContext | null {
   const argument = phpStringAttributeArgumentContextAt(source, position, [
-    "Config",
+    laravelConfigAttributeClass,
   ]);
 
   if (!argument || !isLaravelConfigAttributeKeyArgument(argument)) {

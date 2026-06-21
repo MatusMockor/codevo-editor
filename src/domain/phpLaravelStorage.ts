@@ -7,6 +7,8 @@ import {
 } from "./phpStringArgumentContext";
 
 const laravelStorageDiskConfigPrefix = "filesystems.disks.";
+const laravelStorageAttributeClass =
+  "Illuminate\\Container\\Attributes\\Storage";
 const storageDiskCallMethods = {
   disk: "Storage::disk",
   drive: "Storage::drive",
@@ -75,7 +77,7 @@ function phpLaravelStorageAttributeDiskReferenceContextAt(
   position: EditorPosition,
 ): PhpLaravelStorageDiskReferenceContext | null {
   const argument = phpStringAttributeArgumentContextAt(source, position, [
-    "Storage",
+    laravelStorageAttributeClass,
   ]);
 
   if (!argument) {

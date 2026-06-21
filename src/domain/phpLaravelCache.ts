@@ -7,6 +7,7 @@ import {
 } from "./phpStringArgumentContext";
 
 const laravelCacheStoreConfigPrefix = "cache.stores.";
+const laravelCacheAttributeClass = "Illuminate\\Container\\Attributes\\Cache";
 const cacheStoreStaticCallMethods = {
   driver: "Cache::driver",
   store: "Cache::store",
@@ -79,7 +80,7 @@ function phpLaravelCacheAttributeStoreReferenceContextAt(
   position: EditorPosition,
 ): PhpLaravelCacheStoreReferenceContext | null {
   const argument = phpStringAttributeArgumentContextAt(source, position, [
-    "Cache",
+    laravelCacheAttributeClass,
   ]);
 
   if (!argument) {

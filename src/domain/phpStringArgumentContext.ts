@@ -1,4 +1,5 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import { resolvePhpClassName } from "./phpClassNameResolution";
 
 export interface PhpStringArgumentContext {
   argumentIndex: number;
@@ -20,6 +21,7 @@ export interface PhpStringAttributeArgumentContext
   extends PhpStringArgumentContext {
   attributeName: string;
   attributeShortName: string;
+  resolvedAttributeName: string;
 }
 
 interface PhpStringLiteral {
@@ -142,12 +144,16 @@ export function phpStringAttributeArgumentContextAt(
     source,
     argument.openParen,
   );
+  const resolvedAttributeName = attributeName
+    ? resolvePhpClassName(source, attributeName)
+    : null;
 
   if (
     !attributeName ||
+    !resolvedAttributeName ||
     (attributeNames?.length &&
       !attributeNames.some((expectedName) =>
-        phpAttributeNameMatches(attributeName, expectedName),
+        phpAttributeNameMatches(resolvedAttributeName, expectedName),
       ))
   ) {
     return null;
@@ -157,6 +163,7 @@ export function phpStringAttributeArgumentContextAt(
     ...argument,
     attributeName,
     attributeShortName: phpShortAttributeName(attributeName),
+    resolvedAttributeName,
   };
 }
 
@@ -316,17 +323,15 @@ function isTopLevelAttributeItemNameStart(
 }
 
 function phpAttributeNameMatches(
-  attributeName: string,
+  resolvedAttributeName: string,
   expectedName: string,
 ): boolean {
-  const normalizedAttributeName = normalizePhpAttributeName(attributeName);
+  const normalizedAttributeName = normalizePhpAttributeName(resolvedAttributeName);
   const normalizedExpectedName = normalizePhpAttributeName(expectedName);
 
-  return (
-    normalizedAttributeName === normalizedExpectedName ||
-    phpShortAttributeName(normalizedAttributeName) ===
-      phpShortAttributeName(normalizedExpectedName)
-  );
+  return expectedName.includes("\\")
+    ? normalizedAttributeName === normalizedExpectedName
+    : phpShortAttributeName(normalizedAttributeName) === normalizedExpectedName;
 }
 
 function normalizePhpAttributeName(attributeName: string): string {

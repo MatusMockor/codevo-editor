@@ -88,14 +88,34 @@ class Controller {}
         prefix: key,
       });
     }
+
+    const aliasedAttribute = `<?php
+
+use Illuminate\\Container\\Attributes\\Config as ConfigValue;
+
+#[ConfigValue('app.locale')]
+class Controller {}
+`;
+
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        aliasedAttribute,
+        positionAfter(aliasedAttribute, "app.locale"),
+      ),
+    ).toMatchObject({
+      call: "#[Config]",
+      key: "app.locale",
+      prefix: "app.locale",
+    });
   });
 
   it("ignores interpolation, update arrays, and non-config calls", () => {
     const interpolated = `<?php\n\nreturn config("app.$name");\n`;
     const updateArray = `<?php\n\nconfig(['app.name' => 'Codevo']);\n`;
     const wrongCall = `<?php\n\nreturn trans('app.name');\n`;
-    const wrongAttributeArgument = `<?php\n\n#[Config(default: 'app.name')]\nclass Controller {}\n`;
+    const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Config;\n\n#[Config(default: 'app.name')]\nclass Controller {}\n`;
     const nestedAttributeCall = `<?php\n\n#[Example(Config('app.name'))]\nclass Controller {}\n`;
+    const foreignAttribute = `<?php\n\nuse App\\Attributes\\Config;\n\n#[Config('app.name')]\nclass Controller {}\n`;
 
     expect(
       phpLaravelConfigReferenceContextAt(
@@ -122,6 +142,12 @@ class Controller {}
       phpLaravelConfigReferenceContextAt(
         nestedAttributeCall,
         positionAfter(nestedAttributeCall, "app.name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        foreignAttribute,
+        positionAfter(foreignAttribute, "app.name"),
       ),
     ).toBeNull();
   });

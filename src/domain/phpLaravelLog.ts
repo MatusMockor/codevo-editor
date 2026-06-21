@@ -9,6 +9,7 @@ import {
 } from "./phpStringArgumentContext";
 
 const laravelLogChannelConfigPrefix = "logging.channels.";
+const laravelLogAttributeClass = "Illuminate\\Container\\Attributes\\Log";
 const logChannelStaticCallMethods = {
   channel: "Log::channel",
   driver: "Log::driver",
@@ -99,7 +100,7 @@ function phpLaravelLogAttributeChannelReferenceContextAt(
   position: EditorPosition,
 ): PhpLaravelLogChannelReferenceContext | null {
   const argument = phpStringAttributeArgumentContextAt(source, position, [
-    "Log",
+    laravelLogAttributeClass,
   ]);
 
   if (!argument) {

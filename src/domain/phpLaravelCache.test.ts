@@ -24,7 +24,10 @@ describe("phpLaravelCache", () => {
     ] as const;
 
     for (const [expression, call] of samples) {
-      const source = `<?php\n\nreturn ${expression};\n`;
+      const imports = expression.startsWith("#[Cache(")
+        ? "use Illuminate\\Container\\Attributes\\Cache;\n\n"
+        : "";
+      const source = `<?php\n\n${imports}return ${expression};\n`;
 
       expect(
         phpLaravelCacheStoreReferenceContextAt(
@@ -37,6 +40,25 @@ describe("phpLaravelCache", () => {
         storeName: "redis",
       });
     }
+
+    const aliasedAttribute = `<?php
+
+use Illuminate\\Container\\Attributes\\Cache as CacheStore;
+
+#[CacheStore('redis')]
+class RepositoryConsumer {}
+`;
+
+    expect(
+      phpLaravelCacheStoreReferenceContextAt(
+        aliasedAttribute,
+        positionAfter(aliasedAttribute, "redis"),
+      ),
+    ).toMatchObject({
+      call: "#[Cache]",
+      prefix: "redis",
+      storeName: "redis",
+    });
   });
 
   it("ignores unsupported arguments, interpolation, invalid names, and non-cache calls", () => {
@@ -44,8 +66,9 @@ describe("phpLaravelCache", () => {
     const interpolated = `<?php\n\nCache::store("red$is");\n`;
     const invalid = `<?php\n\nCache::store('redis/main');\n`;
     const wrongCall = `<?php\n\nStorage::disk('redis');\n`;
-    const wrongAttributeArgument = `<?php\n\n#[Cache(name: 'redis')]\nclass RepositoryConsumer {}\n`;
-    const memoAttributeArgument = `<?php\n\n#[Cache(memo: 'redis')]\nclass RepositoryConsumer {}\n`;
+    const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Cache;\n\n#[Cache(name: 'redis')]\nclass RepositoryConsumer {}\n`;
+    const memoAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Cache;\n\n#[Cache(memo: 'redis')]\nclass RepositoryConsumer {}\n`;
+    const foreignAttribute = `<?php\n\nuse App\\Attributes\\Cache;\n\n#[Cache('redis')]\nclass RepositoryConsumer {}\n`;
 
     expect(
       phpLaravelCacheStoreReferenceContextAt(
@@ -75,6 +98,12 @@ describe("phpLaravelCache", () => {
       phpLaravelCacheStoreReferenceContextAt(
         memoAttributeArgument,
         positionAfter(memoAttributeArgument, "redis"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelCacheStoreReferenceContextAt(
+        foreignAttribute,
+        positionAfter(foreignAttribute, "redis"),
       ),
     ).toBeNull();
   });

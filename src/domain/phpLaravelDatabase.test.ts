@@ -31,7 +31,12 @@ describe("phpLaravelDatabase", () => {
     ] as const;
 
     for (const [expression, call] of samples) {
-      const source = `<?php\n\nreturn ${expression};\n`;
+      const imports = expression.startsWith("#[DB(")
+        ? "use Illuminate\\Container\\Attributes\\DB;\n\n"
+        : expression.startsWith("#[Database(")
+          ? "use Illuminate\\Container\\Attributes\\Database;\n\n"
+          : "";
+      const source = `<?php\n\n${imports}return ${expression};\n`;
       const connectionName = expression.includes("sqlite") ? "sqlite" : "mysql";
 
       expect(
@@ -45,6 +50,42 @@ describe("phpLaravelDatabase", () => {
         prefix: connectionName,
       });
     }
+
+    const aliasedDbAttribute = `<?php
+
+use Illuminate\\Container\\Attributes\\DB as DatabaseConnection;
+
+#[DatabaseConnection('mysql')]
+class RepositoryConsumer {}
+`;
+    const aliasedDatabaseAttribute = `<?php
+
+use Illuminate\\Container\\Attributes\\Database as ConnectionAttribute;
+
+#[ConnectionAttribute('mysql')]
+class RepositoryConsumer {}
+`;
+
+    expect(
+      phpLaravelDatabaseConnectionReferenceContextAt(
+        aliasedDbAttribute,
+        positionAfter(aliasedDbAttribute, "mysql"),
+      ),
+    ).toMatchObject({
+      call: "#[DB]",
+      connectionName: "mysql",
+      prefix: "mysql",
+    });
+    expect(
+      phpLaravelDatabaseConnectionReferenceContextAt(
+        aliasedDatabaseAttribute,
+        positionAfter(aliasedDatabaseAttribute, "mysql"),
+      ),
+    ).toMatchObject({
+      call: "#[Database]",
+      connectionName: "mysql",
+      prefix: "mysql",
+    });
   });
 
   it("detects Laravel Eloquent model connection properties", () => {
@@ -120,8 +161,9 @@ class User extends \\Illuminate\\Database\\Eloquent\\Model
     const localVariable = `<?php\n\nuse Illuminate\\Database\\Eloquent\\Model;\nclass User extends Model { public function run() { public $connection = 'mysql'; } }\n`;
     const globalAfterModel = `<?php\n\nuse Illuminate\\Database\\Eloquent\\Model;\nclass User extends Model {}\nprotected $connection = 'mysql';\n`;
     const fakeClassInComment = `<?php\n\nuse Illuminate\\Database\\Eloquent\\Model;\n// class User extends Model {\nprotected $connection = 'mysql';\n`;
-    const wrongAttributeArgument = `<?php\n\n#[DB(name: 'mysql')]\nclass RepositoryConsumer {}\n`;
+    const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\DB;\n\n#[DB(name: 'mysql')]\nclass RepositoryConsumer {}\n`;
     const nestedAttributeCall = `<?php\n\n#[Example(DB('mysql'))]\nclass RepositoryConsumer {}\n`;
+    const foreignAttribute = `<?php\n\nuse App\\Attributes\\DB;\n\n#[DB('mysql')]\nclass RepositoryConsumer {}\n`;
 
     expect(
       phpLaravelDatabaseConnectionReferenceContextAt(
@@ -211,6 +253,12 @@ class User extends \\Illuminate\\Database\\Eloquent\\Model
       phpLaravelDatabaseConnectionReferenceContextAt(
         nestedAttributeCall,
         positionAfter(nestedAttributeCall, "mysql"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelDatabaseConnectionReferenceContextAt(
+        foreignAttribute,
+        positionAfter(foreignAttribute, "mysql"),
       ),
     ).toBeNull();
   });

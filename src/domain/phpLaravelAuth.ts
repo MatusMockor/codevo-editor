@@ -9,6 +9,7 @@ import {
 } from "./phpStringArgumentContext";
 
 const laravelAuthGuardConfigPrefix = "auth.guards.";
+const laravelAuthAttributeClass = "Illuminate\\Container\\Attributes\\Auth";
 const authGuardStaticCallMethods = {
   guard: "Auth::guard",
   setdefaultdriver: "Auth::setDefaultDriver",
@@ -111,7 +112,7 @@ function phpLaravelAuthAttributeGuardReferenceContextAt(
   position: EditorPosition,
 ): PhpLaravelAuthGuardReferenceContext | null {
   const argument = phpStringAttributeArgumentContextAt(source, position, [
-    "Auth",
+    laravelAuthAttributeClass,
   ]);
 
   if (!argument) {

@@ -92,16 +92,82 @@ class Controller {}
       attributeName: "Auth",
       attributeShortName: "Auth",
       prefix: "admin",
+      resolvedAttributeName: "Illuminate\\Container\\Attributes\\Auth",
       value: "admin",
     });
   });
 
-  it("matches qualified PHP attribute names and ignores nested calls", () => {
+  it("matches qualified and aliased PHP attribute names", () => {
     const qualified = `<?php
 
 #[\\Illuminate\\Container\\Attributes\\Auth('web')]
 class Controller {}
 `;
+    const aliased = `<?php
+
+use Illuminate\\Container\\Attributes\\Auth as GuardAttribute;
+
+#[GuardAttribute('web')]
+class Controller {}
+`;
+
+    expect(
+      phpStringAttributeArgumentContextAt(
+        qualified,
+        positionAfter(qualified, "web"),
+        ["Illuminate\\Container\\Attributes\\Auth"],
+      ),
+    ).toMatchObject({
+      attributeName: "\\Illuminate\\Container\\Attributes\\Auth",
+      attributeShortName: "Auth",
+      prefix: "web",
+      resolvedAttributeName: "Illuminate\\Container\\Attributes\\Auth",
+    });
+    expect(
+      phpStringAttributeArgumentContextAt(
+        aliased,
+        positionAfter(aliased, "web"),
+        ["Illuminate\\Container\\Attributes\\Auth"],
+      ),
+    ).toMatchObject({
+      attributeName: "GuardAttribute",
+      attributeShortName: "GuardAttribute",
+      prefix: "web",
+      resolvedAttributeName: "Illuminate\\Container\\Attributes\\Auth",
+    });
+  });
+
+  it("does not match foreign attributes against exact expected names", () => {
+    const foreignQualified = `<?php
+
+#[\\App\\Attributes\\Auth('web')]
+class Controller {}
+`;
+    const foreignImport = `<?php
+
+use App\\Attributes\\Auth;
+
+#[Auth('web')]
+class Controller {}
+`;
+
+    expect(
+      phpStringAttributeArgumentContextAt(
+        foreignQualified,
+        positionAfter(foreignQualified, "web"),
+        ["Illuminate\\Container\\Attributes\\Auth"],
+      ),
+    ).toBeNull();
+    expect(
+      phpStringAttributeArgumentContextAt(
+        foreignImport,
+        positionAfter(foreignImport, "web"),
+        ["Illuminate\\Container\\Attributes\\Auth"],
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores nested and non-attribute calls", () => {
     const directCall = `<?php\n\nAuth('web');\n`;
     const newCall = `<?php\n\nnew Auth('web');\n`;
     const nestedExpression = `<?php
@@ -118,17 +184,6 @@ class Controller {}
 class Controller {}
 `;
 
-    expect(
-      phpStringAttributeArgumentContextAt(
-        qualified,
-        positionAfter(qualified, "web"),
-        ["Auth"],
-      ),
-    ).toMatchObject({
-      attributeName: "\\Illuminate\\Container\\Attributes\\Auth",
-      attributeShortName: "Auth",
-      prefix: "web",
-    });
     expect(
       phpStringAttributeArgumentContextAt(
         directCall,

@@ -7,6 +7,9 @@ import {
 } from "./phpStringArgumentContext";
 
 const laravelDatabaseConnectionConfigPrefix = "database.connections.";
+const laravelDatabaseDbAttributeClass = "Illuminate\\Container\\Attributes\\DB";
+const laravelDatabaseAttributeClass =
+  "Illuminate\\Container\\Attributes\\Database";
 const databaseConnectionStaticCallMethods = {
   connection: "DB::connection",
   disconnect: "DB::disconnect",
@@ -102,8 +105,8 @@ function phpLaravelDatabaseAttributeConnectionReferenceContextAt(
   position: EditorPosition,
 ): PhpLaravelDatabaseConnectionReferenceContext | null {
   const argument = phpStringAttributeArgumentContextAt(source, position, [
-    "DB",
-    "Database",
+    laravelDatabaseDbAttributeClass,
+    laravelDatabaseAttributeClass,
   ]);
 
   if (!argument) {
@@ -122,7 +125,8 @@ function phpLaravelDatabaseAttributeConnectionReferenceContextAt(
 
   return {
     call:
-      argument.attributeShortName.toLowerCase() === "db"
+      argument.resolvedAttributeName.toLowerCase() ===
+      laravelDatabaseDbAttributeClass.toLowerCase()
         ? "#[DB]"
         : "#[Database]",
     connectionName,
