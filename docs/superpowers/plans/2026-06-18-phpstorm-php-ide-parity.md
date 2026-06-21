@@ -6737,3 +6737,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `2ccf2fb8 Display multi-target MorphTo relation properties`.
+
+## Slice: JavaScript TypeScript Same-Root Navigation Stale Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d3cad72e Record multi-target MorphTo property display commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down JS/TS navigation isolation when the language-server session restarts inside the same workspace root.
+
+### Implementation Choice
+
+- Add preview coverage for stale source-definition results after a same-root JS/TS session restart.
+- Add preview coverage for stale type-definition results after a same-root JS/TS session restart.
+- Keep this slice test-only because the shared navigation helper already carries the session guard.
+
+### Acceptance Criteria
+
+- Late source-definition results do not open targets after a same-root JS/TS session restart.
+- Late type-definition results do not open targets after a same-root JS/TS session restart.
+- Existing workspace-tab stale coverage remains unchanged.
+- Focused/full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "source definition results after same-root session restart|type definition results after same-root session restart"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
