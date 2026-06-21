@@ -2228,6 +2228,7 @@ export function useWorkbenchController(
     setFileStructureOpen(false);
     setLanguageServerSetupOpen(false);
     setSettingsOpen(false);
+    setMessage(null);
     setIntelligenceMode("basic");
     intelligenceModeRef.current = "basic";
     clearIndexWorkspaceState();
@@ -3265,6 +3266,7 @@ export function useWorkbenchController(
       setTextSearchLoading(false);
       setTextSearchResults([]);
       setFileStructureScope("current");
+      setMessage(null);
       lastPhpFileOutlineRefreshKeyRef.current = null;
       lastPhpIdeReadinessSignatureRef.current = null;
       phpClassSourcePathCacheRef.current = {};

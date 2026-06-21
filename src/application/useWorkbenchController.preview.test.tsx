@@ -4270,6 +4270,11 @@ describe("useWorkbenchController preview tabs", () => {
         lineNumber: 5,
       },
     });
+    act(() => {
+      getWorkbench().reportCommandError(new Error("workspace a transient"));
+    });
+
+    expect(getWorkbench().message).toBe("Error: workspace a transient");
 
     await act(async () => {
       await getWorkbench().closeWorkspaceTab("/workspace");
@@ -4286,6 +4291,7 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(getWorkbench().workspaceRoot).toBeNull();
     expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(getWorkbench().message).toBeNull();
     expect(getWorkbench().editorRevealTarget).toBeNull();
     expect(getWorkbench().bottomPanelVisible).toBe(false);
     expect(getWorkbench().bottomPanelView).toBe("problems");
