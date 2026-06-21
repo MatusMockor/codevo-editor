@@ -995,3 +995,42 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `8e87cade Track pending index roots across lifecycle`.
+
+### Slice: Index Clear Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5cd51839 Record pending index root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed index-clear results or errors from a previous project tab from updating the currently active workspace UI.
+
+#### Implementation Choice
+
+- Re-check the active workspace root after `clearWorkspaceIndex` resolves before applying its optional message.
+- Suppress clear-index errors when the active workspace no longer matches the clear request root.
+- Add a controller regression where `/workspace-a` disables IDE indexing, the clear request is still pending, the user switches to `/workspace-b`, and the stale clear error does not create an Index notice.
+
+#### Acceptance Criteria
+
+- Stale index-clear errors do not surface after switching project tabs.
+- Stale index-clear success messages do not overwrite the active workspace message after switching project tabs.
+- Existing index start/reindex root guards still pass.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores index clear errors after switching project tabs|ignores reindex start responses that belong to another workspace root|ignores index start responses that belong to another workspace root"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `1b414242 Guard index clear results by active workspace`.
