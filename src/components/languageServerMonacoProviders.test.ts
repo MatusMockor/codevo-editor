@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
 import type {
   LanguageServerCompletionList,
+  LanguageServerCodeLens,
   LanguageServerDocumentHighlight,
   LanguageServerDocumentLink,
   LanguageServerDocumentSymbol,
@@ -22,7 +23,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, folding range, formatting, range formatting, on type formatting and linked editing range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, code lens, folding range, formatting, range formatting, on type formatting and linked editing range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -51,6 +52,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentHighlightLanguage).toBe("php");
     expect(registered.documentSymbolLanguage).toBe("php");
     expect(registered.documentLinkLanguage).toBe("php");
+    expect(registered.codeLensLanguage).toBe("php");
     expect(registered.foldingRangeLanguage).toBe("php");
     expect(registered.documentFormattingLanguage).toBe("php");
     expect(registered.rangeFormattingLanguage).toBe("php");
@@ -86,6 +88,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentHighlightDispose).toHaveBeenCalled();
     expect(registered.documentSymbolDispose).toHaveBeenCalled();
     expect(registered.documentLinkDispose).toHaveBeenCalled();
+    expect(registered.codeLensDispose).toHaveBeenCalled();
     expect(registered.foldingRangeDispose).toHaveBeenCalled();
     expect(registered.documentFormattingDispose).toHaveBeenCalled();
     expect(registered.rangeFormattingDispose).toHaveBeenCalled();
@@ -5565,10 +5568,462 @@ describe("registerLanguageServerMonacoProviders", () => {
     await expect(rootPromise).resolves.toBeNull();
   });
 
+  it("maps and resolves PHP CodeLens showReferences commands with workspace filtering", async () => {
+    const registered = createRegisteredProviders();
+    const sourceLens: LanguageServerCodeLens = {
+      command: null,
+      data: { id: "references" },
+      range: range(1, 0, 1, 12),
+    };
+    const resolvedLens: LanguageServerCodeLens = {
+      ...sourceLens,
+      command: {
+        arguments: [
+          "file:///project/src/User.php",
+          { character: 4, line: 2 },
+          [
+            {
+              range: range(2, 4, 2, 8),
+              uri: "file:///project/src/User.php",
+            },
+            {
+              range: range(3, 1, 3, 5),
+              uri: "file:///project-neighbor/src/User.php",
+            },
+          ],
+        ],
+        command: "editor.action.showReferences",
+        title: "2 references",
+      },
+    };
+    const gateway = featuresGateway({
+      codeLenses: [sourceLens],
+      resolvedCodeLens: resolvedLens,
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+      }),
+    );
+
+    const lenses = await registered.codeLensProvider.provideCodeLenses(model());
+
+    expect(lenses).toEqual({
+      dispose: expect.any(Function),
+      lenses: [
+        expect.objectContaining({
+          __languageServerLens: sourceLens,
+          __languageServerSessionId: 1,
+          __sourcePath: "/project/src/User.php",
+          __workspaceRoot: "/project",
+          range: expect.objectContaining({
+            endColumn: 13,
+            endLineNumber: 2,
+            startColumn: 1,
+            startLineNumber: 2,
+          }),
+        }),
+      ],
+    });
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.codeLenses).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+    );
+
+    const resolved = await registered.codeLensProvider.resolveCodeLens(
+      model(),
+      lenses.lenses[0],
+    );
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledTimes(2);
+    expect(gateway.resolveCodeLens).toHaveBeenCalledWith(
+      "/project",
+      sourceLens,
+    );
+    expect(resolved).toEqual(
+      expect.objectContaining({
+        __languageServerLens: resolvedLens,
+        command: {
+          arguments: [
+            {
+              fsPath: "/project/src/User.php",
+              path: "/project/src/User.php",
+            },
+            {
+              column: 5,
+              lineNumber: 3,
+            },
+            [
+              {
+                range: expect.objectContaining({
+                  endColumn: 9,
+                  endLineNumber: 3,
+                  startColumn: 5,
+                  startLineNumber: 3,
+                }),
+                uri: {
+                  fsPath: "/project/src/User.php",
+                  path: "/project/src/User.php",
+                },
+              },
+            ],
+          ],
+          id: "editor.action.showReferences",
+          title: "2 references",
+        },
+      }),
+    );
+  });
+
+  it("maps generic PHP CodeLens commands through the language server command executor", async () => {
+    const registered = createRegisteredProviders();
+    const sourceLens: LanguageServerCodeLens = {
+      command: {
+        arguments: ["unused"],
+        command: "phpactor.fixAll",
+        title: "Fix all",
+      },
+      data: null,
+      range: range(4, 2, 4, 12),
+    };
+    const gateway = featuresGateway({ codeLenses: [sourceLens] });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    const lenses = await registered.codeLensProvider.provideCodeLenses(model());
+
+    expect(lenses.lenses[0]).toEqual(
+      expect.objectContaining({
+        command: {
+          arguments: [
+            {
+              command: sourceLens.command,
+              rootPath: "/project",
+              sessionId: 1,
+            },
+          ],
+          id: "mockor.php.executeLanguageServerCommand",
+          title: "Fix all",
+        },
+      }),
+    );
+  });
+
+  it("does not request PHP CodeLens when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      codeLenses: [
+        {
+          command: null,
+          data: { id: "disabled" },
+          range: range(1, 0, 1, 1),
+        },
+      ],
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({ codeLens: false }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.codeLensProvider.provideCodeLenses(model()),
+    ).resolves.toEqual({
+      dispose: expect.any(Function),
+      lenses: [],
+    });
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.codeLenses).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway({
+      codeLenses: [
+        {
+          command: null,
+          data: { id: "other-root" },
+          range: range(1, 0, 1, 1),
+        },
+      ],
+    });
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.codeLensProvider.provideCodeLenses(model()),
+    ).resolves.toEqual({
+      dispose: expect.any(Function),
+      lenses: [],
+    });
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.codeLenses).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty PHP CodeLens list for stale in-flight provide results", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const codeLenses = createDeferred<LanguageServerCodeLens[]>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.codeLenses).mockImplementationOnce(
+      async () => codeLenses.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const lensesPromise = registered.codeLensProvider.provideCodeLenses(model());
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    codeLenses.resolve([
+      {
+        command: null,
+        data: { id: "stale" },
+        range: range(1, 0, 1, 1),
+      },
+    ]);
+
+    await expect(lensesPromise).resolves.toEqual({
+      dispose: expect.any(Function),
+      lenses: [],
+    });
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootCodeLenses = createDeferred<LanguageServerCodeLens[]>();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.codeLenses).mockImplementationOnce(
+      async () => rootCodeLenses.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootLensesPromise =
+      rootRegistered.codeLensProvider.provideCodeLenses(model());
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rootCodeLenses.resolve([
+      {
+        command: null,
+        data: { id: "stale-root" },
+        range: range(1, 0, 1, 1),
+      },
+    ]);
+
+    await expect(rootLensesPromise).resolves.toEqual({
+      dispose: expect.any(Function),
+      lenses: [],
+    });
+  });
+
+  it("does not resolve stale or unbacked PHP CodeLens instances", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const sourceLens: LanguageServerCodeLens = {
+      command: null,
+      data: { id: "references" },
+      range: range(1, 0, 1, 12),
+    };
+    const gateway = featuresGateway({
+      resolvedCodeLens: {
+        ...sourceLens,
+        command: {
+          arguments: [],
+          command: "phpactor.references",
+          title: "References",
+        },
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const backedLens = backedCodeLens(sourceLens);
+    const unbackedLens = {
+      range: new registered.monaco.Range(2, 1, 2, 13),
+    };
+
+    activeRoot = "/other";
+
+    await expect(
+      registered.codeLensProvider.resolveCodeLens(model(), backedLens),
+    ).resolves.toBe(backedLens);
+    await expect(
+      registered.codeLensProvider.resolveCodeLens(model(), unbackedLens),
+    ).resolves.toBe(unbackedLens);
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.resolveCodeLens).not.toHaveBeenCalled();
+
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionGateway = featuresGateway({
+      resolvedCodeLens: {
+        ...sourceLens,
+        command: {
+          arguments: [],
+          command: "phpactor.references",
+          title: "References",
+        },
+      },
+    });
+    const sessionFlushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        flushPendingDocumentChange: sessionFlushPendingDocumentChange,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+    const sessionBackedLens = backedCodeLens(sourceLens);
+
+    activeSessionId = 2;
+
+    await expect(
+      sessionRegistered.codeLensProvider.resolveCodeLens(
+        model(),
+        sessionBackedLens,
+      ),
+    ).resolves.toBe(sessionBackedLens);
+    expect(sessionFlushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(sessionGateway.resolveCodeLens).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP CodeLens resolve results after async response", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sourceLens: LanguageServerCodeLens = {
+      command: null,
+      data: { id: "references" },
+      range: range(1, 0, 1, 12),
+    };
+    const resolvedCodeLens = createDeferred<LanguageServerCodeLens>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.resolveCodeLens).mockImplementationOnce(
+      async () => resolvedCodeLens.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+    const backedLens = backedCodeLens(sourceLens);
+
+    const resolvePromise = registered.codeLensProvider.resolveCodeLens(
+      model(),
+      backedLens,
+    );
+
+    await Promise.resolve();
+    expect(gateway.resolveCodeLens).toHaveBeenCalledWith(
+      "/project",
+      sourceLens,
+    );
+
+    activeSessionId = 2;
+    resolvedCodeLens.resolve({
+      ...sourceLens,
+      command: {
+        arguments: [],
+        command: "phpactor.references",
+        title: "References",
+      },
+    });
+
+    await expect(resolvePromise).resolves.toBe(backedLens);
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootResolvedCodeLens = createDeferred<LanguageServerCodeLens>();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.resolveCodeLens).mockImplementationOnce(
+      async () => rootResolvedCodeLens.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const rootBackedLens = backedCodeLens(sourceLens);
+
+    const rootResolvePromise = rootRegistered.codeLensProvider.resolveCodeLens(
+      model(),
+      rootBackedLens,
+    );
+
+    await Promise.resolve();
+    expect(rootGateway.resolveCodeLens).toHaveBeenCalledWith(
+      "/project",
+      sourceLens,
+    );
+
+    activeRoot = "/other";
+    rootResolvedCodeLens.resolve({
+      ...sourceLens,
+      command: {
+        arguments: [],
+        command: "phpactor.references",
+        title: "References",
+      },
+    });
+
+    await expect(rootResolvePromise).resolves.toBe(rootBackedLens);
+  });
+
 });
 
 function createRegisteredProviders() {
   const codeActionDispose = vi.fn();
+  const codeLensDispose = vi.fn();
   const commandDispose = vi.fn();
   const declarationDispose = vi.fn();
   const definitionDispose = vi.fn();
@@ -5593,6 +6048,9 @@ function createRegisteredProviders() {
     codeActionLanguage: string | null;
     codeActionMetadata: any;
     codeActionProvider: any;
+    codeLensDispose: ReturnType<typeof vi.fn>;
+    codeLensLanguage: string | null;
+    codeLensProvider: any;
     commandDispose: ReturnType<typeof vi.fn>;
     commandRun: ((accessor: unknown, payload?: unknown) => unknown) | null;
     completionDispose: ReturnType<typeof vi.fn>;
@@ -5655,6 +6113,9 @@ function createRegisteredProviders() {
     codeActionLanguage: null,
     codeActionMetadata: null,
     codeActionProvider: null,
+    codeLensDispose,
+    codeLensLanguage: null,
+    codeLensProvider: null,
     commandDispose,
     commandRun: null,
     completionDispose,
@@ -5798,6 +6259,11 @@ function createRegisteredProviders() {
         registered.codeActionProvider = provider;
         registered.codeActionMetadata = metadata;
         return { dispose: codeActionDispose };
+      }),
+      registerCodeLensProvider: vi.fn((language, provider) => {
+        registered.codeLensLanguage = language;
+        registered.codeLensProvider = provider;
+        return { dispose: codeLensDispose };
       }),
       registerCompletionItemProvider: vi.fn((language, provider) => {
         registered.completionLanguage = language;
@@ -5956,6 +6422,9 @@ function featuresGateway(
     codeActions: Awaited<
       ReturnType<LanguageServerFeaturesGateway["codeActions"]>
     >;
+    codeLenses: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["codeLenses"]>
+    >;
     completion: LanguageServerCompletionList;
     declaration: LanguageServerLocation[];
     definition: LanguageServerLocation[];
@@ -5987,6 +6456,9 @@ function featuresGateway(
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
     >;
+    resolvedCodeLens: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["resolveCodeLens"]>
+    >;
     resolvedDocumentLink: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveDocumentLink"]>
     >;
@@ -6005,7 +6477,7 @@ function featuresGateway(
 ): LanguageServerFeaturesGateway {
   return {
     codeActions: vi.fn(async () => responses.codeActions ?? []),
-    codeLenses: vi.fn(async () => []),
+    codeLenses: vi.fn(async () => responses.codeLenses ?? []),
     completion: vi.fn(async () =>
       responses.completion ?? {
         isIncomplete: false,
@@ -6051,10 +6523,27 @@ function featuresGateway(
     resolveCodeAction: vi.fn(
       async (_rootPath, action) => responses.resolvedCodeAction ?? action,
     ),
-    resolveCodeLens: vi.fn(async (_rootPath, lens) => lens),
+    resolveCodeLens: vi.fn(
+      async (_rootPath, lens) => responses.resolvedCodeLens ?? lens,
+    ),
     resolveDocumentLink: vi.fn(
       async (_rootPath, link) => responses.resolvedDocumentLink ?? link,
     ),
+  };
+}
+
+function backedCodeLens(lens: LanguageServerCodeLens) {
+  return {
+    __languageServerLens: lens,
+    __languageServerSessionId: 1,
+    __sourcePath: "/project/src/User.php",
+    __workspaceRoot: "/project",
+    range: {
+      endColumn: lens.range.end.character + 1,
+      endLineNumber: lens.range.end.line + 1,
+      startColumn: lens.range.start.character + 1,
+      startLineNumber: lens.range.start.line + 1,
+    },
   };
 }
 

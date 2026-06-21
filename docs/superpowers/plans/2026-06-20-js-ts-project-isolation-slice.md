@@ -7409,3 +7409,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco On-Type Formatting Provider
 
 - Committed as `d2c937b6 Register PHP on type formatting provider`.
+
+## Next Slice: PHP Monaco CodeLens Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `43b48922 Record PHP on type formatting provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support `codeLens` and code-lens resolve.
+- The PHP Monaco provider did not register CodeLens, so PHPactor-provided references/actions above symbols could not surface in PHP files.
+- CodeLens is a visible IDE affordance, but it needs careful lazy resolve root/session guards to avoid stale cross-tab commands.
+
+### Implementation Choice
+
+- Register an optional PHP CodeLens Monaco provider.
+- Reuse PHP document request context, pending change flush, capability gate, active session guard, stale result dropping, and error reporting for provided lenses.
+- Store root/session/source path metadata on LSP-backed CodeLens items so lazy resolve can safely call `featuresGateway.resolveCodeLens` only while the originating PHP session is active.
+- Map `editor.action.showReferences` through Monaco-native arguments and all other commands through the existing PHP execute-command payload.
+
+### Acceptance Criteria
+
+- PHP CodeLens routes to `featuresGateway.codeLenses` and maps ranges/commands correctly.
+- Lazy CodeLens resolution routes to `featuresGateway.resolveCodeLens` only while the stored root/session are active.
+- Disabled capability and stale root/session responses do not call or return stale results.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco CodeLens Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "code lens|CodeLens"` (7 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (110 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 953 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco CodeLens Provider
+
+- Pending commit after verification.
