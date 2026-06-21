@@ -1302,3 +1302,40 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `22d1b754 Guard workspace runtime dispose by active workspace`.
+
+### Slice: PHP Tools Detection Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `89fcddb9 Record workspace runtime dispose guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed PHP tools detection failures from a previous project tab from surfacing in the active workspace.
+
+#### Implementation Choice
+
+- Keep the existing active-root success guard for PHP tools detection and replace the catch-side global report with `reportErrorForActiveWorkspaceRoot`.
+- Add a regression where `/workspace-a` has delayed PHP tools detection, the user switches to `/workspace-b`, and the stale `/workspace-a` rejection cannot create a PHP Tools notice in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale PHP tools detection failures do not surface after switching project tabs.
+- Existing workspace runtime dispose guard and restored PHP IDE startup behavior still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale PHP tools detection errors after switching project tabs|ignores inactive workspace runtime dispose errors after switching project tabs|starts IDE services when a restored PHP workspace is already in IDE mode"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `9a96e392 Guard PHP tools detection by active workspace`.
