@@ -1119,6 +1119,14 @@ class Comment extends Model
             ->whereValueNotBetween(0, ['min_score', 'max_score'])
             ->orWhereValueNotBetween(1, ['min_rating', 'max_rating'])
             ->first();
+        $relationMethodIntegerRowFilteredPost = $this->posts()
+            ->whereIntegerInRaw('id', [1, 2])
+            ->orWhereIntegerInRaw('parent_id', [3, 4])
+            ->whereIntegerNotInRaw('legacy_id', [5, 6])
+            ->orWhereIntegerNotInRaw('archived_id', [7, 8])
+            ->whereRowValues(['id', 'score'], '>', [1, 0])
+            ->orWhereRowValues(['id', 'score'], '<', [10, 100])
+            ->first();
         $relationMethodLikeFilteredPost = $this->posts()
             ->whereLike('title', '%Laravel%')
             ->orWhereLike('summary', '%Laravel%')
@@ -1221,6 +1229,7 @@ class Comment extends Model
         $relationMethodRawFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
         $relationMethodBetweenFilteredPost->tit
+        $relationMethodIntegerRowFilteredPost->tit
         $relationMethodLikeFilteredPost->tit
         $relationMethodSearchFilteredPost->tit
         $relationMethodJsonFilteredPost->tit
@@ -1481,6 +1490,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodBetweenFilteredPost->tit"),
         "relationMethodBetweenFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodIntegerRowFilteredPost->tit"),
+        "relationMethodIntegerRowFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
