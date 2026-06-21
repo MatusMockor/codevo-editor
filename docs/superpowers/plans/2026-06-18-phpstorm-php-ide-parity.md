@@ -7333,4 +7333,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `83d596d1 Support PHPStan Psalm repository PHPDoc methods`.
