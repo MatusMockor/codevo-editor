@@ -67,6 +67,10 @@ to_route("comments.index");
 redirect()->route('comments.edit');
 Redirect::route('comments.preview');
 URL::route('comments.feed');
+URL::signedRoute('comments.unsubscribe');
+URL::temporarySignedRoute('comments.preview-expiring', now()->addHour());
+Uri::signedRoute('comments.secure');
+Uri::temporarySignedRoute('comments.secure-expiring', now()->addHour());
 Route::has('comments.destroy');
 `;
 
@@ -124,6 +128,50 @@ Route::has('comments.destroy');
       name: "comments.feed",
       position: positionOf(source, "comments.feed"),
       prefix: "comments.feed",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.unsubscribe"),
+      ),
+    ).toEqual({
+      call: "URL::signedRoute",
+      name: "comments.unsubscribe",
+      position: positionOf(source, "comments.unsubscribe"),
+      prefix: "comments.unsubscribe",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.preview-expiring"),
+      ),
+    ).toEqual({
+      call: "URL::temporarySignedRoute",
+      name: "comments.preview-expiring",
+      position: positionOf(source, "comments.preview-expiring"),
+      prefix: "comments.preview-expiring",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.secure"),
+      ),
+    ).toEqual({
+      call: "Uri::signedRoute",
+      name: "comments.secure",
+      position: positionOf(source, "comments.secure"),
+      prefix: "comments.secure",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.secure-expiring"),
+      ),
+    ).toEqual({
+      call: "Uri::temporarySignedRoute",
+      name: "comments.secure-expiring",
+      position: positionOf(source, "comments.secure-expiring"),
+      prefix: "comments.secure-expiring",
     });
     expect(
       phpLaravelNamedRouteReferenceContextAt(

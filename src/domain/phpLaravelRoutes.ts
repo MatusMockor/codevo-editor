@@ -6,6 +6,10 @@ export type PhpLaravelNamedRouteReferenceCall =
   | "redirect()->route"
   | "Redirect::route"
   | "URL::route"
+  | "URL::signedRoute"
+  | "URL::temporarySignedRoute"
+  | "Uri::signedRoute"
+  | "Uri::temporarySignedRoute"
   | "Route::has";
 
 export interface PhpLaravelNamedRouteReferenceContext {
@@ -745,6 +749,22 @@ function laravelNamedRouteReferenceCallAt(
 
   if (/\bURL\s*::\s*route\s*$/i.test(beforeCall)) {
     return "URL::route";
+  }
+
+  if (/\bURL\s*::\s*signedRoute\s*$/i.test(beforeCall)) {
+    return "URL::signedRoute";
+  }
+
+  if (/\bURL\s*::\s*temporarySignedRoute\s*$/i.test(beforeCall)) {
+    return "URL::temporarySignedRoute";
+  }
+
+  if (/\bUri\s*::\s*signedRoute\s*$/i.test(beforeCall)) {
+    return "Uri::signedRoute";
+  }
+
+  if (/\bUri\s*::\s*temporarySignedRoute\s*$/i.test(beforeCall)) {
+    return "Uri::temporarySignedRoute";
   }
 
   if (/\bRoute\s*::\s*has\s*$/i.test(beforeCall)) {
