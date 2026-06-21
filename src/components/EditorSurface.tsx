@@ -90,6 +90,7 @@ interface EditorSurfaceProps {
   javaScriptTypeScriptValidationEnabled?: boolean;
   languageServerDiagnosticsByPath: Record<string, LanguageServerDiagnostic[]>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
+  languageServerRefreshGateway?: LanguageServerRefreshGateway;
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
@@ -131,6 +132,7 @@ export function EditorSurface({
   flushPendingLanguageServerDocument,
   languageServerDiagnosticsByPath,
   languageServerFeaturesGateway,
+  languageServerRefreshGateway,
   languageServerRuntimeStatus,
   javaScriptTypeScriptLanguageServerFeaturesGateway = languageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerRefreshGateway,
@@ -330,6 +332,7 @@ export function EditorSurface({
         phpMethodCompletionsRef.current(source, position),
       providePhpMethodSignature: (source, position) =>
         phpMethodSignatureRef.current(source, position),
+      refreshGateway: languageServerRefreshGateway,
       reportError: (error) => errorReporterRef.current(error),
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,
     });
@@ -337,6 +340,7 @@ export function EditorSurface({
     return () => disposable.dispose();
   }, [
     languageServerFeaturesGateway,
+    languageServerRefreshGateway,
     monacoApi,
     phpLanguageServerWorkspaceEditGateway,
     workspaceRoot,

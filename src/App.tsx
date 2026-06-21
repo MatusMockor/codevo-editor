@@ -140,6 +140,7 @@ const javaScriptTypeScriptLanguageServerFeaturesGateway =
     undefined,
     JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
   );
+const languageServerRefreshGateway = new TauriLanguageServerRefreshGateway();
 const javaScriptTypeScriptLanguageServerRefreshGateway =
   new TauriLanguageServerRefreshGateway(
     undefined,
@@ -695,6 +696,7 @@ function App() {
               workbench.workspaceSettings.javaScriptTypeScriptValidation
             }
             languageServerFeaturesGateway={languageServerFeaturesGateway}
+            languageServerRefreshGateway={languageServerRefreshGateway}
             languageServerDiagnosticsByPath={
               workbench.languageServerDiagnosticsByPath
             }

@@ -17,6 +17,8 @@ import {
   type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
   type LanguageServerRange,
+  type LanguageServerRefreshEvent,
+  type LanguageServerRefreshGateway,
   type LanguageServerSelectionRange,
   type LanguageServerSemanticTokens,
   type LanguageServerTextEdit,
@@ -44,6 +46,11 @@ type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
+type MonacoEventEmitter<T> = {
+  dispose(): void;
+  event: Monaco.IEvent<T>;
+  fire(event: T): void;
+};
 type WorkspaceEditContext = {
   path: string | null;
   versionId: number | undefined;
@@ -148,8 +155,44 @@ export interface LanguageServerMonacoProviderContext {
     source: string,
     position: MonacoPosition,
   ): Promise<PhpMethodSignature | null>;
+  refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
+}
+
+function createMonacoEventEmitter<T>(): MonacoEventEmitter<T> {
+  const listeners = new Set<{
+    listener: (event: T) => unknown;
+    thisArgs?: unknown;
+  }>();
+
+  return {
+    dispose: () => {
+      listeners.clear();
+    },
+    event: (
+      listener: (event: T) => unknown,
+      thisArgs?: unknown,
+      disposables?: Disposable[],
+    ) => {
+      const entry = { listener, thisArgs };
+      listeners.add(entry);
+      const disposable = {
+        dispose: () => {
+          listeners.delete(entry);
+        },
+      };
+
+      disposables?.push(disposable);
+
+      return disposable;
+    },
+    fire: (event) => {
+      for (const entry of Array.from(listeners)) {
+        entry.listener.call(entry.thisArgs, event);
+      }
+    },
+  };
 }
 
 export function registerLanguageServerMonacoProviders(
@@ -157,6 +200,18 @@ export function registerLanguageServerMonacoProviders(
   context: LanguageServerMonacoProviderContext,
 ): Disposable {
   const registry = monaco.languages as Partial<typeof monaco.languages>;
+  const codeLensRefreshEmitter = createMonacoEventEmitter<void>();
+  const inlayHintRefreshEmitter = createMonacoEventEmitter<void>();
+  const semanticTokensRefreshEmitter = createMonacoEventEmitter<void>();
+  let refreshUnsubscribe: (() => void) | null = null;
+  let refreshSubscriptionDisposed = false;
+  const refreshSubscriptionDisposable = {
+    dispose: () => {
+      refreshSubscriptionDisposed = true;
+      refreshUnsubscribe?.();
+      refreshUnsubscribe = null;
+    },
+  };
   let workspaceEditUnsubscribe: (() => void) | null = null;
   let workspaceEditSubscriptionDisposed = false;
   const workspaceEditSubscriptionDisposable = {
@@ -166,6 +221,28 @@ export function registerLanguageServerMonacoProviders(
       workspaceEditUnsubscribe = null;
     },
   };
+
+  if (context.refreshGateway) {
+    context.refreshGateway
+      .subscribeRefreshEvents((event) => {
+        handleLanguageServerRefreshEvent(
+          context,
+          event,
+          codeLensRefreshEmitter,
+          inlayHintRefreshEmitter,
+          semanticTokensRefreshEmitter,
+        );
+      })
+      .then((unsubscribe) => {
+        if (refreshSubscriptionDisposed) {
+          unsubscribe();
+          return;
+        }
+
+        refreshUnsubscribe = unsubscribe;
+      })
+      .catch((error) => context.reportError(error));
+  }
 
   if (context.workspaceEditGateway) {
     context.workspaceEditGateway
@@ -348,6 +425,8 @@ export function registerLanguageServerMonacoProviders(
     : { dispose: () => undefined };
   const codeLens = monaco.languages.registerCodeLensProvider
     ? monaco.languages.registerCodeLensProvider("php", {
+        onDidChange:
+          codeLensRefreshEmitter.event as unknown as Monaco.languages.CodeLensProvider["onDidChange"],
         provideCodeLenses: (model) => provideCodeLenses(monaco, context, model),
         resolveCodeLens: (model, lens) =>
           resolveCodeLens(monaco, context, model, lens),
@@ -355,6 +434,7 @@ export function registerLanguageServerMonacoProviders(
     : { dispose: () => undefined };
   const inlayHints = monaco.languages.registerInlayHintsProvider
     ? monaco.languages.registerInlayHintsProvider("php", {
+        onDidChangeInlayHints: inlayHintRefreshEmitter.event,
         provideInlayHints: (model, range) =>
           provideInlayHints(monaco, context, model, range),
         resolveInlayHint: (hint) => resolveInlayHint(monaco, context, hint),
@@ -407,6 +487,7 @@ export function registerLanguageServerMonacoProviders(
     : { dispose: () => undefined };
   const semanticTokens = registry.registerDocumentSemanticTokensProvider
     ? registry.registerDocumentSemanticTokensProvider("php", {
+        onDidChange: semanticTokensRefreshEmitter.event,
         getLegend: () => semanticTokensLegendForActiveRuntime(context),
         provideDocumentSemanticTokens: (model) =>
           provideDocumentSemanticTokens(context, model),
@@ -423,7 +504,11 @@ export function registerLanguageServerMonacoProviders(
 
   return {
     dispose: () => {
+      refreshSubscriptionDisposable.dispose();
       workspaceEditSubscriptionDisposable.dispose();
+      codeLensRefreshEmitter.dispose();
+      inlayHintRefreshEmitter.dispose();
+      semanticTokensRefreshEmitter.dispose();
       command.dispose();
       hover.dispose();
       completion.dispose();
@@ -2802,6 +2887,56 @@ async function provideDocumentRangeSemanticTokens(
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
+}
+
+function handleLanguageServerRefreshEvent(
+  context: LanguageServerMonacoProviderContext,
+  event: LanguageServerRefreshEvent,
+  codeLensRefreshEmitter: MonacoEventEmitter<void>,
+  inlayHintRefreshEmitter: MonacoEventEmitter<void>,
+  semanticTokensRefreshEmitter: MonacoEventEmitter<void>,
+): void {
+  if (!isRefreshEventActive(context, event)) {
+    return;
+  }
+
+  if (event.feature === "codeLens") {
+    codeLensRefreshEmitter.fire(undefined);
+    return;
+  }
+
+  if (event.feature === "inlayHint") {
+    inlayHintRefreshEmitter.fire(undefined);
+    return;
+  }
+
+  if (event.feature === "semanticTokens") {
+    semanticTokensRefreshEmitter.fire(undefined);
+  }
+}
+
+function isRefreshEventActive(
+  context: LanguageServerMonacoProviderContext,
+  event: LanguageServerRefreshEvent,
+): boolean {
+  const workspaceRoot = context.getWorkspaceRoot?.() ?? null;
+
+  if (!workspaceRoot) {
+    return false;
+  }
+
+  if (!event.rootPath || !workspaceRootKeysEqual(event.rootPath, workspaceRoot)) {
+    return false;
+  }
+
+  const status = context.getRuntimeStatus();
+
+  return (
+    status?.kind === "running" &&
+    status.sessionId === event.sessionId &&
+    Boolean(status.rootPath) &&
+    workspaceRootKeysEqual(status.rootPath, workspaceRoot)
+  );
 }
 
 function phpMethodCompletionKind(

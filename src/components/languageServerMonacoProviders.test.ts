@@ -12,6 +12,8 @@ import type {
   LanguageServerLinkedEditingRanges,
   LanguageServerLocation,
   LanguageServerRange,
+  LanguageServerRefreshEvent,
+  LanguageServerRefreshGateway,
   LanguageServerSemanticTokens,
   LanguageServerWorkspaceEdit,
   LanguageServerWorkspaceEditEvent,
@@ -102,6 +104,86 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.linkedEditingRangeDispose).toHaveBeenCalled();
     expect(registered.documentSemanticTokensDispose).toHaveBeenCalled();
     expect(registered.rangeSemanticTokensDispose).toHaveBeenCalled();
+  });
+
+  it("fires PHP provider refresh events only for the active root and session", async () => {
+    const registered = createRegisteredProviders();
+    let refreshListener: ((event: LanguageServerRefreshEvent) => void) | null =
+      null;
+    const refreshGateway: LanguageServerRefreshGateway = {
+      subscribeRefreshEvents: vi.fn(async (listener) => {
+        refreshListener = listener;
+        return () => undefined;
+      }),
+    };
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ refreshGateway }),
+    );
+    await Promise.resolve();
+    const codeLensChanged = vi.fn();
+    const inlayHintsChanged = vi.fn();
+    const semanticTokensChanged = vi.fn();
+    registered.codeLensProvider.onDidChange(codeLensChanged);
+    registered.inlayHintsProvider.onDidChangeInlayHints(inlayHintsChanged);
+    registered.documentSemanticTokensProvider.onDidChange(semanticTokensChanged);
+    const emitRefreshEvent = (event: LanguageServerRefreshEvent) => {
+      if (!refreshListener) {
+        throw new Error("Refresh listener was not registered");
+      }
+
+      refreshListener(event);
+    };
+
+    emitRefreshEvent({
+      feature: "codeLens",
+      rootPath: "/project",
+      sessionId: 1,
+    });
+    emitRefreshEvent({
+      feature: "inlayHint",
+      rootPath: "/project",
+      sessionId: 1,
+    });
+    emitRefreshEvent({
+      feature: "semanticTokens",
+      rootPath: "/project",
+      sessionId: 1,
+    });
+    emitRefreshEvent({
+      feature: "codeLens",
+      rootPath: "/other",
+      sessionId: 1,
+    });
+    emitRefreshEvent({
+      feature: "inlayHint",
+      rootPath: "/project",
+      sessionId: 2,
+    });
+
+    expect(codeLensChanged).toHaveBeenCalledTimes(1);
+    expect(inlayHintsChanged).toHaveBeenCalledTimes(1);
+    expect(semanticTokensChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("unsubscribes PHP provider refresh events when disposed before subscription resolves", async () => {
+    const registered = createRegisteredProviders();
+    const unsubscribe = vi.fn();
+    const subscription = createDeferred<() => void>();
+    const refreshGateway: LanguageServerRefreshGateway = {
+      subscribeRefreshEvents: vi.fn(async () => subscription.promise),
+    };
+    const disposable = registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ refreshGateway }),
+    );
+
+    disposable.dispose();
+    subscription.resolve(unsubscribe);
+
+    await vi.waitFor(() => {
+      expect(unsubscribe).toHaveBeenCalled();
+    });
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -7270,6 +7352,7 @@ function providerContext(
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodSignature"]
     >;
     reportError(error: unknown): void;
+    refreshGateway: LanguageServerRefreshGateway;
     runtimeStatus: LanguageServerRuntimeStatus | null;
     workspaceEditGateway: LanguageServerWorkspaceEditGateway;
   }> = {},
@@ -7287,6 +7370,7 @@ function providerContext(
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
+    refreshGateway: overrides.refreshGateway,
     reportError: overrides.reportError ?? vi.fn(),
     workspaceEditGateway: overrides.workspaceEditGateway,
   };

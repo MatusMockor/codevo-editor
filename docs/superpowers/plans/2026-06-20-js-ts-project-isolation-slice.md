@@ -7571,3 +7571,41 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Semantic Token Providers
 
 - Committed as `24b0b392 Register PHP semantic token providers`.
+
+## Next Slice: PHP Provider Refresh Events
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1d6fd552 Record PHP semantic token provider commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- PHP backend refresh events already use the default language-server refresh gateway.
+- PHP Monaco now exposes CodeLens, inlay hints, and semantic tokens, but the provider did not wire refresh events into Monaco `onDidChange` hooks.
+- JS/TS already refreshes those same provider surfaces, so this closes a visible PHP provider parity gap after semantic tokens.
+
+### Implementation Choice
+
+- Add PHP refresh gateway wiring to `App` and `EditorSurface`.
+- Add PHP provider event emitters for CodeLens, inlay hints, and semantic tokens.
+- Filter refresh events by active workspace root and current PHP runtime session before firing Monaco provider refresh hooks.
+
+### Acceptance Criteria
+
+- Active PHP CodeLens, inlay-hint, and semantic-token refresh events fire the corresponding Monaco provider events.
+- Wrong-root and stale-session refresh events are ignored.
+- Disposing the provider unsubscribes refresh subscriptions, including subscriptions that resolve after disposal.
+- Focused provider tests, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Provider Refresh Events
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "refresh events|unsubscribes PHP provider refresh|registers php"` (3 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (126 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 970 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Pending
