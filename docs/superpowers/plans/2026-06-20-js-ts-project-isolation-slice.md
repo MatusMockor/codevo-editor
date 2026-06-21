@@ -7943,4 +7943,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Guard Stale Laravel Config File Completion Reads
 
-- Pending commit.
+- Committed as `96f063ea Guard stale Laravel config completions`.
