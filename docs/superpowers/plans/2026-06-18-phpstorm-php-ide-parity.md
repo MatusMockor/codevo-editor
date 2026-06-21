@@ -5173,3 +5173,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `b64672d1 Cover stale indexed definition tab results`.
+
+## Slice: Stale JavaScript TypeScript Implementation Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2315cb36 Record stale indexed definition result guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down JavaScript/TypeScript Go to Implementation isolation when LSP implementation results arrive after switching project tabs.
+
+### Implementation Choice
+
+- Add a preview controller regression for a delayed successful `implementation` response from `/workspace-a`.
+- Start Go to Implementation on `PlatformAdapter::getPlatform`, switch to `/workspace-b`, then resolve the stale implementation location from `/workspace-a`.
+- Assert the active workspace remains `/workspace-b`, the stale implementation target is not opened, no implementation chooser is shown, and no reveal target is set.
+- Keep this as a test-only slice because the existing navigation path already guards stale implementation results.
+
+### Acceptance Criteria
+
+- Delayed implementation results from an inactive project tab are ignored.
+- The active workspace remains `/workspace-b`.
+- Stale implementation results do not open a target or populate an implementation chooser in the active tab.
+- Existing implementation chooser behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "implementation results after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `e12aa0ec Cover stale implementation tab results`.
