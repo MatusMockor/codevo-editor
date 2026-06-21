@@ -5891,3 +5891,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: File Structure Scope Clear Reset Guard
 
 - Committed as `47fcec79 Reset file structure scope on workspace clear`.
+
+## Next Slice: Runtime Status No-Workspace Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `acabbbc6 Record file structure reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 854 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Runtime status handlers rejected mismatched roots only when an active workspace root existed.
+- After closing the last project tab, a delayed PHP or JavaScript/TypeScript runtime status event could repopulate runtime state in the no-workspace controller.
+- PHP status handling also cached the rooted status before checking whether it still belonged to the active workspace.
+
+### Implementation Choice
+
+- Require PHP runtime status roots to match the current active workspace before caching or publishing state.
+- Keep JavaScript/TypeScript background-tab status caching for open tabs, but require a current active root match before publishing active runtime state.
+- Add regressions for PHP and JS/TS runtime status events arriving after the last project tab closes.
+
+### Acceptance Criteria
+
+- PHP runtime status events after last-tab close do not repopulate active runtime state.
+- JavaScript/TypeScript runtime status events after last-tab close do not repopulate active runtime state.
+- Existing rootless status, closed-tab status, and runtime subscription guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Runtime Status No-Workspace Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (322 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 856 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Runtime Status No-Workspace Guard
+
+- Committed as `3015bbd0 Guard runtime status after workspace clear`.
