@@ -21589,6 +21589,110 @@ final class InvoiceAdapter
     });
   });
 
+  it("drops stale indexed PHP implementation results after switching project tabs", async () => {
+    const interfacePath = "/workspace-a/app/Contracts/PlatformAdapter.php";
+    const implementationPath =
+      "/workspace-a/app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php";
+    const interfaceSource = `<?php
+
+namespace App\\Contracts;
+
+interface PlatformAdapter
+{
+    public function getPlatform(): Platform;
+}
+`;
+    const implementationSource = `<?php
+
+namespace App\\Services\\Analytics\\Adapters\\Facebook;
+
+use App\\Contracts\\PlatformAdapter;
+
+final class FacebookAdapterService implements PlatformAdapter
+{
+    public function getPlatform(): Platform
+    {
+    }
+}
+`;
+    const symbolSearch = createDeferred<ProjectSymbolSearchResult[]>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === interfacePath) {
+        return interfaceSource;
+      }
+
+      if (path === implementationPath) {
+        return implementationSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementationOnce(async () => symbolSearch.promise);
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(interfacePath, "PlatformAdapter.php"),
+      );
+    });
+
+    let implementationPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      implementationPromise = getWorkbench().goToImplementationAt(
+        positionAfter(interfaceSource, "getPlatform"),
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "getPlatform", 200);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    symbolSearch.resolve([
+      {
+        column: 21,
+        containerName:
+          "App\\Services\\Analytics\\Adapters\\Facebook\\FacebookAdapterService",
+        fullyQualifiedName:
+          "App\\Services\\Analytics\\Adapters\\Facebook\\FacebookAdapterService::getPlatform",
+        kind: "method",
+        lineNumber: 10,
+        name: "getPlatform",
+        path: implementationPath,
+        relativePath:
+          "app/Services/Analytics/Adapters/Facebook/FacebookAdapterService.php",
+      },
+    ]);
+    await act(async () => {
+      await implementationPromise;
+    });
+
+    expect(readTextFile).not.toHaveBeenCalledWith(implementationPath);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(implementationPath);
+    expect(getWorkbench().implementationChooser).toBe(null);
+  });
+
   it("shows a chooser for multiple indexed PHP implementations when the language server returns no targets", async () => {
     const interfacePath = "/workspace/app/Contracts/PlatformAdapter.php";
     const baseAdapterPath =

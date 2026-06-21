@@ -10171,20 +10171,25 @@ export function useWorkbenchController(
     async (
       editorPosition: EditorPosition,
     ): Promise<ImplementationTarget[]> => {
+      const document = activeDocument;
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
       if (
-        !activeDocument ||
-        activeDocument.language !== "php" ||
-        !workspaceRoot ||
+        !document ||
+        document.language !== "php" ||
+        !requestedRoot ||
         !shouldIndexWorkspace(intelligenceMode)
       ) {
         return [];
       }
 
       const declarationContext = phpImplementationDeclarationContextAt(
-        activeDocument.content,
+        document.content,
         editorPosition,
       );
-      const targetClassName = phpCurrentClassName(activeDocument.content);
+      const targetClassName = phpCurrentClassName(document.content);
 
       if (!declarationContext || !targetClassName) {
         return [];
@@ -10194,23 +10199,37 @@ export function useWorkbenchController(
       const normalizedMethodName = methodName.toLowerCase();
       const normalizedTargetClassName = targetClassName.toLowerCase();
       const symbols = await projectSymbolSearch.searchProjectSymbols(
-        workspaceRoot,
+        requestedRoot,
         methodName,
         200,
       );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
       const targets = new Map<string, ImplementationTarget>();
 
       for (const symbol of symbols) {
         if (
           symbol.kind !== "method" ||
-          symbol.path === activeDocument.path ||
+          symbol.path === document.path ||
           symbol.name.toLowerCase() !== normalizedMethodName
         ) {
           continue;
         }
 
         try {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           const source = await readNavigationFileContent(symbol.path);
+
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           const candidateClassName =
             symbol.containerName ?? phpCurrentClassName(source);
 
@@ -10228,6 +10247,10 @@ export function useWorkbenchController(
             ))
           ) {
             continue;
+          }
+
+          if (!isRequestedRootActive()) {
+            return [];
           }
 
           const target = implementationTargetFromProjectSymbol(symbol);
@@ -10251,21 +10274,30 @@ export function useWorkbenchController(
 
   const goToIndexedPhpImplementation = useCallback(
     async (requestedPosition?: EditorPosition): Promise<boolean> => {
+      const document = activeDocument;
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
       const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
 
-      if (!editorPosition) {
+      if (!document || !requestedRoot || !editorPosition) {
         return false;
       }
 
       const targets = await indexedPhpImplementationTargets(editorPosition);
 
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       if (targets.length === 0) {
         return false;
       }
 
-      const symbolName = activeDocument
-        ? identifierAtEditorPosition(activeDocument.content, editorPosition)
-        : null;
+      const symbolName = identifierAtEditorPosition(
+        document.content,
+        editorPosition,
+      );
 
       if (targets.length > 1) {
         setImplementationChooser({
@@ -10282,10 +10314,19 @@ export function useWorkbenchController(
       }
 
       setImplementationChooser(null);
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       await openNavigationTarget(target.path, target.position, target.label);
       return true;
     },
-    [activeDocument, indexedPhpImplementationTargets, openNavigationTarget],
+    [
+      activeDocument,
+      indexedPhpImplementationTargets,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
   );
 
   const openPhpLaravelDynamicWhereTarget = useCallback(
