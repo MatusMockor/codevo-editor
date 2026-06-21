@@ -1,5 +1,7 @@
 use crate::project::WorkspaceDescriptor;
-use crate::tools::{JavaScriptTypeScriptToolAvailability, PhpToolAvailability, ToolLocation};
+use crate::tools::{
+    JavaScriptTypeScriptToolAvailability, PhpToolAvailability, ToolLocation, ToolSource,
+};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -17,6 +19,7 @@ pub struct LanguageServerPlan {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LanguageServerProvider {
+    Intelephense,
     Phpactor,
     TypeScriptLanguageServer,
 }
@@ -61,6 +64,7 @@ pub trait LanguageServerPlanner {
         trusted: bool,
         descriptor: &WorkspaceDescriptor,
         tools: &PhpToolAvailability,
+        settings: &PhpLanguageServerSettings,
     ) -> LanguageServerPlan;
 }
 
@@ -75,6 +79,54 @@ pub trait JavaScriptTypeScriptLanguageServerPlanner {
 
 pub trait InitializeRequestFactory {
     fn create(&self, root: &Path) -> JsonRpcRequest;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PhpBackendPreference {
+    Auto,
+    Phpactor,
+    Intelephense,
+}
+
+impl PhpBackendPreference {
+    fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("phpactor") => Self::Phpactor,
+            Some("intelephense") => Self::Intelephense,
+            _ => Self::Auto,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhpLanguageServerSettings {
+    pub backend: PhpBackendPreference,
+    pub intelephense_path: Option<String>,
+    pub phpactor_path: Option<String>,
+}
+
+impl PhpLanguageServerSettings {
+    pub fn from_options(
+        backend: Option<&str>,
+        phpactor_path: Option<&str>,
+        intelephense_path: Option<&str>,
+    ) -> Self {
+        Self {
+            backend: PhpBackendPreference::from_setting(backend),
+            intelephense_path: trimmed_non_empty(intelephense_path),
+            phpactor_path: trimmed_non_empty(phpactor_path),
+        }
+    }
+}
+
+impl Default for PhpLanguageServerSettings {
+    fn default() -> Self {
+        Self {
+            backend: PhpBackendPreference::Auto,
+            intelephense_path: None,
+            phpactor_path: None,
+        }
+    }
 }
 
 pub struct PhpactorLanguageServerPlanner<TFactory = PhpactorInitializeRequestFactory> {
@@ -118,6 +170,7 @@ where
         trusted: bool,
         descriptor: &WorkspaceDescriptor,
         tools: &PhpToolAvailability,
+        settings: &PhpLanguageServerSettings,
     ) -> LanguageServerPlan {
         if !trusted {
             return blocked_plan("Trust this workspace to enable PHPactor LSP.");
@@ -127,7 +180,23 @@ where
             return unavailable_plan("This workspace is not a PHP Composer project.");
         }
 
-        let Some(phpactor) = tools.phpactor.as_ref() else {
+        if matches!(settings.backend, PhpBackendPreference::Intelephense) {
+            let message = if settings.intelephense_path.is_some() {
+                "Configured Intelephense path was received, but Intelephense language server support is not available yet. Choose the managed PHP engine to use PHPactor."
+            } else {
+                "Intelephense language server support is not available yet. Choose the managed PHP engine to use PHPactor."
+            };
+
+            return unavailable_intelephense_plan(message);
+        }
+
+        let configured_phpactor = settings.phpactor_path.as_ref().map(|path| ToolLocation {
+            executable: "phpactor".to_string(),
+            path: path.clone(),
+            source: ToolSource::Path,
+        });
+
+        let Some(phpactor) = configured_phpactor.as_ref().or(tools.phpactor.as_ref()) else {
             return unavailable_plan(
                 "Managed PHP IDE engine was not found. Install PHPactor into Mockor Editor tools or set MOCKOR_EDITOR_PHPACTOR_PATH.",
             );
@@ -611,6 +680,16 @@ fn unavailable_plan(message: &str) -> LanguageServerPlan {
     }
 }
 
+fn unavailable_intelephense_plan(message: &str) -> LanguageServerPlan {
+    LanguageServerPlan {
+        provider: LanguageServerProvider::Intelephense,
+        status: LanguageServerPlanStatus::Unavailable,
+        message: message.to_string(),
+        command: None,
+        initialize_request: None,
+    }
+}
+
 fn unavailable_javascript_typescript_plan(message: &str) -> LanguageServerPlan {
     LanguageServerPlan {
         provider: LanguageServerProvider::TypeScriptLanguageServer,
@@ -674,12 +753,20 @@ fn is_uri_path_byte(byte: u8) -> bool {
         )
 }
 
+fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         file_uri, JavaScriptTypeScriptLanguageServerPlanner, LanguageServerPlanStatus,
-        LanguageServerPlanner, LanguageServerProvider, PhpactorLanguageServerPlanner,
-        TypeScriptLanguageServerPlanner, TypeScriptLanguageServerSettings,
+        LanguageServerPlanner, LanguageServerProvider, PhpBackendPreference,
+        PhpLanguageServerSettings, PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
+        TypeScriptLanguageServerSettings,
     };
     use crate::project::{PhpProjectDescriptor, WorkspaceDescriptor};
     use crate::tools::{
@@ -697,6 +784,7 @@ mod tests {
             false,
             &php_descriptor(&root),
             &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings::default(),
         );
 
         assert!(matches!(plan.status, LanguageServerPlanStatus::Blocked));
@@ -714,6 +802,7 @@ mod tests {
             true,
             &php_descriptor(&root),
             &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings::default(),
         );
 
         assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
@@ -739,8 +828,93 @@ mod tests {
                 phpactor: None,
                 intelephense: None,
             },
+            &PhpLanguageServerSettings::default(),
         );
 
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Unavailable));
+        assert!(plan.command.is_none());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn configured_phpactor_path_wins_over_detected_phpactor() {
+        let root = create_temp_dir("lsp-configured-phpactor");
+        let configured_phpactor = root
+            .join("custom-tools")
+            .join("phpactor")
+            .to_string_lossy()
+            .to_string();
+        let planner = PhpactorLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings {
+                backend: PhpBackendPreference::Auto,
+                intelephense_path: None,
+                phpactor_path: Some(configured_phpactor.clone()),
+            },
+        );
+
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
+        let command = plan.command.expect("language server command");
+        assert_eq!(command.executable, configured_phpactor);
+        assert_eq!(command.args, vec!["language-server"]);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn intelephense_backend_does_not_start_phpactor() {
+        let root = create_temp_dir("lsp-intelephense-backend");
+        let planner = PhpactorLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings {
+                backend: PhpBackendPreference::Intelephense,
+                intelephense_path: Some("/tools/intelephense".to_string()),
+                phpactor_path: Some("/tools/phpactor".to_string()),
+            },
+        );
+
+        assert!(matches!(
+            plan.provider,
+            LanguageServerProvider::Intelephense
+        ));
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Unavailable));
+        assert!(plan.command.is_none());
+        assert!(plan.initialize_request.is_none());
+        assert!(plan.message.contains("not available yet"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_backend_ignores_intelephense_tools() {
+        let root = create_temp_dir("lsp-phpactor-backend");
+        let planner = PhpactorLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &PhpToolAvailability {
+                phpactor: None,
+                intelephense: Some(ToolLocation {
+                    executable: "intelephense".to_string(),
+                    path: "/tools/intelephense".to_string(),
+                    source: ToolSource::Path,
+                }),
+            },
+            &PhpLanguageServerSettings {
+                backend: PhpBackendPreference::Phpactor,
+                intelephense_path: Some("/tools/intelephense".to_string()),
+                phpactor_path: None,
+            },
+        );
+
+        assert!(matches!(plan.provider, LanguageServerProvider::Phpactor));
         assert!(matches!(plan.status, LanguageServerPlanStatus::Unavailable));
         assert!(plan.command.is_none());
         fs::remove_dir_all(root).expect("cleanup");
@@ -954,8 +1128,7 @@ mod tests {
             true
         );
         assert_eq!(
-            request.params["capabilities"]["workspace"]["workspaceEdit"]
-                ["resourceOperations"],
+            request.params["capabilities"]["workspace"]["workspaceEdit"]["resourceOperations"],
             json!(["create", "rename", "delete"])
         );
         assert_eq!(

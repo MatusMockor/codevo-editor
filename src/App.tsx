@@ -146,6 +146,8 @@ const javaScriptTypeScriptLanguageServerRefreshGateway =
     undefined,
     JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT,
   );
+const phpLanguageServerWorkspaceEditGateway =
+  new TauriLanguageServerWorkspaceEditGateway();
 const javaScriptTypeScriptLanguageServerWorkspaceEditGateway =
   new TauriLanguageServerWorkspaceEditGateway(
     undefined,
@@ -666,6 +668,9 @@ function App() {
             applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
               workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
             }
+            applyPhpLanguageServerWorkspaceEdit={
+              workbench.applyPhpLanguageServerWorkspaceEdit
+            }
             changeHunks={activeEditorChangeHunks}
             editorRevealTarget={workbench.editorRevealTarget}
             flushPendingLanguageServerDocument={
@@ -697,6 +702,9 @@ function App() {
             keymap={workbench.appSettings.keymap}
             monacoTheme={monacoTheme}
             phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
+            phpLanguageServerWorkspaceEditGateway={
+              phpLanguageServerWorkspaceEditGateway
+            }
             onCloseActiveTab={() => {
               if (workbench.activeDocument) {
                 workbench.closeDocument(workbench.activeDocument.path);

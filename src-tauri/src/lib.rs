@@ -50,7 +50,7 @@ use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use lsp::{
     file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
-    PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
+    PhpLanguageServerSettings, PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
     TypeScriptLanguageServerSettings,
 };
 use lsp_document::{
@@ -1170,6 +1170,9 @@ fn normalize_path(path: &Path) -> PathBuf {
 fn build_php_language_server_plan(
     root_path: &str,
     trust: &Mutex<WorkspaceTrustService>,
+    php_backend: Option<&str>,
+    phpactor_path: Option<&str>,
+    intelephense_path: Option<&str>,
 ) -> Result<LanguageServerPlan, String> {
     let root = PathBuf::from(root_path);
     let trusted = {
@@ -1182,8 +1185,10 @@ fn build_php_language_server_plan(
     let tools = LocalPhpToolDetector
         .detect(Some(&root))
         .map_err(|error| error.to_string())?;
+    let settings =
+        PhpLanguageServerSettings::from_options(php_backend, phpactor_path, intelephense_path);
 
-    Ok(PhpactorLanguageServerPlanner::new().plan(&root, trusted, &descriptor, &tools))
+    Ok(PhpactorLanguageServerPlanner::new().plan(&root, trusted, &descriptor, &tools, &settings))
 }
 
 fn build_javascript_typescript_language_server_plan(
@@ -1222,9 +1227,18 @@ fn javascript_typescript_tool_preference_from_setting(
 #[tauri::command]
 fn plan_php_language_server(
     root_path: String,
+    php_backend: Option<String>,
+    phpactor_path: Option<String>,
+    intelephense_path: Option<String>,
     service: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<LanguageServerPlan, String> {
-    build_php_language_server_plan(&root_path, &service)
+    build_php_language_server_plan(
+        &root_path,
+        &service,
+        php_backend.as_deref(),
+        phpactor_path.as_deref(),
+        intelephense_path.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -1493,11 +1507,20 @@ fn sanitized_log_file_stem(value: &str) -> String {
 #[tauri::command]
 fn start_php_language_server(
     root_path: String,
+    php_backend: Option<String>,
+    phpactor_path: Option<String>,
+    intelephense_path: Option<String>,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<Value, String> {
-    let plan = build_php_language_server_plan(&root_path, &trust)?;
+    let plan = build_php_language_server_plan(
+        &root_path,
+        &trust,
+        php_backend.as_deref(),
+        phpactor_path.as_deref(),
+        intelephense_path.as_deref(),
+    )?;
 
     if !matches!(plan.status, LanguageServerPlanStatus::Ready) {
         return Err(plan.message);

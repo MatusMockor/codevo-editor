@@ -116,6 +116,18 @@ export class TauriLanguageServerRuntimeGateway
       args.inlayHintsEnabled = options.inlayHintsEnabled;
     }
 
+    if (options.phpBackend) {
+      args.phpBackend = options.phpBackend;
+    }
+
+    if (options.phpactorPath) {
+      args.phpactorPath = options.phpactorPath;
+    }
+
+    if (options.intelephensePath) {
+      args.intelephensePath = options.intelephensePath;
+    }
+
     if (options.validationEnabled !== undefined) {
       args.validationEnabled = options.validationEnabled;
     }

@@ -1,6 +1,12 @@
-import type { JavaScriptTypeScriptVersionPreference } from "./settings";
+import type {
+  JavaScriptTypeScriptVersionPreference,
+  PhpBackendPreference,
+} from "./settings";
 
-export type LanguageServerProvider = "phpactor" | "typeScriptLanguageServer";
+export type LanguageServerProvider =
+  | "intelephense"
+  | "phpactor"
+  | "typeScriptLanguageServer";
 
 export type LanguageServerPlanStatus = "blocked" | "ready" | "unavailable";
 
@@ -33,8 +39,17 @@ export interface JavaScriptTypeScriptLanguageServerPlanOptions {
   validationEnabled?: boolean;
 }
 
+export interface PhpLanguageServerPlanOptions {
+  intelephensePath?: string | null;
+  phpBackend?: PhpBackendPreference;
+  phpactorPath?: string | null;
+}
+
 export interface LanguageServerGateway {
-  planPhpLanguageServer(rootPath: string): Promise<LanguageServerPlan>;
+  planPhpLanguageServer(
+    rootPath: string,
+    options?: PhpLanguageServerPlanOptions,
+  ): Promise<LanguageServerPlan>;
   planJavaScriptTypeScriptLanguageServer(
     rootPath: string,
     options?: JavaScriptTypeScriptLanguageServerPlanOptions,

@@ -6402,3 +6402,99 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Provider Same-Root Session Stale Results
 
 - Committed as `df6412d2 Drop stale PHP provider results after restarts`.
+
+## Next Slice: PHP Workspace ApplyEdit Frontend Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `291951af Record PHP provider restart guard commit`
+- Worktree was clean before delegated workers started.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Fermat's PHP/Laravel audit identified a high-impact gap: backend PHP sessions already emit guarded `workspace/applyEdit` events, but the frontend only wired workspace-edit subscriptions for JS/TS.
+- PHPactor server-initiated edits could therefore be acknowledged by the backend and never reach Monaco/open documents or closed-file persistence.
+- A naive frontend subscription would be dangerous without active root/session checks, because stale PHPactor sessions could apply edits after a project-tab switch or same-root restart.
+
+### Implementation Choice
+
+- Add PHP workspace-edit gateway support to the PHP Monaco provider context.
+- Subscribe to PHP `language-server://workspace-edit` events in `EditorSurface` and `App`.
+- Guard PHP workspace edit events by active workspace root and current PHP runtime `sessionId`.
+- Route PHP server-initiated edits and PHP execute-command edits through a shared workspace applier when available, keeping the open-model-only fallback for provider-only usage.
+- Filter edit changes, document versions, and file operations to the active root before applying.
+- Use versioned edit metadata to skip stale open-model mutations and mark those open paths handled so the controller/filesystem path does not overwrite newer text.
+
+### Acceptance Criteria
+
+- Active-root/current-session PHP `workspace/applyEdit` events update open Monaco models and persist closed-file edits.
+- No-active-tab, wrong-root, and stale-session PHP workspace edits are dropped.
+- PHP execute-command workspace edits use the same applier path when available.
+- Stale versioned PHP workspace edits do not mutate open controller documents.
+- Focused PHP provider/controller tests, `npm run check`, full `npm test`, full Tauri lib tests, and `git diff --check` pass.
+
+### Verification: PHP Workspace ApplyEdit Frontend Guard
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "PHP workspace edit|PHP execute-command"` (4 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP language server workspace edits|versioned PHP workspace edits"` (2 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts src/application/useWorkbenchController.preview.test.tsx src/infrastructure/tauriLanguageServerGateway.test.ts src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts` (391 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 877 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (309 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Workspace ApplyEdit Frontend Guard
+
+- Pending integrated commit.
+
+## Next Slice: PHP Language Server Settings Backend Activation
+
+### Checkpoint Before Slice
+
+- Delegated in parallel with the PHP workspace-edit frontend guard.
+- Same starting point:
+  - `291951af Record PHP provider restart guard commit`
+- Worktree was clean before delegated workers started.
+
+### Why This Slice
+
+- Settings UI already persisted `phpBackend`, `phpactorPath`, and `intelephensePath`, but PHP runtime planning and start commands ignored them.
+- That made custom PHPactor paths non-functional and allowed `phpBackend: "intelephense"` to silently fall back to PHPactor.
+- PhpStorm-like IDE mode needs persisted PHP runtime preferences to affect actual runtime planning, not just UI state.
+
+### Implementation Choice
+
+- Add PHP language-server plan/start options to the TypeScript gateway contracts and Tauri IPC arguments.
+- Add Rust `PhpLanguageServerSettings` with normalized backend/path options.
+- Let configured `phpactorPath` win over detected PHPactor.
+- Make `phpBackend: "intelephense"` return an explicit unavailable Intelephense plan with no command until Intelephense support exists.
+- Pass PHP language-server settings through plan refresh, manual start, and autostart paths.
+- Refresh PHP language-server plan and reset autostart attempts when PHP backend/path settings change.
+
+### Acceptance Criteria
+
+- Configured `phpactorPath` is used for PHPactor plans and starts.
+- Intelephense preference does not silently start PHPactor.
+- PHP settings flow through frontend plan/start gateways and controller autostart paths.
+- Existing PHP runtime plan, autostart, and stale-plan guards remain green.
+- Focused TypeScript gateway/controller tests, Rust LSP tests, `npm run check`, full `npm test`, full Tauri lib tests, and `git diff --check` pass.
+
+### Verification: PHP Language Server Settings Backend Activation
+
+- PASS: `npm test -- src/infrastructure/tauriLanguageServerGateway.test.ts src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP language server settings|starts IDE services when a restored PHP workspace is already in IDE mode|auto-starts PHP IDE services while initial runtime status is still unknown|ignores stale PHP language server plan"`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp::tests:: --lib` (10 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 877 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (309 tests)
+- PASS: `rustfmt --check src-tauri/src/lsp.rs`
+- NOTE: `rustfmt --check src-tauri/src/lsp.rs src-tauri/src/lib.rs` still reports pre-existing unrelated formatting differences in `src-tauri/src/js_ts_file_watcher.rs`.
+- PASS: `git diff --check`
+
+### Commit Status: PHP Language Server Settings Backend Activation
+
+- Pending integrated commit.

@@ -6,6 +6,9 @@ import type {
   LanguageServerHover,
   LanguageServerLocation,
   LanguageServerRange,
+  LanguageServerWorkspaceEdit,
+  LanguageServerWorkspaceEditEvent,
+  LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import type {
   LanguageServerCapabilities,
@@ -2595,6 +2598,243 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.codeActions).not.toHaveBeenCalled();
   });
 
+  it("applies PHP workspace edit events for the active workspace and session", async () => {
+    const registered = createRegisteredProviders();
+    const openPath = "/project/src/User.php";
+    const openUri = "file:///project/src/User.php";
+    const closedUri = "file:///project/src/Helper.php";
+    const outsideUri = "file:///other/src/Outside.php";
+    const openModel = {
+      ...model({ path: openPath }),
+      pushEditOperations: vi.fn(),
+    };
+    const edit: LanguageServerWorkspaceEdit = {
+      changes: {
+        ...workspaceEdit(openUri, "Open").changes,
+        ...workspaceEdit(closedUri, "Closed").changes,
+        ...workspaceEdit(outsideUri, "Outside").changes,
+      },
+      documentVersions: {
+        [openUri]: 42,
+        [outsideUri]: 42,
+      },
+    };
+    let publishWorkspaceEdit: (event: LanguageServerWorkspaceEditEvent) => void =
+      () => undefined;
+    const unsubscribe = vi.fn();
+    const workspaceEditGateway: LanguageServerWorkspaceEditGateway = {
+      subscribeWorkspaceEdits: vi.fn(async (listener) => {
+        publishWorkspaceEdit = listener;
+        return unsubscribe;
+      }),
+    };
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([openModel]);
+    const disposable = registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ applyWorkspaceEdit, workspaceEditGateway }),
+    );
+    await Promise.resolve();
+
+    publishWorkspaceEdit({
+      edit,
+      label: "Rename",
+      rootPath: "/project/",
+      sessionId: 1,
+    });
+
+    expect(openModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 1,
+            startColumn: 1,
+            startLineNumber: 1,
+          }),
+          text: "Open",
+        },
+      ],
+      expect.any(Function),
+    );
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      {
+        changes: {
+          ...workspaceEdit(openUri, "Open").changes,
+          ...workspaceEdit(closedUri, "Closed").changes,
+        },
+        documentVersions: {
+          [openUri]: 42,
+        },
+      },
+      {
+        editedOpenPaths: [openPath],
+        rootPath: "/project/",
+      },
+    );
+
+    disposable.dispose();
+
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it("drops PHP workspace edit events for inactive roots and stale sessions", () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = null;
+    let activeSessionId = 1;
+    let publishWorkspaceEdit: (event: LanguageServerWorkspaceEditEvent) => void =
+      () => undefined;
+    const workspaceEditGateway: LanguageServerWorkspaceEditGateway = {
+      subscribeWorkspaceEdits: vi.fn(async (listener) => {
+        publishWorkspaceEdit = listener;
+        return () => undefined;
+      }),
+    };
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        applyWorkspaceEdit,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+        getWorkspaceRoot: () => activeRoot,
+        workspaceEditGateway,
+      }),
+    );
+
+    publishWorkspaceEdit({
+      edit: workspaceEdit("file:///project/src/User.php", "No root"),
+      label: null,
+      rootPath: "/project",
+      sessionId: 1,
+    });
+    activeRoot = "/project";
+    publishWorkspaceEdit({
+      edit: workspaceEdit("file:///project/src/User.php", "Stale"),
+      label: null,
+      rootPath: "/project",
+      sessionId: 2,
+    });
+    publishWorkspaceEdit({
+      edit: workspaceEdit("file:///other/src/User.php", "Other"),
+      label: null,
+      rootPath: "/other",
+      sessionId: 1,
+    });
+    activeSessionId = 2;
+    publishWorkspaceEdit({
+      edit: workspaceEdit("file:///project/src/User.php", "Current"),
+      label: null,
+      rootPath: "/project",
+      sessionId: 2,
+    });
+
+    expect(applyWorkspaceEdit).toHaveBeenCalledTimes(1);
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      workspaceEdit("file:///project/src/User.php", "Current"),
+      {
+        editedOpenPaths: [],
+        rootPath: "/project",
+      },
+    );
+  });
+
+  it("routes PHP execute-command workspace edits through the workspace applier", async () => {
+    const registered = createRegisteredProviders();
+    const openPath = "/project/src/User.php";
+    const openUri = "file:///project/src/User.php";
+    const closedUri = "file:///project/src/Helper.php";
+    const openModel = {
+      ...model({ path: openPath }),
+      pushEditOperations: vi.fn(),
+    };
+    const edit: LanguageServerWorkspaceEdit = {
+      changes: {
+        ...workspaceEdit(openUri, "Open command").changes,
+        ...workspaceEdit(closedUri, "Closed command").changes,
+      },
+    };
+    const gateway = featuresGateway();
+    vi.mocked(gateway.executeCommand).mockResolvedValueOnce(edit);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([openModel]);
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const context = providerContext({
+      applyWorkspaceEdit,
+      featuresGateway: gateway,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    if (!registered.commandRun) {
+      throw new Error("PHP language server command was not registered");
+    }
+    await registered.commandRun(null, phpCommandPayload());
+
+    expect(gateway.executeCommand).toHaveBeenCalledWith(
+      "/project",
+      phpCommandPayload().command,
+    );
+    expect(openModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 1,
+            startColumn: 1,
+            startLineNumber: 1,
+          }),
+          text: "Open command",
+        },
+      ],
+      expect.any(Function),
+    );
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(edit, {
+      editedOpenPaths: [openPath],
+      rootPath: "/project",
+    });
+  });
+
+  it("keeps PHP execute-command workspace edits open-model-only without an applier", async () => {
+    const registered = createRegisteredProviders();
+    const openModel = {
+      ...model({ path: "/project/src/User.php" }),
+      pushEditOperations: vi.fn(),
+    };
+    const gateway = featuresGateway();
+    vi.mocked(gateway.executeCommand).mockResolvedValueOnce({
+      changes: {
+        ...workspaceEdit("file:///project/src/User.php", "Open fallback")
+          .changes,
+        ...workspaceEdit("file:///project/src/Helper.php", "Closed fallback")
+          .changes,
+      },
+    });
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([openModel]);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    if (!registered.commandRun) {
+      throw new Error("PHP language server command was not registered");
+    }
+    await registered.commandRun(null, phpCommandPayload());
+
+    expect(openModel.pushEditOperations).toHaveBeenCalledTimes(1);
+    expect(openModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          text: "Open fallback",
+        }),
+      ],
+      expect.any(Function),
+    );
+  });
+
 });
 
 function createRegisteredProviders() {
@@ -2738,6 +2978,9 @@ function completionLabels(
 function providerContext(
   overrides: Partial<{
     activeDocument: EditorDocument | null;
+    applyWorkspaceEdit: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["applyWorkspaceEdit"]
+    >;
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
     getWorkspaceRoot(): string | null;
@@ -2750,12 +2993,14 @@ function providerContext(
     >;
     reportError(error: unknown): void;
     runtimeStatus: LanguageServerRuntimeStatus | null;
+    workspaceEditGateway: LanguageServerWorkspaceEditGateway;
   }> = {},
 ) {
   const activeDocument = overrides.activeDocument ?? document();
   const runtimeStatus = overrides.runtimeStatus ?? runningStatus();
 
   return {
+    applyWorkspaceEdit: overrides.applyWorkspaceEdit,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
@@ -2765,6 +3010,7 @@ function providerContext(
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
     reportError: overrides.reportError ?? vi.fn(),
+    workspaceEditGateway: overrides.workspaceEditGateway,
   };
 }
 

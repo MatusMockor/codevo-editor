@@ -127,6 +127,36 @@ describe("TauriLanguageServerRuntimeGateway", () => {
     });
   });
 
+  it("passes PHP language server settings to the start command", async () => {
+    const rootedRunning: LanguageServerRuntimeStatus = {
+      capabilities: runtimeCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 4,
+    };
+    const invokeCommand = vi.fn<InvokeCommand>(async () => rootedRunning);
+    const gateway = new TauriLanguageServerRuntimeGateway(
+      invokeCommand,
+      vi.fn<ListenToEvent>(),
+      () => true,
+    );
+
+    await expect(
+      gateway.start("/workspace", {
+        intelephensePath: "/tools/intelephense",
+        phpBackend: "intelephense",
+        phpactorPath: "/tools/phpactor",
+      }),
+    ).resolves.toEqual(rootedRunning);
+
+    expect(invokeCommand).toHaveBeenCalledWith("start_php_language_server", {
+      intelephensePath: "/tools/intelephense",
+      phpBackend: "intelephense",
+      phpactorPath: "/tools/phpactor",
+      rootPath: "/workspace",
+    });
+  });
+
   it("passes TypeScript version preference to JavaScript and TypeScript start command", async () => {
     const running: LanguageServerRuntimeStatus = {
       capabilities: {

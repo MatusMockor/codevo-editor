@@ -50,7 +50,10 @@ import {
   registerJavaScriptTypeScriptLanguageServerMonacoProviders,
   type JavaScriptTypeScriptWorkspaceEditApplicationContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
-import { registerLanguageServerMonacoProviders } from "./languageServerMonacoProviders";
+import {
+  registerLanguageServerMonacoProviders,
+  type PhpWorkspaceEditApplicationContext,
+} from "./languageServerMonacoProviders";
 import {
   configureShikiLanguageFeatures,
   setupShikiTokenization,
@@ -70,6 +73,10 @@ interface EditorSurfaceProps {
     edit: LanguageServerWorkspaceEdit,
     context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
   ): Promise<void>;
+  applyPhpLanguageServerWorkspaceEdit?(
+    edit: LanguageServerWorkspaceEdit,
+    context: PhpWorkspaceEditApplicationContext,
+  ): Promise<void>;
   changeHunks: EditorChangeHunk[];
   editorRevealTarget: EditorRevealTarget | null;
   flushPendingJavaScriptTypeScriptLanguageServerDocument?(
@@ -87,6 +94,7 @@ interface EditorSurfaceProps {
   keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
   phpIdeReadinessVersion?: number;
+  phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   workspaceRoot?: string | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
@@ -116,6 +124,7 @@ interface EditorSurfaceProps {
 export function EditorSurface({
   activeDocument,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
+  applyPhpLanguageServerWorkspaceEdit = async () => undefined,
   changeHunks,
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
@@ -131,6 +140,7 @@ export function EditorSurface({
   keymap,
   monacoTheme,
   phpIdeReadinessVersion = 0,
+  phpLanguageServerWorkspaceEditGateway,
   workspaceRoot = null,
   onCloseActiveTab,
   onCursorPositionChange,
@@ -165,6 +175,7 @@ export function EditorSurface({
   const applyJavaScriptTypeScriptWorkspaceEditRef = useRef(
     applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
   );
+  const applyPhpWorkspaceEditRef = useRef(applyPhpLanguageServerWorkspaceEdit);
   const errorReporterRef = useRef(onLanguageServerError);
   const changeDecorationIdsRef = useRef<string[]>([]);
   const changeHunksRef = useRef(changeHunks);
@@ -252,6 +263,10 @@ export function EditorSurface({
   }, [applyJavaScriptTypeScriptLanguageServerWorkspaceEdit]);
 
   useEffect(() => {
+    applyPhpWorkspaceEditRef.current = applyPhpLanguageServerWorkspaceEdit;
+  }, [applyPhpLanguageServerWorkspaceEdit]);
+
+  useEffect(() => {
     errorReporterRef.current = onLanguageServerError;
   }, [onLanguageServerError]);
 
@@ -304,6 +319,8 @@ export function EditorSurface({
     }
 
     const disposable = registerLanguageServerMonacoProviders(monacoApi, {
+      applyWorkspaceEdit: (edit, editContext) =>
+        applyPhpWorkspaceEditRef.current(edit, editContext),
       featuresGateway: languageServerFeaturesGateway,
       flushPendingDocumentChange: (path) => flushPendingRef.current(path),
       getActiveDocument: () => activeDocumentRef.current,
@@ -314,10 +331,16 @@ export function EditorSurface({
       providePhpMethodSignature: (source, position) =>
         phpMethodSignatureRef.current(source, position),
       reportError: (error) => errorReporterRef.current(error),
+      workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,
     });
 
     return () => disposable.dispose();
-  }, [languageServerFeaturesGateway, monacoApi, workspaceRoot]);
+  }, [
+    languageServerFeaturesGateway,
+    monacoApi,
+    phpLanguageServerWorkspaceEditGateway,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!monacoApi) {

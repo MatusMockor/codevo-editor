@@ -1376,7 +1376,10 @@ export function useWorkbenchController(
   const refreshLanguageServerPlan = useCallback(
     async (rootPath: string) => {
       try {
-        const plan = await languageServerGateway.planPhpLanguageServer(rootPath);
+        const plan = await languageServerGateway.planPhpLanguageServer(
+          rootPath,
+          phpLanguageServerOptions(workspaceSettingsRef.current),
+        );
         if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
           setLanguageServerPlan(plan);
         }
@@ -5316,6 +5319,39 @@ export function useWorkbenchController(
       refreshJavaScriptTypeScriptWorkspaceEditFileOperationDirectories,
       workspaceFiles,
     ],
+  );
+
+  const applyPhpLanguageServerWorkspaceEdit = useCallback(
+    async (
+      edit: LanguageServerWorkspaceEdit,
+      context: { editedOpenPaths?: string[]; rootPath: string },
+    ): Promise<void> => {
+      const requestedRoot = context.rootPath;
+
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return;
+      }
+
+      const rootEdit = workspaceEditForRoot(edit, requestedRoot);
+      const controllerEdit = workspaceEditWithoutPaths(
+        rootEdit,
+        context.editedOpenPaths ?? [],
+      );
+      const openDocumentPaths = Object.keys(documentsRef.current);
+      applyWorkspaceEditToOpenDocuments(
+        controllerEdit,
+        requestedRoot,
+        documentVersionsByUriRef.current,
+      );
+      await workspaceFiles.applyWorkspaceEdit(
+        requestedRoot,
+        rootEdit,
+        openDocumentPaths,
+      );
+    },
+    [applyWorkspaceEditToOpenDocuments, workspaceFiles],
   );
 
   const applyJavaScriptTypeScriptRenameEdits = useCallback(
@@ -13848,6 +13884,13 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptInlayHints ||
           previousWorkspaceSettings.javaScriptTypeScriptValidation !==
             resolvedWorkspaceSettings.javaScriptTypeScriptValidation;
+        const shouldRefreshPhpLanguageServerPlan =
+          previousWorkspaceSettings.phpBackend !==
+            resolvedWorkspaceSettings.phpBackend ||
+          previousWorkspaceSettings.phpactorPath !==
+            resolvedWorkspaceSettings.phpactorPath ||
+          previousWorkspaceSettings.intelephensePath !==
+            resolvedWorkspaceSettings.intelephensePath;
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
           await stopLanguageServerRuntime(requestedRoot);
@@ -13935,6 +13978,8 @@ export function useWorkbenchController(
           }
         }
 
+        let refreshedPhpLanguageServerPlan = false;
+
         if (nextTrusted !== null && nextTrusted !== workspaceTrust?.trusted) {
           const trust = await workspaceTrustGateway.setTrust(
             requestedRoot,
@@ -13956,10 +14001,27 @@ export function useWorkbenchController(
 
           if (workspaceDescriptor?.php) {
             await refreshLanguageServerPlan(requestedRoot);
+            refreshedPhpLanguageServerPlan = true;
 
             if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
               return;
             }
+          }
+        }
+
+        if (
+          shouldRefreshPhpLanguageServerPlan &&
+          workspaceDescriptor?.php &&
+          !refreshedPhpLanguageServerPlan
+        ) {
+          autoStartedLanguageServerRootRef.current = null;
+          delete phpLanguageServerAutostartAttemptsByRootRef.current[
+            normalizedWorkspaceRootKey(requestedRoot)
+          ];
+          await refreshLanguageServerPlan(requestedRoot);
+
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
           }
         }
 
@@ -14024,7 +14086,10 @@ export function useWorkbenchController(
     const requestedRoot = workspaceRoot;
 
     try {
-      const status = await languageServerRuntimeGateway.start(requestedRoot);
+      const status = await languageServerRuntimeGateway.start(
+        requestedRoot,
+        phpLanguageServerOptions(workspaceSettingsRef.current),
+      );
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -15027,7 +15092,7 @@ export function useWorkbenchController(
     phpLanguageServerAutostartAttemptsByRootRef.current[autostartRootKey] =
       autostartAttempts + 1;
     languageServerRuntimeGateway
-      .start(workspaceRoot)
+      .start(workspaceRoot, phpLanguageServerOptions(workspaceSettingsRef.current))
       .then((status) => {
         handleLanguageServerRuntimeStatus(status, workspaceRoot);
 
@@ -15106,6 +15171,9 @@ export function useWorkbenchController(
     languageServerRuntimeStatusRoot,
     phpLanguageServerAutostartRetryVersion,
     reportLanguageServerError,
+    workspaceSettings.intelephensePath,
+    workspaceSettings.phpBackend,
+    workspaceSettings.phpactorPath,
     workspaceRoot,
     workspaceTrust,
   ]);
@@ -16499,6 +16567,7 @@ export function useWorkbenchController(
     activePath,
     appSettings,
     applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
+    applyPhpLanguageServerWorkspaceEdit,
     activateWorkspaceTab,
     callHierarchyView,
     typeHierarchyView,
@@ -17983,6 +18052,14 @@ function javaScriptTypeScriptLanguageServerConfiguration(
       includeCompletionsForImportStatements: autoImportsEnabled,
       includeCompletionsForModuleExports: autoImportsEnabled,
     },
+  };
+}
+
+function phpLanguageServerOptions(settings: WorkspaceSettings) {
+  return {
+    intelephensePath: settings.intelephensePath,
+    phpBackend: settings.phpBackend,
+    phpactorPath: settings.phpactorPath,
   };
 }
 

@@ -3,13 +3,44 @@ import type {
   JavaScriptTypeScriptLanguageServerPlanOptions,
   LanguageServerGateway,
   LanguageServerPlan,
+  PhpLanguageServerPlanOptions,
 } from "../domain/languageServer";
 
+type InvokeLanguageServerCommand = (
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<LanguageServerPlan>;
+
+const invokeLanguageServerCommand: InvokeLanguageServerCommand = (
+  command,
+  args,
+) => invoke<LanguageServerPlan>(command, args);
+
 export class TauriLanguageServerGateway implements LanguageServerGateway {
-  planPhpLanguageServer(rootPath: string): Promise<LanguageServerPlan> {
-    return invoke<LanguageServerPlan>("plan_php_language_server", {
-      rootPath,
-    });
+  constructor(
+    private readonly invokeCommand: InvokeLanguageServerCommand =
+      invokeLanguageServerCommand,
+  ) {}
+
+  planPhpLanguageServer(
+    rootPath: string,
+    options: PhpLanguageServerPlanOptions = {},
+  ): Promise<LanguageServerPlan> {
+    const args: Record<string, unknown> = { rootPath };
+
+    if (options.phpBackend) {
+      args.phpBackend = options.phpBackend;
+    }
+
+    if (options.phpactorPath) {
+      args.phpactorPath = options.phpactorPath;
+    }
+
+    if (options.intelephensePath) {
+      args.intelephensePath = options.intelephensePath;
+    }
+
+    return this.invokeCommand("plan_php_language_server", args);
   }
 
   planJavaScriptTypeScriptLanguageServer(
@@ -38,9 +69,6 @@ export class TauriLanguageServerGateway implements LanguageServerGateway {
       args.validationEnabled = options.validationEnabled;
     }
 
-    return invoke<LanguageServerPlan>(
-      "plan_javascript_typescript_language_server",
-      args,
-    );
+    return this.invokeCommand("plan_javascript_typescript_language_server", args);
   }
 }

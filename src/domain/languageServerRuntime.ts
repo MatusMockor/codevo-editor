@@ -1,4 +1,7 @@
-import type { JavaScriptTypeScriptVersionPreference } from "./settings";
+import type {
+  JavaScriptTypeScriptVersionPreference,
+  PhpBackendPreference,
+} from "./settings";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 
 export interface LanguageServerCapabilities {
@@ -60,6 +63,9 @@ export interface LanguageServerRuntimeStartOptions {
   autoImportsEnabled?: boolean;
   codeLensEnabled?: boolean;
   inlayHintsEnabled?: boolean;
+  intelephensePath?: string | null;
+  phpBackend?: PhpBackendPreference;
+  phpactorPath?: string | null;
   typeScriptVersionPreference?: JavaScriptTypeScriptVersionPreference;
   validationEnabled?: boolean;
 }

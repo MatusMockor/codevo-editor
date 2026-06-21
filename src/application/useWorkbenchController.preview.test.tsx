@@ -20,6 +20,7 @@ import type { SmartModeGateway } from "../domain/intelligence";
 import type {
   LanguageServerGateway,
   LanguageServerPlan,
+  PhpLanguageServerPlanOptions,
 } from "../domain/languageServer";
 import type {
   LanguageServerDiagnosticEvent,
@@ -6141,6 +6142,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
         "/workspace-a",
+        defaultPhpLanguageServerOptions(),
       );
     });
 
@@ -6150,6 +6152,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
         "/workspace-b",
+        defaultPhpLanguageServerOptions(),
       );
     });
 
@@ -6205,6 +6208,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
         "/workspace-a",
+        defaultPhpLanguageServerOptions(),
       );
     });
 
@@ -6214,6 +6218,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
         "/workspace-b",
+        defaultPhpLanguageServerOptions(),
       );
     });
 
@@ -6283,6 +6288,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
         "/workspace-a",
+        defaultPhpLanguageServerOptions(),
       );
     });
     await flushAsyncTurns();
@@ -6306,6 +6312,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
         "/workspace-b",
+        defaultPhpLanguageServerOptions(),
       );
     });
     expect(getWorkbench().installingManagedPhpactor).toBe(false);
@@ -6461,6 +6468,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(languageServerRuntimeGateway.start).toHaveBeenCalledWith(
         "/workspace-a",
+        defaultPhpLanguageServerOptions(),
       );
     });
 
@@ -6645,9 +6653,40 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace");
     expect(
       dependencies.languageServerGateway.planPhpLanguageServer,
-    ).toHaveBeenCalledWith("/workspace");
+    ).toHaveBeenCalledWith("/workspace", defaultPhpLanguageServerOptions());
     expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledWith(
       "/workspace",
+      defaultPhpLanguageServerOptions(),
+    );
+  });
+
+  it("passes workspace PHP language server settings to plan and autostart", async () => {
+    const phpOptions: PhpLanguageServerPlanOptions = {
+      intelephensePath: "/tools/intelephense",
+      phpBackend: "phpactor",
+      phpactorPath: "/tools/phpactor",
+    };
+    const { dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerPlan: phpactorLanguageServerPlan(),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+        ...phpOptions,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.languageServerGateway.planPhpLanguageServer,
+    ).toHaveBeenCalledWith("/workspace", phpOptions);
+    expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledWith(
+      "/workspace",
+      phpOptions,
     );
   });
 
@@ -6742,6 +6781,7 @@ describe("useWorkbenchController preview tabs", () => {
     await vi.waitFor(() => {
       expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledWith(
         "/workspace-a",
+        defaultPhpLanguageServerOptions(),
       );
     });
 
@@ -6926,7 +6966,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().intelligenceMode).toBe("fullSmart");
     expect(
       dependencies.languageServerRuntimeGateway.start,
-    ).toHaveBeenCalledWith("/workspace");
+    ).toHaveBeenCalledWith("/workspace", defaultPhpLanguageServerOptions());
 
     await act(async () => {
       pendingStatus.resolve(runningStatus);
@@ -8025,6 +8065,106 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     expect(getWorkbench().activeDocument?.content).toBe("const value = 1;\n");
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
+  });
+
+  it("applies PHP language server workspace edits without reapplying edited open documents", async () => {
+    const openPath = "/workspace/src/User.php";
+    const closedPath = "/workspace/src/Helper.php";
+    const edit = {
+      changes: {
+        [fileUriFromPath(openPath)]: [
+          {
+            newText: "final ",
+            range: {
+              end: { character: 0, line: 1 },
+              start: { character: 0, line: 1 },
+            },
+          },
+        ],
+        [fileUriFromPath(closedPath)]: [
+          {
+            newText: "<?php\nfinal class Helper {}\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === openPath) {
+          return "<?php\nclass User {}\n";
+        }
+
+        return "";
+      }),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "User.php"));
+    });
+
+    await act(async () => {
+      await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        editedOpenPaths: [openPath],
+        rootPath: "/workspace",
+      });
+    });
+
+    expect(getWorkbench().activeDocument?.content).toBe("<?php\nclass User {}\n");
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
+  });
+
+  it("does not apply stale versioned PHP workspace edits to open documents", async () => {
+    const openPath = "/workspace/src/User.php";
+    const uri = fileUriFromPath(openPath);
+    const edit = {
+      changes: {
+        [uri]: [
+          {
+            newText: "final ",
+            range: {
+              end: { character: 0, line: 1 },
+              start: { character: 0, line: 1 },
+            },
+          },
+        ],
+      },
+      documentVersions: {
+        [uri]: 0,
+      },
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        rootPath: "/workspace",
+      });
+    });
+
+    expect(getWorkbench().activeDocument?.content).toBe("<?php\nclass User {}\n");
     expect(
       dependencies.workspaceGateways.files.applyWorkspaceEdit,
     ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
@@ -29691,6 +29831,14 @@ function phpactorLanguageServerPlan(): LanguageServerPlan {
     message: "PHPactor ready",
     provider: "phpactor",
     status: "ready",
+  };
+}
+
+function defaultPhpLanguageServerOptions(): PhpLanguageServerPlanOptions {
+  return {
+    intelephensePath: null,
+    phpBackend: "auto",
+    phpactorPath: null,
   };
 }
 
