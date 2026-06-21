@@ -447,6 +447,7 @@ Route::get('/dynamic', ['uses' => CommentController::class, 'as' => 'comments.' 
 Route::group(['as' => 'admin.'], function () {
     Route::get('/admin/comments', ['as' => 'comments.admin', 'uses' => CommentController::class]);
 });
+Route::group(['as' => 'arrow.'], fn () => Route::get('/arrow/comments/{comment}', ['as' => 'comments.arrow', 'uses' => CommentController::class]));
 `;
 
     expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
@@ -465,6 +466,10 @@ Route::group(['as' => 'admin.'], function () {
       {
         name: "admin.comments.admin",
         position: positionOf(source, "comments.admin"),
+      },
+      {
+        name: "arrow.comments.arrow",
+        position: positionOf(source, "comments.arrow"),
       },
     ]);
   });

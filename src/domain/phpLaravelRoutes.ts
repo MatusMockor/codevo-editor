@@ -788,26 +788,105 @@ function phpLaravelNamedRouteGroups(
       continue;
     }
 
-    const bodyStart = source.indexOf("{", groupOpenParen);
+    const groupBody = laravelRouteGroupBodyRange(
+      source,
+      groupOpenParen,
+      groupCloseParen,
+      routeMethod === "group" ? 1 : 0,
+    );
 
-    if (bodyStart < 0 || bodyStart > groupCloseParen) {
-      continue;
-    }
-
-    const bodyEnd = matchingBracketOffset(source, bodyStart, "{", "}");
-
-    if (bodyEnd === null || bodyEnd > groupCloseParen) {
+    if (!groupBody) {
       continue;
     }
 
     groups.push({
-      bodyEnd,
-      bodyStart,
+      bodyEnd: groupBody.bodyEnd,
+      bodyStart: groupBody.bodyStart,
       prefix: prefixLiterals.map((literal) => literal.value).join(""),
     });
   }
 
   return groups.sort((left, right) => left.bodyStart - right.bodyStart);
+}
+
+function laravelRouteGroupBodyRange(
+  source: string,
+  groupOpenParen: number,
+  groupCloseParen: number,
+  positionalRoutesIndex: number,
+): { bodyEnd: number; bodyStart: number } | null {
+  const routesStart =
+    topLevelArgumentValueStartAt(source, groupOpenParen, groupCloseParen, {
+      namedArgumentNames: ["routes"],
+    }) ??
+    topLevelArgumentValueStartAt(source, groupOpenParen, groupCloseParen, {
+      argumentIndex: positionalRoutesIndex,
+    });
+
+  if (routesStart === null) {
+    return null;
+  }
+
+  return (
+    laravelRouteGroupArrowBodyRange(source, routesStart, groupCloseParen) ??
+    laravelRouteGroupClosureBodyRange(source, routesStart, groupCloseParen)
+  );
+}
+
+function laravelRouteGroupArrowBodyRange(
+  source: string,
+  routesStart: number,
+  groupCloseParen: number,
+): { bodyEnd: number; bodyStart: number } | null {
+  const match = /^(?:static\s+)?fn\s*\(/.exec(
+    source.slice(routesStart, Math.min(groupCloseParen, routesStart + 96)),
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const parametersOpen = routesStart + match[0].lastIndexOf("(");
+  const parametersClose = matchingBracketOffset(source, parametersOpen, "(", ")");
+
+  if (parametersClose === null || parametersClose > groupCloseParen) {
+    return null;
+  }
+
+  const arrowStart = skipWhitespace(source, parametersClose + 1);
+
+  if (source.slice(arrowStart, arrowStart + 2) !== "=>") {
+    return null;
+  }
+
+  return {
+    bodyEnd: groupCloseParen,
+    bodyStart: arrowStart + 2,
+  };
+}
+
+function laravelRouteGroupClosureBodyRange(
+  source: string,
+  routesStart: number,
+  groupCloseParen: number,
+): { bodyEnd: number; bodyStart: number } | null {
+  if (!/^(?:static\s+)?function\b/.test(source.slice(routesStart, routesStart + 96))) {
+    return null;
+  }
+
+  const bodyStart = source.indexOf("{", routesStart);
+
+  if (bodyStart < 0 || bodyStart > groupCloseParen) {
+    return null;
+  }
+
+  const bodyEnd = matchingBracketOffset(source, bodyStart, "{", "}");
+
+  if (bodyEnd === null || bodyEnd > groupCloseParen) {
+    return null;
+  }
+
+  return { bodyEnd, bodyStart };
 }
 
 function laravelRouteGroupArrayPrefixLiterals(

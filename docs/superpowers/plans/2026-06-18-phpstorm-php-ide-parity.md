@@ -6776,3 +6776,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `fb43de80 Cover same-root JavaScript TypeScript navigation staleness`.
+
+## Slice: Laravel Arrow Route Group Name Prefixes - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `33b69338 Record same-root JavaScript TypeScript navigation stale commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Preserve Laravel named-route group prefixes when route groups use arrow functions, including legacy action-array route names inside the arrow body.
+
+### Implementation Choice
+
+- Resolve the actual `routes` argument for route groups before computing the group body range.
+- Support both closure bodies and `fn () => ...` arrow bodies.
+- Keep named `routes:` handling intact for modern group calls.
+- Add regression coverage for `Route::group(['as' => 'arrow.'], fn () => Route::get(... ['as' => ...]))`, including a `{comment}` URI segment inside the arrow expression.
+
+### Acceptance Criteria
+
+- Arrow-function route groups contribute their `as` prefix to nested route names.
+- Closure route groups and named-argument route groups remain unchanged.
+- URI braces inside arrow-group route strings do not get mistaken for closure bodies.
+- Focused/full route parser tests, named-route preview coverage, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts -t "legacy Laravel route action arrays"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel named routes|legacy route action arrays"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
