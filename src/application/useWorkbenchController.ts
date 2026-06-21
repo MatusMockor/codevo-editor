@@ -202,6 +202,12 @@ import {
   type PhpLaravelNamedRouteDefinition,
 } from "../domain/phpLaravelRoutes";
 import {
+  phpLaravelAuthGuardCompletionInsertText,
+  phpLaravelAuthGuardConfigKey,
+  phpLaravelAuthGuardNameFromConfigKey,
+  phpLaravelAuthGuardReferenceContextAt,
+} from "../domain/phpLaravelAuth";
+import {
   phpLaravelBroadcastConnectionCompletionInsertText,
   phpLaravelBroadcastConnectionConfigKey,
   phpLaravelBroadcastConnectionNameFromConfigKey,
@@ -417,6 +423,10 @@ interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
 }
 
 type PhpLaravelConfigNavigationTarget = PhpLaravelConfigTarget;
+
+interface PhpLaravelAuthGuardTarget extends PhpLaravelConfigTarget {
+  guardName: string;
+}
 
 interface PhpLaravelCacheStoreTarget extends PhpLaravelConfigTarget {
   storeName: string;
@@ -8050,6 +8060,53 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const collectPhpLaravelAuthGuardTargets = useCallback(async (): Promise<
+    PhpLaravelAuthGuardTarget[]
+  > => {
+    const targets = new Map<string, PhpLaravelAuthGuardTarget>();
+
+    for (const target of await collectPhpLaravelConfigTargets()) {
+      const guardName = phpLaravelAuthGuardNameFromConfigKey(target.key);
+
+      if (!guardName) {
+        continue;
+      }
+
+      const key = guardName.toLowerCase();
+
+      if (!targets.has(key)) {
+        targets.set(key, {
+          ...target,
+          guardName,
+        });
+      }
+    }
+
+    return Array.from(targets.values()).sort((left, right) =>
+      left.guardName.localeCompare(right.guardName),
+    );
+  }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelAuthGuardTarget = useCallback(
+    async (guardName: string): Promise<PhpLaravelAuthGuardTarget | null> => {
+      const configKey = phpLaravelAuthGuardConfigKey(guardName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            guardName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const collectPhpLaravelCacheStoreTargets = useCallback(async (): Promise<
     PhpLaravelCacheStoreTarget[]
   > => {
@@ -12723,6 +12780,36 @@ export function useWorkbenchController(
           }));
       }
 
+      const authGuardContext = phpLaravelAuthGuardReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && authGuardContext && activeDocument) {
+        const normalizedPrefix = authGuardContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelAuthGuardTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.guardName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelAuthGuardCompletionInsertText(
+              target.guardName,
+            ),
+            kind: "config",
+            name: target.guardName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const cacheStoreContext = phpLaravelCacheStoreReferenceContextAt(
         source,
         position,
@@ -13085,6 +13172,7 @@ export function useWorkbenchController(
         .slice(0, 80);
     },
     [
+      collectPhpLaravelAuthGuardTargets,
       collectPhpLaravelCacheStoreTargets,
       collectPhpLaravelBroadcastConnectionTargets,
       collectPhpLaravelConfigTargets,
@@ -14510,6 +14598,43 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelAuthGuardDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelAuthGuardString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelAuthGuardTarget(context.guardName);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(`No Laravel auth guard ${context.guardName} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.guardName);
+    },
+    [
+      activeDocument,
+      findPhpLaravelAuthGuardTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelCacheStoreDefinition = useCallback(
     async (
       context: Extract<
@@ -14934,6 +15059,10 @@ export function useWorkbenchController(
 
     if (context.kind === "laravelConfigString") {
       return goToPhpLaravelConfigDefinition(context);
+    }
+
+    if (context.kind === "laravelAuthGuardString") {
+      return goToPhpLaravelAuthGuardDefinition(context);
     }
 
     if (context.kind === "laravelCacheStoreString") {
@@ -15519,6 +15648,10 @@ export function useWorkbenchController(
           return goToPhpLaravelConfigDefinition(context);
         }
 
+        if (context.kind === "laravelAuthGuardString") {
+          return goToPhpLaravelAuthGuardDefinition(context);
+        }
+
         if (context.kind === "laravelCacheStoreString") {
           return goToPhpLaravelCacheStoreDefinition(context);
         }
@@ -15654,6 +15787,7 @@ export function useWorkbenchController(
     }
   }, [
     activeDocument,
+    goToPhpLaravelAuthGuardDefinition,
     goToPhpClassIdentifierDefinition,
     goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,

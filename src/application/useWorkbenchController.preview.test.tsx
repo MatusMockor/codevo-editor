@@ -33829,6 +33829,241 @@ return [
     });
   });
 
+  it("suggests Laravel Auth guard names from auth config", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AuthController.php";
+    const configRoot = "/workspace/config";
+    const authConfigPath = "/workspace/config/auth.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Auth;
+
+class AuthController
+{
+    public function login(): void
+    {
+        Auth::guard('ad');
+        Auth::shouldUse('we');
+        Auth::setDefaultDriver(name: 'ad');
+        auth('we');
+        auth()->guard(name: 'ad');
+    }
+}
+`;
+    const authConfigSource = `<?php
+
+return [
+    'defaults' => [
+        'guard' => 'web',
+    ],
+    'guards' => [
+        'web' => [
+            'driver' => 'session',
+        ],
+        'admin' => [
+            'driver' => 'session',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot ? [fileEntry(authConfigPath, "auth.php")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === authConfigPath) {
+          return authConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AuthController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Auth::guard('ad"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "admin",
+        kind: "config",
+        name: "admin",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Auth::shouldUse('we"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "web",
+        kind: "config",
+        name: "web",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Auth::setDefaultDriver(name: 'ad"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "admin",
+        kind: "config",
+        name: "admin",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "auth('we"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "web",
+        kind: "config",
+        name: "web",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "auth()->guard(name: 'ad"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "admin",
+        kind: "config",
+        name: "admin",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Auth guard names before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AuthController.php";
+    const authConfigPath = "/workspace/config/auth.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Auth;
+
+class AuthController
+{
+    public function login(): void
+    {
+        Auth::guard('admin')->attempt([]);
+    }
+}
+`;
+    const authConfigSource = `<?php
+
+return [
+    'defaults' => [
+        'guard' => 'web',
+    ],
+    'guards' => [
+        'web' => [
+            'driver' => 'session',
+        ],
+        'admin' => [
+            'driver' => 'session',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === authConfigPath) {
+          return authConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AuthController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Auth::guard('admin"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(authConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: authConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 11,
+      },
+    });
+  });
+
   it("suggests Laravel translation keys inside translation helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const langBase = "/workspace/lang";

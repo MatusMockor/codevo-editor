@@ -12,6 +12,7 @@ import {
   type PhpProjectDescriptor,
   type Psr4Root,
 } from "./workspace";
+import { phpLaravelAuthGuardReferenceContextAt } from "./phpLaravelAuth";
 import { phpLaravelBroadcastConnectionReferenceContextAt } from "./phpLaravelBroadcasting";
 import { phpLaravelCacheStoreReferenceContextAt } from "./phpLaravelCache";
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
@@ -50,6 +51,10 @@ export type PhpIdentifierContext =
   | {
       configKey: string;
       kind: "laravelConfigString";
+    }
+  | {
+      guardName: string;
+      kind: "laravelAuthGuardString";
     }
   | {
       kind: "laravelCacheStoreString";
@@ -189,6 +194,18 @@ export function phpIdentifierContextAt(
     return {
       configKey: configReference.key,
       kind: "laravelConfigString",
+    };
+  }
+
+  const authGuardReference = phpLaravelAuthGuardReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (authGuardReference) {
+    return {
+      guardName: authGuardReference.guardName,
+      kind: "laravelAuthGuardString",
     };
   }
 
