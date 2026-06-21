@@ -7649,4 +7649,6 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test` (65 files, 973 tests)
 - PASS: `git diff --check`
 
-### Commit Status: Pending
+### Commit Status: PHP Monaco Workspace Symbol Provider
+
+- Committed as `3deaaf50 Register PHP workspace symbol provider`.
