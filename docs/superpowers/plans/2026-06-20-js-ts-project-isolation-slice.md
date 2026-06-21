@@ -4932,4 +4932,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Managed PHPactor Install Loading Guard
 
-- Pending commit.
+- Committed as `335f00ae Guard managed PHPactor install loading by workspace`.
