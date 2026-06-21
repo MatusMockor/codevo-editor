@@ -7216,4 +7216,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `61dd135c Cover PHPStan Psalm magic member preview navigation`.
