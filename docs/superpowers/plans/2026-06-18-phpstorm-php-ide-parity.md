@@ -3842,3 +3842,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `ae52e331 Complete Laravel Redirect facade route names`.
+
+## Slice: Chained Laravel Controller Route Groups - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `be672c55 Record Laravel Redirect facade route names commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Resolve route action strings inside chained Laravel controller groups such as `Route::prefix(...)->controller(...)->group(...)`.
+
+### Implementation Choice
+
+- Extend controller group detection from direct `Route::controller(...)` calls to chained `->controller(...)` segments in Route chains.
+- Preserve direct controller group detection.
+- Add domain coverage for a `Route::prefix(...)->controller(...)->group(...)` action string.
+- Change the workbench route-action go-to-definition regression to use the chained prefix/controller group shape.
+
+### Acceptance Criteria
+
+- Direct controller route groups still resolve action strings to controller methods.
+- Chained prefix/controller route groups resolve action strings to controller methods.
+- Go to Definition from a chained controller group action opens the indexed controller method.
+- Focused/full navigation and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx -t "Laravel controller group route action strings|resolves Laravel controller group route action strings"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `ac9d0221 Resolve chained Laravel controller route groups`.
