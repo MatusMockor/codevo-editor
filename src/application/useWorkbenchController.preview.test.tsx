@@ -8047,6 +8047,76 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().fileStructureOutline).toBeNull();
   });
 
+  it("drops stale JavaScript and TypeScript file structure errors after switching project tabs", async () => {
+    const path = "/workspace-a/src/userService.ts";
+    const documentSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 32,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+    ).mockImplementationOnce(async () => documentSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => "export class UserService {}"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.fileStructure",
+    );
+
+    await act(async () => {
+      await command?.run();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", path);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    documentSymbols.reject(new Error("stale file structure"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale file structure");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript File Structure" &&
+          notice.message.includes("stale file structure"),
+      ),
+    ).toBe(false);
+  });
+
   it("opens JavaScript and TypeScript call hierarchy from command palette actions", async () => {
     const path = "/workspace/src/userService.ts";
     const callerPath = "/workspace/src/app.ts";
