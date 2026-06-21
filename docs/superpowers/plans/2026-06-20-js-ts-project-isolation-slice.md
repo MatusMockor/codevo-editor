@@ -8236,3 +8236,40 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel JSON Translation Key Navigation And Completion
 
 - Committed as `45f6bded Add Laravel JSON translation navigation`.
+
+## Next Slice: Guard Stale Laravel JSON Translation Targets
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f13e246e Record Laravel JSON translation commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- JSON translation completion had stale file-read coverage, but Go to Definition also reads JSON translation files asynchronously.
+- A delayed JSON target read after workspace-tab switch must not open or reveal a stale JSON file.
+
+### Implementation Choice
+
+- Add a preview regression where `editor.goToDefinition` starts in `/workspace-a`, discovers `lang/es.json`, then blocks on reading that JSON file.
+- Switch to `/workspace-b`, resolve the stale JSON read, and assert the stale target is not opened.
+
+### Acceptance Criteria
+
+- Delayed Laravel JSON translation target reads do not open stale files after workspace-tab switch.
+- Existing Laravel JSON/PHP-array translation behavior remains unchanged.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Guard Stale Laravel JSON Translation Targets
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JSON translation|Laravel translation"` passed: 11 passed, 383 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 394 passed.
+- `npm run check` passed.
+- `npm test` passed: 69 files, 1049 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Guard Stale Laravel JSON Translation Targets
+
+- Pending commit.

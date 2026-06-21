@@ -32598,6 +32598,91 @@ class AppController
     });
   });
 
+  it("drops stale Laravel JSON translation targets after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const langBase = "/workspace-a/lang";
+    const jsonPath = "/workspace-a/lang/es.json";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('I love programming.');
+    }
+}
+`;
+    const staleJsonRead = createDeferred<string>();
+    let jsonReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === langBase ? [fileEntry(jsonPath, "es.json")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === jsonPath) {
+          jsonReadCount += 1;
+          return staleJsonRead.promise;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "I love programming."),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(jsonReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleJsonRead.resolve(`{
+  "I love programming.": "Stale"
+}
+`);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(jsonPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("opens Laravel Lang facade translation keys before LSP fallback", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const langBase = "/workspace/lang";
