@@ -4247,6 +4247,7 @@ describe("useWorkbenchController preview tabs", () => {
       getWorkbench().setClassOpenQuery("Service");
       getWorkbench().setTextSearchOpen(true);
       getWorkbench().setTextSearchQuery("needle");
+      getWorkbench().showBottomPanelView("terminal");
     });
 
     await act(async () => {
@@ -4264,6 +4265,8 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(getWorkbench().workspaceRoot).toBeNull();
     expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(getWorkbench().bottomPanelVisible).toBe(false);
+    expect(getWorkbench().bottomPanelView).toBe("problems");
     expect(getWorkbench().phpTree.nodes).toEqual([]);
     expect(getWorkbench().phpTreeLoading).toBe(false);
     expect(getWorkbench().quickOpenOpen).toBe(false);

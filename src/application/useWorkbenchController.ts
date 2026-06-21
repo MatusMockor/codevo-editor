@@ -2193,6 +2193,7 @@ export function useWorkbenchController(
     setNavigationHistory(createNavigationHistory());
     setSidebarView("files");
     setBottomPanelView("problems");
+    setBottomPanelVisible(false);
     setGitStatus(emptyGitStatus());
     setGitLoading(false);
     setGitDiffLoading(false);
