@@ -13417,6 +13417,10 @@ export function useWorkbenchController(
       );
       setActivePath(nextPath);
       await refreshDirectory(parentPath);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       setMessage(`Renamed ${activeDocument.name}`);
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Rename File", error);

@@ -6752,6 +6752,67 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("does not publish stale rename success after switching project tabs", async () => {
+    const oldPath = "/workspace-a/src/User.php";
+    const newPath = "/workspace-a/src/Account.php";
+    const parentPath = "/workspace-a/src";
+    const staleDirectoryRefresh = createDeferred<FileEntry[]>();
+    let holdNextParentRead = false;
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === parentPath && holdNextParentRead) {
+        return staleDirectoryRefresh.promise;
+      }
+
+      return [];
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory,
+      readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\n`),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.php");
+    holdNextParentRead = true;
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledWith(parentPath);
+    });
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleDirectoryRefresh.resolve([]);
+    await act(async () => {
+      await renamePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Renamed User.php");
+  });
+
   it("does not notify JavaScript TypeScript did-rename after switching project tabs", async () => {
     const oldPath = "/workspace-a/src/User.ts";
     const newPath = "/workspace-a/src/Account.ts";

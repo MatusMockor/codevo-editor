@@ -4842,3 +4842,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Workspace Open Follow-Up Request Guard
 
 - Committed as `32c040dd Guard workspace open follow-up awaits by request`.
+
+## Next Slice: Rename Success Active Workspace Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ef646cd7 Record workspace open follow-up guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 839 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `renameActiveDocument` already guarded stale rename errors and several intermediate awaits by active workspace root.
+- After a successful rename, it awaited `refreshDirectory(parentPath)` and then set `Renamed ...`.
+- If the user switched project tabs while that refresh was pending, the stale success message could appear in the new workspace.
+
+### Implementation Choice
+
+- Add the missing active-root check immediately after the directory refresh and before the success message.
+- Add a preview regression where the parent directory refresh is held after a successful rename, the user switches to `/workspace-b`, and the stale refresh then resolves.
+
+### Acceptance Criteria
+
+- Stale rename errors remain suppressed after switching project tabs.
+- Successful stale rename continuations do not publish `Renamed ...` messages into the active workspace.
+- Existing create/rename/delete file-operation tests remain green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Rename Success Active Workspace Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale rename|rename success|did-rename|rename edits"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rename|create file|create folder|delete|watched files|open file"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 840 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Rename Success Active Workspace Guard
+
+- Pending commit.
