@@ -7528,4 +7528,6 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test` (65 files, 960 tests)
 - PASS: `git diff --check`
 
-### Commit Status: Pending
+### Commit Status: JS/TS Bulk Close Session Guard
+
+- Committed as `77d15704 Guard JS TS bulk close by session`.
