@@ -593,6 +593,8 @@ class CommentController
         $comment->load(relations: 'namedChildren');
         Comment::with(relations: ['namedParent']);
         Comment::query()->whereHas(relation: 'namedAttachments', callback: fn ($query) => $query);
+        Comment::query()->whereHas(callback: fn ($query) => $query, relation: 'lateAttachments');
+        Comment::with(callback: fn () => null, relations: ['lateParent']);
         $comment->load(label: 'notRelation');
     }
 }
@@ -624,6 +626,24 @@ class CommentController
       methodName: "whereHas",
       receiverExpression: "Comment::query()",
       relationName: "namedAttachments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'lateAttachments'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "whereHas",
+      receiverExpression: "Comment::query()",
+      relationName: "lateAttachments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'lateParent'")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "with",
+      receiverExpression: null,
+      relationName: "lateParent",
     });
     expect(
       phpIdentifierContextAt(source, positionAfter(source, "'notRelation'")),
@@ -925,6 +945,8 @@ class CommentController
         $comment->load(relations: 'namedChi');
         Comment::with(relations: ['namedParent.arrayChi']);
         Comment::query()->whereHas(relation: 'namedAtt', callback: fn ($query) => $query);
+        Comment::query()->whereHas(callback: fn ($query) => $query, relation: 'lateAtt');
+        Comment::with(callback: fn () => null, relations: ['lateParent.arrayChi']);
         $comment->load(label: 'notRel');
     }
 }
@@ -963,6 +985,29 @@ class CommentController
       methodName: "whereHas",
       prefix: "namedAtt",
       receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "whereHas(callback: fn ($query) => $query, relation: 'lateAtt"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "whereHas",
+      prefix: "lateAtt",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "with(callback: fn () => null, relations: ['lateParent.arrayChi"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      methodName: "with",
+      prefix: "arrayChi",
+      previousRelationNames: ["lateParent"],
+      receiverExpression: null,
     });
     expect(
       phpLaravelRelationStringCompletionContextAt(

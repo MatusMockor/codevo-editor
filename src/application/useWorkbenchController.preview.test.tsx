@@ -13681,6 +13681,7 @@ class CommentController
         Comment::with('par')->first();
         Comment::query()->whereHas('att', fn ($query) => $query);
         Comment::query()->whereHas(relation: 'attach', callback: fn ($query) => $query);
+        Comment::query()->whereHas(callback: fn ($query) => $query, relation: 'attach');
         Comment::query()->whereRelation('children', 'is_vis', true);
     }
 }
@@ -13843,6 +13844,20 @@ class Attachment extends Model
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "whereHas(relation: 'attach"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        kind: "relation",
+        name: "attachments",
+        parameters: "",
+        returnType: "App\\Models\\Attachment",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "whereHas(callback: fn ($query) => $query, relation: 'attach"),
       ),
     ).resolves.toEqual([
       {

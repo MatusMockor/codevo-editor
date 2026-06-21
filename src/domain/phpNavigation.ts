@@ -741,11 +741,19 @@ function isDirectFirstArgumentString(
     closeParen,
     quoteStart,
   );
+  const argumentIndex = topLevelArgumentIndexAtOffset(
+    source,
+    openParen,
+    quoteStart,
+  );
+
+  if (isLaravelRelationNamedArgument(argumentName)) {
+    return true;
+  }
 
   return (
-    topLevelArgumentIndexAtOffset(source, openParen, quoteStart) === 0 &&
-    (isTopLevelWhitespaceBetween(source, openParen + 1, quoteStart) ||
-      isLaravelRelationNamedArgument(argumentName))
+    argumentIndex === 0 &&
+    isTopLevelWhitespaceBetween(source, openParen + 1, quoteStart)
   );
 }
 
@@ -771,12 +779,22 @@ function isFirstArgumentArrayRelationString(
     return false;
   }
 
+  const argumentName = topLevelCallArgumentNameAtOffset(
+    source,
+    openParen,
+    closeParen,
+    arrayStart,
+  );
+  const argumentIndex = topLevelArgumentIndexAtOffset(
+    source,
+    openParen,
+    arrayStart,
+  );
+
   if (
-    topLevelArgumentIndexAtOffset(source, openParen, arrayStart) !== 0 ||
-    (!isTopLevelWhitespaceBetween(source, openParen + 1, arrayStart) &&
-      !isLaravelRelationNamedArgument(
-        topLevelCallArgumentNameAtOffset(source, openParen, closeParen, arrayStart),
-      ))
+    !isLaravelRelationNamedArgument(argumentName) &&
+    (argumentIndex !== 0 ||
+      !isTopLevelWhitespaceBetween(source, openParen + 1, arrayStart))
   ) {
     return false;
   }
