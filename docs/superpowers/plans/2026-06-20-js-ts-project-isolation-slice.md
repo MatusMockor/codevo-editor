@@ -5024,4 +5024,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Settings Save Continuation Guard
 
-- Pending commit.
+- Committed as `59d25b98 Guard settings save continuations by workspace`.
