@@ -18354,7 +18354,7 @@ Route::post('/reactions', [ReactionController::class, 'store']);
     const routesSource = `<?php
 use App\\Http\\Controllers\\communication\\CommentController;
 
-Route::controller(CommentController::class)->group(function () {
+Route::prefix('admin/comments')->controller(CommentController::class)->group(function () {
     Route::get('/comments/{comment}', 'show');
     Route::post('/comments', 'store');
 });

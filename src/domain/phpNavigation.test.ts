@@ -947,6 +947,9 @@ Route::controller(CommentController::class)->group(function () {
     Route::get('/comments/{comment}', 'show');
     Route::post('/comments', 'store');
 });
+Route::prefix('admin/comments')->controller(CommentController::class)->group(function () {
+    Route::get('/preview', 'preview');
+});
 `;
 
     expect(
@@ -962,6 +965,13 @@ Route::controller(CommentController::class)->group(function () {
       className: "CommentController",
       kind: "laravelRouteActionMethod",
       methodName: "store",
+    });
+    expect(
+      phpIdentifierContextAt(routeSource, positionAfter(routeSource, "'preview")),
+    ).toEqual({
+      className: "CommentController",
+      kind: "laravelRouteActionMethod",
+      methodName: "preview",
     });
   });
 
