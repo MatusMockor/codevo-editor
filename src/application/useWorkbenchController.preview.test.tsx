@@ -9916,6 +9916,81 @@ export class FacebookAdapterService extends BaseAdapter {
     ).toBe(false);
   });
 
+  it("drops stale JavaScript and TypeScript workspace symbol results after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 28,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).toHaveBeenCalledWith("/workspace-a", "User");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.resolve([
+      {
+        containerName: "src/staleUser",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace-a/src/staleUser.ts"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().classOpenResults.some(
+        (result) => result.name === "StaleUser",
+      ),
+    ).toBe(false);
+  });
+
   it("uses the project index for go to definition when the language server is unavailable", async () => {
     const controllerPath = "/workspace/src/CommentController.php";
     const agentPath = "/workspace/src/CommentsAgent.php";
