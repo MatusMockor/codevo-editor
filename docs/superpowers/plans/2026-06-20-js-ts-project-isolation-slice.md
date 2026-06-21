@@ -5849,3 +5849,45 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Managed PHPactor Install Clear Reset Guard
 
 - Committed as `578358f5 Clear managed install state on workspace reset`.
+
+## Next Slice: File Structure Scope Clear Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `dd3aeeea Record managed install reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 854 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Opening a workspace reset File Structure scope to `current`, but clearing the active workspace only closed the panel.
+- Closing the last project tab could leave `fileStructureScope` set to `inherited` in no-workspace controller state.
+- File Structure scope is workspace/editor UI state and should not survive a full workspace clear.
+
+### Implementation Choice
+
+- Reset `fileStructureScope` to `current` when clearing the active workspace.
+- Extend the last-tab-close regression to seed File Structure as open with `inherited` scope and assert both the panel and scope reset after close.
+
+### Acceptance Criteria
+
+- Closing the last project tab closes File Structure.
+- Closing the last project tab resets File Structure scope to `current`.
+- Existing workspace reset and outline guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: File Structure Scope Clear Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (320 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 854 tests)
+- PASS: `git diff --check`
+
+### Commit Status: File Structure Scope Clear Reset Guard
+
+- Committed as `47fcec79 Reset file structure scope on workspace clear`.
