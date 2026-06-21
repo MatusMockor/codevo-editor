@@ -496,6 +496,44 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("ignores inactive workspace runtime dispose errors after switching project tabs", async () => {
+    const workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway = {
+      disposeWorkspace: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          throw new Error("stale runtime dispose");
+        }
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        runtimePolicy: "suspendOnBackground",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      workspaceRuntimeLifecycleGateway,
+    });
+    await flushAsyncTurns();
+    vi.mocked(workspaceRuntimeLifecycleGateway.disposeWorkspace).mockClear();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Workspace Runtime" &&
+          notice.message.includes("stale runtime dispose"),
+      ),
+    ).toBe(false);
+  });
+
   it("treats trailing-separator project tabs as the active workspace", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -18024,6 +18062,7 @@ final class InvoiceAdapter
     searchFiles = vi.fn(async () => []),
     searchText,
     workspaceDescriptor,
+    workspaceRuntimeLifecycleGateway,
     workspaceSettings = defaultWorkspaceSettings(),
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
@@ -18056,6 +18095,7 @@ final class InvoiceAdapter
       limit: number,
     ) => Promise<TextSearchResult[]>;
     workspaceDescriptor?: WorkspaceDescriptor;
+    workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
     workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
   } = {}) {
     let workbench: WorkbenchController | null = null;
@@ -18082,6 +18122,7 @@ final class InvoiceAdapter
       searchFiles,
       searchText,
       workspaceDescriptor,
+      workspaceRuntimeLifecycleGateway,
       workspaceSettings,
     });
     const getWorkbench = () => {
@@ -18167,6 +18208,7 @@ function createControllerDependencies({
   searchFiles,
   searchText,
   workspaceDescriptor,
+  workspaceRuntimeLifecycleGateway,
   workspaceSettings,
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
@@ -18199,6 +18241,7 @@ function createControllerDependencies({
     limit: number,
   ): Promise<TextSearchResult[]>;
   workspaceDescriptor?: WorkspaceDescriptor;
+  workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
 }): ControllerDependencies {
   const documentSyncGateway: LanguageServerDocumentSyncGateway = {
@@ -18391,9 +18434,10 @@ function createControllerDependencies({
       subscribeOutput: vi.fn(async () => () => undefined),
       writeInput: vi.fn(async () => undefined),
     },
-    workspaceRuntimeLifecycleGateway: {
-      disposeWorkspace: vi.fn(async () => undefined),
-    },
+    workspaceRuntimeLifecycleGateway:
+      workspaceRuntimeLifecycleGateway ?? {
+        disposeWorkspace: vi.fn(async () => undefined),
+      },
     workspaceGateways,
     workspaceTrustGateway: {
       getTrust: vi.fn(async (rootPath) => ({

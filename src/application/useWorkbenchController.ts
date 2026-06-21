@@ -1837,7 +1837,11 @@ export function useWorkbenchController(
       try {
         await workspaceRuntimeLifecycleGateway.disposeWorkspace(targetRootPath);
       } catch (error) {
-        reportError("Workspace Runtime", error);
+        reportErrorForActiveWorkspaceRoot(
+          targetRootPath,
+          "Workspace Runtime",
+          error,
+        );
         await Promise.allSettled([
           stopLanguageServerRuntime(targetRootPath),
           stopJavaScriptTypeScriptLanguageServerRuntime(targetRootPath),
@@ -1875,7 +1879,7 @@ export function useWorkbenchController(
       cachePhpLanguageServerRuntimeStatus,
       clearJavaScriptTypeScriptDiagnosticsForRoot,
       clearLanguageServerDiagnostics,
-      reportError,
+      reportErrorForActiveWorkspaceRoot,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
       stopJavaScriptTypeScriptLanguageServerRuntime,
