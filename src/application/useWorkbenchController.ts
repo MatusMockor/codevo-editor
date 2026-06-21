@@ -10595,6 +10595,9 @@ export function useWorkbenchController(
       return false;
     }
 
+    const requestedRoot = workspaceRoot;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
     const editorPosition = activeEditorPositionRef.current;
 
     if (!editorPosition) {
@@ -10658,6 +10661,10 @@ export function useWorkbenchController(
           context.name,
         );
 
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         if (openedClassTarget) {
           return true;
         }
@@ -10668,10 +10675,15 @@ export function useWorkbenchController(
         }
 
         const symbols = await projectSymbolSearch.searchProjectSymbols(
-          workspaceRoot,
+          requestedRoot,
           context.name,
           25,
         );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         const target = bestIndexedSymbolMatch(
           symbols,
           context.name,
@@ -10696,10 +10708,15 @@ export function useWorkbenchController(
       }
 
       const symbols = await projectSymbolSearch.searchProjectSymbols(
-        workspaceRoot,
+        requestedRoot,
         symbolName,
         25,
       );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       const target = bestIndexedSymbolMatch(
         symbols,
         symbolName,
@@ -10717,7 +10734,11 @@ export function useWorkbenchController(
         target.name,
       );
     } catch (error) {
-      reportError("Go to Definition", error);
+      reportErrorForActiveWorkspaceRoot(
+        requestedRoot,
+        "Go to Definition",
+        error,
+      );
       return false;
     }
   }, [
@@ -10731,7 +10752,7 @@ export function useWorkbenchController(
     openDirectPhpMethodTarget,
     openNavigationTarget,
     projectSymbolSearch,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     workspaceRoot,
   ]);
 

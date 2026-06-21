@@ -42,7 +42,10 @@ import {
 } from "../domain/languageServerRuntime";
 import type { PhpFileOutlineGateway } from "../domain/phpFileOutline";
 import type { PhpTreeGateway } from "../domain/phpTree";
-import type { ProjectSymbolSearchResult } from "../domain/projectSymbols";
+import type {
+  ProjectSymbolSearchGateway,
+  ProjectSymbolSearchResult,
+} from "../domain/projectSymbols";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
@@ -9321,6 +9324,157 @@ export class FacebookAdapterService extends BaseAdapter {
         lineNumber: 4,
       },
     });
+  });
+
+  it("drops stale indexed go to definition errors after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/src/CommentController.php";
+    const symbolSearch =
+      createDeferred<
+        Awaited<
+          ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>
+        >
+      >();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return "<?php\n$agent = new CommentsAgent();\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementationOnce(async () => symbolSearch.promise);
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 23,
+        lineNumber: 2,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "CommentsAgent", 25);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      symbolSearch.reject(new Error("stale indexed definition"));
+      await commandPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale indexed definition");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Go to Definition" &&
+          notice.message.includes("stale indexed definition"),
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale indexed go to definition misses after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/src/CommentController.php";
+    const symbolSearch =
+      createDeferred<
+        Awaited<
+          ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>
+        >
+      >();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return "<?php\n$agent = new CommentsAgent();\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementationOnce(async () => symbolSearch.promise);
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 23,
+        lineNumber: 2,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "CommentsAgent", 25);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      symbolSearch.resolve([]);
+      await commandPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe(
+      "No indexed symbol found for CommentsAgent.",
+    );
   });
 
   it("navigates back into the same editor tab after definition replaces it", async () => {
