@@ -6137,3 +6137,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `a51c286e Guard stale PHP property hierarchy diagnostics`.
+
+## Slice: Stale PHP Constant Hierarchy Diagnostic Traversal Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `dac7be20 Record stale PHP property hierarchy guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP constant hierarchy diagnostic traversal from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `phpClassHierarchyHasConstant`.
+- Guard before hierarchy source reads, after member reads, after trait/mixin/supertype recursion, after failed reads, and before returning from the helper.
+- Add a preview regression where a trait-host constant diagnostic from `/workspace-a` starts checking `App\\Support\\HostState::HOST_STATE`, the hierarchy host source read is delayed, the workspace switches to `/workspace-b`, and the delayed source extends `BaseHostState`.
+- Assert the stale diagnostic traversal does not continue into `/workspace-b` base host reads.
+
+### Acceptance Criteria
+
+- Stale PHP constant hierarchy diagnostic traversal stops after tab switch.
+- Stale constant diagnostics do not start inherited class reads in the newly active workspace.
+- Existing PHP trait-host constant diagnostic filtering behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP constant hierarchy diagnostic traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
