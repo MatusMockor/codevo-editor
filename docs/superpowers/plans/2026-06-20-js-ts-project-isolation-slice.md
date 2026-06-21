@@ -7368,4 +7368,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Document And Range Formatting Providers
 
-- Pending commit after verification.
+- Committed as `61d73d8e Register PHP formatting providers`.
