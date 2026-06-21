@@ -8190,4 +8190,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Laravel Translation Lang Facade Calls
 
-- Pending commit.
+- Committed as `3d1a5b6f Support Laravel Lang facade translation keys`.
