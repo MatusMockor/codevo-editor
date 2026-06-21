@@ -4704,4 +4704,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Workspace Settings Load Request Guard
 
-- Pending commit.
+- Committed as `760c863d Guard workspace settings load by open request`.
