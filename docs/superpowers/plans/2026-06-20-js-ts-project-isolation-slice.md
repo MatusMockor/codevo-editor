@@ -4106,3 +4106,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
 - PASS: `npm run check`
 - PASS: `git diff --check`
+
+### Commit Status: PHP Provider Lazy Code Action Root Guard Coverage
+
+- Committed as `5156e711 Cover PHP lazy code action runtime roots`.
