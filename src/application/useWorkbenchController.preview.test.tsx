@@ -4202,14 +4202,44 @@ describe("useWorkbenchController preview tabs", () => {
   });
 
   it("clears the workbench and stops runtime when the last project tab closes", async () => {
+    const phpTree: Awaited<ReturnType<PhpTreeGateway["getPhpTree"]>> = {
+      nodes: [
+        {
+            children: [],
+            column: 7,
+            fullyQualifiedName: "App\\Services\\UserService",
+            id: "class:App\\Services\\UserService",
+            kind: "class",
+            label: "UserService",
+            lineNumber: 5,
+            path: "/workspace/app/Services/UserService.php",
+            relativePath: "app/Services/UserService.php",
+          },
+        ],
+    };
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",
         workspaceTabs: ["/workspace"],
       },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
+    vi.mocked(dependencies.phpTreeGateway.getPhpTree).mockResolvedValueOnce(
+      phpTree,
+    );
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    });
+    await act(async () => {
+      await getWorkbench().refreshPhpTree();
+    });
+
+    expect(dependencies.phpTreeGateway.getPhpTree).toHaveBeenCalledWith(
+      "/workspace",
+    );
+    expect(getWorkbench().phpTree.nodes).toHaveLength(1);
 
     await act(async () => {
       await getWorkbench().closeWorkspaceTab("/workspace");
@@ -4226,6 +4256,8 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(getWorkbench().workspaceRoot).toBeNull();
     expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(getWorkbench().phpTree.nodes).toEqual([]);
+    expect(getWorkbench().phpTreeLoading).toBe(false);
     expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
       expect.objectContaining({
         recentWorkspacePath: null,

@@ -2199,8 +2199,17 @@ export function useWorkbenchController(
     setSelectedGitChange(null);
     setGitDiffPreview(null);
     setEditorGitBaselinesByPath({});
+    setPhpTree(emptyPhpTree());
+    setPhpTreeExpandedNodeIds(new Set());
+    setPhpTreeLoading(false);
+    setPhpFileOutlinesByPath({});
+    setPhpInheritedFileOutlinesByPath({});
+    setExpandedPhpFilePaths(new Set());
+    setLoadingPhpFileOutlinePaths(new Set());
+    setLoadingInheritedPhpFileOutlinePaths(new Set());
     setJavaScriptTypeScriptFileOutlinesByPath({});
     setLoadingJavaScriptTypeScriptFileOutlinePaths(new Set());
+    setPhpFileOutlineExpandedNodeIds(new Set());
     setClassOpenOpen(false);
     setQuickOpenOpen(false);
     setTextSearchOpen(false);
