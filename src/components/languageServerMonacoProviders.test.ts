@@ -19,7 +19,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition and document highlight providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight and folding range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -46,6 +46,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.implementationLanguage).toBe("php");
     expect(registered.typeDefinitionLanguage).toBe("php");
     expect(registered.documentHighlightLanguage).toBe("php");
+    expect(registered.foldingRangeLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
         "quickfix",
@@ -71,6 +72,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.implementationDispose).toHaveBeenCalled();
     expect(registered.typeDefinitionDispose).toHaveBeenCalled();
     expect(registered.documentHighlightDispose).toHaveBeenCalled();
+    expect(registered.foldingRangeDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -2319,6 +2321,214 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("maps PHP FoldingRange responses with a kind", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      foldingRanges: [
+        {
+          endCharacter: null,
+          endLine: 8,
+          kind: "region",
+          startCharacter: null,
+          startLine: 2,
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.foldingRangeProvider.provideFoldingRanges(model()),
+    ).resolves.toEqual([
+      {
+        end: 9,
+        kind: { value: "region" },
+        start: 3,
+      },
+    ]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.foldingRanges).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+    );
+    expect(
+      registered.monaco.languages.FoldingRangeKind.fromValue,
+    ).toHaveBeenCalledWith("region");
+  });
+
+  it("maps PHP FoldingRange responses without a kind", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      foldingRanges: [
+        {
+          endCharacter: null,
+          endLine: 6,
+          kind: null,
+          startCharacter: null,
+          startLine: 1,
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.foldingRangeProvider.provideFoldingRanges(model()),
+    ).resolves.toEqual([
+      {
+        end: 7,
+        kind: undefined,
+        start: 2,
+      },
+    ]);
+    expect(
+      registered.monaco.languages.FoldingRangeKind.fromValue,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("does not request PHP FoldingRange when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      foldingRanges: [
+        {
+          endCharacter: null,
+          endLine: 8,
+          kind: "region",
+          startCharacter: null,
+          startLine: 2,
+        },
+      ],
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({ foldingRange: false }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.foldingRangeProvider.provideFoldingRanges(model()),
+    ).resolves.toBeNull();
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.foldingRanges).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway({
+      foldingRanges: [
+        {
+          endCharacter: null,
+          endLine: 6,
+          kind: null,
+          startCharacter: null,
+          startLine: 1,
+        },
+      ],
+    });
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.foldingRangeProvider.provideFoldingRanges(model()),
+    ).resolves.toBeNull();
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.foldingRanges).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP FoldingRange results after session or root changes", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionRanges =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>>
+      >();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.foldingRanges).mockImplementationOnce(
+      async () => sessionRanges.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const sessionPromise =
+      sessionRegistered.foldingRangeProvider.provideFoldingRanges(model());
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    sessionRanges.resolve([
+      {
+        endCharacter: null,
+        endLine: 8,
+        kind: "region",
+        startCharacter: null,
+        startLine: 2,
+      },
+    ]);
+
+    await expect(sessionPromise).resolves.toBeNull();
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootRanges =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>>
+      >();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.foldingRanges).mockImplementationOnce(
+      async () => rootRanges.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootPromise =
+      rootRegistered.foldingRangeProvider.provideFoldingRanges(model());
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rootRanges.resolve([
+      {
+        endCharacter: null,
+        endLine: 6,
+        kind: null,
+        startCharacter: null,
+        startLine: 1,
+      },
+    ]);
+
+    await expect(rootPromise).resolves.toBeNull();
+  });
+
   it("resolves LSP-backed code actions", async () => {
     const registered = createRegisteredProviders();
     const unresolvedAction = {
@@ -4010,6 +4220,7 @@ function createRegisteredProviders() {
   const declarationDispose = vi.fn();
   const definitionDispose = vi.fn();
   const documentHighlightDispose = vi.fn();
+  const foldingRangeDispose = vi.fn();
   const hoverDispose = vi.fn();
   const implementationDispose = vi.fn();
   const referenceDispose = vi.fn();
@@ -4037,6 +4248,9 @@ function createRegisteredProviders() {
     documentHighlightDispose: ReturnType<typeof vi.fn>;
     documentHighlightLanguage: string | null;
     documentHighlightProvider: any;
+    foldingRangeDispose: ReturnType<typeof vi.fn>;
+    foldingRangeLanguage: string | null;
+    foldingRangeProvider: any;
     hoverDispose: ReturnType<typeof vi.fn>;
     hoverLanguage: string | null;
     hoverProvider: any;
@@ -4078,6 +4292,9 @@ function createRegisteredProviders() {
     documentHighlightDispose,
     documentHighlightLanguage: null,
     documentHighlightProvider: null,
+    foldingRangeDispose,
+    foldingRangeLanguage: null,
+    foldingRangeProvider: null,
     hoverDispose,
     hoverLanguage: null,
     hoverProvider: null,
@@ -4147,6 +4364,9 @@ function createRegisteredProviders() {
         Text: 1,
         Write: 3,
       },
+      FoldingRangeKind: {
+        fromValue: vi.fn((value) => ({ value })),
+      },
       registerCodeActionProvider: vi.fn((language, provider, metadata) => {
         registered.codeActionLanguage = language;
         registered.codeActionProvider = provider;
@@ -4172,6 +4392,11 @@ function createRegisteredProviders() {
         registered.documentHighlightLanguage = language;
         registered.documentHighlightProvider = provider;
         return { dispose: documentHighlightDispose };
+      }),
+      registerFoldingRangeProvider: vi.fn((language, provider) => {
+        registered.foldingRangeLanguage = language;
+        registered.foldingRangeProvider = provider;
+        return { dispose: foldingRangeDispose };
       }),
       registerHoverProvider: vi.fn((language, provider) => {
         registered.hoverLanguage = language;
@@ -4282,6 +4507,9 @@ function featuresGateway(
     documentSymbols: Awaited<
       ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>
     >;
+    foldingRanges: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["foldingRanges"]>
+    >;
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     hover: LanguageServerHover | null;
     implementation: LanguageServerLocation[];
@@ -4324,7 +4552,7 @@ function featuresGateway(
     documentLinks: vi.fn(async () => []),
     documentSymbols: vi.fn(async () => responses.documentSymbols ?? []),
     executeCommand: vi.fn(async () => null),
-    foldingRanges: vi.fn(async () => []),
+    foldingRanges: vi.fn(async () => responses.foldingRanges ?? []),
     formatting: vi.fn(async () => responses.formatting ?? []),
     hover: vi.fn(async () => responses.hover ?? null),
     incomingCalls: vi.fn(async () => []),

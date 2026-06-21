@@ -7,6 +7,7 @@ import {
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
   type LanguageServerDocumentHighlight,
+  type LanguageServerFoldingRange,
   type LanguageServerFeaturesGateway,
   type LanguageServerLocation,
   type LanguageServerRange,
@@ -251,6 +252,12 @@ export function registerLanguageServerMonacoProviders(
           provideDocumentHighlights(monaco, context, model, position),
       })
     : { dispose: () => undefined };
+  const foldingRange = monaco.languages.registerFoldingRangeProvider
+    ? monaco.languages.registerFoldingRangeProvider("php", {
+        provideFoldingRanges: (model) =>
+          provideFoldingRanges(monaco, context, model),
+      })
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -268,6 +275,7 @@ export function registerLanguageServerMonacoProviders(
       implementation.dispose();
       typeDefinition.dispose();
       documentHighlight.dispose();
+      foldingRange.dispose();
     },
   };
 }
@@ -492,6 +500,38 @@ async function provideDocumentHighlights(
     return highlights.map((highlight) =>
       toMonacoDocumentHighlight(monaco, highlight),
     );
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
+}
+
+async function provideFoldingRanges(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+): Promise<Monaco.languages.FoldingRange[] | null> {
+  const request = featureDocumentRequestContext(context, model, "foldingRange");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const ranges = await context.featuresGateway.foldingRanges(
+      request.rootPath,
+      request.path,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    return ranges.map((range) => toMonacoFoldingRange(monaco, range));
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -1006,6 +1046,19 @@ function monacoDocumentHighlightKindFromLspKind(
     default:
       return monaco.languages.DocumentHighlightKind.Text;
   }
+}
+
+function toMonacoFoldingRange(
+  monaco: MonacoApi,
+  range: LanguageServerFoldingRange,
+): Monaco.languages.FoldingRange {
+  return {
+    end: range.endLine + 1,
+    kind: range.kind
+      ? monaco.languages.FoldingRangeKind.fromValue(range.kind)
+      : undefined,
+    start: range.startLine + 1,
+  };
 }
 
 function toMonacoTextEdit(
@@ -2050,6 +2103,7 @@ function featureDocumentRequestContext(
     | "declaration"
     | "definition"
     | "documentHighlight"
+    | "foldingRange"
     | "hover"
     | "implementation"
     | "prepareRename"

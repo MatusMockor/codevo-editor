@@ -7169,3 +7169,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Document Highlight Provider
 
 - Committed as `957d60d2 Register PHP document highlight provider`.
+
+## Next Slice: PHP Monaco Folding Range Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `fb749d8e Record PHP document highlight provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support `foldingRange`.
+- The PHP Monaco provider did not register folding ranges, so PHP files could not receive language-server folding metadata.
+- Folding blocks are a small but visible PhpStorm-like editing affordance and can reuse existing document/root/session isolation.
+
+### Implementation Choice
+
+- Register an optional PHP folding range Monaco provider.
+- Use the existing PHP document request context, pending change flush, capability gate, active session guard, stale result dropping, and error reporting.
+- Map LSP folding ranges to Monaco start/end lines and optional folding kind metadata.
+
+### Acceptance Criteria
+
+- PHP folding ranges route to `featuresGateway.foldingRanges` and map line numbers/kinds correctly.
+- Disabled capability and stale root/session responses do not call or return stale results.
+- Provider registration is optional and disposed with the rest of the PHP providers.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Folding Range Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "folding range|FoldingRange"` (5 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (81 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 924 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Folding Range Provider
+
+- Pending commit after verification.
