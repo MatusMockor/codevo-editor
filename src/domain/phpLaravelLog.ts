@@ -1,6 +1,8 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
+  phpStringArrayArgumentElementContextAt,
   phpStringArgumentContextAt,
+  type PhpStringArrayArgumentElementContext,
   type PhpStringArgumentContext,
 } from "./phpStringArgumentContext";
 
@@ -9,11 +11,13 @@ const logChannelStaticCallMethods = {
   channel: "Log::channel",
   driver: "Log::driver",
 } as const;
+const logStackCall = "Log::stack";
 
 type LogChannelStaticMethodName = keyof typeof logChannelStaticCallMethods;
 
 export type PhpLaravelLogChannelReferenceCall =
-  (typeof logChannelStaticCallMethods)[LogChannelStaticMethodName];
+  | (typeof logChannelStaticCallMethods)[LogChannelStaticMethodName]
+  | typeof logStackCall;
 
 export interface PhpLaravelLogChannelReferenceContext {
   call: PhpLaravelLogChannelReferenceCall;
@@ -26,6 +30,28 @@ export function phpLaravelLogChannelReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelLogChannelReferenceContext | null {
+  const arrayArgument = phpStringArrayArgumentElementContextAt(source, position);
+
+  if (arrayArgument) {
+    const channelName = arrayArgument.closed
+      ? arrayArgument.value
+      : arrayArgument.prefix;
+
+    if (
+      isLogStackChannelsArgument(arrayArgument) &&
+      isUsableLaravelLogChannelName(arrayArgument.prefix) &&
+      isUsableLaravelLogChannelName(channelName) &&
+      isLaravelLogStackCallAt(source, arrayArgument)
+    ) {
+      return {
+        call: logStackCall,
+        channelName,
+        position: arrayArgument.position,
+        prefix: arrayArgument.prefix,
+      };
+    }
+  }
+
   const argument = phpStringArgumentContextAt(source, position);
 
   if (!argument) {
@@ -111,6 +137,15 @@ function laravelLogChannelReferenceCallAt(
   return null;
 }
 
+function isLaravelLogStackCallAt(
+  source: string,
+  argument: PhpStringArrayArgumentElementContext,
+): boolean {
+  const beforeCall = source.slice(0, argument.openParen);
+
+  return /\bLog\s*::\s*stack\s*$/.test(beforeCall);
+}
+
 function isLogChannelStaticMethodName(
   methodName: string,
 ): methodName is LogChannelStaticMethodName {
@@ -129,4 +164,14 @@ function isLogChannelArgument(argument: PhpStringArgumentContext): boolean {
     argumentName === "driver" ||
     argumentName === "name"
   );
+}
+
+function isLogStackChannelsArgument(
+  argument: PhpStringArrayArgumentElementContext,
+): boolean {
+  const argumentName = argument.argumentName?.toLowerCase();
+
+  return argumentName
+    ? argumentName === "channels"
+    : argument.argumentIndex === 0;
 }

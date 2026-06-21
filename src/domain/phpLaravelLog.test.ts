@@ -32,11 +32,54 @@ describe("phpLaravelLog", () => {
     }
   });
 
+  it("detects Laravel Log stack channel array strings", () => {
+    const source = `<?php
+
+Log::stack(['single', 'slack']);
+Log::stack(channels: ['daily']);
+`;
+
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        source,
+        positionAfter(source, "single"),
+      ),
+    ).toMatchObject({
+      call: "Log::stack",
+      channelName: "single",
+      prefix: "single",
+    });
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        source,
+        positionAfter(source, "slack"),
+      ),
+    ).toMatchObject({
+      call: "Log::stack",
+      channelName: "slack",
+      prefix: "slack",
+    });
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        source,
+        positionAfter(source, "daily"),
+      ),
+    ).toMatchObject({
+      call: "Log::stack",
+      channelName: "daily",
+      prefix: "daily",
+    });
+  });
+
   it("ignores unsupported arguments, interpolation, invalid names, and non-log calls", () => {
     const secondArgument = `<?php\n\nLog::channel(null, 'slack');\n`;
     const interpolated = `<?php\n\nLog::channel("sla$ck");\n`;
     const invalid = `<?php\n\nLog::channel('slack/main');\n`;
     const wrongCall = `<?php\n\nMail::mailer('slack');\n`;
+    const stackName = `<?php\n\nLog::stack(['single'], 'slack');\n`;
+    const stackNamedChannel = `<?php\n\nLog::stack(['single'], channel: 'slack');\n`;
+    const stackKey = `<?php\n\nLog::stack(['slack' => true]);\n`;
+    const stackWrongNamedArg = `<?php\n\nLog::stack(name: ['slack']);\n`;
 
     expect(
       phpLaravelLogChannelReferenceContextAt(
@@ -60,6 +103,30 @@ describe("phpLaravelLog", () => {
       phpLaravelLogChannelReferenceContextAt(
         wrongCall,
         positionAfter(wrongCall, "slack"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        stackName,
+        positionAfter(stackName, "slack"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        stackNamedChannel,
+        positionAfter(stackNamedChannel, "slack"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        stackKey,
+        positionAfter(stackKey, "slack"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        stackWrongNamedArg,
+        positionAfter(stackWrongNamedArg, "slack"),
       ),
     ).toBeNull();
   });

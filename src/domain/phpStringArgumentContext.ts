@@ -10,6 +10,12 @@ export interface PhpStringArgumentContext {
   value: string;
 }
 
+export interface PhpStringArrayArgumentElementContext
+  extends PhpStringArgumentContext {
+  arrayElementIndex: number;
+  arrayOpen: number;
+}
+
 interface PhpStringLiteral {
   closed: boolean;
   quote: "'" | "\"";
@@ -43,6 +49,68 @@ export function phpStringArgumentContextAt(
 
   return {
     ...argument,
+    closed: literal.closed,
+    position: editorPositionAtOffset(source, literal.quoteStart + 1),
+    prefix: source.slice(
+      literal.quoteStart + 1,
+      Math.min(offset, literal.quoteEnd),
+    ),
+    value: literal.value,
+  };
+}
+
+export function phpStringArrayArgumentElementContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpStringArrayArgumentElementContext | null {
+  const offset = offsetAtPosition(source, position);
+  const literal = stringLiteralAtOffset(source, offset);
+
+  if (!literal) {
+    return null;
+  }
+
+  const arrayOpen = enclosingShortArrayOpenAt(source, literal);
+
+  if (arrayOpen === null) {
+    return null;
+  }
+
+  const arrayClose = matchingBracketOffset(source, arrayOpen, "[", "]");
+
+  if (arrayClose !== null && literal.quoteStart > arrayClose) {
+    return null;
+  }
+
+  if (!isTopLevelBetween(source, arrayOpen + 1, literal.quoteStart)) {
+    return null;
+  }
+
+  const arrayEnd = arrayClose ?? source.length;
+  const arrayElementIndex = topLevelArgumentIndexAtOffset(
+    source,
+    arrayOpen,
+    literal.quoteStart,
+  );
+
+  if (
+    arrayElementIndex === null ||
+    topLevelArrayStringLiteralRole(source, arrayOpen, arrayEnd, literal) !==
+      "element"
+  ) {
+    return null;
+  }
+
+  const argument = arrayArgumentContextAt(source, arrayOpen);
+
+  if (!argument || !isPhpCodeOffset(source, argument.openParen)) {
+    return null;
+  }
+
+  return {
+    ...argument,
+    arrayElementIndex,
+    arrayOpen,
     closed: literal.closed,
     position: editorPositionAtOffset(source, literal.quoteStart + 1),
     prefix: source.slice(
@@ -149,6 +217,92 @@ function argumentContextAt(
     );
 
     if (argumentName === undefined) {
+      continue;
+    }
+
+    return { argumentIndex, argumentName, openParen };
+  }
+
+  return null;
+}
+
+function isDirectArrayArgumentValue(
+  source: string,
+  openParen: number,
+  arrayOpen: number,
+  argumentName: string | null,
+): boolean {
+  const argumentStart = previousTopLevelCallArgumentDelimiter(
+    source,
+    openParen,
+    arrayOpen,
+  );
+  const beforeArray = source.slice(argumentStart, arrayOpen);
+
+  if (!argumentName) {
+    return /^\s*$/.test(beforeArray);
+  }
+
+  return new RegExp(
+    `^\\s*${escapeRegExp(argumentName)}\\s*:\\s*$`,
+    "i",
+  ).test(beforeArray);
+}
+
+function previousTopLevelCallArgumentDelimiter(
+  source: string,
+  openParen: number,
+  targetOffset: number,
+): number {
+  let delimiter = openParen + 1;
+
+  scanTopLevel(source, openParen + 1, targetOffset, (index, character) => {
+    if (character === ",") {
+      delimiter = index + 1;
+    }
+  });
+
+  return delimiter;
+}
+
+function arrayArgumentContextAt(
+  source: string,
+  arrayOpen: number,
+): PhpArgumentContext | null {
+  for (
+    let openParen = source.lastIndexOf("(", arrayOpen);
+    openParen >= 0;
+    openParen = source.lastIndexOf("(", openParen - 1)
+  ) {
+    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+    if (closeParen !== null && arrayOpen > closeParen) {
+      continue;
+    }
+
+    const argumentIndex = topLevelArgumentIndexAtOffset(
+      source,
+      openParen,
+      arrayOpen,
+    );
+
+    if (argumentIndex === null) {
+      continue;
+    }
+
+    const argumentName = namedArgumentNameBeforeLiteral(
+      source,
+      openParen + 1,
+      arrayOpen,
+    );
+
+    if (argumentName === undefined) {
+      continue;
+    }
+
+    if (
+      !isDirectArrayArgumentValue(source, openParen, arrayOpen, argumentName)
+    ) {
       continue;
     }
 
@@ -350,6 +504,170 @@ function stringLiteralAtOffset(
 
 function hasPhpVariableInterpolation(value: string): boolean {
   return /(^|[^\\])\$(?:[A-Za-z_]|[{])/.test(value);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function enclosingShortArrayOpenAt(
+  source: string,
+  literal: PhpStringLiteral,
+): number | null {
+  for (
+    let arrayOpen = source.lastIndexOf("[", literal.quoteStart);
+    arrayOpen >= 0;
+    arrayOpen = source.lastIndexOf("[", arrayOpen - 1)
+  ) {
+    const arrayClose = matchingBracketOffset(source, arrayOpen, "[", "]");
+
+    if (arrayClose === null || literal.quoteStart <= arrayClose) {
+      return arrayOpen;
+    }
+  }
+
+  return null;
+}
+
+function isTopLevelBetween(
+  source: string,
+  startOffset: number,
+  endOffset: number,
+): boolean {
+  return (
+    topLevelArgumentIndexAtOffset(source, startOffset - 1, endOffset) !== null
+  );
+}
+
+function topLevelArrayStringLiteralRole(
+  source: string,
+  arrayOpen: number,
+  arrayEnd: number,
+  literal: PhpStringLiteral,
+): "element" | "key" | null {
+  const itemStart = previousTopLevelArrayDelimiter(
+    source,
+    arrayOpen,
+    literal.quoteStart,
+  );
+  const literalAfterOffset =
+    literal.quoteEnd > literal.quoteStart
+      ? literal.quoteEnd + 1
+      : literal.quoteEnd;
+  const itemEnd = nextTopLevelArrayDelimiter(
+    source,
+    literalAfterOffset,
+    arrayEnd,
+  );
+  const beforeLiteral = source.slice(itemStart, literal.quoteStart);
+  const afterLiteral = source.slice(literalAfterOffset, itemEnd);
+
+  if (hasTopLevelDoubleArrow(beforeLiteral)) {
+    return null;
+  }
+
+  if (hasTopLevelDoubleArrow(afterLiteral)) {
+    return "key";
+  }
+
+  if (/^\s*$/.test(beforeLiteral) && /^\s*$/.test(afterLiteral)) {
+    return "element";
+  }
+
+  return null;
+}
+
+function previousTopLevelArrayDelimiter(
+  source: string,
+  arrayOpen: number,
+  targetOffset: number,
+): number {
+  let delimiter = arrayOpen + 1;
+
+  scanTopLevel(source, arrayOpen + 1, targetOffset, (index, character) => {
+    if (character === ",") {
+      delimiter = index + 1;
+    }
+  });
+
+  return delimiter;
+}
+
+function nextTopLevelArrayDelimiter(
+  source: string,
+  startOffset: number,
+  arrayEnd: number,
+): number {
+  let delimiter = arrayEnd;
+
+  scanTopLevel(source, startOffset, arrayEnd, (index, character) => {
+    if (character === "," && delimiter === arrayEnd) {
+      delimiter = index;
+    }
+  });
+
+  return delimiter;
+}
+
+function hasTopLevelDoubleArrow(source: string): boolean {
+  let found = false;
+
+  scanTopLevel(source, 0, source.length, (index) => {
+    if (source[index] === "=" && source[index + 1] === ">") {
+      found = true;
+      return false;
+    }
+
+    return true;
+  });
+
+  return found;
+}
+
+function scanTopLevel(
+  source: string,
+  startOffset: number,
+  endOffset: number,
+  visit: (index: number, character: string) => boolean | void,
+): void {
+  let depth = 0;
+  let quote: "'" | "\"" | null = null;
+
+  for (let index = startOffset; index < endOffset; index += 1) {
+    const character = source[index] ?? "";
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth -= 1;
+      continue;
+    }
+
+    if (depth === 0 && visit(index, character) === false) {
+      return;
+    }
+  }
 }
 
 function matchingBracketOffset(

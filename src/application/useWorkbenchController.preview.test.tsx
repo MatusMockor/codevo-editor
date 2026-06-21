@@ -33148,6 +33148,8 @@ class LogController
     {
         Log::channel('sl');
         Log::driver('da');
+        Log::stack(['sl']);
+        Log::stack(channels: ['da']);
     }
 }
 `;
@@ -33228,6 +33230,36 @@ return [
         returnType: null,
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Log::stack(['sl"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/logging.php",
+        insertText: "slack",
+        kind: "config",
+        name: "slack",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "channels: ['da"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/logging.php",
+        insertText: "daily",
+        kind: "config",
+        name: "daily",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
   });
 
   it("opens Laravel Log channel names before LSP fallback", async () => {
@@ -33241,7 +33273,7 @@ class LogController
 {
     public function report(): void
     {
-        Log::channel('slack')->error('Payment failed.');
+        Log::stack(['daily', 'slack'])->error('Payment failed.');
     }
 }
 `;
@@ -33298,7 +33330,7 @@ return [
     });
     act(() => {
       getWorkbench().updateActiveEditorPosition(
-        positionAfter(controllerSource, "Log::channel('slack"),
+        positionAfter(controllerSource, "slack"),
       );
     });
 
