@@ -15,6 +15,7 @@ import {
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
 import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
+import { phpLaravelStorageDiskReferenceContextAt } from "./phpLaravelStorage";
 import { phpLaravelTranslationReferenceContextAt } from "./phpLaravelTranslations";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 
@@ -47,6 +48,10 @@ export type PhpIdentifierContext =
   | {
       envName: string;
       kind: "laravelEnvString";
+    }
+  | {
+      diskName: string;
+      kind: "laravelStorageDiskString";
     }
   | {
       kind: "laravelTranslationString";
@@ -154,6 +159,18 @@ export function phpIdentifierContextAt(
     return {
       configKey: configReference.key,
       kind: "laravelConfigString",
+    };
+  }
+
+  const storageDiskReference = phpLaravelStorageDiskReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (storageDiskReference) {
+    return {
+      diskName: storageDiskReference.diskName,
+      kind: "laravelStorageDiskString",
     };
   }
 

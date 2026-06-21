@@ -218,6 +218,12 @@ import {
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
 import {
+  phpLaravelStorageDiskCompletionInsertText,
+  phpLaravelStorageDiskConfigKey,
+  phpLaravelStorageDiskNameFromConfigKey,
+  phpLaravelStorageDiskReferenceContextAt,
+} from "../domain/phpLaravelStorage";
+import {
   isUsableLaravelTranslationLocale,
   phpLaravelJsonTranslationCompletionInsertText,
   phpLaravelJsonTranslationKeysFromSource,
@@ -375,6 +381,10 @@ interface PhpLaravelViewNavigationTarget extends PhpLaravelViewTarget {
 }
 
 type PhpLaravelConfigNavigationTarget = PhpLaravelConfigTarget;
+
+interface PhpLaravelStorageDiskTarget extends PhpLaravelConfigTarget {
+  diskName: string;
+}
 
 type PhpLaravelEnvNavigationTarget = PhpLaravelEnvTarget;
 
@@ -7980,6 +7990,53 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const collectPhpLaravelStorageDiskTargets = useCallback(async (): Promise<
+    PhpLaravelStorageDiskTarget[]
+  > => {
+    const targets = new Map<string, PhpLaravelStorageDiskTarget>();
+
+    for (const target of await collectPhpLaravelConfigTargets()) {
+      const diskName = phpLaravelStorageDiskNameFromConfigKey(target.key);
+
+      if (!diskName) {
+        continue;
+      }
+
+      const key = diskName.toLowerCase();
+
+      if (!targets.has(key)) {
+        targets.set(key, {
+          ...target,
+          diskName,
+        });
+      }
+    }
+
+    return Array.from(targets.values()).sort((left, right) =>
+      left.diskName.localeCompare(right.diskName),
+    );
+  }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelStorageDiskTarget = useCallback(
+    async (diskName: string): Promise<PhpLaravelStorageDiskTarget | null> => {
+      const configKey = phpLaravelStorageDiskConfigKey(diskName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            diskName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const findPhpLaravelEnvTarget = useCallback(
     async (envName: string): Promise<PhpLaravelEnvNavigationTarget | null> => {
       const requestedRoot = workspaceRoot;
@@ -12315,6 +12372,36 @@ export function useWorkbenchController(
           }));
       }
 
+      const storageDiskContext = phpLaravelStorageDiskReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && storageDiskContext && activeDocument) {
+        const normalizedPrefix = storageDiskContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelStorageDiskTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.diskName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelStorageDiskCompletionInsertText(
+              target.diskName,
+            ),
+            kind: "config",
+            name: target.diskName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const viewContext = phpLaravelViewReferenceContextAt(source, position);
 
       if (isLaravelFrameworkActive && viewContext && activeDocument) {
@@ -12465,6 +12552,7 @@ export function useWorkbenchController(
     [
       collectPhpLaravelConfigTargets,
       collectPhpLaravelEnvTargets,
+      collectPhpLaravelStorageDiskTargets,
       collectPhpLaravelTranslationTargets,
       collectPhpLaravelRelationCompletionsForClass,
       collectPhpLaravelNamedRouteTargets,
@@ -13881,6 +13969,43 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelStorageDiskDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelStorageDiskString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelStorageDiskTarget(context.diskName);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(`No Laravel storage disk ${context.diskName} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.diskName);
+    },
+    [
+      activeDocument,
+      findPhpLaravelStorageDiskTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelEnvDefinition = useCallback(
     async (
       context: Extract<PhpIdentifierContext, { kind: "laravelEnvString" }>,
@@ -14020,6 +14145,10 @@ export function useWorkbenchController(
       return goToPhpLaravelConfigDefinition(context);
     }
 
+    if (context.kind === "laravelStorageDiskString") {
+      return goToPhpLaravelStorageDiskDefinition(context);
+    }
+
     if (context.kind === "laravelViewString") {
       return goToPhpLaravelViewDefinition(context);
     }
@@ -14053,6 +14182,7 @@ export function useWorkbenchController(
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
+    goToPhpLaravelStorageDiskDefinition,
     goToPhpLaravelTranslationDefinition,
     goToPhpLaravelViewDefinition,
     goToPhpMemberPropertyDefinition,
@@ -14570,6 +14700,10 @@ export function useWorkbenchController(
           return goToPhpLaravelConfigDefinition(context);
         }
 
+        if (context.kind === "laravelStorageDiskString") {
+          return goToPhpLaravelStorageDiskDefinition(context);
+        }
+
         if (context.kind === "laravelViewString") {
           return goToPhpLaravelViewDefinition(context);
         }
@@ -14682,6 +14816,7 @@ export function useWorkbenchController(
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
+    goToPhpLaravelStorageDiskDefinition,
     goToPhpLaravelTranslationDefinition,
     goToPhpLaravelViewDefinition,
     goToPhpMethodCallDefinition,

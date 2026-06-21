@@ -32305,6 +32305,194 @@ return [
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  it("suggests Laravel Storage disk names from filesystem config", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/UploadController.php";
+    const configRoot = "/workspace/config";
+    const filesystemsConfigPath = "/workspace/config/filesystems.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Storage;
+
+class UploadController
+{
+    public function store(): void
+    {
+        Storage::disk('s');
+        Storage::persistentFake(disk: 'pu');
+    }
+}
+`;
+    const filesystemsConfigSource = `<?php
+
+return [
+    'default' => 'local',
+    'disks' => [
+        'local' => [
+            'driver' => 'local',
+        ],
+        'public' => [
+            'driver' => 'local',
+        ],
+        's3' => [
+            'driver' => 's3',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot
+          ? [fileEntry(filesystemsConfigPath, "filesystems.php")]
+          : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === filesystemsConfigPath) {
+          return filesystemsConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "UploadController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Storage::disk('s"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/filesystems.php",
+        insertText: "s3",
+        kind: "config",
+        name: "s3",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "disk: 'pu"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/filesystems.php",
+        insertText: "public",
+        kind: "config",
+        name: "public",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Storage disk names before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/UploadController.php";
+    const filesystemsConfigPath = "/workspace/config/filesystems.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Storage;
+
+class UploadController
+{
+    public function store(): void
+    {
+        Storage::disk('s3')->put('avatar.jpg', $contents);
+    }
+}
+`;
+    const filesystemsConfigSource = `<?php
+
+return [
+    'default' => 'local',
+    'disks' => [
+        'local' => [
+            'driver' => 'local',
+        ],
+        's3' => [
+            'driver' => 's3',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === filesystemsConfigPath) {
+          return filesystemsConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "UploadController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Storage::disk('s3"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(filesystemsConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: filesystemsConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+  });
+
   it("suggests Laravel translation keys inside translation helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const langBase = "/workspace/lang";
