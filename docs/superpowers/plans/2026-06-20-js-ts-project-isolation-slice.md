@@ -9021,3 +9021,40 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 - Committed as `45bdc37f Add Laravel Redis connection navigation`.
 - Follow-up committed as `57b3b68b Reserve Laravel Redis cluster config key`.
+
+## Next Slice: Laravel Eloquent Model Connection Properties
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0e6d7540 Record Laravel Redis connection commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Eloquent models can pin their database connection through `$connection = 'mysql'`.
+- That string references the same `database.connections.<connection>` config targets as `DB::connection(...)`.
+- This adds a common model-file workflow without adding new workbench target plumbing.
+
+### Implementation Choice
+
+- Extend the Database connection detector with `Model::$connection` property initializers.
+- Accept public/protected `$connection` properties in classes extending `Model` or the exact `\Illuminate\Database\Eloquent\Model` FQCN.
+- Reject non-model classes, private properties, local variables, invalid names, and broader parent aliases until type-aware class resolution is available in this detector.
+- Reuse the existing database connection completion and Go to Definition handlers.
+
+### Verification: Laravel Eloquent Model Connection Properties
+
+- `npm test -- src/domain/phpLaravelDatabase.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "database connection"` passed: 3 passed, 420 skipped.
+- `npm test -- src/domain/phpNavigation.test.ts` passed: 27 passed.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 423 passed.
+- `npm test -- src/domain/phpLaravelDatabase.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test` passed: 80 files, 1125 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Eloquent Model Connection Properties
+
+- Committed as `1c0ce445 Support Laravel model connection navigation`.
