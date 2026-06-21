@@ -8911,3 +8911,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Password Broker Names
 
 - Committed as `84e2fb1b Add Laravel password broker navigation`.
+
+## Next Slice: Laravel Request User Guard Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `49ea5e60 Record Laravel password broker commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel's HTTP request API accepts a guard name in `Request::user($guard)`.
+- `request()->user('admin')` and `$request->user('admin')` point to the same `auth.guards.<guard>` config targets as the Auth guard slice.
+- This improves a common controller / route workflow without adding another config family.
+
+### Implementation Choice
+
+- Extend the existing Auth guard detector with request-user calls rooted only at `$request` or `request()`.
+- Accept first positional argument and named `guard:`.
+- Reject generic `->user('admin')`, wrong named arguments such as `name:`, and broader request expressions until type-aware receiver support is available.
+
+### Verification: Laravel Request User Guard Names
+
+- `npm test -- src/domain/phpLaravelAuth.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Auth guard"` passed: 2 passed, 417 skipped.
+- `npm test -- src/domain/phpNavigation.test.ts` passed: 27 passed.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 419 passed.
+- `npm test -- src/domain/phpLaravelAuth.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test` passed: 79 files, 1117 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Request User Guard Names
+
+- Committed as `5b9c43df Support Laravel request user guard navigation`.
