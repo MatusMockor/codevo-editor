@@ -6097,3 +6097,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `9bd9c8fd Guard stale PHP static hierarchy diagnostics`.
+
+## Slice: Stale PHP Property Hierarchy Diagnostic Traversal Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f4a35c0a Record stale PHP static hierarchy guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP property hierarchy diagnostic traversal from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `phpClassHierarchyHasProperty`.
+- Guard before hierarchy source reads, after member reads, after trait/mixin/supertype recursion, after failed reads, and before returning from the helper.
+- Add a preview regression where a PHP diagnostic from `/workspace-a` starts checking `App\\Models\\Comment::$externalId`, the model source read is delayed, the workspace switches to `/workspace-b`, and the delayed source extends `BaseComment`.
+- Assert the stale diagnostic traversal does not continue into `/workspace-b` base model reads.
+
+### Acceptance Criteria
+
+- Stale PHP property hierarchy diagnostic traversal stops after tab switch.
+- Stale property diagnostics do not start inherited class reads in the newly active workspace.
+- Existing PHP property diagnostic filtering behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP property hierarchy diagnostic traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

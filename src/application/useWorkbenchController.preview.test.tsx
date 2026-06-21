@@ -15795,6 +15795,118 @@ interface HasExternalId
     ]);
   });
 
+  it("stops stale PHP property hierarchy diagnostic traversal after switching project tabs", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace-a/app/Models/Comment.php";
+    const workspaceBBaseCommentPath = "/workspace-b/app/Models/BaseComment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->externalId;
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 38,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const staleCommentRead = createDeferred<string>();
+    let commentReadCount = 0;
+    let workspaceBBaseCommentReadCount = 0;
+    const diagnosticPosition = positionAfter(controllerSource, "externalId");
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          commentReadCount += 1;
+          return staleCommentRead.promise;
+        }
+
+        if (path === workspaceBBaseCommentPath) {
+          workspaceBBaseCommentReadCount += 1;
+          return `<?php
+namespace App\\Models;
+
+class BaseComment
+{
+    public string $externalId;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: diagnosticPosition.column - "externalId".length - 1,
+            line: diagnosticPosition.lineNumber - 1,
+            message: "Property App\\Models\\Comment::$externalId does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(controllerPath),
+        version: null,
+      });
+    });
+    await vi.waitFor(() => {
+      expect(commentReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleCommentRead.resolve(`<?php
+namespace App\\Models;
+
+class Comment extends BaseComment
+{
+}
+`);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(workspaceBBaseCommentReadCount).toBe(0);
+  });
+
   it("infers Laravel relation model completions from property and relation chains", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =
