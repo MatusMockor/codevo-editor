@@ -5295,3 +5295,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Invalid Navigation Target Session Guard
 
 - Committed as `be1bcff2 Guard invalid navigation target messages by session`.
+
+## Next Slice: Directory Loading Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `97b5d92f Record invalid navigation target guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 850 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Directory load results/errors were guarded by active workspace root.
+- The shared `loadingDirectories` set was not reset when opening or clearing a workspace.
+- A pending `/workspace-a` directory load could leave `/workspace-a` marked as loading in the state of `/workspace-b` until the stale promise settled.
+
+### Implementation Choice
+
+- Clear `loadingDirectories` when clearing the active workspace.
+- Clear `loadingDirectories` when opening a workspace after cached/fresh workspace state is applied.
+- Extend the stale directory-load regression to assert `/workspace-a` is no longer in `loadingDirectories` after switching to `/workspace-b`.
+
+### Acceptance Criteria
+
+- Switching project tabs clears stale directory loading state immediately.
+- Stale directory load errors still do not report workspace notices after switches.
+- Existing stale workspace-open directory guard remains green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Directory Loading Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (316 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 850 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Directory Loading Reset Guard
+
+- Committed as `8e7c9dcb Reset directory loading on workspace switches`.
