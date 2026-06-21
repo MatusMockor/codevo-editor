@@ -1226,3 +1226,40 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `c0841093 Guard manual PHP server start by active workspace`.
+
+### Slice: Manual PHP Server Stop Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d17965ba Record manual PHP start guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed manual PHP language-server stop failures from surfacing after the user switches project tabs.
+
+#### Implementation Choice
+
+- Keep stop-result caching behavior intact, but gate the PHP stop error report on the requested root still being active.
+- Add a regression where `/workspace-a` starts a PHP stop request, the stop promise remains pending, the user switches to `/workspace-b`, and the stale rejection cannot create a Language Server notice.
+
+#### Acceptance Criteria
+
+- Stale manual PHP language-server stop failures do not surface in a different active workspace.
+- Existing manual start guard and restored PHP IDE startup behavior still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores manual PHP language server start errors after switching project tabs|ignores manual PHP language server stop errors after switching project tabs|starts IDE services when a restored PHP workspace is already in IDE mode"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `b9d29d8c Guard manual PHP server stop by active workspace`.
