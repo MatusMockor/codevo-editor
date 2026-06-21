@@ -1377,3 +1377,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `a63c6452 Guard workspace trust checks by active workspace`.
+
+### Slice: Workspace Detection Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ea868ec6 Record workspace trust guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed workspace detection failures from a previous project tab from surfacing in the active workspace.
+
+#### Implementation Choice
+
+- Keep the existing active-root success guard for workspace detection and replace the catch-side global report with `reportErrorForActiveWorkspaceRoot`.
+- Extend the controller test harness so tests can inject a custom workspace detection gateway.
+- Add a regression where `/workspace-a` has delayed workspace detection, the user switches to `/workspace-b`, and the stale `/workspace-a` rejection cannot create a Workspace Detection notice in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale workspace detection failures do not surface after switching project tabs.
+- Existing workspace trust guard and tab-switch persistence behavior still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale workspace detection errors after switching project tabs|ignores stale workspace trust errors after switching project tabs|switches between persisted project tabs without stopping another project runtime"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `c1b8e873 Guard workspace detection by active workspace`.
