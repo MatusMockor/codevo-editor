@@ -3985,3 +3985,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test -- src/App.test.ts src/components/StatusBar.test.tsx`
 - PASS: `npm run check`
 - PASS: `git diff --check`
+
+### Commit Status: App IDE Activity Runtime Root Guard
+
+- Committed as `bdda5240 Root IDE activity runtime state by workspace`.
