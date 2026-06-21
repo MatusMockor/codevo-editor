@@ -3743,3 +3743,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
 - PASS: `npm run check`
 - PASS: `git diff --check`
+
+### Commit Status: Controller Stop Runtime Response Root Guard
+
+- Committed as `0437289b Guard controller stop runtime roots`.
