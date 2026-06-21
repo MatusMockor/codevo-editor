@@ -3058,7 +3058,10 @@ export function useWorkbenchController(
         delete workspaceStateCacheRef.current[tabPath];
         delete workspaceStateCacheRef.current[targetRootPath];
         forgetLanguageServerRuntimeStatuses(targetRootPath);
-        await closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath);
+        await Promise.allSettled([
+          closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
+          closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
+        ]);
         await stopProjectRuntimes(targetRootPath);
         forgetLanguageServerRuntimeStatuses(targetRootPath);
 

@@ -2426,6 +2426,66 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("does not dispose an inactive PHP project runtime before closing synced documents", async () => {
+    const path = "/workspace-a/app/Models/User.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".php") ? "<?php\nfinal class User {}\n" : "",
+      ),
+      runtimeStatus: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 55,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace-a",
+      expect.objectContaining({ path }),
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace-a",
+      path,
+    );
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(
+      vi.mocked(dependencies.documentSyncGateway.didClose).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(
+        dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+      ).mock.invocationCallOrder[0],
+    );
+  });
+
   it("does not restore stale JavaScript and TypeScript runtime status from a closed project tab", async () => {
     let publishRuntimeStatus:
       | ((status: LanguageServerRuntimeStatus) => void)

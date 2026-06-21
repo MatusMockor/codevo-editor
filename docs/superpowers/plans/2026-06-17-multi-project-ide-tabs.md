@@ -226,3 +226,41 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `426a1017 Reconcile workspace LSP isolation plan`.
+
+### Slice: Inactive Workspace PHP Document Sync Cleanup - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `340c07a6 Record workspace LSP plan reconciliation commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Close PHP language-server document sync state before disposing an inactive workspace tab runtime.
+
+#### Implementation Choice
+
+- Update the inactive tab close branch to close both PHP and JS/TS synced documents before `disposeWorkspace`.
+- Add a controller regression test that opens a PHP document in workspace A, switches to workspace B, then closes inactive workspace A and verifies PHP `didClose` happened before workspace disposal.
+
+#### Acceptance Criteria
+
+- Closing an inactive workspace tab does not dispose a PHP runtime before document sync cleanup.
+- JS/TS inactive-tab cleanup remains unchanged.
+- Runtime disposal still runs after document sync cleanup.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "does not dispose an inactive PHP project runtime before closing synced documents|removes an inactive project tab without changing the active workspace"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Pending implementation commit.
