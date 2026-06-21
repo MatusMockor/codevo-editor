@@ -4094,3 +4094,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `b0ba1773 Complete Laravel named route definitions`.
+
+## Slice: Laravel Named Resource Route Definitions - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `09b40e2b Record Laravel named route definitions commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Include PHP 8 named arguments in Laravel resource and singleton route-name extraction.
+
+### Implementation Choice
+
+- Allow `name:` when extracting the first literal route name for `Route::resource`, `Route::apiResource`, `Route::singleton`, and `Route::apiSingleton`.
+- Keep resource array route parsing unchanged because those APIs take a route map instead of a single name.
+- Keep unsupported named arguments such as `label:` ignored.
+- Add parser coverage for named-argument resource and singleton route definitions, including prefixed groups.
+- Update workbench route completion coverage so resource route names can be sourced from `Route::resource(name: 'comments', ...)`.
+
+### Acceptance Criteria
+
+- Named-argument resource definitions expand to the expected resource route names.
+- Named-argument singleton definitions expand to the expected singleton route names.
+- Group prefixes still apply to named-argument resource and singleton definitions.
+- Unsupported named arguments remain ignored.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "resource route names from named arguments|singleton route names from named arguments|resource route names from resource-only route files|literal Laravel resource route names|literal Laravel singleton route names"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `5eaedc64 Complete Laravel named resource route definitions`.
