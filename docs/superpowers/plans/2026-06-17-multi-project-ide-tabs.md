@@ -1767,3 +1767,44 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `94dd10c5 Guard folder creation by active workspace`.
+
+### Slice: File Save Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1142657c Record folder creation guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed file-save failures or success messages from a previous project tab from surfacing in the active workspace.
+
+#### Implementation Choice
+
+- Capture `requestedRoot` in `saveActiveDocument`.
+- Re-check the active workspace root after filesystem write and after document sync before mutating the active workspace message.
+- Replace the catch-side global Save File report with `reportErrorForActiveWorkspaceRoot`.
+- Add a root-aware Language Server error wrapper for generic saved-document sync errors.
+- Add regressions where `/workspace-a` starts saving a file, the user switches to `/workspace-b`, and stale `/workspace-a` failures or completions cannot surface in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale save failures do not create Save File notices after switching project tabs.
+- Stale save completions do not set a Saved message in the newly active workspace.
+- Existing JavaScript/TypeScript did-save stale-session guards still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale save errors after switching project tabs|ignores stale save completions after switching project tabs|ignores stale JavaScript TypeScript did-save errors after same-root session restart"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `91feabf0 Guard file saves by active workspace`.
