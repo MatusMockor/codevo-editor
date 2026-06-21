@@ -12132,7 +12132,7 @@ export function useWorkbenchController(
   const goToJavaScriptTypeScriptLanguageServerLocation = useCallback(async (
     feature: Extract<
       LanguageServerFeature,
-      "definition" | "implementation" | "sourceDefinition"
+      "declaration" | "definition" | "implementation" | "sourceDefinition"
     >,
     label: string,
     requestedPosition?: EditorPosition,
@@ -12530,6 +12530,13 @@ export function useWorkbenchController(
     await goToJavaScriptTypeScriptLanguageServerLocation(
       "sourceDefinition",
       "source definition",
+    );
+  }, [goToJavaScriptTypeScriptLanguageServerLocation]);
+
+  const goToDeclaration = useCallback(async () => {
+    await goToJavaScriptTypeScriptLanguageServerLocation(
+      "declaration",
+      "declaration",
     );
   }, [goToJavaScriptTypeScriptLanguageServerLocation]);
 
@@ -13880,6 +13887,28 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.goToDeclaration",
+      title: "Go to Declaration",
+      category: "Editor",
+      isEnabled: () =>
+        Boolean(activeDocument) &&
+        Boolean(
+          activeDocument &&
+            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
+        ) &&
+        isRunningLanguageServerForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ) &&
+        canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "declaration",
+        ),
+      run: goToDeclaration,
+    });
+
+    registry.register({
       id: "editor.goToImplementation",
       title: "Go to Implementation",
       category: "Editor",
@@ -14176,6 +14205,7 @@ export function useWorkbenchController(
     createDirectory,
     createFile,
     deleteActiveDocument,
+    goToDeclaration,
     goToDefinition,
     goToImplementation,
     goToSourceDefinition,

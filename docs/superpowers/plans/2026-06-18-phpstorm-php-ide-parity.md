@@ -6620,3 +6620,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `26e18b8c Support Laravel legacy action-array named routes`.
+
+## Slice: JavaScript TypeScript Go to Declaration Command - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f0dbb85d Record Laravel legacy action-array route commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Expose a command-palette action for JS/TS Go to Declaration using the existing language-server declaration capability.
+
+### Implementation Choice
+
+- Extend the shared JS/TS language-server navigation helper to accept `declaration`.
+- Add `goToDeclaration` and register `editor.goToDeclaration` when the active JS/TS runtime advertises declaration support.
+- Add preview coverage for successful declaration navigation and stale workspace-tab results after switching project tabs.
+
+### Acceptance Criteria
+
+- JS/TS declaration command is visible/enabled only for active JS/TS language-server documents with declaration capability.
+- Running the command calls the JS/TS declaration gateway and opens the returned target.
+- Declaration results are dropped after switching workspace tabs.
+- Focused declaration tests, full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript and TypeScript declaration"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

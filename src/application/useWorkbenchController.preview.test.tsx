@@ -9978,6 +9978,190 @@ function helper_call(): string
     expect(getWorkbench().message).not.toBe("Opened source definition user.ts:1:14");
   });
 
+  it("opens JavaScript and TypeScript declarations through workbench commands", async () => {
+    const sourcePath = "/workspace/src/main.ts";
+    const targetPath = "/workspace/types/user.d.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const target = "export declare class User {\n  name: string;\n}\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 38,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.declaration,
+    ).mockResolvedValue([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === sourcePath) {
+          return source;
+        }
+
+        if (requestedPath === targetPath) {
+          return target;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+
+    expect(
+      command?.isEnabled({
+        activeDocumentDirty: false,
+        hasActiveDocument: true,
+        hasWorkspace: true,
+      }),
+    ).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.declaration,
+    ).toHaveBeenCalledWith("/workspace", {
+      character: cursorPosition.column - 1,
+      line: cursorPosition.lineNumber - 1,
+      path: sourcePath,
+    });
+    expect(getWorkbench().activePath).toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: targetPath,
+      position: {
+        column: 14,
+        lineNumber: 1,
+      },
+    });
+  });
+
+  it("drops stale JavaScript and TypeScript declaration results after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/src/main.ts";
+    const targetPath = "/workspace-a/types/user.d.ts";
+    const source = "import { User } from '@workspace/user';\nnew User();\n";
+    const cursorPosition = positionAfter(source, "new Us");
+    const declarationResult =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["declaration"]>>
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        declaration: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 39,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.declaration,
+    ).mockImplementationOnce(async () => declarationResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return "export declare class User {}\n";
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDeclaration",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.declaration,
+      ).toHaveBeenCalledWith("/workspace-a", {
+        character: cursorPosition.column - 1,
+        line: cursorPosition.lineNumber - 1,
+        path: sourcePath,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    declarationResult.resolve([
+      {
+        range: range(0, 13, 0, 17),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe("Opened declaration user.d.ts:1:14");
+  });
+
   it("shows a JavaScript and TypeScript implementation chooser through workbench commands", async () => {
     const interfacePath = "/workspace/src/PlatformAdapter.ts";
     const baseAdapterPath = "/workspace/src/BaseAdapter.ts";
