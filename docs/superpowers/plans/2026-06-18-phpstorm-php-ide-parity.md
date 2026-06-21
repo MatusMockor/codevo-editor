@@ -5377,3 +5377,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `c209c481 Stop stale implementation chooser target reads`.
+
+## Slice: Stale Inherited PHP File Structure Candidate Read Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `94e3ecea Record stale implementation chooser target read guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale inherited PHP file-structure candidate reads after switching project tabs while parent outline resolution is in flight.
+
+### Implementation Choice
+
+- Add a local active-root guard to `loadInheritedPhpFileOutline`.
+- Check the guard after reading the child source, before each parent candidate read, after parent source reads, after PHP outline parsing, and before continuing after a failed candidate.
+- Add a preview regression with duplicate PSR-4 candidates where the first parent read is delayed, the workspace tab switches, and the first candidate then fails.
+- Assert the second stale parent candidate is never read or parsed.
+
+### Acceptance Criteria
+
+- Stale inherited PHP file-structure parent candidate reads stop after tab switch.
+- Inactive workspace results do not populate inherited file-structure state.
+- Existing inherited/current file-structure behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "inherited PHP file structure"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `c722dd0b Stop stale inherited PHP structure reads`.
