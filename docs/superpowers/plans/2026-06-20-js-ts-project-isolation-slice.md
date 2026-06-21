@@ -5206,3 +5206,48 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Hierarchy Navigation Panel Guard
 
 - Committed as `28e6df7f Guard hierarchy navigation panels by workspace`.
+
+## Next Slice: Navigation History Open Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a02ebe3b Record hierarchy navigation guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 848 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `openNavigationTarget` and direct LSP navigation branches recorded the current location before the target open succeeded.
+- A stale row/target from an inactive project tab could be correctly refused by `openFile`, but still leave a fake `navigation.back` entry.
+- JS/TS navigation also recorded history before rechecking whether the original LSP session was still active.
+
+### Implementation Choice
+
+- Capture the previous navigation location before opening, but record it only after the open succeeds.
+- Apply the same delayed-history write to PHP and JS/TS direct LSP navigation branches.
+- Keep JS/TS implementation chooser closure delayed until the single-target open succeeds.
+- Extend stale hierarchy and stale JS/TS declaration regressions to assert `navigation.back` stays disabled.
+
+### Acceptance Criteria
+
+- Failed or stale navigation attempts do not mutate navigation history.
+- Stale hierarchy row clicks from inactive project tabs do not enable `navigation.back`.
+- Stale JS/TS LSP results after a project-tab switch do not enable `navigation.back`.
+- Successful navigation still records history so existing back-navigation coverage remains green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Navigation History Open Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (314 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 848 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Navigation History Open Guard
+
+- Committed as `ca122aa8 Guard navigation history after stale opens`.
