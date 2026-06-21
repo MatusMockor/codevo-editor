@@ -55,6 +55,7 @@ import {
   configureShikiLanguageFeatures,
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
 
@@ -223,13 +224,17 @@ export function EditorSurface({
 
     configureTypescriptJavascriptDefaults(monacoApi, {
       managedLanguageServerActive:
-        javaScriptTypeScriptLanguageServerRuntimeStatus?.kind === "running",
+        isJavaScriptTypeScriptRuntimeActiveForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          workspaceRoot,
+        ),
       validationEnabled: javaScriptTypeScriptValidationEnabled,
     });
   }, [
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptValidationEnabled,
     monacoApi,
+    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -1046,6 +1051,18 @@ function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
   setupShikiTokenization(monaco, theme).catch((error) => {
     console.error("Shiki tokenization setup failed", error);
   });
+}
+
+function isJavaScriptTypeScriptRuntimeActiveForWorkspace(
+  status: LanguageServerRuntimeStatus | null,
+  workspaceRoot: string | null,
+): boolean {
+  return (
+    status?.kind === "running" &&
+    Boolean(workspaceRoot) &&
+    Boolean(status.rootPath) &&
+    workspaceRootKeysEqual(status.rootPath, workspaceRoot)
+  );
 }
 
 function isTypescriptJavascriptDocument(

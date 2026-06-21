@@ -3989,3 +3989,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: App IDE Activity Runtime Root Guard
 
 - Committed as `bdda5240 Root IDE activity runtime state by workspace`.
+
+## Next Slice: EditorSurface JS/TS Defaults Runtime Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9ae40b26 Record IDE activity root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `EditorSurface` configures Monaco TypeScript/JavaScript defaults based on whether the managed JS/TS language server is active.
+- That decision still checked only `javaScriptTypeScriptLanguageServerRuntimeStatus.kind === "running"`.
+- A rootless or stale running status from another workspace should not disable Monaco's built-in JS/TS providers and diagnostics for the active workspace.
+
+### Implementation Choice
+
+- Add a local `EditorSurface` helper that treats the managed JS/TS runtime as active only when it is running and explicitly rooted to the active workspace.
+- Include `workspaceRoot` in the Monaco defaults effect dependencies.
+- Extend the `EditorSurface` Monaco mock with TypeScript defaults and cover rootless, stale-root, and matching-root runtime status cases.
+
+### Acceptance Criteria
+
+- Rootless or mismatched running JS/TS runtime statuses keep built-in Monaco JS/TS providers and diagnostics enabled for the active workspace.
+- Matching rooted running JS/TS runtime status still disables Monaco's built-ins so the managed server owns those features.
+- Focused `EditorSurface` and defaults tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: EditorSurface JS/TS Defaults Runtime Root Guard
+
+- PASS: `npm test -- src/components/EditorSurface.test.tsx -t "Monaco JavaScript and TypeScript built-ins"`
+- PASS: `npm test -- src/components/EditorSurface.test.tsx src/components/typescriptJavascriptDefaults.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`

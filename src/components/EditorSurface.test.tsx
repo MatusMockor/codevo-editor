@@ -4,6 +4,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import {
+  emptyLanguageServerCapabilities,
+  type LanguageServerRuntimeStatus,
+} from "../domain/languageServerRuntime";
 import { defaultKeymapSettings } from "../domain/keymap";
 import { editorChangeHunks } from "../domain/editorChangeMarkers";
 import type { EditorDocument } from "../domain/workspace";
@@ -178,6 +182,116 @@ describe("EditorSurface", () => {
         },
         quickSuggestionsDelay: 10,
         suggestOnTriggerCharacters: true,
+      }),
+    );
+  });
+
+  it("keeps Monaco JavaScript and TypeScript built-ins active unless the managed runtime matches the workspace", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+    const renderSurface = (
+      javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null,
+    ) =>
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptLanguageServerRuntimeStatus={
+            javaScriptTypeScriptLanguageServerRuntimeStatus
+          }
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+
+    await act(async () => {
+      renderSurface({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 1,
+      });
+      await Promise.resolve();
+    });
+
+    expect(latestTypeScriptModeConfiguration(monaco)).toEqual(
+      expect.objectContaining({
+        completionItems: true,
+        diagnostics: true,
+        hovers: true,
+      }),
+    );
+
+    await act(async () => {
+      renderSurface({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        rootPath: "/other",
+        sessionId: 2,
+      });
+      await Promise.resolve();
+    });
+
+    expect(latestTypeScriptModeConfiguration(monaco)).toEqual(
+      expect.objectContaining({
+        completionItems: true,
+        diagnostics: true,
+        hovers: true,
+      }),
+    );
+
+    await act(async () => {
+      renderSurface({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        rootPath: "/workspace/",
+        sessionId: 3,
+      });
+      await Promise.resolve();
+    });
+
+    expect(latestTypeScriptModeConfiguration(monaco)).toEqual(
+      expect.objectContaining({
+        completionItems: false,
+        diagnostics: false,
+        hovers: false,
       }),
     );
   });
@@ -1662,6 +1776,9 @@ function queryRequired<T extends Element>(
 }
 
 function createMonaco(model: FakeModel) {
+  const javascriptDefaults = languageDefaults();
+  const typescriptDefaults = languageDefaults();
+
   return {
     editor: {
       addCommand: vi.fn(() => ({ dispose: vi.fn() })),
@@ -1699,6 +1816,14 @@ function createMonaco(model: FakeModel) {
       registerSelectionRangeProvider: vi.fn(() => ({ dispose: vi.fn() })),
       registerSignatureHelpProvider: vi.fn(() => ({ dispose: vi.fn() })),
       SignatureHelpTriggerKind: { Invoke: 1 },
+      typescript: {
+        javascriptDefaults,
+        typescriptDefaults,
+        JsxEmit: { ReactJSX: 4 },
+        ModuleKind: { ESNext: 99 },
+        ModuleResolutionKind: { NodeJs: 2 },
+        ScriptTarget: { ESNext: 99 },
+      },
     },
     MarkerSeverity: {
       Error: 8,
@@ -1728,6 +1853,23 @@ function createMonaco(model: FakeModel) {
       }
     },
   };
+}
+
+function languageDefaults() {
+  return {
+    setCompilerOptions: vi.fn(),
+    setDiagnosticsOptions: vi.fn(),
+    setEagerModelSync: vi.fn(),
+    setModeConfiguration: vi.fn(),
+  };
+}
+
+function latestTypeScriptModeConfiguration(monaco: ReturnType<typeof createMonaco>) {
+  const calls =
+    monaco.languages.typescript.typescriptDefaults.setModeConfiguration.mock
+      .calls;
+
+  return calls[calls.length - 1]?.[0];
 }
 
 function languageServerFeaturesGateway() {
