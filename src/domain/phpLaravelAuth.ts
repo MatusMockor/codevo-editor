@@ -1,6 +1,8 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
+  phpStringArrayArgumentElementContextAt,
   phpStringArgumentContextAt,
+  type PhpStringArrayArgumentElementContext,
   type PhpStringArgumentContext,
 } from "./phpStringArgumentContext";
 
@@ -17,15 +19,21 @@ const authGuardHelperCallMethods = {
 const authGuardRequestCallMethods = {
   user: "request()->user",
 } as const;
+const authGuardMiddlewareCallMethods = {
+  auth: "Route::middleware(auth)",
+  guest: "Route::middleware(guest)",
+} as const;
 
 type AuthGuardStaticMethodName = keyof typeof authGuardStaticCallMethods;
 type AuthGuardHelperMethodName = keyof typeof authGuardHelperCallMethods;
 type AuthGuardRequestMethodName = keyof typeof authGuardRequestCallMethods;
+type AuthGuardMiddlewareName = keyof typeof authGuardMiddlewareCallMethods;
 
 export type PhpLaravelAuthGuardReferenceCall =
   | (typeof authGuardStaticCallMethods)[AuthGuardStaticMethodName]
   | (typeof authGuardHelperCallMethods)[AuthGuardHelperMethodName]
-  | (typeof authGuardRequestCallMethods)[AuthGuardRequestMethodName];
+  | (typeof authGuardRequestCallMethods)[AuthGuardRequestMethodName]
+  | (typeof authGuardMiddlewareCallMethods)[AuthGuardMiddlewareName];
 
 export interface PhpLaravelAuthGuardReferenceContext {
   call: PhpLaravelAuthGuardReferenceCall;
@@ -38,10 +46,32 @@ export function phpLaravelAuthGuardReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelAuthGuardReferenceContext | null {
+  const arrayArgument = phpStringArrayArgumentElementContextAt(source, position);
+
+  if (arrayArgument) {
+    const context = phpLaravelAuthMiddlewareGuardReferenceContext(
+      source,
+      arrayArgument,
+    );
+
+    if (context) {
+      return context;
+    }
+  }
+
   const argument = phpStringArgumentContextAt(source, position);
 
   if (!argument) {
     return null;
+  }
+
+  const middlewareContext = phpLaravelAuthMiddlewareGuardReferenceContext(
+    source,
+    argument,
+  );
+
+  if (middlewareContext) {
+    return middlewareContext;
   }
 
   const call = laravelAuthGuardReferenceCallAt(source, argument);
@@ -61,6 +91,35 @@ export function phpLaravelAuthGuardReferenceContextAt(
     guardName,
     position: argument.position,
     prefix: argument.prefix,
+  };
+}
+
+function phpLaravelAuthMiddlewareGuardReferenceContext(
+  source: string,
+  argument: PhpStringArgumentContext | PhpStringArrayArgumentElementContext,
+): PhpLaravelAuthGuardReferenceContext | null {
+  if (
+    !isRouteMiddlewareArgument(argument) ||
+    !isRouteMiddlewareCallAt(source, argument)
+  ) {
+    return null;
+  }
+
+  const segment = authGuardMiddlewareSegment(argument);
+
+  if (
+    !segment ||
+    !isUsableLaravelAuthGuardName(segment.prefix) ||
+    !isUsableLaravelAuthGuardName(segment.guardName)
+  ) {
+    return null;
+  }
+
+  return {
+    call: authGuardMiddlewareCallMethods[segment.middleware],
+    guardName: segment.guardName,
+    position: argument.position,
+    prefix: segment.prefix,
   };
 }
 
@@ -187,4 +246,70 @@ function isAuthGuardArgument(
   }
 
   return argument.argumentIndex === 0;
+}
+
+function isRouteMiddlewareArgument(
+  argument: PhpStringArgumentContext | PhpStringArrayArgumentElementContext,
+): boolean {
+  if (argument.argumentName) {
+    return argument.argumentName.toLowerCase() === "middleware";
+  }
+
+  return argument.argumentIndex === 0;
+}
+
+function isRouteMiddlewareCallAt(
+  source: string,
+  argument: PhpStringArgumentContext | PhpStringArrayArgumentElementContext,
+): boolean {
+  const beforeCall = source.slice(0, argument.openParen);
+
+  if (
+    !/(?:^|[^A-Za-z0-9_])(?:Route\s*::|->|\?->)\s*middleware\s*$/.test(
+      beforeCall,
+    )
+  ) {
+    return false;
+  }
+
+  return /\bRoute\s*::/.test(beforeCall);
+}
+
+function authGuardMiddlewareSegment(
+  argument: PhpStringArgumentContext | PhpStringArrayArgumentElementContext,
+): {
+  guardName: string;
+  middleware: AuthGuardMiddlewareName;
+  prefix: string;
+} | null {
+  const middlewareMatch = /^(auth|guest):/i.exec(argument.prefix);
+
+  if (!middlewareMatch) {
+    return null;
+  }
+
+  const middleware = middlewareMatch[1]?.toLowerCase();
+
+  if (!middleware || !isAuthGuardMiddlewareName(middleware)) {
+    return null;
+  }
+
+  const guardListStart = middlewareMatch[0].length;
+  const prefixGuardList = argument.prefix.slice(guardListStart);
+  const currentSegmentStart = prefixGuardList.lastIndexOf(",") + 1;
+  const prefix = prefixGuardList.slice(currentSegmentStart);
+  const guardList = (argument.closed ? argument.value : argument.prefix).slice(
+    guardListStart,
+  );
+  const guardName = argument.closed
+    ? (guardList.slice(currentSegmentStart).split(",")[0] ?? "")
+    : prefix;
+
+  return { guardName, middleware, prefix };
+}
+
+function isAuthGuardMiddlewareName(
+  middleware: string,
+): middleware is AuthGuardMiddlewareName {
+  return middleware in authGuardMiddlewareCallMethods;
 }

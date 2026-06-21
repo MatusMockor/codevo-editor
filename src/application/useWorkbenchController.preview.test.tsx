@@ -33847,6 +33847,8 @@ class AuthController
         auth('we');
         auth()->guard(name: 'ad');
         request()->user('ad');
+        Route::middleware('auth:ad');
+        Route::middleware(['guest:ad']);
     }
 }
 `;
@@ -33987,6 +33989,36 @@ return [
         returnType: null,
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Route::middleware('auth:ad"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "admin",
+        kind: "config",
+        name: "admin",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Route::middleware(['guest:ad"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "admin",
+        kind: "config",
+        name: "admin",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
   });
 
   it("opens Laravel Auth guard names before LSP fallback", async () => {
@@ -34060,6 +34092,91 @@ return [
     act(() => {
       getWorkbench().updateActiveEditorPosition(
         positionAfter(controllerSource, "request()->user('admin"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(authConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: authConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 11,
+      },
+    });
+  });
+
+  it("opens Laravel Auth route middleware guard names before LSP fallback", async () => {
+    const controllerPath = "/workspace/routes/web.php";
+    const authConfigPath = "/workspace/config/auth.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Route;
+
+Route::middleware('auth:admin')->group(function () {
+    Route::get('/admin', fn () => null);
+});
+`;
+    const authConfigSource = `<?php
+
+return [
+    'defaults' => [
+        'guard' => 'web',
+    ],
+    'guards' => [
+        'web' => [
+            'driver' => 'session',
+        ],
+        'admin' => [
+            'driver' => 'session',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === authConfigPath) {
+          return authConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "web.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "auth:admin"),
       );
     });
 

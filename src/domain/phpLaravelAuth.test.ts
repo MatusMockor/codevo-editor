@@ -24,6 +24,14 @@ describe("phpLaravelAuth", () => {
       ["$request->user(guard: 'admin')", "request()->user"],
       ["request()->user('admin')", "request()->user"],
       ["request()->user(guard: 'admin')", "request()->user"],
+      ["Route::middleware('auth:admin')", "Route::middleware(auth)"],
+      ["Route::middleware('guest:admin')", "Route::middleware(guest)"],
+      [
+        "Route::get('/secure')->middleware('auth:admin')",
+        "Route::middleware(auth)",
+      ],
+      ["Route::middleware(['auth:admin'])", "Route::middleware(auth)"],
+      ["Route::middleware(['auth:web,admin'])", "Route::middleware(auth)"],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -47,7 +55,9 @@ describe("phpLaravelAuth", () => {
     const wrongStaticArgument = `<?php\n\nAuth::guard(guard: 'admin');\n`;
     const wrongHelperArgument = `<?php\n\nauth(name: 'admin');\n`;
     const customDriver = `<?php\n\nAuth::viaRequest('admin', fn () => null);\n`;
-    const routeMiddleware = `<?php\n\nRoute::get('/admin')->middleware('auth:admin');\n`;
+    const routeMiddlewareWithoutGuard = `<?php\n\nRoute::get('/admin')->middleware('auth');\n`;
+    const invalidRouteMiddlewareGuard = `<?php\n\nRoute::get('/admin')->middleware('auth:admin/web');\n`;
+    const genericRouteMiddleware = `<?php\n\n$router->middleware('auth:admin');\n`;
     const interpolated = `<?php\n\nAuth::guard("ad$min");\n`;
     const invalid = `<?php\n\nAuth::guard('admin/web');\n`;
     const wrongFacade = `<?php\n\nCache::store('admin');\n`;
@@ -81,8 +91,20 @@ describe("phpLaravelAuth", () => {
     ).toBeNull();
     expect(
       phpLaravelAuthGuardReferenceContextAt(
-        routeMiddleware,
-        positionAfter(routeMiddleware, "admin"),
+        routeMiddlewareWithoutGuard,
+        positionAfter(routeMiddlewareWithoutGuard, "auth"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        invalidRouteMiddlewareGuard,
+        positionAfter(invalidRouteMiddlewareGuard, "admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        genericRouteMiddleware,
+        positionAfter(genericRouteMiddleware, "admin"),
       ),
     ).toBeNull();
     expect(
