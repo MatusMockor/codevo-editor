@@ -1147,3 +1147,43 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `a08db0f7 Guard PHP language server plans by active workspace`.
+
+### Slice: Managed PHPactor Install Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `878f7bb5 Record PHP plan workspace guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed managed PHPactor installation completions or failures from updating the UI after the user switches project tabs.
+
+#### Implementation Choice
+
+- Re-check the active workspace root after the install flow refreshes the PHP language-server plan and before closing setup UI or setting the install success message.
+- Suppress managed PHPactor install errors when the active workspace no longer matches the install request root.
+- Extend the controller test harness so tests can inject a custom PHP tools gateway for delayed install failures.
+- Add regressions where `/workspace-a` starts the managed install, the user switches to `/workspace-b`, and the stale success tail or install rejection cannot change `/workspace-b` UI state.
+
+#### Acceptance Criteria
+
+- Stale managed PHPactor install completions do not set the active workspace message.
+- Stale managed PHPactor install failures do not create Language Server notices after switching project tabs.
+- Existing stale PHP plan guards still pass.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores managed PHPactor install completion after switching project tabs|ignores managed PHPactor install errors after switching project tabs|ignores stale PHP language server plan results after switching project tabs|ignores stale PHP language server plan errors after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `b7342493 Guard managed PHPactor install by active workspace`.
