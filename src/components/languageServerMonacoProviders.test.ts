@@ -18,7 +18,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range and rename providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename and reference providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -39,6 +39,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.codeActionLanguage).toBe("php");
     expect(registered.selectionRangeLanguage).toBe("php");
     expect(registered.renameLanguage).toBe("php");
+    expect(registered.referenceLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
         "quickfix",
@@ -58,6 +59,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.codeActionDispose).toHaveBeenCalled();
     expect(registered.selectionRangeDispose).toHaveBeenCalled();
     expect(registered.renameDispose).toHaveBeenCalled();
+    expect(registered.referenceDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -3138,12 +3140,228 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("maps in-root PHP reference locations", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      references: [
+        {
+          range: range(3, 4, 3, 9),
+          uri: "file:///project/src/User.php",
+        },
+        {
+          range: range(7, 8, 7, 13),
+          uri: "file:///project/src/Controller.php",
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.referenceProvider.provideReferences(model(), position()),
+    ).resolves.toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 10,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        }),
+        uri: {
+          fsPath: "/project/src/User.php",
+          path: "/project/src/User.php",
+        },
+      },
+      {
+        range: expect.objectContaining({
+          endColumn: 14,
+          endLineNumber: 8,
+          startColumn: 9,
+          startLineNumber: 8,
+        }),
+        uri: {
+          fsPath: "/project/src/Controller.php",
+          path: "/project/src/Controller.php",
+        },
+      },
+    ]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.references).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
+  });
+
+  it("does not request references when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      references: [
+        {
+          range: range(3, 4, 3, 9),
+          uri: "file:///project/src/User.php",
+        },
+      ],
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({ references: false }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.referenceProvider.provideReferences(model(), position()),
+    ).resolves.toBeNull();
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.references).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway({
+      references: [
+        {
+          range: range(3, 4, 3, 9),
+          uri: "file:///project/src/User.php",
+        },
+      ],
+    });
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.referenceProvider.provideReferences(model(), position()),
+    ).resolves.toBeNull();
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.references).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP references and suppresses stale errors after same-root session restart", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const references = createDeferred<LanguageServerLocation[]>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.references).mockImplementationOnce(
+      async () => references.promise,
+    );
+    const reportError = vi.fn();
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const referencesPromise = registered.referenceProvider.provideReferences(
+      model(),
+      position(),
+    );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    references.reject(new Error("Cannot find stale references."));
+
+    await expect(referencesPromise).resolves.toBeNull();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP references after switching project tabs and suppresses stale errors", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const references = createDeferred<LanguageServerLocation[]>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.references).mockImplementationOnce(
+      async () => references.promise,
+    );
+    const reportError = vi.fn();
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const referencesPromise = registered.referenceProvider.provideReferences(
+      model(),
+      position(),
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    references.reject(new Error("Cannot find stale references."));
+
+    await expect(referencesPromise).resolves.toBeNull();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("filters outside-root PHP reference locations", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      references: [
+        {
+          range: range(3, 4, 3, 9),
+          uri: "file:///project/src/User.php",
+        },
+        {
+          range: range(4, 0, 4, 7),
+          uri: "file:///project-other/src/User.php",
+        },
+        {
+          range: range(5, 0, 5, 7),
+          uri: "untitled:User.php",
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.referenceProvider.provideReferences(model(), position()),
+    ).resolves.toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 10,
+          endLineNumber: 4,
+          startColumn: 5,
+          startLineNumber: 4,
+        }),
+        uri: {
+          fsPath: "/project/src/User.php",
+          path: "/project/src/User.php",
+        },
+      },
+    ]);
+  });
+
 });
 
 function createRegisteredProviders() {
   const codeActionDispose = vi.fn();
   const commandDispose = vi.fn();
   const hoverDispose = vi.fn();
+  const referenceDispose = vi.fn();
   const completionDispose = vi.fn();
   const renameDispose = vi.fn();
   const selectionRangeDispose = vi.fn();
@@ -3162,6 +3380,9 @@ function createRegisteredProviders() {
     hoverLanguage: string | null;
     hoverProvider: any;
     monaco: any;
+    referenceDispose: ReturnType<typeof vi.fn>;
+    referenceLanguage: string | null;
+    referenceProvider: any;
     renameDispose: ReturnType<typeof vi.fn>;
     renameLanguage: string | null;
     renameProvider: any;
@@ -3185,6 +3406,9 @@ function createRegisteredProviders() {
     hoverLanguage: null,
     hoverProvider: null,
     monaco: null,
+    referenceDispose,
+    referenceLanguage: null,
+    referenceProvider: null,
     renameDispose,
     renameLanguage: null,
     renameProvider: null,
@@ -3251,6 +3475,11 @@ function createRegisteredProviders() {
         registered.hoverLanguage = language;
         registered.hoverProvider = provider;
         return { dispose: hoverDispose };
+      }),
+      registerReferenceProvider: vi.fn((language, provider) => {
+        registered.referenceLanguage = language;
+        registered.referenceProvider = provider;
+        return { dispose: referenceDispose };
       }),
       registerRenameProvider: vi.fn((language, provider) => {
         registered.renameLanguage = language;

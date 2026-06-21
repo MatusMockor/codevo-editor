@@ -6646,3 +6646,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS Resolve Capability Advertisement
 
 - Committed as `dbfc6546 Advertise TypeScript inlay resolve fields`.
+
+## Next Slice: PHP Monaco References Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3d12827d Record TypeScript inlay resolve capability commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP LSP references/find-usages commands already exist in the frontend gateway and Tauri backend.
+- Backend output filtering already guards PHP locations by workspace root.
+- The Monaco PHP provider did not register a references provider, so users could not invoke PhpStorm-like Find Usages from the editor.
+
+### Implementation Choice
+
+- Register an optional-safe PHP `referenceProvider` alongside the existing PHP providers.
+- Reuse the PHP feature request context, pending document flush, active root/session re-checks, and stale error suppression.
+- Map LSP file locations to Monaco locations and defensively filter non-file/outside-root locations on the frontend.
+
+### Acceptance Criteria
+
+- PHP reference provider is registered and disposed.
+- PHP references map in-root locations to Monaco locations.
+- Disabled `references` capability and mismatched runtime roots do not call the gateway.
+- Stale same-root session restart and workspace-tab switch paths drop results/errors.
+- Outside-root and non-file reference locations are filtered.
+- Focused PHP provider tests, full PHP provider tests, `EditorSurface` tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco References Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "reference|references|same-root session restart"` (12 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (66 tests)
+- PASS: `npm test -- src/components/EditorSurface.test.tsx` (18 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 896 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco References Provider
+
+- Pending commit after full frontend verification.

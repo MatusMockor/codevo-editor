@@ -7,6 +7,7 @@ import {
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
   type LanguageServerFeaturesGateway,
+  type LanguageServerLocation,
   type LanguageServerRange,
   type LanguageServerSelectionRange,
   type LanguageServerTextEdit,
@@ -212,6 +213,12 @@ export function registerLanguageServerMonacoProviders(
           prepareRename(monaco, context, model, position),
       })
     : { dispose: () => undefined };
+  const references = monaco.languages.registerReferenceProvider
+    ? monaco.languages.registerReferenceProvider("php", {
+        provideReferences: (model, position) =>
+          provideReferences(monaco, context, model, position),
+      })
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -223,6 +230,7 @@ export function registerLanguageServerMonacoProviders(
       codeActions.dispose();
       selectionRange.dispose();
       rename.dispose();
+      references.dispose();
     },
   };
 }
@@ -321,6 +329,41 @@ async function provideRenameEdits(
       workspaceEditContext(model),
       edit,
       request.rootPath,
+    );
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
+}
+
+async function provideReferences(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  const request = featureRequestContext(context, model, position, "references");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const references = await context.featuresGateway.references(
+      request.rootPath,
+      request.position,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    return references.flatMap((location) =>
+      toMonacoLocation(monaco, request.rootPath, location),
     );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
@@ -751,6 +794,25 @@ function toMonacoWorkspaceEdit(
       }));
     }),
   };
+}
+
+function toMonacoLocation(
+  monaco: MonacoApi,
+  rootPath: string,
+  location: LanguageServerLocation,
+): Monaco.languages.Location[] {
+  const path = pathFromLanguageServerUri(location.uri);
+
+  if (!path || !isPathInWorkspaceRoot(rootPath, path)) {
+    return [];
+  }
+
+  return [
+    {
+      range: toMonacoRange(monaco, location.range),
+      uri: monaco.Uri.file(path),
+    },
+  ];
 }
 
 function toMonacoTextEdit(
@@ -1762,7 +1824,7 @@ function featureRequestContext(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
-  feature: "completion" | "hover" | "prepareRename" | "rename",
+  feature: "completion" | "hover" | "prepareRename" | "references" | "rename",
 ) {
   const request = featureDocumentRequestContext(context, model, feature);
 
@@ -1784,6 +1846,7 @@ function featureDocumentRequestContext(
     | "completion"
     | "hover"
     | "prepareRename"
+    | "references"
     | "rename"
     | "selectionRange",
 ) {
