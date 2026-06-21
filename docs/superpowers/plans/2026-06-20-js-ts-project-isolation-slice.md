@@ -3788,3 +3788,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Controller Runtime Workspace Gates
 
 - Committed as `4fbadc07 Gate PHP runtime features by workspace`.
+
+## Next Slice: Workspace Runtime Status Helper Root Fallback
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9edfe71e Record PHP controller runtime gate commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Runtime ingress handlers now require explicit roots for active statuses.
+- The shared workspace status helper still allowed a separate `statusRoot` fallback to make rootless `starting`, `running`, or `crashed` statuses look workspace-scoped.
+- Keeping that fallback only for safe `stopped` statuses aligns the helper with the direct/runtime handler contract.
+
+### Implementation Choice
+
+- Preserve `status.rootPath` as the primary source of workspace ownership.
+- Allow `statusRoot` fallback only when the status is `stopped`.
+- Re-run rootless/runtime preview regressions and the full controller preview suite.
+
+### Acceptance Criteria
+
+- Rootless active statuses cannot be treated as belonging to a workspace by the shared helper.
+- Rootless stopped statuses can still use the local safe fallback.
+- Focused rootless runtime tests, full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: Workspace Runtime Status Helper Root Fallback
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "rootless|runtime status events without an explicit workspace root|rootless .* response|PHP runtime"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`

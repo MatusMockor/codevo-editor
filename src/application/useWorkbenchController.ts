@@ -15054,7 +15054,8 @@ function isLanguageServerStatusForWorkspace(
     return false;
   }
 
-  const rootedStatus = status.rootPath ?? statusRoot;
+  const rootedStatus =
+    status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
 
   return (
     Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
