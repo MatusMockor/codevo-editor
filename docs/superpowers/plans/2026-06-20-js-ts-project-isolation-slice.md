@@ -8806,3 +8806,36 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Broadcast Fluent Connection Names
 
 - Committed as `471a3129 Support Laravel broadcast fluent connection navigation`.
+
+## Next Slice: Laravel Notification MailMessage Mailer Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3df46e14 Record Laravel broadcast fluent commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel notification mail messages can select a configured mailer through `(new MailMessage)->mailer('postmark')`.
+- This is another config-derived string reference to `mail.mailers.<mailer>` and reuses the existing Mail mailer completion / Go to Definition pipeline.
+- The slice intentionally avoids generic `->mailer(...)` receiver matching until class/type resolution can support variable receivers safely.
+
+### Implementation Choice
+
+- Extend the Mail mailer detector with a guarded `MailMessage::mailer` member-call reference.
+- Accept fluent chains rooted at `new MailMessage` or the exact Laravel FQCN `new \Illuminate\Notifications\Messages\MailMessage`.
+- Reject generic `$message->mailer(...)`, unrelated message classes, non-Laravel namespaced `MailMessage` classes, nested `tap(new MailMessage)->mailer(...)`, and wrong named arguments such as `name:`.
+
+### Verification: Laravel Notification MailMessage Mailer Names
+
+- `npm test -- src/domain/phpLaravelMail.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Mail mailer"` passed: 2 passed, 413 skipped.
+- `npm run check` passed.
+- `npm test` passed: 77 files, 1105 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Notification MailMessage Mailer Names
+
+- Committed as `6243eb06 Support Laravel notification mailer navigation`.
