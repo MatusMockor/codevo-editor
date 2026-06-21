@@ -16287,7 +16287,7 @@ function phpClassSourceHasDeclaredProperty(
 
   const escapedPropertyName = escapeRegExp(normalizedPropertyName);
   const docPropertyPattern = new RegExp(
-    String.raw`@property(?:-read|-write)?\s+[^\r\n*]+?\s+\$${escapedPropertyName}\b`,
+    String.raw`@(?:(?:phpstan|psalm)-)?property(?:-read|-write)?\s+[^\r\n*]+?\s+\$${escapedPropertyName}\b`,
     "i",
   );
   const declaredPropertyPattern = new RegExp(

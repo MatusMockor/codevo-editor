@@ -7217,3 +7217,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `61dd135c Cover PHPStan Psalm magic member preview navigation`.
+
+## Slice: PHPStan Psalm PHPDoc Property Diagnostic Filtering - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9f89a72b Record PHPStan Psalm magic member preview commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prevent Phpactor unresolved-property false positives for PHPStan/Psalm-prefixed PHPDoc property declarations in workbench diagnostics.
+
+### Implementation Choice
+
+- Extend the local declared-property docblock check in `useWorkbenchController` to accept `@phpstan-property*` and `@psalm-property*`.
+- Extend the implemented-interface PHPDoc property diagnostic preview regression with prefixed read/write properties.
+- Keep unknown-property diagnostics visible as the control case.
+
+### Acceptance Criteria
+
+- Prefixed PHPDoc properties can confirm hierarchy property existence for diagnostic filtering.
+- Workbench diagnostics suppress prefixed documented properties inherited through an implemented interface.
+- Missing properties continue to appear.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "suppresses implemented interface PHPDoc property diagnostics"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc property diagnostics|PHPDoc magic property definitions|PHPDoc magic method definitions"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -16517,6 +16517,8 @@ class CommentController
     public function show(Comment $comment): void
     {
         $comment->externalId;
+        $comment->slug;
+        $comment->hidden;
         $comment->missingProperty;
     }
 }
@@ -16591,6 +16593,8 @@ namespace App\\Contracts;
 
 /**
  * @property-read string $externalId
+ * @phpstan-property-read string $slug
+ * @psalm-property-write bool $hidden
  */
 interface HasExternalId
 {
@@ -16612,6 +16616,8 @@ interface HasExternalId
     expect(diagnosticsListener).not.toBeNull();
 
     const externalIdPosition = propertyDiagnosticPosition("externalId");
+    const slugPosition = propertyDiagnosticPosition("slug");
+    const hiddenPosition = propertyDiagnosticPosition("hidden");
     const missingPosition = propertyDiagnosticPosition("missingProperty");
 
     act(() => {
@@ -16621,6 +16627,18 @@ interface HasExternalId
             ...externalIdPosition,
             message:
               "Property App\\Models\\Comment::$externalId does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...slugPosition,
+            message: "Property App\\Models\\Comment::$slug does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...hiddenPosition,
+            message: "Property App\\Models\\Comment::$hidden does not exist",
             severity: "error",
             source: "phpactor",
           },
