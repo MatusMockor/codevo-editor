@@ -9914,23 +9914,38 @@ export function useWorkbenchController(
 
   const openPhpClassTarget = useCallback(
     async (className: string, label: string): Promise<boolean> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const requestedSourcePath = activeDocument?.path ?? "";
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return false;
       }
 
       if (shouldIndexWorkspace(intelligenceMode)) {
         const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
-          workspaceRoot,
+          requestedRoot,
           className,
           25,
         );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         const indexedTarget = bestIndexedSymbolMatch(
           indexedSymbols,
           className,
-          activeDocument?.path ?? "",
+          requestedSourcePath,
         );
 
         if (indexedTarget) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           return openNavigationTarget(
             indexedTarget.path,
             editorPositionFromProjectSymbol(indexedTarget),
@@ -9940,18 +9955,31 @@ export function useWorkbenchController(
       }
 
       for (const path of phpClassPathCandidates(
-        workspaceRoot,
-        workspaceDescriptor.php,
+        requestedRoot,
+        requestedDescriptor.php,
         className,
       )) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         try {
           const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           return openNavigationTarget(
             path,
             phpNamedTypePosition(content, shortPhpName(className)),
             label,
           );
         } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           continue;
         }
       }

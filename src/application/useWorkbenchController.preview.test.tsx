@@ -10667,6 +10667,98 @@ export abstract class BaseAdapter implements PlatformAdapter {
     });
   });
 
+  it("drops stale contextual PHP class targets after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/src/CommentController.php";
+    const targetPath = "/external/shared/CommentsAgent.php";
+    const controllerSource = "<?php\n$agent = new CommentsAgent();\n";
+    const symbolSearch =
+      createDeferred<
+        Awaited<
+          ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>
+        >
+      >();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === targetPath) {
+        return "<?php\nfinal class CommentsAgent {}\n";
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementationOnce(async () => symbolSearch.promise);
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 23,
+        lineNumber: 2,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "CommentsAgent", 25);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    symbolSearch.resolve([
+      {
+        column: 13,
+        containerName: null,
+        fullyQualifiedName: "App\\CommentsAgent",
+        kind: "class",
+        lineNumber: 4,
+        name: "CommentsAgent",
+        path: targetPath,
+        relativePath: "../shared/CommentsAgent.php",
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("drops stale indexed go to definition errors after switching project tabs", async () => {
     const controllerPath = "/workspace-a/src/CommentController.php";
     const symbolSearch =
