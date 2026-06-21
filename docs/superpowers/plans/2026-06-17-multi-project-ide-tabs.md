@@ -339,4 +339,4 @@ This prevents project A diagnostics, completion, or implementation results from 
 
 #### Commit Status
 
-- Pending implementation commit.
+- Committed as `49377f28 Cover active workspace disposal fallback`.
