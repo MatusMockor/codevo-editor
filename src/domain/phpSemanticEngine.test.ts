@@ -1104,6 +1104,12 @@ class Comment extends Model
             ->orHavingRaw('sum(score) > 10')
             ->orderByRaw('created_at desc')
             ->first();
+        $relationMethodExistsFilteredPost = $this->posts()
+            ->whereExists(fn ($query) => $query->selectRaw('1'))
+            ->orWhereExists(fn ($query) => $query->selectRaw('1'))
+            ->whereNotExists(fn ($query) => $query->selectRaw('1'))
+            ->orWhereNotExists(fn ($query) => $query->selectRaw('1'))
+            ->first();
         $relationMethodColumnFilteredPost = $this->posts()
             ->whereColumn('created_at', 'updated_at')
             ->orWhereColumn('published_at', 'updated_at')
@@ -1227,6 +1233,7 @@ class Comment extends Model
         $relationMethodDescendingPost->tit
         $relationMethodReorderedPost->tit
         $relationMethodRawFilteredPost->tit
+        $relationMethodExistsFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
         $relationMethodBetweenFilteredPost->tit
         $relationMethodIntegerRowFilteredPost->tit
@@ -1474,6 +1481,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodRawFilteredPost->tit"),
         "relationMethodRawFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodExistsFilteredPost->tit"),
+        "relationMethodExistsFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
