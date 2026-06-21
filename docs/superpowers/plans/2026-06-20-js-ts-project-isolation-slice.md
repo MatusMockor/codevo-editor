@@ -6845,7 +6845,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP File Rename Backend Command Parity
 
-- Pending commit after verification.
+- Committed as `87d1b477 Add PHP file rename LSP commands`.
 
 ## Next Slice: JS/TS Completion InsertTextMode Capability Advertisement
 
