@@ -3308,4 +3308,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending implementation commit.
+- Committed as `e6cd208e Recognize Laravel integer raw query helpers`.
