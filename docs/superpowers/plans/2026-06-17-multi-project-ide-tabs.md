@@ -725,3 +725,40 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `49b86c5e Cover TypeScript document links without active workspace`.
+
+### Slice: TypeScript Selection Range Rootless Active Guard Coverage - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `37a8c0d8 Record TypeScript document link root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prove in-flight TypeScript selection ranges are dropped when the last project tab closes before the LSP response returns.
+
+#### Implementation Choice
+
+- Add a JS/TS Monaco provider regression that starts selection ranges under `/project`, clears the active workspace root before the delayed response, and verifies Monaco receives `null`.
+- Keep the gateway assertion pinned to `/project`, proving request capture remains stable while response delivery is blocked after active-root loss.
+
+#### Acceptance Criteria
+
+- In-flight TypeScript selection ranges return `null` after `getWorkspaceRoot()` becomes `null`.
+- Existing project-switch selection range guard still passes.
+- Full JS/TS provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "drops in-flight TypeScript selection ranges when no project tab is active|drops in-flight TypeScript selection ranges after switching project tabs"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `dd16a360 Cover TypeScript selection ranges without active workspace`.
