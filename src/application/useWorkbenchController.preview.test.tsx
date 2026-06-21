@@ -11847,6 +11847,177 @@ export abstract class BaseAdapter implements PlatformAdapter {
     ).toBe(false);
   });
 
+  it("drops stale JavaScript and TypeScript workspace symbol errors after same-root session restart", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(411)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(411)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(411),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(411),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).toHaveBeenCalledWith("/workspace", "User");
+
+    act(() => {
+      publishStatus?.(runningStatus(412));
+    });
+    await flushAsyncTurns();
+
+    workspaceSymbols.reject(new Error("stale workspace symbols"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().message).not.toBe("Error: stale workspace symbols");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript Workspace Symbols" &&
+          notice.message.includes("stale workspace symbols"),
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale JavaScript and TypeScript workspace symbol results after same-root session restart", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway =
+      {
+        getStatus: vi.fn(async () => runningStatus(421)),
+        openLog: vi.fn(async () => "/tmp/typescript-language-server.log"),
+        start: vi.fn(async () => runningStatus(421)),
+        stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+        subscribeStatus: vi.fn(async (listener) => {
+          publishStatus = listener;
+          return () => undefined;
+        }),
+      };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus(421),
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus(421),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).toHaveBeenCalledWith("/workspace", "User");
+
+    act(() => {
+      publishStatus?.(runningStatus(422));
+    });
+    await flushAsyncTurns();
+
+    workspaceSymbols.resolve([
+      {
+        containerName: "src/staleUser",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace/src/staleUser.ts"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(
+      getWorkbench().classOpenResults.some(
+        (result) => result.name === "StaleUser",
+      ),
+    ).toBe(false);
+  });
+
   it("uses the project index for go to definition when the language server is unavailable", async () => {
     const controllerPath = "/workspace/src/CommentController.php";
     const agentPath = "/workspace/src/CommentsAgent.php";

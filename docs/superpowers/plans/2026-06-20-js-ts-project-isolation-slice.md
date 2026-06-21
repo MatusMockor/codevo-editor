@@ -4314,3 +4314,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP DidClose Active Workspace Guard
 
 - Committed as `89ad8cbe Guard PHP didClose errors by active workspace`.
+
+## Next Slice: JavaScript TypeScript Workspace Symbols Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ebc5c244 Record PHP didClose guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- A read-only explorer audit found that Cmd+O JS/TS workspace symbols checked the active root after async results but not the originating TypeScript language-server session.
+- A same-root tsserver restart while `workspace/symbol` was in flight could let stale symbols populate class search results or stale errors create notices.
+- Existing coverage handled project-tab switches, but not same-root session restarts.
+
+### Implementation Choice
+
+- Capture the JS/TS language-server session id before starting the `workspaceSymbols` request.
+- Drop resolved symbols unless the captured session is still active for the requested root.
+- Suppress stale workspace-symbol errors after same-root restarts.
+- Add preview regressions for stale result and stale error paths after publishing a newer same-root JS/TS runtime session.
+
+### Acceptance Criteria
+
+- Stale JS/TS Cmd+O workspace-symbol results do not populate class-open results after a same-root session restart.
+- Stale JS/TS Cmd+O workspace-symbol errors do not create notices after a same-root session restart.
+- Existing tab-switch workspace-symbol coverage remains green.
+- Focused, broader, full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: JavaScript TypeScript Workspace Symbols Session Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace symbol"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace symbol|Cmd\\+O|class search|interfaces in Cmd\\+O"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status: JavaScript TypeScript Workspace Symbols Session Guard
+
+- Pending commit.

@@ -15308,11 +15308,23 @@ export function useWorkbenchController(
           "workspaceSymbol",
         )
       ) {
+        const requestedSessionId =
+          javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+        const isRequestedWorkspaceSymbolSessionActive = () =>
+          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+            requestedRoot,
+            requestedSessionId,
+          );
+
         searches.push(
           javaScriptTypeScriptLanguageServerFeaturesGateway
             .workspaceSymbols(requestedRoot, query)
-            .then((symbols) =>
-              symbols
+            .then((symbols) => {
+              if (!isRequestedWorkspaceSymbolSessionActive()) {
+                return [];
+              }
+
+              return symbols
                 .map((symbol) =>
                   projectSymbolFromLanguageServerWorkspaceSymbol(
                     requestedRoot,
@@ -15322,15 +15334,10 @@ export function useWorkbenchController(
                 .filter(
                   (symbol): symbol is ProjectSymbolSearchResult =>
                     symbol !== null,
-                ),
-            )
+                );
+            })
             .catch((error) => {
-              if (
-                !workspaceRootKeysEqual(
-                  currentWorkspaceRootRef.current,
-                  requestedRoot,
-                )
-              ) {
+              if (!isRequestedWorkspaceSymbolSessionActive()) {
                 return [];
               }
 
@@ -15352,6 +15359,7 @@ export function useWorkbenchController(
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       projectSymbolSearch,
       reportError,
       workspaceRoot,
