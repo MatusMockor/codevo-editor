@@ -5214,3 +5214,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `e12aa0ec Cover stale implementation tab results`.
+
+## Slice: Stale JavaScript TypeScript Source Definition Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c024d664 Record stale implementation result guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down JavaScript/TypeScript source-definition isolation when LSP source-definition results arrive after switching project tabs.
+
+### Implementation Choice
+
+- Add a preview controller regression for a delayed successful `sourceDefinition` response from `/workspace-a`.
+- Start Go to Source Definition from `/workspace-a/src/main.ts`, switch to `/workspace-b`, then resolve the stale target from `/workspace-a/packages/user/src/user.ts`.
+- Assert the active workspace remains `/workspace-b`, the stale target is not read/opened, no reveal target is set, and the stale success message is not shown.
+- Keep this as a test-only slice because the existing navigation path already guards stale source-definition results.
+
+### Acceptance Criteria
+
+- Delayed source-definition results from an inactive project tab are ignored.
+- The active workspace remains `/workspace-b`.
+- Stale source-definition targets do not open, reveal, or trigger a file read in the active tab.
+- Existing source-definition happy-path behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "source definition results after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `eb2c7ec5 Cover stale source definition tab results`.
