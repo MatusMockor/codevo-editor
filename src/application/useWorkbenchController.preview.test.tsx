@@ -32950,6 +32950,190 @@ return [
     });
   });
 
+  it("suggests Laravel Mail mailer names from mail config", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/MailController.php";
+    const configRoot = "/workspace/config";
+    const mailConfigPath = "/workspace/config/mail.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Mail;
+
+class MailController
+{
+    public function send(): void
+    {
+        Mail::mailer('post');
+        Mail::driver('sm');
+    }
+}
+`;
+    const mailConfigSource = `<?php
+
+return [
+    'default' => 'smtp',
+    'mailers' => [
+        'smtp' => [
+            'transport' => 'smtp',
+        ],
+        'postmark' => [
+            'transport' => 'postmark',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot ? [fileEntry(mailConfigPath, "mail.php")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === mailConfigPath) {
+          return mailConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "MailController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Mail::mailer('post"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/mail.php",
+        insertText: "postmark",
+        kind: "config",
+        name: "postmark",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Mail::driver('sm"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/mail.php",
+        insertText: "smtp",
+        kind: "config",
+        name: "smtp",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Mail mailer names before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/MailController.php";
+    const mailConfigPath = "/workspace/config/mail.php";
+    const controllerSource = `<?php
+
+use App\\Mail\\OrderShipped;
+use Illuminate\\Support\\Facades\\Mail;
+
+class MailController
+{
+    public function send(): void
+    {
+        Mail::mailer('postmark')->to('[email protected]')->send(new OrderShipped());
+    }
+}
+`;
+    const mailConfigSource = `<?php
+
+return [
+    'default' => 'smtp',
+    'mailers' => [
+        'smtp' => [
+            'transport' => 'smtp',
+        ],
+        'postmark' => [
+            'transport' => 'postmark',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === mailConfigPath) {
+          return mailConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "MailController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Mail::mailer('postmark"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(mailConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: mailConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+  });
+
   it("suggests Laravel Storage disk names from filesystem config", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/UploadController.php";
     const configRoot = "/workspace/config";

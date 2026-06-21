@@ -16,6 +16,7 @@ import { phpLaravelCacheStoreReferenceContextAt } from "./phpLaravelCache";
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
 import { phpLaravelDatabaseConnectionReferenceContextAt } from "./phpLaravelDatabase";
 import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
+import { phpLaravelMailMailerReferenceContextAt } from "./phpLaravelMail";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
 import { phpLaravelQueueConnectionReferenceContextAt } from "./phpLaravelQueue";
 import { phpLaravelStorageDiskReferenceContextAt } from "./phpLaravelStorage";
@@ -63,6 +64,10 @@ export type PhpIdentifierContext =
   | {
       envName: string;
       kind: "laravelEnvString";
+    }
+  | {
+      kind: "laravelMailMailerString";
+      mailerName: string;
     }
   | {
       diskName: string;
@@ -208,6 +213,18 @@ export function phpIdentifierContextAt(
     return {
       connectionName: queueConnectionReference.connectionName,
       kind: "laravelQueueConnectionString",
+    };
+  }
+
+  const mailMailerReference = phpLaravelMailMailerReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (mailMailerReference) {
+    return {
+      kind: "laravelMailMailerString",
+      mailerName: mailMailerReference.mailerName,
     };
   }
 

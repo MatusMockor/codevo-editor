@@ -230,6 +230,12 @@ import {
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
 import {
+  phpLaravelMailMailerCompletionInsertText,
+  phpLaravelMailMailerConfigKey,
+  phpLaravelMailMailerNameFromConfigKey,
+  phpLaravelMailMailerReferenceContextAt,
+} from "../domain/phpLaravelMail";
+import {
   phpLaravelQueueConnectionCompletionInsertText,
   phpLaravelQueueConnectionConfigKey,
   phpLaravelQueueConnectionNameFromConfigKey,
@@ -410,6 +416,10 @@ interface PhpLaravelDatabaseConnectionTarget extends PhpLaravelConfigTarget {
 
 interface PhpLaravelQueueConnectionTarget extends PhpLaravelConfigTarget {
   connectionName: string;
+}
+
+interface PhpLaravelMailMailerTarget extends PhpLaravelConfigTarget {
+  mailerName: string;
 }
 
 interface PhpLaravelStorageDiskTarget extends PhpLaravelConfigTarget {
@@ -8167,6 +8177,53 @@ export function useWorkbenchController(
     [findPhpLaravelConfigTarget],
   );
 
+  const collectPhpLaravelMailMailerTargets = useCallback(async (): Promise<
+    PhpLaravelMailMailerTarget[]
+  > => {
+    const targets = new Map<string, PhpLaravelMailMailerTarget>();
+
+    for (const target of await collectPhpLaravelConfigTargets()) {
+      const mailerName = phpLaravelMailMailerNameFromConfigKey(target.key);
+
+      if (!mailerName) {
+        continue;
+      }
+
+      const key = mailerName.toLowerCase();
+
+      if (!targets.has(key)) {
+        targets.set(key, {
+          ...target,
+          mailerName,
+        });
+      }
+    }
+
+    return Array.from(targets.values()).sort((left, right) =>
+      left.mailerName.localeCompare(right.mailerName),
+    );
+  }, [collectPhpLaravelConfigTargets]);
+
+  const findPhpLaravelMailMailerTarget = useCallback(
+    async (mailerName: string): Promise<PhpLaravelMailMailerTarget | null> => {
+      const configKey = phpLaravelMailMailerConfigKey(mailerName);
+
+      if (!configKey) {
+        return null;
+      }
+
+      const target = await findPhpLaravelConfigTarget(configKey);
+
+      return target
+        ? {
+            ...target,
+            mailerName,
+          }
+        : null;
+    },
+    [findPhpLaravelConfigTarget],
+  );
+
   const collectPhpLaravelStorageDiskTargets = useCallback(async (): Promise<
     PhpLaravelStorageDiskTarget[]
   > => {
@@ -12640,6 +12697,36 @@ export function useWorkbenchController(
           }));
       }
 
+      const mailMailerContext = phpLaravelMailMailerReferenceContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && mailMailerContext && activeDocument) {
+        const normalizedPrefix = mailMailerContext.prefix.toLowerCase();
+        const targets = await collectPhpLaravelMailMailerTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return targets
+          .filter((target) =>
+            target.mailerName.toLowerCase().startsWith(normalizedPrefix),
+          )
+          .slice(0, 80)
+          .map((target) => ({
+            declaringClassName: target.relativePath,
+            insertText: phpLaravelMailMailerCompletionInsertText(
+              target.mailerName,
+            ),
+            kind: "config",
+            name: target.mailerName,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
       const storageDiskContext = phpLaravelStorageDiskReferenceContextAt(
         source,
         position,
@@ -12822,6 +12909,7 @@ export function useWorkbenchController(
       collectPhpLaravelConfigTargets,
       collectPhpLaravelDatabaseConnectionTargets,
       collectPhpLaravelEnvTargets,
+      collectPhpLaravelMailMailerTargets,
       collectPhpLaravelQueueConnectionTargets,
       collectPhpLaravelStorageDiskTargets,
       collectPhpLaravelTranslationTargets,
@@ -14367,6 +14455,43 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelMailMailerDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelMailMailerString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const target = await findPhpLaravelMailMailerTarget(context.mailerName);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!target) {
+        setMessage(`No Laravel mailer ${context.mailerName} found.`);
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.mailerName);
+    },
+    [
+      activeDocument,
+      findPhpLaravelMailMailerTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelStorageDiskDefinition = useCallback(
     async (
       context: Extract<
@@ -14555,6 +14680,10 @@ export function useWorkbenchController(
       return goToPhpLaravelQueueConnectionDefinition(context);
     }
 
+    if (context.kind === "laravelMailMailerString") {
+      return goToPhpLaravelMailMailerDefinition(context);
+    }
+
     if (context.kind === "laravelStorageDiskString") {
       return goToPhpLaravelStorageDiskDefinition(context);
     }
@@ -14591,6 +14720,7 @@ export function useWorkbenchController(
     goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelConfigDefinition,
     goToPhpLaravelEnvDefinition,
+    goToPhpLaravelMailMailerDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelStorageDiskDefinition,
@@ -15123,6 +15253,10 @@ export function useWorkbenchController(
           return goToPhpLaravelQueueConnectionDefinition(context);
         }
 
+        if (context.kind === "laravelMailMailerString") {
+          return goToPhpLaravelMailMailerDefinition(context);
+        }
+
         if (context.kind === "laravelStorageDiskString") {
           return goToPhpLaravelStorageDiskDefinition(context);
         }
@@ -15239,6 +15373,7 @@ export function useWorkbenchController(
     goToPhpLaravelConfigDefinition,
     goToPhpLaravelDatabaseConnectionDefinition,
     goToPhpLaravelEnvDefinition,
+    goToPhpLaravelMailMailerDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelQueueConnectionDefinition,
     goToPhpLaravelRelationStringDefinition,
