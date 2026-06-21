@@ -356,6 +356,7 @@ class CommentController
         Comment::with('parent')->first();
         Comment::with('children.parent')->first();
         Comment::query()->whereHas('attachments', fn ($query) => $query);
+        Comment::query()->withWhereHas('eagerAttachments', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_visible', true);
         Comment::query()->orWhereRelation('visibleChildren', 'is_visible', true);
         Comment::query()->withWhereRelation('eagerVisibleChildren', 'is_visible', true);
@@ -404,6 +405,15 @@ class CommentController
       methodName: "whereHas",
       receiverExpression: "Comment::query()",
       relationName: "attachments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'eagerAttachments'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "withWhereHas",
+      receiverExpression: "Comment::query()",
+      relationName: "eagerAttachments",
     });
     expect(
       phpIdentifierContextAt(source, positionAfter(source, "children.parent")),
@@ -724,6 +734,7 @@ class CommentController
         Comment::with('parent');
         Comment::with('children.parent');
         Comment::query()->whereHas('attachments', fn ($query) => $query);
+        Comment::query()->withWhereHas('eagerAtt', fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_visible', true);
         Comment::query()->orWhereRelation('visibleChi', 'is_visible', true);
         Comment::query()->withWhereRelation('eagerVisibleChi', 'is_visible', true);
@@ -782,6 +793,17 @@ class CommentController
       className: null,
       methodName: "whereHas",
       prefix: "att",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "withWhereHas('eagerAtt"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "withWhereHas",
+      prefix: "eagerAtt",
       receiverExpression: "Comment::query()",
     });
     expect(

@@ -6935,3 +6935,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `b6627d54 Cover Laravel enforceMorphMap inference`.
+
+## Slice: Laravel WithWhereHas Relation String Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `afedc85d Record Laravel enforceMorphMap coverage commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down Laravel relation-string navigation and completion for `withWhereHas(...)`.
+
+### Implementation Choice
+
+- Add domain relation-string context coverage for `Comment::query()->withWhereHas('eagerAttachments', ...)`.
+- Add completion-context coverage for an incomplete `withWhereHas('eagerAtt...')` first argument.
+- Keep this slice coverage-only because `withWhereHas` already participates in the relation-string method allowlist.
+
+### Acceptance Criteria
+
+- `withWhereHas` first-argument strings resolve as Laravel relation strings.
+- `withWhereHas` first-argument completions carry the correct method name, prefix, and receiver expression.
+- Existing Laravel relation-string parsing remains unchanged.
+- Focused/full navigation tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts -t "Laravel relation string"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
