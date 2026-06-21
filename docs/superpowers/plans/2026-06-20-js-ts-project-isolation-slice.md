@@ -5763,3 +5763,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Diagnostics Clear Workspace Reset Guard
 
 - Committed as `ab16f338 Clear diagnostics on workspace reset`.
+
+## Next Slice: PHP IDE Readiness Clear Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3450e964 Record diagnostics reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 853 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `phpIdeReadinessVersion` drives the editor-side PHP completion readiness trigger.
+- Opening a workspace reset the PHP readiness dedupe signature and version, but clearing the active workspace did not.
+- Closing the last project tab could leave a stale readiness tick/signature in the no-workspace controller state.
+
+### Implementation Choice
+
+- Reset `lastPhpIdeReadinessSignatureRef` when clearing the active workspace.
+- Reset `phpIdeReadinessVersion` to `0` in the same clear path.
+- Extend the last-tab-close regression to publish an index completion event, observe a PHP IDE readiness tick, close the only project tab, and assert the readiness version resets.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears PHP IDE readiness dedupe state.
+- Closing the last project tab resets the public readiness version to `0`.
+- Existing workspace reset, PHP runtime, and diagnostic guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: PHP IDE Readiness Clear Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (319 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 853 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP IDE Readiness Clear Reset Guard
+
+- Committed as `e85d4c42 Reset PHP readiness on workspace clear`.
