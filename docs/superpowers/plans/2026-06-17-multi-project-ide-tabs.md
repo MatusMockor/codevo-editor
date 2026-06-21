@@ -495,3 +495,43 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `57b94029 Guard PHP hover after workspace loss`.
+
+### Slice: PHP Completion Active Workspace Loss Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c6713fff Record PHP hover root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent stale PHP completion results from returning after the active project tab closes while completion work is in flight.
+
+#### Implementation Choice
+
+- Carry the captured active workspace root through local PHP method completion calculation.
+- Drop typed receiver, local-variable, and LSP completion suggestions if the captured root is no longer active after async completion work resumes.
+- Re-check the captured LSP request root after pending document flush and again after the PHP LSP completion response resolves.
+- Suppress stale completion errors once the request root is no longer active.
+
+#### Acceptance Criteria
+
+- PHP completions return no suggestions after `getWorkspaceRoot()` becomes `null` mid-request.
+- In-flight LSP completion responses do not reach Monaco after active-root loss.
+- Local PHP suggestions computed from a stale project tab are dropped after active-root loss.
+- Generic PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "drops in-flight PHP completions when no project tab is active|maps completion responses to Monaco suggestions"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `8834fa70 Guard PHP completions after workspace loss`.
