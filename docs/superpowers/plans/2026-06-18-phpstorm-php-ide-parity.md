@@ -6017,3 +6017,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `8165b764 Guard stale PHP method return traversal`.
+
+## Slice: Stale PHP Method Hierarchy Diagnostic Traversal Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c9b68894 Record stale PHP method return guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP method hierarchy diagnostic traversal from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `phpClassHierarchyHasMethod`.
+- Guard before hierarchy source reads, after member reads, after trait/mixin/supertype recursion, after failed reads, and before returning from the helper.
+- Add a preview regression where a PHP diagnostic from `/workspace-a` starts checking `App\\Models\\Comment::knownHook()`, the model source read is delayed, the workspace switches to `/workspace-b`, and the delayed source extends `BaseComment`.
+- Assert the stale diagnostic traversal does not continue into `/workspace-b` base model reads.
+
+### Acceptance Criteria
+
+- Stale PHP method hierarchy diagnostic traversal stops after tab switch.
+- Stale diagnostics do not start inherited class reads in the newly active workspace.
+- Existing PHP diagnostic filtering behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP method hierarchy diagnostic traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
