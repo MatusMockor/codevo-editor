@@ -9495,6 +9495,233 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("drops stale PHP language server definition results after switching project tabs", async () => {
+    const sourcePath = "/workspace-a/app/Http/Controllers/UserController.php";
+    const targetPath = "/external/vendor/package/Helper.php";
+    const source = `<?php
+
+$result = helper_call();
+`;
+    const target = `<?php
+
+function helper_call(): string
+{
+    return 'ok';
+}
+`;
+    const cursorPosition = positionAfter(source, "helper_ca");
+    const definitionResult =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 51,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.definition,
+    ).mockImplementationOnce(async () => definitionResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return target;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(languageServerFeaturesGateway.definition).toHaveBeenCalledWith(
+        "/workspace-a",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    definitionResult.resolve([
+      {
+        range: range(2, 9, 2, 20),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe(
+      "Opened definition Helper.php:3:10",
+    );
+  });
+
+  it("drops stale PHP language server definition results after same-root session restart", async () => {
+    const sourcePath = "/workspace/app/Http/Controllers/UserController.php";
+    const targetPath = "/external/vendor/package/Helper.php";
+    const source = `<?php
+
+$result = helper_call();
+`;
+    const target = `<?php
+
+function helper_call(): string
+{
+    return 'ok';
+}
+`;
+    const cursorPosition = positionAfter(source, "helper_ca");
+    const definitionResult =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(61)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(61)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.definition,
+    ).mockImplementationOnce(async () => definitionResult.promise);
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === sourcePath) {
+        return source;
+      }
+
+      if (requestedPath === targetPath) {
+        return target;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      readTextFile,
+      runtimeStatus: runningStatus(61),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(sourcePath, "UserController.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(cursorPosition);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(languageServerFeaturesGateway.definition).toHaveBeenCalledWith(
+        "/workspace",
+        {
+          character: cursorPosition.column - 1,
+          line: cursorPosition.lineNumber - 1,
+          path: sourcePath,
+        },
+      );
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(62));
+    });
+    await flushAsyncTurns();
+
+    definitionResult.resolve([
+      {
+        range: range(2, 9, 2, 20),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().activePath).toBe(sourcePath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).not.toBe(
+      "Opened definition Helper.php:3:10",
+    );
+  });
+
   it("opens JavaScript and TypeScript source definitions through workbench commands", async () => {
     const sourcePath = "/workspace/src/main.ts";
     const targetPath = "/workspace/packages/user/src/user.ts";

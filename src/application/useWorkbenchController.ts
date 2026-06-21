@@ -623,6 +623,9 @@ export function useWorkbenchController(
   const javaScriptTypeScriptDiagnosticsByRootRef = useRef<
     Record<string, Record<string, LanguageServerDiagnostic[]>>
   >({});
+  const languageServerRuntimeStatusRef =
+    useRef<LanguageServerRuntimeStatus | null>(null);
+  const languageServerRuntimeStatusRootRef = useRef<string | null>(null);
   const javaScriptTypeScriptLanguageServerRuntimeStatusRef =
     useRef<LanguageServerRuntimeStatus | null>(null);
   const javaScriptTypeScriptLanguageServerRuntimeStatusRootRef =
@@ -777,6 +780,11 @@ export function useWorkbenchController(
   useEffect(() => {
     previewPathRef.current = previewPath;
   }, [previewPath]);
+
+  useEffect(() => {
+    languageServerRuntimeStatusRef.current = languageServerRuntimeStatus;
+    languageServerRuntimeStatusRootRef.current = languageServerRuntimeStatusRoot;
+  }, [languageServerRuntimeStatus, languageServerRuntimeStatusRoot]);
 
   useEffect(() => {
     javaScriptTypeScriptLanguageServerRuntimeStatusRef.current =
@@ -1336,6 +1344,41 @@ export function useWorkbenchController(
       );
     },
     [],
+  );
+
+  const isLanguageServerSessionCurrentForRoot = useCallback(
+    (rootPath: string, sessionId: number) => {
+      const currentRuntimeStatus =
+        cachedLanguageServerRuntimeStatusForRoot(
+          languageServerRuntimeStatusByRootRef.current,
+          rootPath,
+        ) ??
+        (workspaceRootKeysEqual(
+          languageServerRuntimeStatusRootRef.current,
+          rootPath,
+        )
+          ? languageServerRuntimeStatusRef.current
+          : null);
+
+      return isRunningLanguageServerSessionForWorkspace(
+        currentRuntimeStatus,
+        currentRuntimeStatus?.rootPath ??
+          languageServerRuntimeStatusRootRef.current,
+        rootPath,
+        sessionId,
+      );
+    },
+    [],
+  );
+
+  const isLanguageServerSessionActiveForRoot = useCallback(
+    (rootPath: string, sessionId: number) => {
+      return (
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
+        isLanguageServerSessionCurrentForRoot(rootPath, sessionId)
+      );
+    },
+    [isLanguageServerSessionCurrentForRoot],
   );
 
   const isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot = useCallback(
@@ -10880,19 +10923,20 @@ export function useWorkbenchController(
     label: string,
     requestedPosition?: EditorPosition,
   ): Promise<boolean> => {
-    if (!activeDocument) {
-      return false;
-    }
+    const document = activeDocument;
+    const requestedRoot = workspaceRoot;
+    const runtimeStatus = languageServerRuntimeStatus;
+    const runtimeStatusRoot = languageServerRuntimeStatusRoot;
 
-    if (!workspaceRoot || !isLanguageServerDocument(activeDocument)) {
+    if (!document || !requestedRoot || !isLanguageServerDocument(document)) {
       return false;
     }
 
     if (
       !isRunningLanguageServerForWorkspace(
-        languageServerRuntimeStatus,
-        languageServerRuntimeStatusRoot,
-        workspaceRoot,
+        runtimeStatus,
+        runtimeStatusRoot,
+        requestedRoot,
       )
     ) {
       return false;
@@ -10900,36 +10944,59 @@ export function useWorkbenchController(
 
     if (
       !canUseLanguageServerFeature(
-        languageServerRuntimeStatus.capabilities,
+        runtimeStatus.capabilities,
         feature,
       )
     ) {
       return false;
     }
 
+    const requestedSessionId = runtimeStatus.sessionId;
     const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
 
     if (!editorPosition) {
       return false;
     }
 
+    const requestedPath = document.path;
+    const isRequestedSessionActive = () =>
+      isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
+
     if (feature === "implementation") {
       setImplementationChooser(null);
     }
 
     try {
-      await flushPendingDocumentChange(activeDocument.path);
+      await flushPendingDocumentChange(requestedPath);
+
+      if (!isRequestedSessionActive()) {
+        return false;
+      }
+
+      if (activeDocumentRef.current?.path !== requestedPath) {
+        return false;
+      }
+
       const locations = await languageServerFeaturesGateway[feature](
-        workspaceRoot,
-        toLanguageServerTextDocumentPosition(activeDocument.path, editorPosition),
+        requestedRoot,
+        toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
       );
+
+      if (!isRequestedSessionActive()) {
+        return false;
+      }
+
       const symbolName = identifierAtEditorPosition(
-        activeDocument.content,
+        document.content,
         editorPosition,
       );
 
       if (feature === "implementation" && locations.length > 1) {
         const targets = await implementationTargetsFromLocations(locations);
+
+        if (!isRequestedSessionActive()) {
+          return false;
+        }
 
         if (targets.length > 1) {
           setImplementationChooser({
@@ -10942,6 +11009,10 @@ export function useWorkbenchController(
         const [onlyTarget] = targets;
 
         if (onlyTarget) {
+          if (!isRequestedSessionActive()) {
+            return false;
+          }
+
           await openImplementationTarget(onlyTarget);
           return true;
         }
@@ -10960,10 +11031,18 @@ export function useWorkbenchController(
         return false;
       }
 
+      if (!isRequestedSessionActive()) {
+        return false;
+      }
+
       recordCurrentNavigationLocation();
       const opened = await openPathForNavigation(targetPath);
 
       if (!opened) {
+        return false;
+      }
+
+      if (!isRequestedSessionActive()) {
         return false;
       }
 
@@ -10977,20 +11056,25 @@ export function useWorkbenchController(
       );
       return true;
     } catch (error) {
-      reportLanguageServerError(error);
+      if (!isRequestedSessionActive()) {
+        return false;
+      }
+
+      reportLanguageServerErrorForActiveWorkspaceRoot(requestedRoot, error);
       return false;
     }
   }, [
     activeDocument,
     flushPendingDocumentChange,
     implementationTargetsFromLocations,
+    isLanguageServerSessionActiveForRoot,
     languageServerFeaturesGateway,
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
     openImplementationTarget,
     openPathForNavigation,
     recordCurrentNavigationLocation,
-    reportLanguageServerError,
+    reportLanguageServerErrorForActiveWorkspaceRoot,
     workspaceRoot,
   ]);
 
