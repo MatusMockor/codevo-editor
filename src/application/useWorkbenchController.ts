@@ -13019,16 +13019,20 @@ export function useWorkbenchController(
       return;
     }
 
-    void persistWorkspaceSettings(workspaceRoot, {
+    const requestedRoot = workspaceRoot;
+
+    void persistWorkspaceSettings(requestedRoot, {
       ...workspaceSettingsRef.current,
       session,
-    }).catch((error) => reportError("Session", error));
+    }).catch((error) =>
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "Session", error),
+    );
   }, [
     activePath,
     bottomPanelView,
     openPaths,
     persistWorkspaceSettings,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     sidebarView,
     workspaceRoot,
   ]);

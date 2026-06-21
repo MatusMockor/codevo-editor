@@ -6821,6 +6821,60 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale session persistence errors after switching project tabs", async () => {
+    const sessionSave = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\n`),
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockImplementationOnce(
+      async () => sessionSave.promise,
+    );
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry("/workspace-a/src/User.php", "User.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.settingsGateway.saveWorkspaceSettings,
+      ).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({
+          session: expect.objectContaining({
+            activePath: "/workspace-a/src/User.php",
+          }),
+        }),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      sessionSave.reject(new Error("stale session save"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Session" &&
+          notice.message.includes("stale session save"),
+      ),
+    ).toBe(false);
+  });
+
   it("restarts JavaScript and TypeScript language service with current settings", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
