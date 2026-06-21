@@ -5132,3 +5132,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `adbdf6de Cover stale workspace symbol tab results`.
+
+## Slice: Stale Indexed Definition Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ff5efbe4 Record stale workspace symbol result guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down indexed PHP Go to Definition isolation when a project-symbol search result arrives after switching project tabs.
+
+### Implementation Choice
+
+- Add a preview controller regression for a delayed successful indexed symbol search from `/workspace-a`.
+- Start Go to Definition on `CommentsAgent` in `/workspace-a`, switch to `/workspace-b`, then resolve the stale search with `/workspace-a/src/CommentsAgent.php`.
+- Assert the active workspace remains `/workspace-b`, the stale target is not opened, no reveal target is set, and the stale open message is not shown.
+- Keep this as a test-only slice because the existing navigation path already drops stale opens.
+
+### Acceptance Criteria
+
+- Delayed indexed definition results from an inactive project tab are ignored.
+- The active workspace remains `/workspace-b`.
+- Stale indexed targets do not open or reveal in the active tab.
+- Existing stale indexed error and miss coverage remain unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "indexed go to definition .* switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `b64672d1 Cover stale indexed definition tab results`.
