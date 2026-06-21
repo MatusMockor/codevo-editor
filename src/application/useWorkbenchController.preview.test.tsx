@@ -15497,6 +15497,7 @@ class CommentController
     public function show(Comment $comment): void
     {
         $comment->publish();
+        $comment->archive();
         $comment->missingPublish();
     }
 }
@@ -15571,6 +15572,7 @@ namespace App\\Contracts;
 
 /**
  * @method void publish()
+ * @method archive()
  */
 interface PublishesComments
 {
@@ -15592,6 +15594,7 @@ interface PublishesComments
     expect(diagnosticsListener).not.toBeNull();
 
     const publishPosition = methodDiagnosticPosition("publish");
+    const archivePosition = methodDiagnosticPosition("archive");
     const missingPosition = methodDiagnosticPosition("missingPublish");
 
     act(() => {
@@ -15601,6 +15604,13 @@ interface PublishesComments
             ...publishPosition,
             message:
               "Method App\\Models\\Comment::publish() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...archivePosition,
+            message:
+              "Method App\\Models\\Comment::archive() does not exist",
             severity: "error",
             source: "phpactor",
           },

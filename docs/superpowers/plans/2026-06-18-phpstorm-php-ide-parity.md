@@ -6461,3 +6461,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `acef2408 Cover returnless PHPDoc magic method navigation`.
+
+## Slice: Returnless PHPDoc Magic Method Diagnostic Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `dc6d777c Record returnless PHPDoc magic navigation commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down contextual diagnostic filtering for returnless PHPDoc magic methods inherited through implemented interfaces.
+
+### Implementation Choice
+
+- Extend the existing implemented-interface PHPDoc method diagnostic regression.
+- Add a returnless `@method archive()` annotation and matching `$comment->archive()` diagnostic.
+- Keep the expected diagnostics limited to the genuinely missing method.
+- Keep the slice coverage-only because returnless PHPDoc parsing now flows through the existing hierarchy diagnostic filter.
+
+### Acceptance Criteria
+
+- Returnless PHPDoc magic methods suppress matching false-positive method diagnostics.
+- Existing explicit-return PHPDoc diagnostic filtering remains unchanged.
+- Focused/full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "implemented interface PHPDoc method diagnostics"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
