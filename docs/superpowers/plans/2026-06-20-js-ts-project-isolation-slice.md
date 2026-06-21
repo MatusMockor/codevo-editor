@@ -4191,3 +4191,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Provider Selection Range Rootless Runtime Coverage
 
 - Committed as `a2b82227 Cover PHP selection range rootless runtime`.
+
+## Next Slice: PHP Signature Help Tab Switch Coverage
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `112824ae Record PHP selection range rootless runtime commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP signature help is local/controller-backed rather than LSP-backed, so it does not use runtime-root gates.
+- It still captures the active PHP document root and must drop delayed results after project-tab switches.
+- Existing coverage dropped delayed signature help when no project tab was active, but not when another project tab became active.
+
+### Implementation Choice
+
+- Add a focused regression where signature help starts in `/project`, the active workspace changes to `/other`, and the delayed signature result resolves.
+- Assert the stale result returns `null` and does not populate Monaco signature help.
+- Keep the slice coverage-only because the provider already checks the stored workspace root after async signature resolution.
+
+### Acceptance Criteria
+
+- Delayed PHP signature help results are ignored after switching to another project tab.
+- Existing no-active-project signature guard and signature mapping behavior remains unchanged.
+- Focused/full PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Signature Help Tab Switch Coverage
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "PHP signature help"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Signature Help Tab Switch Coverage
+
+- Committed as `a5324db8 Cover PHP signature help tab switches`.
