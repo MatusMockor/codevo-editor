@@ -13342,12 +13342,13 @@ export function useWorkbenchController(
         })
         .catch((error) => {
           if (
-            active &&
-            workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)
+            !active ||
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)
           ) {
-            setLanguageServerRuntimeStatusRoot(workspaceRoot);
+            return;
           }
 
+          setLanguageServerRuntimeStatusRoot(workspaceRoot);
           reportError("Language Server", error);
         });
     } else {
