@@ -4928,3 +4928,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `7a22c697 Refresh project morph maps after edits`.
+
+## Slice: Laravel Container Binding Edit Refresh - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `cd66899f Record project morph map edit refresh commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Keep Laravel container-binding completions current after editing an open service provider file.
+
+### Implementation Choice
+
+- Add a workbench preview regression that resolves an interface repository binding from `CommentRepositoryInterface` to `EloquentCommentRepository`, producing `Comment::forceDelete()`.
+- Edit the open `AppServiceProvider.php` binding to point the same interface at `CachedCommentRepository`, which returns `ArchivedComment`.
+- Clear Laravel container-binding cache when a PHP document changes, and keep navigation reads pointed at the latest open-document content through refs.
+- Prefer explicit Laravel container bindings over repository naming convention fallback when resolving method-call return types for assigned variables and chained calls.
+
+### Acceptance Criteria
+
+- Editing an open PHP provider document invalidates cached container binding inference.
+- Workbench completions update from the old concrete repository return model to the newly bound concrete return model without requiring an index reset or workspace reload.
+- Existing container-binding warm-up, go-to-definition, preview completions, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- FAIL then fixed: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "refreshes Laravel container binding completions after editing service provider files"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "container binding"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `7b81bf6b Refresh Laravel container bindings after edits`.
