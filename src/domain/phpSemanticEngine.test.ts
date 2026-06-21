@@ -1131,6 +1131,12 @@ class Comment extends Model
             ->whereNone(['slug', 'body'], 'like', '%archived%')
             ->orWhereNone(['slug', 'body'], 'like', '%deleted%')
             ->first();
+        $relationMethodSearchFilteredPost = $this->posts()
+            ->whereFullText(['title', 'body'], 'laravel')
+            ->orWhereFullText('summary', 'php')
+            ->whereNullSafeEquals('published_at', null)
+            ->orWhereNullSafeEquals('archived_at', null)
+            ->first();
         $relationMethodJsonFilteredPost = $this->posts()
             ->whereJsonContains('meta->tags', 'php')
             ->orWhereJsonContains('meta->tags', 'laravel')
@@ -1216,6 +1222,7 @@ class Comment extends Model
         $relationMethodColumnFilteredPost->tit
         $relationMethodBetweenFilteredPost->tit
         $relationMethodLikeFilteredPost->tit
+        $relationMethodSearchFilteredPost->tit
         $relationMethodJsonFilteredPost->tit
         $relationMethodDatePartFilteredPost->tit
         $relationMethodFoundManyPosts->first()->tit
@@ -1482,6 +1489,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodLikeFilteredPost->tit"),
         "relationMethodLikeFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodSearchFilteredPost->tit"),
+        "relationMethodSearchFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");

@@ -3227,3 +3227,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `0f05556b Recognize Laravel multi column orWhere helpers`.
+
+## Slice: Laravel Full-Text And Null-Safe Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e652c9bd Record Laravel multi column orWhere helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize Laravel full-text search and null-safe equality query helpers as builder-preserving methods.
+
+### Implementation Choice
+
+- Add `whereFullText`, `orWhereFullText`, `whereNullSafeEquals`, and `orWhereNullSafeEquals` to Eloquent static/fluent builder recognition.
+- Add the same fluent helpers to base query-builder recognition.
+- Cover classifier behavior, Eloquent builder return-type preservation, and relation-method semantic inference through a search/null-safe helper chain ending in `first()`.
+
+### Acceptance Criteria
+
+- Full-text and null-safe equality helpers are recognized as Laravel Eloquent builder method names.
+- Base query-builder classifiers recognize the same fluent helpers.
+- Eloquent builder calls through these helpers preserve `Builder<Model>` inference.
+- Relation-method chains through these helpers infer the related model after `first()`.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "raw query builder|local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending implementation commit.
