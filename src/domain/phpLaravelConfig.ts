@@ -1,11 +1,23 @@
 import type { EditorPosition } from "./languageServerFeatures";
 
+const laravelConfigRepositoryMethods = [
+  "get",
+  "has",
+  "string",
+  "integer",
+  "float",
+  "boolean",
+  "array",
+  "collection",
+] as const;
+
+type LaravelConfigRepositoryMethod =
+  (typeof laravelConfigRepositoryMethods)[number];
+
 export type PhpLaravelConfigReferenceCall =
   | "config"
-  | "Config::get"
-  | "Config::has"
-  | "config()->get"
-  | "config()->has";
+  | `Config::${LaravelConfigRepositoryMethod}`
+  | `config()->${LaravelConfigRepositoryMethod}`;
 
 export interface PhpLaravelConfigReferenceContext {
   call: PhpLaravelConfigReferenceCall;
@@ -220,21 +232,25 @@ function laravelConfigReferenceCallAt(
   }
 
   const beforeCall = source.slice(0, argument.openParen);
+  const staticMethodMatch = /\bConfig\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+    beforeCall,
+  );
 
-  if (/\bConfig\s*::\s*get\s*$/.test(beforeCall)) {
-    return "Config::get";
+  if (staticMethodMatch?.[1]) {
+    const method = staticMethodMatch[1].toLowerCase();
+    if (isLaravelConfigRepositoryMethod(method)) {
+      return `Config::${method}`;
+    }
   }
 
-  if (/\bConfig\s*::\s*has\s*$/.test(beforeCall)) {
-    return "Config::has";
-  }
+  const helperMethodMatch =
+    /\bconfig\s*\(\s*\)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(beforeCall);
 
-  if (/\bconfig\s*\(\s*\)\s*->\s*get\s*$/.test(beforeCall)) {
-    return "config()->get";
-  }
-
-  if (/\bconfig\s*\(\s*\)\s*->\s*has\s*$/.test(beforeCall)) {
-    return "config()->has";
+  if (helperMethodMatch?.[1]) {
+    const method = helperMethodMatch[1].toLowerCase();
+    if (isLaravelConfigRepositoryMethod(method)) {
+      return `config()->${method}`;
+    }
   }
 
   const functionMatch = /(?:^|[^A-Za-z0-9_>$:])([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
@@ -252,6 +268,12 @@ function laravelConfigReferenceCallAt(
   }
 
   return functionMatch[1].toLowerCase() === "config" ? "config" : null;
+}
+
+function isLaravelConfigRepositoryMethod(
+  method: string,
+): method is LaravelConfigRepositoryMethod {
+  return (laravelConfigRepositoryMethods as readonly string[]).includes(method);
 }
 
 function isFirstArgument(argument: PhpArgumentContext): boolean {

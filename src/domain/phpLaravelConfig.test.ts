@@ -27,13 +27,26 @@ return config('app.name');
   });
 
   it("detects supported Laravel config repository calls", () => {
-    const samples = [
+    const typedRepositoryMethods = [
+      "string",
+      "integer",
+      "float",
+      "boolean",
+      "array",
+      "collection",
+    ];
+    const samples: Array<[string, string]> = [
       ["Config::get('app.name')", "Config::get"],
       ["Config::has('app.name')", "Config::has"],
       ["config()->get('app.name')", "config()->get"],
       ["config()->has('app.name')", "config()->has"],
       ["config(key: 'app.name')", "config"],
-    ] as const;
+    ];
+
+    for (const method of typedRepositoryMethods) {
+      samples.push([`Config::${method}('app.name')`, `Config::${method}`]);
+      samples.push([`config()->${method}('app.name')`, `config()->${method}`]);
+    }
 
     for (const [expression, call] of samples) {
       const source = `<?php\n\nreturn ${expression};\n`;
