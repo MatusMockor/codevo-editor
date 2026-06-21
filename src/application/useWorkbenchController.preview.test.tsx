@@ -16538,6 +16538,157 @@ class User
     ]);
   });
 
+  it("stops stale Laravel morph map search after switching project tabs", async () => {
+    const controllerPath =
+      "/workspace-a/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace-a/app/Models/Comment.php";
+    const providerPath = "/workspace-a/app/Providers/AppServiceProvider.php";
+    const userPath = "/workspace-a/app/Models/User.php";
+    const commentModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+
+class Comment extends Model
+{
+    public function mappedOwner(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+`;
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $owner = $comment->mappedOwner()->first();
+        $owner->get
+    }
+}
+`;
+    const providerSource = `<?php
+namespace App\\Providers;
+
+use App\\Models\\User;
+use Illuminate\\Database\\Eloquent\\Relations\\Relation;
+
+class AppServiceProvider
+{
+    public function boot(): void
+    {
+        Relation::morphMap([
+            'user' => User::class,
+        ]);
+    }
+}
+`;
+    const staleMorphMapSearch = createDeferred<TextSearchResult[]>();
+    const searchText = vi.fn(async (_root: string, query: string, _limit: number) =>
+      query === "morphMap" ? staleMorphMapSearch.promise : [],
+    );
+    let providerReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 6,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\User",
+          kind: "class",
+          lineNumber: 5,
+          name: "User",
+          path: userPath,
+          relativePath: "app/Models/User.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentModelSource;
+        }
+
+        if (path === providerPath) {
+          providerReadCount += 1;
+          return providerSource;
+        }
+
+        if (path === userPath) {
+          return `<?php
+namespace App\\Models;
+
+class User
+{
+    public function getName(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    const completions = getWorkbench().providePhpMethodCompletions(
+      controllerSource,
+      positionAfter(controllerSource, "$owner->get"),
+    );
+    await vi.waitFor(() => {
+      expect(searchText).toHaveBeenCalledWith("/workspace-a", "morphMap", 200);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleMorphMapSearch.resolve([
+      {
+        column: 19,
+        lineNumber: 10,
+        lineText: "        Relation::morphMap([",
+        path: providerPath,
+        relativePath: "app/Providers/AppServiceProvider.php",
+      },
+    ]);
+
+    await expect(completions).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(providerReadCount).toBe(0);
+  });
+
   it("refreshes Laravel morph map completions after editing service provider files", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const commentPath = "/workspace/app/Models/Comment.php";

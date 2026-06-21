@@ -5714,11 +5714,20 @@ export function useWorkbenchController(
 
   const resolvePhpLaravelProjectMorphMapModelType =
     useCallback(async (): Promise<string | null> => {
-      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (
+        !isLaravelFrameworkActive ||
+        !requestedRoot ||
+        !workspaceDescriptor?.php ||
+        !isRequestedRootActive()
+      ) {
         return null;
       }
 
-      const cacheKey = `${workspaceRoot}:${activePhpFrameworkProviderSignature}`;
+      const cacheKey = `${requestedRoot}:${activePhpFrameworkProviderSignature}`;
 
       if (
         Object.prototype.hasOwnProperty.call(
@@ -5732,12 +5741,21 @@ export function useWorkbenchController(
       const modelTypes = new Set<string>();
       const searchResults = await Promise.all(
         ["morphMap", "enforceMorphMap"].map((query) =>
-          textSearch.searchText(workspaceRoot, query, 200),
+          textSearch.searchText(requestedRoot, query, 200),
         ),
       );
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
       const visitedPaths = new Set<string>();
 
       for (const result of searchResults.flat()) {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
         if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
           continue;
         }
@@ -5747,16 +5765,28 @@ export function useWorkbenchController(
         try {
           const content = await readNavigationFileContent(result.path);
 
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           for (const entry of phpLaravelMorphMapEntriesFromSource(content)) {
             modelTypes.add(entry.modelClassName.replace(/^\\+/, ""));
           }
         } catch {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
           continue;
         }
       }
 
       const modelType =
         modelTypes.size === 1 ? (Array.from(modelTypes)[0] ?? null) : null;
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
 
       phpLaravelMorphMapModelTypeCacheRef.current[cacheKey] = modelType;
 
