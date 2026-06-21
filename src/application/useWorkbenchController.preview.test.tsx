@@ -32712,6 +32712,8 @@ class BroadcastController
         Broadcast::driver('re');
         Broadcast::purge('lo');
         Broadcast::setDefaultDriver('pu');
+        broadcast(new OrderUpdated())->via('pu');
+        Broadcast::event(new OrderUpdated())->via('re');
     }
 }
 `;
@@ -32810,6 +32812,39 @@ return [
         returnType: null,
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "broadcast(new OrderUpdated())->via('pu"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/broadcasting.php",
+        insertText: "pusher",
+        kind: "config",
+        name: "pusher",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(
+          controllerSource,
+          "Broadcast::event(new OrderUpdated())->via('re",
+        ),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/broadcasting.php",
+        insertText: "reverb",
+        kind: "config",
+        name: "reverb",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
   });
 
   it("opens Laravel Broadcast connection names before LSP fallback", async () => {
@@ -32824,7 +32859,7 @@ class BroadcastController
 {
     public function connect(): void
     {
-        Broadcast::connection('pusher');
+        $this->broadcastVia(['reverb', 'pusher']);
     }
 }
 `;
@@ -32881,7 +32916,7 @@ return [
     });
     act(() => {
       getWorkbench().updateActiveEditorPosition(
-        positionAfter(controllerSource, "Broadcast::connection('pusher"),
+        positionAfter(controllerSource, "pusher"),
       );
     });
 

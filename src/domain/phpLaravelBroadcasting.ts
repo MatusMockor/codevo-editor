@@ -1,6 +1,8 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
+  phpStringArrayArgumentElementContextAt,
   phpStringArgumentContextAt,
+  type PhpStringArrayArgumentElementContext,
   type PhpStringArgumentContext,
 } from "./phpStringArgumentContext";
 
@@ -11,14 +13,20 @@ const broadcastConnectionStaticCallMethods = {
   purge: "Broadcast::purge",
   setdefaultdriver: "Broadcast::setDefaultDriver",
 } as const;
+const broadcastViaMemberCallMethods = {
+  broadcastvia: "broadcastVia",
+  via: "via",
+} as const;
 
 type BroadcastConnectionStaticMethodName =
   keyof typeof broadcastConnectionStaticCallMethods;
+type BroadcastViaMemberMethodName = keyof typeof broadcastViaMemberCallMethods;
 
 export type PhpLaravelBroadcastConnectionReferenceCall =
-  (typeof broadcastConnectionStaticCallMethods)[
-    BroadcastConnectionStaticMethodName
-  ];
+  | (typeof broadcastConnectionStaticCallMethods)[
+      BroadcastConnectionStaticMethodName
+    ]
+  | (typeof broadcastViaMemberCallMethods)[BroadcastViaMemberMethodName];
 
 export interface PhpLaravelBroadcastConnectionReferenceContext {
   call: PhpLaravelBroadcastConnectionReferenceCall;
@@ -31,6 +39,34 @@ export function phpLaravelBroadcastConnectionReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelBroadcastConnectionReferenceContext | null {
+  const arrayArgument = phpStringArrayArgumentElementContextAt(source, position);
+
+  if (arrayArgument) {
+    const connectionName = arrayArgument.closed
+      ? arrayArgument.value
+      : arrayArgument.prefix;
+
+    if (
+      isBroadcastViaArrayArgument(arrayArgument) &&
+      isUsableLaravelBroadcastConnectionName(arrayArgument.prefix) &&
+      isUsableLaravelBroadcastConnectionName(connectionName)
+    ) {
+      const call = laravelBroadcastArrayConnectionReferenceCallAt(
+        source,
+        arrayArgument,
+      );
+
+      if (call) {
+        return {
+          call,
+          connectionName,
+          position: arrayArgument.position,
+          prefix: arrayArgument.prefix,
+        };
+      }
+    }
+  }
+
   const argument = phpStringArgumentContextAt(source, position);
 
   if (!argument) {
@@ -118,13 +154,47 @@ function laravelBroadcastConnectionReferenceCallAt(
     return broadcastConnectionStaticCallMethods[staticMethod];
   }
 
+  const memberMatch =
+    /(?:->|\?->|::)\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(beforeCall);
+  const memberMethod = memberMatch?.[1]?.toLowerCase() ?? null;
+
+  if (memberMethod && isBroadcastViaMemberMethodName(memberMethod)) {
+    const call = broadcastViaMemberCallMethods[memberMethod];
+
+    return isSupportedBroadcastViaCallAt(source, argument, call) ? call : null;
+  }
+
   return null;
+}
+
+function laravelBroadcastArrayConnectionReferenceCallAt(
+  source: string,
+  argument: PhpStringArrayArgumentElementContext,
+): PhpLaravelBroadcastConnectionReferenceCall | null {
+  const beforeCall = source.slice(0, argument.openParen);
+  const memberMatch =
+    /(?:->|\?->|::)\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(beforeCall);
+  const memberMethod = memberMatch?.[1]?.toLowerCase() ?? null;
+
+  if (!memberMethod || !isBroadcastViaMemberMethodName(memberMethod)) {
+    return null;
+  }
+
+  const call = broadcastViaMemberCallMethods[memberMethod];
+
+  return isSupportedBroadcastViaCallAt(source, argument, call) ? call : null;
 }
 
 function isBroadcastConnectionStaticMethodName(
   methodName: string,
 ): methodName is BroadcastConnectionStaticMethodName {
   return methodName in broadcastConnectionStaticCallMethods;
+}
+
+function isBroadcastViaMemberMethodName(
+  methodName: string,
+): methodName is BroadcastViaMemberMethodName {
+  return methodName in broadcastViaMemberCallMethods;
 }
 
 function isBroadcastConnectionArgument(
@@ -140,5 +210,38 @@ function isBroadcastConnectionArgument(
     argumentName === "connection" ||
     argumentName === "driver" ||
     argumentName === "name"
+  );
+}
+
+function isBroadcastViaArrayArgument(
+  argument: PhpStringArrayArgumentElementContext,
+): boolean {
+  const argumentName = argument.argumentName?.toLowerCase();
+
+  return argumentName
+    ? argumentName === "connection"
+    : argument.argumentIndex === 0;
+}
+
+function isSupportedBroadcastViaCallAt(
+  source: string,
+  argument: PhpStringArgumentContext,
+  call: PhpLaravelBroadcastConnectionReferenceCall,
+): boolean {
+  const beforeMemberCall = source.slice(0, argument.openParen);
+
+  if (call === "broadcastVia") {
+    return /(?:^|[^A-Za-z0-9_$])(?:\$this|self|static)\s*(?:->|::)\s*broadcastVia\s*$/.test(
+      beforeMemberCall,
+    );
+  }
+
+  return (
+    /\b(?:broadcast|broadcast_if|broadcast_unless)\s*\([\s\S]*\)\s*->\s*via\s*$/.test(
+      beforeMemberCall,
+    ) ||
+    /\bBroadcast\s*::\s*(?:event|on|private|presence)\s*\([\s\S]*\)\s*->\s*via\s*$/.test(
+      beforeMemberCall,
+    )
   );
 }

@@ -14,9 +14,19 @@ describe("phpLaravelBroadcasting", () => {
       ["Broadcast::driver('pusher')", "Broadcast::driver"],
       ["Broadcast::purge('pusher')", "Broadcast::purge"],
       ["Broadcast::setDefaultDriver('pusher')", "Broadcast::setDefaultDriver"],
+      ["broadcast(new OrderUpdated())->via('pusher')", "via"],
+      ["broadcast_if($ok, new OrderUpdated())->via('pusher')", "via"],
+      ["broadcast_unless($skip, new OrderUpdated())->via('pusher')", "via"],
+      ["Broadcast::event(new OrderUpdated())->via('pusher')", "via"],
+      ["Broadcast::on('orders.1')->via('pusher')", "via"],
+      ["Broadcast::private('orders.1')->via('pusher')", "via"],
+      ["Broadcast::presence('orders.1')->via('pusher')", "via"],
+      ["$this->broadcastVia('pusher')", "broadcastVia"],
+      ["self::broadcastVia('pusher')", "broadcastVia"],
       ["Broadcast::connection(connection: 'pusher')", "Broadcast::connection"],
       ["Broadcast::driver(driver: 'pusher')", "Broadcast::driver"],
       ["Broadcast::purge(name: 'pusher')", "Broadcast::purge"],
+      ["broadcast(new OrderUpdated())->via(connection: 'pusher')", "via"],
       [
         "Broadcast::setDefaultDriver(name: 'pusher')",
         "Broadcast::setDefaultDriver",
@@ -39,11 +49,44 @@ describe("phpLaravelBroadcasting", () => {
     }
   });
 
+  it("detects Laravel broadcastVia connection array strings", () => {
+    const source = `<?php
+
+$this->broadcastVia(['pusher', 'reverb']);
+$this->broadcastVia(connection: ['pusher']);
+`;
+
+    expect(
+      phpLaravelBroadcastConnectionReferenceContextAt(
+        source,
+        positionAfter(source, "pusher"),
+      ),
+    ).toMatchObject({
+      call: "broadcastVia",
+      connectionName: "pusher",
+      prefix: "pusher",
+    });
+    expect(
+      phpLaravelBroadcastConnectionReferenceContextAt(
+        source,
+        positionAfter(source, "reverb"),
+      ),
+    ).toMatchObject({
+      call: "broadcastVia",
+      connectionName: "reverb",
+      prefix: "reverb",
+    });
+  });
+
   it("ignores unsupported arguments, interpolation, invalid names, and non-broadcast calls", () => {
     const secondArgument = `<?php\n\nBroadcast::connection(null, 'pusher');\n`;
     const interpolated = `<?php\n\nBroadcast::connection("push$er");\n`;
     const invalid = `<?php\n\nBroadcast::connection('pusher/main');\n`;
     const wrongCall = `<?php\n\nQueue::connection('pusher');\n`;
+    const unrelatedVia = `<?php\n\nHttp::withOptions([])->via('pusher');\n`;
+    const broadcastOn = `<?php\n\nBroadcast::on('pusher');\n`;
+    const arrayKey = `<?php\n\n$this->broadcastVia(['pusher' => true]);\n`;
+    const arrayWrongArg = `<?php\n\n$this->broadcastVia(name: ['pusher']);\n`;
 
     expect(
       phpLaravelBroadcastConnectionReferenceContextAt(
@@ -67,6 +110,30 @@ describe("phpLaravelBroadcasting", () => {
       phpLaravelBroadcastConnectionReferenceContextAt(
         wrongCall,
         positionAfter(wrongCall, "pusher"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelBroadcastConnectionReferenceContextAt(
+        unrelatedVia,
+        positionAfter(unrelatedVia, "pusher"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelBroadcastConnectionReferenceContextAt(
+        broadcastOn,
+        positionAfter(broadcastOn, "pusher"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelBroadcastConnectionReferenceContextAt(
+        arrayKey,
+        positionAfter(arrayKey, "pusher"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelBroadcastConnectionReferenceContextAt(
+        arrayWrongArg,
+        positionAfter(arrayWrongArg, "pusher"),
       ),
     ).toBeNull();
   });
