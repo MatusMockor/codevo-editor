@@ -3717,4 +3717,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending implementation commit.
+- Committed as `33ea4548 Treat Laravel scalar aggregates as terminals`.
