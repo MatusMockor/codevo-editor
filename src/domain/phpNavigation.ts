@@ -83,6 +83,17 @@ interface StringLiteralRange {
   quoteStart: number;
 }
 
+const laravelControllerGroupRouteMethods = new Set([
+  "any",
+  "delete",
+  "get",
+  "match",
+  "options",
+  "patch",
+  "post",
+  "put",
+]);
+
 export function phpIdentifierContextAt(
   source: string,
   position: EditorPosition,
@@ -897,6 +908,19 @@ function laravelRouteActionContextAt(
     return null;
   }
 
+  const controllerGroupClassName = laravelControllerGroupClassNameForRouteAction(
+    source,
+    literal,
+  );
+
+  if (controllerGroupClassName) {
+    return {
+      className: controllerGroupClassName,
+      kind: "laravelRouteActionMethod",
+      methodName: literal.value,
+    };
+  }
+
   const arrayStart = source.lastIndexOf("[", literal.quoteStart);
 
   if (arrayStart < 0) {
@@ -924,6 +948,146 @@ function laravelRouteActionContextAt(
     kind: "laravelRouteActionMethod",
     methodName: literal.value,
   };
+}
+
+function laravelControllerGroupClassNameForRouteAction(
+  source: string,
+  literal: StringLiteralRange,
+): string | null {
+  const routeCall = laravelControllerGroupRouteCallForAction(source, literal);
+
+  if (!routeCall) {
+    return null;
+  }
+
+  for (const group of laravelControllerGroups(source)) {
+    if (routeCall.routeStart > group.bodyStart && routeCall.routeStart < group.bodyEnd) {
+      return group.className;
+    }
+  }
+
+  return null;
+}
+
+function laravelControllerGroupRouteCallForAction(
+  source: string,
+  literal: StringLiteralRange,
+): { routeStart: number } | null {
+  const routePattern = /\bRoute\s*::\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+
+  for (const match of source.matchAll(routePattern)) {
+    const routeStart = match.index ?? 0;
+    const routeMethod = match[1]?.toLowerCase() ?? "";
+
+    if (!laravelControllerGroupRouteMethods.has(routeMethod)) {
+      continue;
+    }
+
+    const openParen = routeStart + match[0].lastIndexOf("(");
+    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+    if (
+      closeParen === null ||
+      literal.quoteStart <= openParen ||
+      literal.quoteEnd >= closeParen
+    ) {
+      continue;
+    }
+
+    const argumentIndex = topLevelCallArgumentIndexAt(
+      source,
+      openParen,
+      closeParen,
+      literal.quoteStart,
+    );
+
+    if (argumentIndex === 1) {
+      return { routeStart };
+    }
+  }
+
+  return null;
+}
+
+function laravelControllerGroups(
+  source: string,
+): Array<{ bodyEnd: number; bodyStart: number; className: string }> {
+  const groups: Array<{ bodyEnd: number; bodyStart: number; className: string }> = [];
+  const controllerPattern =
+    /\bRoute\s*::\s*controller\s*\(\s*((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*class\s*\)/g;
+
+  for (const match of source.matchAll(controllerPattern)) {
+    const controllerStart = match.index ?? 0;
+    const className = match[1];
+
+    if (!className) {
+      continue;
+    }
+
+    const chainSource = source.slice(controllerStart);
+    const groupMatch = /->\s*group\s*\(/g.exec(chainSource);
+
+    if (!groupMatch) {
+      continue;
+    }
+
+    const groupOpenParen =
+      controllerStart +
+      (groupMatch.index ?? 0) +
+      groupMatch[0].lastIndexOf("(");
+    const groupCloseParen = matchingBracketOffset(source, groupOpenParen, "(", ")");
+
+    if (groupCloseParen === null) {
+      continue;
+    }
+
+    const bodyStart = source.indexOf("{", groupOpenParen);
+
+    if (bodyStart < 0 || bodyStart > groupCloseParen) {
+      continue;
+    }
+
+    const bodyEnd = matchingBracketOffset(source, bodyStart, "{", "}");
+
+    if (bodyEnd === null || bodyEnd > groupCloseParen) {
+      continue;
+    }
+
+    groups.push({
+      bodyEnd,
+      bodyStart,
+      className,
+    });
+  }
+
+  return groups.sort((left, right) => left.bodyStart - right.bodyStart);
+}
+
+function topLevelCallArgumentIndexAt(
+  source: string,
+  openParen: number,
+  closeParen: number,
+  targetOffset: number,
+): number | null {
+  let argumentIndex = 0;
+  let found: number | null = null;
+
+  scanTopLevel(source, openParen + 1, closeParen, (index, character) => {
+    if (found !== null) {
+      return;
+    }
+
+    if (index >= targetOffset) {
+      found = argumentIndex;
+      return;
+    }
+
+    if (character === ",") {
+      argumentIndex += 1;
+    }
+  });
+
+  return found ?? argumentIndex;
 }
 
 function stringLiteralAtOffset(

@@ -939,6 +939,32 @@ Route::post('/reactions', [ReactionController::class, 'store']);
     });
   });
 
+  it("detects Laravel controller group route action strings as controller methods", () => {
+    const routeSource = `<?php
+use App\\Http\\Controllers\\communication\\CommentController;
+
+Route::controller(CommentController::class)->group(function () {
+    Route::get('/comments/{comment}', 'show');
+    Route::post('/comments', 'store');
+});
+`;
+
+    expect(
+      phpIdentifierContextAt(routeSource, positionAfter(routeSource, "'show")),
+    ).toEqual({
+      className: "CommentController",
+      kind: "laravelRouteActionMethod",
+      methodName: "show",
+    });
+    expect(
+      phpIdentifierContextAt(routeSource, positionAfter(routeSource, "'store")),
+    ).toEqual({
+      className: "CommentController",
+      kind: "laravelRouteActionMethod",
+      methodName: "store",
+    });
+  });
+
   it("resolves imports and typed request parameters", () => {
     expect(resolvePhpClassName(controllerSource, "StoreCommentRequest")).toBe(
       "App\\Http\\Request\\AiHub\\StoreCommentRequest",
