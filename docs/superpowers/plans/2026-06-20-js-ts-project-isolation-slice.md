@@ -8670,3 +8670,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Log Channel Names
 
 - Committed as `7faf75a4 Add Laravel log channel navigation`.
+
+## Next Slice: Laravel Log Stack Array Channels
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ebcf6e6b Record Laravel log channel commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- The scalar Log channel slice intentionally deferred `Log::stack([...])` because channel names live inside a short-array argument rather than as direct string arguments.
+- Supporting top-level array string elements unlocks `Log::stack(['single', 'slack'])` and `Log::stack(channels: ['single'])` without changing scalar string argument behavior.
+
+### Implementation Choice
+
+- Add `phpStringArrayArgumentElementContextAt(...)` for direct short-array argument string elements while keeping `phpStringArgumentContextAt(...)` scalar-only.
+- Accept only top-level unkeyed array values that are direct argument values; reject array keys, nested arrays, expression-wrapped arrays, interpolation, and the `Log::stack(..., channel: ...)` runtime stack name.
+- Reuse the existing Log channel config mapping so completions and definitions still target `logging.channels.<channel>`.
+
+### Verification: Laravel Log Stack Array Channels
+
+- `npm test -- src/domain/phpStringArgumentContext.test.ts src/domain/phpLaravelLog.test.ts` passed: 10 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Log channel names"` passed: 2 passed, 411 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpStringArgumentContext.test.ts src/domain/phpLaravelLog.test.ts src/domain/phpNavigation.test.ts` passed: 37 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 413 passed.
+- `npm test` passed: 76 files, 1098 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Log Stack Array Channels
+
+- Committed as `1d6b5273 Support Laravel log stack channel navigation`.
