@@ -373,6 +373,132 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(reportError).not.toHaveBeenCalled();
   });
 
+  it("drops successful TypeScript provider responses after same-root session restart", async () => {
+    const position = { column: 4, lineNumber: 2 };
+
+    {
+      const monaco = createMonaco();
+      let activeSessionId = 1;
+      const hover =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({
+          featuresGateway: gateway,
+          getRuntimeStatus: () => ({
+            ...runningStatus(),
+            sessionId: activeSessionId,
+          }),
+        }),
+      );
+      const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+        .calls[0][1];
+      const hoverPromise = hoverProvider.provideHover(textModel(), position);
+
+      await Promise.resolve();
+      activeSessionId = 2;
+      hover.resolve({
+        contents: "type User = { id: string }",
+      });
+
+      await expect(hoverPromise).resolves.toBeNull();
+      expect(gateway.hover).toHaveBeenCalledWith("/project", {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      });
+    }
+
+    {
+      const monaco = createMonaco();
+      let activeSessionId = 1;
+      const references =
+        createDeferred<
+          Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>
+        >();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.references).mockImplementationOnce(
+        async () => references.promise,
+      );
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({
+          featuresGateway: gateway,
+          getRuntimeStatus: () => ({
+            ...runningStatus(),
+            sessionId: activeSessionId,
+          }),
+        }),
+      );
+      const referenceProvider = (
+        monaco.languages.registerReferenceProvider as any
+      ).mock.calls[0][1];
+      const referencesPromise = referenceProvider.provideReferences(
+        textModel(),
+        position,
+      );
+
+      await Promise.resolve();
+      activeSessionId = 2;
+      references.resolve([
+        {
+          range: range(0, 6, 0, 20),
+          uri: "file:///project/src/stale.ts",
+        },
+      ]);
+
+      await expect(referencesPromise).resolves.toBeNull();
+      expect(gateway.references).toHaveBeenCalledWith("/project", {
+        character: 3,
+        line: 1,
+        path: "/project/src/user.ts",
+      });
+    }
+
+    {
+      const monaco = createMonaco();
+      let activeSessionId = 1;
+      const rename =
+        createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>>();
+      const gateway = featuresGateway();
+      vi.mocked(gateway.rename).mockImplementationOnce(async () => rename.promise);
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({
+          featuresGateway: gateway,
+          getRuntimeStatus: () => ({
+            ...runningStatus(),
+            sessionId: activeSessionId,
+          }),
+        }),
+      );
+      const renameProvider = (monaco.languages.registerRenameProvider as any).mock
+        .calls[0][1];
+      const renamePromise = renameProvider.provideRenameEdits(
+        textModel(),
+        position,
+        "account",
+      );
+
+      await Promise.resolve();
+      activeSessionId = 2;
+      rename.resolve(workspaceEdit("file:///project/src/stale.ts", "account"));
+
+      await expect(renamePromise).resolves.toBeNull();
+      expect(gateway.rename).toHaveBeenCalledWith(
+        "/project",
+        {
+          character: 3,
+          line: 1,
+          path: "/project/src/user.ts",
+        },
+        "account",
+      );
+    }
+  });
+
   it("does not request TypeScript completions after switching project tabs during document sync", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";

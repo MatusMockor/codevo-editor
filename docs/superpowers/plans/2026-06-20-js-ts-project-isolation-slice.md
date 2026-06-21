@@ -4357,3 +4357,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JavaScript TypeScript Workspace Symbols Session Guard
 
 - Committed as `821a5733 Guard JavaScript TypeScript workspace symbols by session`.
+
+## Next Slice: JavaScript TypeScript Provider Same-Root Response Coverage
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `dd8fb77c Record JavaScript TypeScript workspace symbols guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 828 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- A read-only explorer audit noted that provider same-root restart coverage mostly proved completion error handling and lazy resolves.
+- Hover, references, and rename already use the shared provider root/session guard, but lacked direct successful-response regressions after same-root session restarts.
+- These provider return shapes are distinct: hover payload, reference locations, and rename workspace edits.
+
+### Implementation Choice
+
+- Add a coverage-only JS/TS Monaco provider regression.
+- Start each provider request under session 1, switch the active runtime status to session 2 for the same root, resolve the stale server response, and assert the provider returns `null`.
+- Keep production code unchanged because `isFeatureRequestActive` already filters stale same-root sessions.
+
+### Acceptance Criteria
+
+- Stale hover responses are ignored after same-root session restart.
+- Stale references responses are ignored after same-root session restart.
+- Stale rename edits are ignored after same-root session restart.
+- Focused/full JS/TS provider tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: JavaScript TypeScript Provider Same-Root Response Coverage
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "same-root session restart"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JavaScript TypeScript Provider Same-Root Response Coverage
+
+- Pending commit.
