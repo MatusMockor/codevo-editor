@@ -6232,9 +6232,16 @@ export function useWorkbenchController(
       );
 
       const searchResults = await Promise.all(
-        ["->name(", "Route::resource", "Route::apiResource"].map((query) =>
-          textSearch.searchText(workspaceRoot, query, 200),
-        ),
+        [
+          "->name(",
+          "Route::resource",
+          "Route::apiResource",
+          "Route::singleton",
+          "Route::apiSingleton",
+          "Route::resources",
+          "Route::apiResources",
+          "Route::softDeletableResources",
+        ].map((query) => textSearch.searchText(workspaceRoot, query, 200)),
       );
       const visitedPaths = new Set([currentPath]);
 

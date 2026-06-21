@@ -19141,6 +19141,80 @@ Route::resource(name: 'comments', controller: CommentController::class)
     ]);
   });
 
+  it("suggests Laravel singleton route names from singleton-only route files", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/ProfileController.php";
+    const routesPath = "/workspace/routes/web.php";
+    const controllerSource = `<?php
+
+class ProfileController
+{
+    public function show(): string
+    {
+        return route('profile.sh');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === routesPath) {
+          return `<?php
+Route::singleton(name: 'profile', controller: ProfileController::class);
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "Route::singleton"
+          ? [
+              {
+                column: 1,
+                lineNumber: 2,
+                lineText:
+                  "Route::singleton(name: 'profile', controller: ProfileController::class);",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "ProfileController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "profile.sh"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "routes/web.php",
+        insertText: "show",
+        kind: "route",
+        name: "profile.show",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("suggests Laravel resource route name overrides from named arguments", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace/routes/web.php";
