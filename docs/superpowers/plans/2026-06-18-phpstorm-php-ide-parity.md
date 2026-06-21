@@ -7334,3 +7334,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `83d596d1 Support PHPStan Psalm repository PHPDoc methods`.
+
+## Slice: PHPStan Psalm PHPDoc Return Tags - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `67b1851a Record PHPStan Psalm repository PHPDoc method commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 814 tests)
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat `@phpstan-return` and `@psalm-return` like `@return` in PHPDoc return-type inference.
+
+### Implementation Choice
+
+- Add a shared `phpDocReturnTypeToken` helper that recognizes unprefixed, PHPStan, and Psalm return tags.
+- Reuse the helper in class-string template detection, PHP method completions, and Laravel return inference.
+- Add focused fixtures for PHPStan/Psalm method returns, class-string template returns, and Laravel generic repository builder returns.
+
+### Acceptance Criteria
+
+- PHP method completions can use `@phpstan-return` return types.
+- Class-string template inference can use prefixed return tags.
+- Laravel generic repository builder inference can use `@psalm-return`.
+- Focused/full domain and preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "PHPDoc return|class-string template"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "generic functions"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "generic repository returns"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "generic repository returns|class-string|PHPDoc return"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

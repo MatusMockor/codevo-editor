@@ -21,8 +21,7 @@ export function phpDocClassStringReturnTemplate(
     return null;
   }
 
-  const returnMatch = /@return\s+([^\r\n*]+)/.exec(docBlock);
-  const returnType = firstPhpDocTypeToken(returnMatch?.[1] ?? null);
+  const returnType = phpDocReturnTypeToken(docBlock);
 
   if (!returnType || !templates.has(returnType)) {
     return null;
@@ -40,6 +39,14 @@ export function phpDocClassStringReturnTemplate(
   }
 
   return null;
+}
+
+export function phpDocReturnTypeToken(docBlock: string | null): string | null {
+  const returnMatch = /@(?:(?:phpstan|psalm)-)?return\s+([^\r\n*]+)/.exec(
+    docBlock ?? "",
+  );
+
+  return firstPhpDocTypeToken(returnMatch?.[1] ?? null);
 }
 
 export function firstPhpDocTypeToken(

@@ -2676,7 +2676,7 @@ class Controller
 /**
  * @template T of object
  * @param class-string<T> $className
- * @return T
+ * @phpstan-return T
  */
 function service(string $className): object {}
 `,

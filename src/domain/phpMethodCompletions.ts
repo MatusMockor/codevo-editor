@@ -2,6 +2,7 @@ import type { EditorPosition } from "./languageServerFeatures";
 import {
   firstPhpDocTypeToken,
   phpDocClassStringReturnTemplate,
+  phpDocReturnTypeToken,
 } from "./phpDocTemplates";
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
@@ -479,9 +480,7 @@ function phpDocBlockBefore(source: string, functionOffset: number): string | nul
 }
 
 function phpDocReturnTypeFromBlock(docBlock: string | null): string | null {
-  const returnMatch = /@return\s+([^\r\n*]+)/.exec(docBlock ?? "");
-
-  return normalizeReturnType(firstPhpDocTypeToken(returnMatch?.[1] ?? null));
+  return normalizeReturnType(phpDocReturnTypeToken(docBlock));
 }
 
 function enrichParametersFromPhpDoc(

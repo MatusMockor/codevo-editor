@@ -1887,7 +1887,7 @@ class Comment
   it("uses PHPDoc return types when methods do not declare one", () => {
     expect(
       phpMethodCompletionsFromSource(
-        "<?php\nclass Factory\n{\n    /** @return Comment */\n    public static function make() {}\n}\n",
+        "<?php\nclass Factory\n{\n    /** @phpstan-return Comment */\n    public static function make() {}\n}\n",
         "Factory",
       ),
     ).toEqual([
@@ -1908,7 +1908,7 @@ class Container
     /**
      * @template T of object
      * @param class-string<T> $className
-     * @return T
+     * @psalm-return T
      */
     public function get(string $className): object {}
 }

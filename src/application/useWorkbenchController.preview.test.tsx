@@ -20885,7 +20885,7 @@ use Illuminate\\Database\\Eloquent\\Builder;
 
 class AlbumRepository
 {
-    /** @return Builder<Album> */
+    /** @psalm-return Builder<Album> */
     public function query(): Builder {}
 }
 `;

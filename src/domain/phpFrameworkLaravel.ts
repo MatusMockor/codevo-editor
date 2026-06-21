@@ -1,6 +1,6 @@
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
 import type { EditorPosition } from "./languageServerFeatures";
-import { firstPhpDocTypeToken } from "./phpDocTemplates";
+import { phpDocReturnTypeToken } from "./phpDocTemplates";
 import {
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
@@ -5807,9 +5807,7 @@ function phpDocBlockBefore(source: string, functionOffset: number): string | nul
 }
 
 function phpDocReturnTypeFromBlock(docBlock: string | null): string | null {
-  const returnMatch = /@return\s+([^\r\n*]+)/.exec(docBlock ?? "");
-
-  return normalizeReturnType(firstPhpDocTypeToken(returnMatch?.[1] ?? null));
+  return normalizeReturnType(phpDocReturnTypeToken(docBlock));
 }
 
 function bestPhpReturnType(
