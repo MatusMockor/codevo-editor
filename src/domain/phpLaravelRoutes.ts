@@ -333,6 +333,7 @@ function laravelRouteActionsWithOnlyExcept(
     const filterActions = laravelRouteActionNamesAtOpenParen(
       source,
       filterOpenParen,
+      [methodName],
     ).filter((action) => actionSet.has(action));
 
     if (filterActions.length === 0) {
@@ -405,6 +406,7 @@ function laravelRouteStringMapAtOpenParen(
 function laravelRouteActionNamesAtOpenParen(
   source: string,
   openParen: number,
+  namedArgumentNames: readonly string[] = [],
 ): string[] {
   const closeParen = matchingBracketOffset(source, openParen, "(", ")");
 
@@ -413,15 +415,48 @@ function laravelRouteActionNamesAtOpenParen(
   }
 
   const argumentStart = skipWhitespace(source, openParen + 1);
+  const namedValueStart = namedArgumentValueStartAt(
+    source,
+    argumentStart,
+    namedArgumentNames,
+  );
+  const hasUnsupportedNamedArgument =
+    namedValueStart === null &&
+    /^[A-Za-z_][A-Za-z0-9_]*\s*:(?!:)/.test(
+      source.slice(argumentStart, closeParen),
+    );
+  const valueStart = namedValueStart ?? argumentStart;
 
-  if (source[argumentStart] === "[") {
-    const arrayClose = matchingBracketOffset(source, argumentStart, "[", "]");
+  if (hasUnsupportedNamedArgument) {
+    return [];
+  }
+
+  if (source[valueStart] === "[") {
+    const arrayClose = matchingBracketOffset(source, valueStart, "[", "]");
 
     if (arrayClose === null || arrayClose > closeParen) {
       return [];
     }
 
-    return topLevelArrayStringValues(source, argumentStart, arrayClose);
+    return topLevelArrayStringValues(source, valueStart, arrayClose);
+  }
+
+  if (namedValueStart !== null) {
+    const literal = stringLiteralStartingAt(source, namedValueStart);
+
+    if (!literal?.closed) {
+      return [];
+    }
+
+    const afterLiteral = source.slice(literal.quoteEnd + 1, closeParen);
+
+    if (!/^\s*(?:,|$)/.test(afterLiteral)) {
+      return [];
+    }
+
+    return literal.quote === "\"" && hasPhpVariableInterpolation(literal.value)
+      ? []
+      : [literal.value];
   }
 
   return topLevelCallStringArguments(source, openParen, closeParen);
@@ -967,6 +1002,14 @@ function firstLiteralArgumentAtOpenParen(
 }
 
 function namedLiteralArgumentQuoteStartAt(
+  source: string,
+  argumentStart: number,
+  allowedNames: readonly string[],
+): number | null {
+  return namedArgumentValueStartAt(source, argumentStart, allowedNames);
+}
+
+function namedArgumentValueStartAt(
   source: string,
   argumentStart: number,
   allowedNames: readonly string[],

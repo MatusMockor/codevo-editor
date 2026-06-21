@@ -711,6 +711,47 @@ Route::resource('reports', ReportController::class)->only('index', 'store');
     ]);
   });
 
+  it("filters Laravel resource route names with named only and except arguments", () => {
+    const source = `<?php
+Route::resource(name: 'photos', controller: PhotoController::class)
+    ->only(only: ['index', 'show']);
+Route::resource(name: 'posts', controller: PostController::class)
+    ->except(except: ['create', 'edit', 'destroy']);
+Route::apiResource(name: 'api.comments', controller: ApiCommentController::class)
+    ->except(except: 'destroy');
+Route::resource(name: 'reports', controller: ReportController::class)
+    ->only(only: 'index', more: 'placeholder');
+Route::resource(name: 'ignored', controller: IgnoredController::class)
+    ->only(label: ['index']);
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      ...expectedRouteDefinitions(source, "photos", ["index", "show"]),
+      ...expectedRouteDefinitions(source, "posts", [
+        "index",
+        "store",
+        "show",
+        "update",
+      ]),
+      ...expectedRouteDefinitions(source, "api.comments", [
+        "index",
+        "store",
+        "show",
+        "update",
+      ]),
+      ...expectedRouteDefinitions(source, "reports", ["index"]),
+      ...expectedRouteDefinitions(source, "ignored", [
+        "index",
+        "create",
+        "store",
+        "show",
+        "edit",
+        "update",
+        "destroy",
+      ]),
+    ]);
+  });
+
   it("uses literal Laravel resource route name overrides", () => {
     const source = `<?php
 Route::resource('photos', PhotoController::class)->names([
