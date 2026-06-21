@@ -5655,3 +5655,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `226dd56f Guard stale Laravel dynamic where targets`.
+
+## Slice: Stale Laravel Request Method Hint Target Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `09a0f0ac Record stale Laravel dynamic where guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale Laravel request method-hint targets from opening after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `openPhpMethodHintTarget`.
+- Guard before Laravel request method hint candidate reads, after source reads, before target opens, and after failed candidate reads.
+- Add a preview regression where Go to Definition starts on `$request->input()` in `/workspace-a`, the Laravel `InteractsWithInput` source read is delayed, the workspace switches to `/workspace-b`, and the delayed read resolves.
+- Assert the stale Laravel trait target is not opened or revealed in the active workspace.
+
+### Acceptance Criteria
+
+- Stale Laravel request method-hint targets are ignored after tab switch.
+- Existing Laravel request helper definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel request method hint"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

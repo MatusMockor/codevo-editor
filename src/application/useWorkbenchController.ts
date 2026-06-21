@@ -9999,23 +9999,41 @@ export function useWorkbenchController(
 
   const openPhpMethodHintTarget = useCallback(
     async (hint: PhpMethodDefinitionHint): Promise<boolean> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return false;
       }
 
       for (const path of phpClassPathCandidates(
-        workspaceRoot,
-        workspaceDescriptor.php,
+        requestedRoot,
+        requestedDescriptor.php,
         hint.className,
       )) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         try {
           const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           return openNavigationTarget(
             path,
             phpMethodPosition(content, hint.methodName),
             `${hint.methodName}()`,
           );
         } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           continue;
         }
       }

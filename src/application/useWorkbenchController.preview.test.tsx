@@ -11206,6 +11206,92 @@ class Comment
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  it("drops stale Laravel request method hint targets after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const inputTraitPath =
+      "/workspace-a/vendor/laravel/framework/src/Illuminate/Http/Concerns/InteractsWithInput.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers\\publicapi\\AiHub;
+
+use App\\Http\\Request\\AiHub\\StoreCommentRequest;
+
+class CommentController
+{
+    public function store(StoreCommentRequest $request): void
+    {
+        $request->input('originalComment', '');
+    }
+}
+`;
+    const staleInputRead = createDeferred<string>();
+    let inputTraitReadCount = 0;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === inputTraitPath) {
+        inputTraitReadCount += 1;
+        return staleInputRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "input"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(inputTraitReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleInputRead.resolve(
+      "<?php\ntrait InteractsWithInput\n{\n    public function input($key = null, $default = null) {}\n}\n",
+    );
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(inputTraitPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("drops stale indexed go to definition errors after switching project tabs", async () => {
     const controllerPath = "/workspace-a/src/CommentController.php";
     const symbolSearch =
