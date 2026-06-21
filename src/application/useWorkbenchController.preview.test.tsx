@@ -588,6 +588,60 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale workspace trust errors after switching project tabs", async () => {
+    const workspaceATrust =
+      createDeferred<Awaited<ReturnType<WorkspaceTrustGateway["getTrust"]>>>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          return workspaceATrust.promise;
+        }
+
+        return {
+          rootPath,
+          trusted: true,
+        };
+      }),
+      setTrust: vi.fn(async (rootPath, trusted) => ({
+        rootPath,
+        trusted,
+      })),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(workspaceTrustGateway.getTrust).toHaveBeenCalledWith("/workspace-a");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(workspaceTrustGateway.getTrust).toHaveBeenCalledWith("/workspace-b");
+    });
+
+    await act(async () => {
+      workspaceATrust.reject(new Error("stale workspace trust"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Workspace Trust" &&
+          notice.message.includes("stale workspace trust"),
+      ),
+    ).toBe(false);
+  });
+
   it("treats trailing-separator project tabs as the active workspace", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -18118,6 +18172,7 @@ final class InvoiceAdapter
     workspaceDescriptor,
     workspaceRuntimeLifecycleGateway,
     workspaceSettings = defaultWorkspaceSettings(),
+    workspaceTrustGateway,
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
     gitGateway?: GitGateway;
@@ -18151,6 +18206,7 @@ final class InvoiceAdapter
     workspaceDescriptor?: WorkspaceDescriptor;
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
     workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
+    workspaceTrustGateway?: WorkspaceTrustGateway;
   } = {}) {
     let workbench: WorkbenchController | null = null;
     const dependencies = createControllerDependencies({
@@ -18178,6 +18234,7 @@ final class InvoiceAdapter
       workspaceDescriptor,
       workspaceRuntimeLifecycleGateway,
       workspaceSettings,
+      workspaceTrustGateway,
     });
     const getWorkbench = () => {
       if (!workbench) {
@@ -18264,6 +18321,7 @@ function createControllerDependencies({
   workspaceDescriptor,
   workspaceRuntimeLifecycleGateway,
   workspaceSettings,
+  workspaceTrustGateway,
 }: {
   appSettings: ReturnType<typeof defaultAppSettings>;
   gitGateway?: GitGateway;
@@ -18297,6 +18355,7 @@ function createControllerDependencies({
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
+  workspaceTrustGateway?: WorkspaceTrustGateway;
 }): ControllerDependencies {
   const documentSyncGateway: LanguageServerDocumentSyncGateway = {
     didChange: vi.fn(async () => undefined),
@@ -18493,16 +18552,17 @@ function createControllerDependencies({
         disposeWorkspace: vi.fn(async () => undefined),
       },
     workspaceGateways,
-    workspaceTrustGateway: {
-      getTrust: vi.fn(async (rootPath) => ({
-        rootPath,
-        trusted: true,
-      })),
-      setTrust: vi.fn(async (rootPath, trusted) => ({
-        rootPath,
-        trusted,
-      })),
-    },
+    workspaceTrustGateway:
+      workspaceTrustGateway ?? {
+        getTrust: vi.fn(async (rootPath) => ({
+          rootPath,
+          trusted: true,
+        })),
+        setTrust: vi.fn(async (rootPath, trusted) => ({
+          rootPath,
+          trusted,
+        })),
+      },
   };
 }
 

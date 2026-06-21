@@ -2958,7 +2958,7 @@ export function useWorkbenchController(
 
         setWorkspaceTrust(trust);
       } catch (error) {
-        reportError("Workspace Trust", error);
+        reportErrorForActiveWorkspaceRoot(path, "Workspace Trust", error);
       }
 
       try {
