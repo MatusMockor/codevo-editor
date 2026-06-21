@@ -12131,7 +12131,11 @@ export function useWorkbenchController(
       isEnabled: () =>
         shouldStartLanguageServer(intelligenceMode) &&
         languageServerPlan?.status === "ready" &&
-        !isLanguageServerActive(languageServerRuntimeStatus),
+        !isLanguageServerActiveForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ),
       run: startLanguageServer,
     });
 
@@ -12139,7 +12143,12 @@ export function useWorkbenchController(
       id: "smart.stopLanguageServer",
       title: "Stop PHP Language Server",
       category: "Intelligence",
-      isEnabled: () => isLanguageServerActive(languageServerRuntimeStatus),
+      isEnabled: () =>
+        isLanguageServerActiveForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          workspaceRoot,
+        ),
       run: stopLanguageServer,
     });
 
@@ -12185,6 +12194,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     languageServerPlan,
     languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
     selectedGitChange,
     workspaceDescriptor,
     workspaceRoot,
@@ -12222,7 +12232,13 @@ export function useWorkbenchController(
       return;
     }
 
-    if (isLanguageServerActive(languageServerRuntimeStatus)) {
+    if (
+      isLanguageServerActiveForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       return;
     }
 
@@ -12231,7 +12247,14 @@ export function useWorkbenchController(
       phpLanguageServerAutostartAttemptsByRootRef.current[autostartRootKey] ??
       0;
 
-    if (languageServerRuntimeStatus?.kind === "crashed" && autostartAttempts === 0) {
+    if (
+      isCrashedLanguageServerForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        workspaceRoot,
+      ) &&
+      autostartAttempts === 0
+    ) {
       return;
     }
 

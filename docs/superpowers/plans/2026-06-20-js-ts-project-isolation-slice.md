@@ -3908,3 +3908,40 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS Autostart Direct Status Root Guard
 
 - Committed as `bfac47aa Guard JS TS autostart direct roots`.
+
+## Next Slice: PHP Command Runtime Workspace Gates
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `61224970 Record JS TS autostart root guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP document sync, diagnostics, navigation, and provider paths already use workspace-aware runtime checks.
+- The PHP Start/Stop command enablement and PHP IDE autostart suppression still used raw `isLanguageServerActive(languageServerRuntimeStatus)` or raw `kind === "crashed"` checks.
+- Those gates should make the same workspace ownership decision as the rest of the controller, even if stale state from another workspace or malformed test doubles reach the command/autostart surface.
+
+### Implementation Choice
+
+- Gate the Start PHP Language Server command with `isLanguageServerActiveForWorkspace(...)`.
+- Gate the Stop PHP Language Server command with `isLanguageServerActiveForWorkspace(...)`.
+- Gate PHP autostart suppression with `isLanguageServerActiveForWorkspace(...)` and `isCrashedLanguageServerForWorkspace(...)`.
+- Add the PHP runtime status root to the command registry memo dependencies.
+
+### Acceptance Criteria
+
+- PHP Start/Stop command enablement is scoped to the active workspace root.
+- PHP autostart is suppressed only by an active or crashed PHP runtime status that belongs to the active workspace root.
+- Existing rootless PHP runtime and PHP autostart regressions, full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Command Runtime Workspace Gates
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP runtime status events without an explicit workspace root|PHP IDE service autostart|rootless PHP stop response"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
