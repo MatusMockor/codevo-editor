@@ -6965,3 +6965,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Workspace Edit File Operation Reconciliation
 
 - Committed as `eb38f0d1 Reconcile PHP workspace edit file operations`.
+
+## Next Slice: PHP Monaco Declaration And Type Definition Providers
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `dd836e8d Record PHP workspace edit file operation commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, frontend gateway methods, and runtime capabilities already support `declaration` and `typeDefinition`.
+- The PHP Monaco provider did not register declaration or type-definition providers, so the editor could not surface those PHPactor navigation answers.
+- Adding the providers closes a PhpStorm-like navigation gap while reusing existing provider root/session isolation mechanics.
+
+### Implementation Choice
+
+- Register optional PHP declaration and type-definition Monaco providers.
+- Reuse existing feature request context, pending document flush, active session guard, error reporting, and location mapping patterns.
+- Add focused provider tests for registration/disposal, successful mapping, capability gating, and stale async result dropping.
+
+### Acceptance Criteria
+
+- PHP declaration provider routes to `featuresGateway.declaration` and maps workspace locations.
+- PHP type-definition provider routes to `featuresGateway.typeDefinition` and maps workspace locations.
+- Disabled capabilities and stale root/session responses do not call or return stale results.
+- Focused provider tests, full provider suite, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Declaration And Type Definition Providers
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "declaration|type definition"` (5 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (70 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 907 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Declaration And Type Definition Providers
+
+- Pending commit after verification.

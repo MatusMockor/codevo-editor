@@ -18,7 +18,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename and reference providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, declaration and type definition providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -40,6 +40,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.selectionRangeLanguage).toBe("php");
     expect(registered.renameLanguage).toBe("php");
     expect(registered.referenceLanguage).toBe("php");
+    expect(registered.declarationLanguage).toBe("php");
+    expect(registered.typeDefinitionLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
         "quickfix",
@@ -60,6 +62,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.selectionRangeDispose).toHaveBeenCalled();
     expect(registered.renameDispose).toHaveBeenCalled();
     expect(registered.referenceDispose).toHaveBeenCalled();
+    expect(registered.declarationDispose).toHaveBeenCalled();
+    expect(registered.typeDefinitionDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -3140,6 +3144,218 @@ describe("registerLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("maps in-root PHP declaration locations", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      declaration: [
+        {
+          range: range(2, 3, 2, 11),
+          uri: "file:///project/src/Contracts/UserRepository.php",
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.declarationProvider.provideDeclaration(model(), position()),
+    ).resolves.toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 12,
+          endLineNumber: 3,
+          startColumn: 4,
+          startLineNumber: 3,
+        }),
+        uri: {
+          fsPath: "/project/src/Contracts/UserRepository.php",
+          path: "/project/src/Contracts/UserRepository.php",
+        },
+      },
+    ]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.declaration).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
+  });
+
+  it("maps in-root PHP type definition locations", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      typeDefinition: [
+        {
+          range: range(4, 0, 4, 9),
+          uri: "file:///project/src/Models/User.php",
+        },
+        {
+          range: range(6, 0, 6, 7),
+          uri: "file:///project-other/src/Models/User.php",
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.typeDefinitionProvider.provideTypeDefinition(model(), position()),
+    ).resolves.toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 10,
+          endLineNumber: 5,
+          startColumn: 1,
+          startLineNumber: 5,
+        }),
+        uri: {
+          fsPath: "/project/src/Models/User.php",
+          path: "/project/src/Models/User.php",
+        },
+      },
+    ]);
+    expect(gateway.typeDefinition).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
+  });
+
+  it("does not request PHP declaration or type definition when capability is disabled", async () => {
+    const declarationRegistered = createRegisteredProviders();
+    const declarationGateway = featuresGateway({
+      declaration: [
+        {
+          range: range(2, 3, 2, 11),
+          uri: "file:///project/src/Contracts/UserRepository.php",
+        },
+      ],
+    });
+    const declarationFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      declarationRegistered.monaco,
+      providerContext({
+        featuresGateway: declarationGateway,
+        flushPendingDocumentChange: declarationFlush,
+        runtimeStatus: runningStatus({ declaration: false }),
+      }),
+    );
+
+    await expect(
+      declarationRegistered.declarationProvider.provideDeclaration(
+        model(),
+        position(),
+      ),
+    ).resolves.toBeNull();
+    expect(declarationFlush).not.toHaveBeenCalled();
+    expect(declarationGateway.declaration).not.toHaveBeenCalled();
+
+    const typeDefinitionRegistered = createRegisteredProviders();
+    const typeDefinitionGateway = featuresGateway({
+      typeDefinition: [
+        {
+          range: range(4, 0, 4, 9),
+          uri: "file:///project/src/Models/User.php",
+        },
+      ],
+    });
+    const typeDefinitionFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      typeDefinitionRegistered.monaco,
+      providerContext({
+        featuresGateway: typeDefinitionGateway,
+        flushPendingDocumentChange: typeDefinitionFlush,
+        runtimeStatus: runningStatus({ typeDefinition: false }),
+      }),
+    );
+
+    await expect(
+      typeDefinitionRegistered.typeDefinitionProvider.provideTypeDefinition(
+        model(),
+        position(),
+      ),
+    ).resolves.toBeNull();
+    expect(typeDefinitionFlush).not.toHaveBeenCalled();
+    expect(typeDefinitionGateway.typeDefinition).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP declaration and type definition results after async response", async () => {
+    const declarationRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const declaration = createDeferred<LanguageServerLocation[]>();
+    const declarationGateway = featuresGateway();
+    vi.mocked(declarationGateway.declaration).mockImplementationOnce(
+      async () => declaration.promise,
+    );
+    const declarationContext = providerContext({
+      featuresGateway: declarationGateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+    });
+    registerLanguageServerMonacoProviders(
+      declarationRegistered.monaco,
+      declarationContext,
+    );
+
+    const declarationPromise =
+      declarationRegistered.declarationProvider.provideDeclaration(
+        model(),
+        position(),
+      );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    declaration.resolve([
+      {
+        range: range(2, 3, 2, 11),
+        uri: "file:///project/src/Contracts/UserRepository.php",
+      },
+    ]);
+
+    await expect(declarationPromise).resolves.toBeNull();
+
+    const typeDefinitionRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const typeDefinition = createDeferred<LanguageServerLocation[]>();
+    const typeDefinitionGateway = featuresGateway();
+    vi.mocked(typeDefinitionGateway.typeDefinition).mockImplementationOnce(
+      async () => typeDefinition.promise,
+    );
+    const typeDefinitionContext = providerContext({
+      featuresGateway: typeDefinitionGateway,
+      getWorkspaceRoot: () => activeRoot,
+    });
+    registerLanguageServerMonacoProviders(
+      typeDefinitionRegistered.monaco,
+      typeDefinitionContext,
+    );
+
+    const typeDefinitionPromise =
+      typeDefinitionRegistered.typeDefinitionProvider.provideTypeDefinition(
+        model(),
+        position(),
+      );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    typeDefinition.resolve([
+      {
+        range: range(4, 0, 4, 9),
+        uri: "file:///project/src/Models/User.php",
+      },
+    ]);
+
+    await expect(typeDefinitionPromise).resolves.toBeNull();
+  });
+
   it("maps in-root PHP reference locations", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -3360,12 +3576,14 @@ describe("registerLanguageServerMonacoProviders", () => {
 function createRegisteredProviders() {
   const codeActionDispose = vi.fn();
   const commandDispose = vi.fn();
+  const declarationDispose = vi.fn();
   const hoverDispose = vi.fn();
   const referenceDispose = vi.fn();
   const completionDispose = vi.fn();
   const renameDispose = vi.fn();
   const selectionRangeDispose = vi.fn();
   const signatureDispose = vi.fn();
+  const typeDefinitionDispose = vi.fn();
   const registered: {
     codeActionDispose: ReturnType<typeof vi.fn>;
     codeActionLanguage: string | null;
@@ -3376,6 +3594,9 @@ function createRegisteredProviders() {
     completionDispose: ReturnType<typeof vi.fn>;
     completionLanguage: string | null;
     completionProvider: any;
+    declarationDispose: ReturnType<typeof vi.fn>;
+    declarationLanguage: string | null;
+    declarationProvider: any;
     hoverDispose: ReturnType<typeof vi.fn>;
     hoverLanguage: string | null;
     hoverProvider: any;
@@ -3392,6 +3613,9 @@ function createRegisteredProviders() {
     signatureDispose: ReturnType<typeof vi.fn>;
     signatureLanguage: string | null;
     signatureProvider: any;
+    typeDefinitionDispose: ReturnType<typeof vi.fn>;
+    typeDefinitionLanguage: string | null;
+    typeDefinitionProvider: any;
   } = {
     codeActionDispose,
     codeActionLanguage: null,
@@ -3402,6 +3626,9 @@ function createRegisteredProviders() {
     completionDispose,
     completionLanguage: null,
     completionProvider: null,
+    declarationDispose,
+    declarationLanguage: null,
+    declarationProvider: null,
     hoverDispose,
     hoverLanguage: null,
     hoverProvider: null,
@@ -3418,6 +3645,9 @@ function createRegisteredProviders() {
     signatureDispose,
     signatureLanguage: null,
     signatureProvider: null,
+    typeDefinitionDispose,
+    typeDefinitionLanguage: null,
+    typeDefinitionProvider: null,
   };
   registered.monaco = {
     Range: class FakeRange {
@@ -3471,6 +3701,11 @@ function createRegisteredProviders() {
         registered.completionProvider = provider;
         return { dispose: completionDispose };
       }),
+      registerDeclarationProvider: vi.fn((language, provider) => {
+        registered.declarationLanguage = language;
+        registered.declarationProvider = provider;
+        return { dispose: declarationDispose };
+      }),
       registerHoverProvider: vi.fn((language, provider) => {
         registered.hoverLanguage = language;
         registered.hoverProvider = provider;
@@ -3495,6 +3730,11 @@ function createRegisteredProviders() {
         registered.signatureLanguage = language;
         registered.signatureProvider = provider;
         return { dispose: signatureDispose };
+      }),
+      registerTypeDefinitionProvider: vi.fn((language, provider) => {
+        registered.typeDefinitionLanguage = language;
+        registered.typeDefinitionProvider = provider;
+        return { dispose: typeDefinitionDispose };
       }),
     },
     MarkerSeverity: {
@@ -3586,6 +3826,7 @@ function featuresGateway(
     signatureHelp: Awaited<
       ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
     >;
+    typeDefinition: LanguageServerLocation[];
     workspaceSymbols: Awaited<
       ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>
     >;
@@ -3630,7 +3871,7 @@ function featuresGateway(
     semanticTokens: vi.fn(async () => null),
     signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
     sourceDefinition: vi.fn(async () => []),
-    typeDefinition: vi.fn(async () => []),
+    typeDefinition: vi.fn(async () => responses.typeDefinition ?? []),
     typeHierarchySubtypes: vi.fn(async () => []),
     typeHierarchySupertypes: vi.fn(async () => []),
     willRenameFiles: vi.fn(async () => null),

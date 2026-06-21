@@ -11,6 +11,7 @@ import {
   type LanguageServerRange,
   type LanguageServerSelectionRange,
   type LanguageServerTextEdit,
+  type LanguageServerTextDocumentPosition,
   type LanguageServerWorkspaceEdit,
   type LanguageServerWorkspaceEditEvent,
   type LanguageServerWorkspaceEditGateway,
@@ -219,6 +220,18 @@ export function registerLanguageServerMonacoProviders(
           provideReferences(monaco, context, model, position),
       })
     : { dispose: () => undefined };
+  const declaration = monaco.languages.registerDeclarationProvider
+    ? monaco.languages.registerDeclarationProvider("php", {
+        provideDeclaration: (model, position) =>
+          provideDeclaration(monaco, context, model, position),
+      })
+    : { dispose: () => undefined };
+  const typeDefinition = monaco.languages.registerTypeDefinitionProvider
+    ? monaco.languages.registerTypeDefinitionProvider("php", {
+        provideTypeDefinition: (model, position) =>
+          provideTypeDefinition(monaco, context, model, position),
+      })
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -231,6 +244,8 @@ export function registerLanguageServerMonacoProviders(
       selectionRange.dispose();
       rename.dispose();
       references.dispose();
+      declaration.dispose();
+      typeDefinition.dispose();
     },
   };
 }
@@ -342,7 +357,63 @@ async function provideReferences(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.Location[] | null> {
-  const request = featureRequestContext(context, model, position, "references");
+  return provideNavigationLocations(
+    monaco,
+    context,
+    model,
+    position,
+    "references",
+    (rootPath, requestPosition) =>
+      context.featuresGateway.references(rootPath, requestPosition),
+  );
+}
+
+async function provideDeclaration(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  return provideNavigationLocations(
+    monaco,
+    context,
+    model,
+    position,
+    "declaration",
+    (rootPath, requestPosition) =>
+      context.featuresGateway.declaration(rootPath, requestPosition),
+  );
+}
+
+async function provideTypeDefinition(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  return provideNavigationLocations(
+    monaco,
+    context,
+    model,
+    position,
+    "typeDefinition",
+    (rootPath, requestPosition) =>
+      context.featuresGateway.typeDefinition(rootPath, requestPosition),
+  );
+}
+
+async function provideNavigationLocations(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  feature: "declaration" | "references" | "typeDefinition",
+  requestLocations: (
+    rootPath: string,
+    position: LanguageServerTextDocumentPosition,
+  ) => Promise<LanguageServerLocation[]>,
+): Promise<Monaco.languages.Location[] | null> {
+  const request = featureRequestContext(context, model, position, feature);
 
   if (!request) {
     return null;
@@ -353,16 +424,13 @@ async function provideReferences(
       return null;
     }
 
-    const references = await context.featuresGateway.references(
-      request.rootPath,
-      request.position,
-    );
+    const locations = await requestLocations(request.rootPath, request.position);
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
-    return references.flatMap((location) =>
+    return locations.flatMap((location) =>
       toMonacoLocation(monaco, request.rootPath, location),
     );
   } catch (error) {
@@ -1824,7 +1892,14 @@ function featureRequestContext(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
-  feature: "completion" | "hover" | "prepareRename" | "references" | "rename",
+  feature:
+    | "completion"
+    | "declaration"
+    | "hover"
+    | "prepareRename"
+    | "references"
+    | "rename"
+    | "typeDefinition",
 ) {
   const request = featureDocumentRequestContext(context, model, feature);
 
@@ -1844,11 +1919,13 @@ function featureDocumentRequestContext(
   feature:
     | "codeAction"
     | "completion"
+    | "declaration"
     | "hover"
     | "prepareRename"
     | "references"
     | "rename"
-    | "selectionRange",
+    | "selectionRange"
+    | "typeDefinition",
 ) {
   const activeDocument = context.getActiveDocument();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
