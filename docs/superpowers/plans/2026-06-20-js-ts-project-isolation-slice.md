@@ -7288,4 +7288,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Linked Editing Range Provider
 
-- Pending commit after verification.
+- Committed as `389f0124 Register PHP linked editing provider`.
