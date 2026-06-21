@@ -1889,3 +1889,44 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `08967328 Guard smart mode changes by active workspace`.
+
+### Slice: File Open Workspace Tab Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `aadf8665 Record smart mode guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent stale navigation or cached document opens from activating files that belong to another project tab.
+
+#### Implementation Choice
+
+- Capture the requested root in `openFile` while preserving early/no-root test flows.
+- Block only paths that belong to another open workspace tab, while still allowing external files that are not owned by a project tab.
+- Re-check the requested root after async file reads before mutating editor state.
+- Replace stale open-file errors with root-aware reporting when a root is known.
+- Add regressions where `/workspace-a` has a cached file, the user switches to `/workspace-b`, and a stale open attempt cannot activate the `/workspace-a` file or report an Open File error in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Cached files from inactive project tabs cannot become the active editor in the current tab.
+- Stale open-file read failures do not create Open File notices after switching project tabs.
+- Existing preview, workspace-edit, and rename filtering behavior for external files still passes.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "does not activate cached files from inactive project tabs|ignores stale open file errors after switching project tabs|keeps a double-click pin from being overwritten by a stale preview read|filters JavaScript TypeScript workspace edits before applying closed files|filters JavaScript TypeScript rename edits to the active workspace root"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `d31668b6 Guard file opens across workspace tabs`.
