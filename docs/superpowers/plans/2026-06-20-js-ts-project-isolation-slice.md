@@ -4749,4 +4749,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Method Definition Miss Message Guard
 
-- Pending commit.
+- Committed as `f3793bbf Guard PHP method definition messages by active workspace`.
