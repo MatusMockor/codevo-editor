@@ -5977,3 +5977,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Active Editor Position Workspace Reset Guard
 
 - Committed as `57c21895 Reset editor position on workspace changes`.
+
+## Next Slice: Hierarchy Panels Workspace Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f342f6af Record editor position reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 857 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Call Hierarchy, Type Hierarchy, and implementation chooser state were not reset when clearing or opening workspaces.
+- Those panels are populated from workspace-scoped LSP/provider responses.
+- Closing the last project tab could leave a stale hierarchy panel visible in no-workspace state.
+
+### Implementation Choice
+
+- Clear implementation chooser, Call Hierarchy, and Type Hierarchy when clearing the active workspace.
+- Clear the same panels when opening or activating another workspace.
+- Add a JS/TS Call Hierarchy regression that opens a hierarchy view, closes the only project tab, and asserts all navigation overlays are null.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears Call Hierarchy state.
+- Workspace clear/open also clears Type Hierarchy and implementation chooser state.
+- Existing hierarchy, implementation, and stale navigation guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Hierarchy Panels Workspace Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (324 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 858 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Hierarchy Panels Workspace Reset Guard
+
+- Committed as `5aef0ed3 Reset hierarchy panels on workspace changes`.
