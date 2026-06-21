@@ -11271,20 +11271,24 @@ export function useWorkbenchController(
       nextWorkspaceSettings: WorkspaceSettings,
       nextTrusted: boolean | null,
     ) => {
+      const requestedRoot = workspaceRoot;
+
       try {
         const previousAppSettings = appSettingsRef.current;
         const previousWorkspaceSettings = workspaceSettingsRef.current;
         await persistAppSettings(nextAppSettings);
 
-        if (!workspaceRoot) {
-          setMessage("Settings saved.");
+        if (!requestedRoot) {
+          if (!currentWorkspaceRootRef.current) {
+            setMessage("Settings saved.");
+          }
           return;
         }
 
         if (previousAppSettings.runtimePolicy !== nextAppSettings.runtimePolicy) {
           await stopBackgroundProjectRuntimes(
             nextAppSettings.runtimePolicy,
-            workspaceRoot,
+            requestedRoot,
             null,
           );
         }
@@ -11323,12 +11327,16 @@ export function useWorkbenchController(
         if (!shouldStartLanguageServer(previousMode) && shouldStartLanguageServer(nextMode)) {
           autoStartedLanguageServerRootRef.current = null;
           delete phpLanguageServerAutostartAttemptsByRootRef.current[
-            normalizedWorkspaceRootKey(workspaceRoot)
+            normalizedWorkspaceRootKey(requestedRoot)
           ];
         }
 
         intelligenceModeRef.current = nextMode;
-        await persistWorkspaceSettings(workspaceRoot, resolvedWorkspaceSettings);
+        await persistWorkspaceSettings(requestedRoot, resolvedWorkspaceSettings);
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
         setIntelligenceMode(nextMode);
 
         if (
@@ -11338,10 +11346,9 @@ export function useWorkbenchController(
           isRunningLanguageServerForWorkspace(
             javaScriptTypeScriptLanguageServerRuntimeStatus,
             javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-            workspaceRoot,
+            requestedRoot,
           )
         ) {
-          const requestedRoot = workspaceRoot;
           const requestedSessionId =
             javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
 
@@ -11367,7 +11374,7 @@ export function useWorkbenchController(
         if (shouldRestartJavaScriptTypeScriptRuntime) {
           autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
           await refreshJavaScriptTypeScriptLanguageServerPlan(
-            workspaceRoot,
+            requestedRoot,
             resolvedWorkspaceSettings.javaScriptTypeScriptVersion,
           );
 
@@ -11375,45 +11382,53 @@ export function useWorkbenchController(
             isLanguageServerActiveForWorkspace(
               javaScriptTypeScriptLanguageServerRuntimeStatus,
               javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
+              requestedRoot,
             ) ||
             isCrashedLanguageServerForWorkspace(
               javaScriptTypeScriptLanguageServerRuntimeStatus,
               javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              workspaceRoot,
+              requestedRoot,
             )
           ) {
-            await stopJavaScriptTypeScriptLanguageServerRuntime(workspaceRoot);
+            await stopJavaScriptTypeScriptLanguageServerRuntime(requestedRoot);
           }
         }
 
         if (nextTrusted !== null && nextTrusted !== workspaceTrust?.trusted) {
           const trust = await workspaceTrustGateway.setTrust(
-            workspaceRoot,
+            requestedRoot,
             nextTrusted,
           );
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
+
           setWorkspaceTrust(trust);
 
           if (!trust.trusted) {
-            await stopLanguageServerRuntime();
+            await stopLanguageServerRuntime(requestedRoot);
           }
 
           if (workspaceDescriptor?.php) {
-            await refreshLanguageServerPlan(workspaceRoot);
+            await refreshLanguageServerPlan(requestedRoot);
           }
         }
 
         if (!shouldIndexWorkspace(previousMode) && shouldIndexWorkspace(nextMode)) {
-          await startInitialIndexScan(workspaceRoot);
+          await startInitialIndexScan(requestedRoot);
         }
 
         if (shouldIndexWorkspace(previousMode) && !shouldIndexWorkspace(nextMode)) {
-          await clearWorkspaceIndex(workspaceRoot);
+          await clearWorkspaceIndex(requestedRoot);
+        }
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
         }
 
         setMessage("Settings saved.");
       } catch (error) {
-        reportError("Settings", error);
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "Settings", error);
       }
     },
     [
@@ -11426,7 +11441,7 @@ export function useWorkbenchController(
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       refreshLanguageServerPlan,
       refreshJavaScriptTypeScriptLanguageServerPlan,
-      reportError,
+      reportErrorForActiveWorkspaceRoot,
       smartModeGateway,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,

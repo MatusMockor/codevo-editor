@@ -6727,6 +6727,56 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale workspace settings save errors after switching project tabs", async () => {
+    const workspaceSettingsSave = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockImplementationOnce(
+      async () => workspaceSettingsSave.promise,
+    );
+
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        getWorkbench().workspaceSettings,
+        getWorkbench().workspaceTrust?.trusted ?? null,
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.settingsGateway.saveWorkspaceSettings,
+      ).toHaveBeenCalledWith("/workspace-a", expect.any(Object));
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      workspaceSettingsSave.reject(new Error("stale workspace settings"));
+      await savePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Settings" &&
+          notice.message.includes("stale workspace settings"),
+      ),
+    ).toBe(false);
+  });
+
   it("restarts JavaScript and TypeScript language service with current settings", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {
