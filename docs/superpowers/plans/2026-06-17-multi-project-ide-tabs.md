@@ -688,3 +688,40 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `22808a25 Cover TypeScript code actions without active workspace`.
+
+### Slice: TypeScript Document Link Rootless Active Guard Coverage - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `84f86c9d Record TypeScript code action root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prove in-flight TypeScript document links are dropped when the last project tab closes before the LSP response returns.
+
+#### Implementation Choice
+
+- Add a JS/TS Monaco provider regression that starts document link lookup under `/project`, clears the active workspace root before the delayed response, and verifies Monaco receives an empty link list.
+- Keep the gateway assertion pinned to `/project`, proving request capture remains stable while response delivery is blocked after active-root loss.
+
+#### Acceptance Criteria
+
+- In-flight TypeScript document links return no links after `getWorkspaceRoot()` becomes `null`.
+- Existing project-switch document-link guard still passes.
+- Full JS/TS provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "drops in-flight TypeScript document links when no project tab is active|drops in-flight TypeScript document links after switching project tabs"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `49b86c5e Cover TypeScript document links without active workspace`.
