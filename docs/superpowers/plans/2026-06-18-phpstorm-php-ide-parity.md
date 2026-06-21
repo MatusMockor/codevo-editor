@@ -2983,3 +2983,38 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `3aa27bdb Recognize Laravel raw query helpers`.
+
+## Slice: Laravel Column Constraint Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0f6504df Record Laravel raw query helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize common Laravel column comparison and negative range helpers as Eloquent builder-preserving methods.
+
+### Implementation Choice
+
+- Add `whereColumn`, `orWhereColumn`, and `orWhereNotBetween` to Eloquent static/fluent builder recognition.
+- Cover method recognition, Eloquent builder return-type preservation, and relation-method semantic inference through a column constraint chain ending in `first()`.
+
+### Acceptance Criteria
+
+- `whereColumn`, `orWhereColumn`, and `orWhereNotBetween` are recognized as Laravel Eloquent builder method names.
+- Eloquent builder calls through these helpers preserve `Builder<Model>` inference.
+- Relation-method chains through these helpers infer the related model after `first()`.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`

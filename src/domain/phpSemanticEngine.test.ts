@@ -1104,6 +1104,11 @@ class Comment extends Model
             ->orHavingRaw('sum(score) > 10')
             ->orderByRaw('created_at desc')
             ->first();
+        $relationMethodColumnFilteredPost = $this->posts()
+            ->whereColumn('created_at', 'updated_at')
+            ->orWhereColumn('published_at', 'updated_at')
+            ->orWhereNotBetween('score', [0, 10])
+            ->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
@@ -1158,6 +1163,7 @@ class Comment extends Model
         $relationMethodDescendingPost->tit
         $relationMethodReorderedPost->tit
         $relationMethodRawFilteredPost->tit
+        $relationMethodColumnFilteredPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
@@ -1398,6 +1404,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodRawFilteredPost->tit"),
         "relationMethodRawFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodColumnFilteredPost->tit"),
+        "relationMethodColumnFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
