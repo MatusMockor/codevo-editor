@@ -7295,3 +7295,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `b9fa5f00 Cover PHPStan Psalm PHPDoc method diagnostics`.
+
+## Slice: PHPStan Psalm Laravel Repository PHPDoc Methods - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `778599e2 Record PHPStan Psalm method diagnostic commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let Laravel repository model-return inference read PHPStan/Psalm-prefixed PHPDoc `@method` declarations.
+
+### Implementation Choice
+
+- Extend the Laravel repository PHPDoc method return regex to accept `@phpstan-method` and `@psalm-method`.
+- Convert existing repository finder and creation-helper semantic fixtures to prefixed tags.
+- Preserve unprefixed `@method` coverage in the mixed creation-helper fixture.
+
+### Acceptance Criteria
+
+- Repository `findOrFail` model inference works from `@phpstan-method`.
+- Repository `firstOrNew`/`updateOrCreate` model inference works from PHPStan/Psalm method tags.
+- Existing unprefixed repository PHPDoc method inference remains covered.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "repository .*PHPDoc methods"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -325,7 +325,7 @@ namespace App\\Repositories;
 use App\\Models\\Album;
 
 /**
- * @method Album findOrFail(int $id)
+ * @phpstan-method Album findOrFail(int $id)
  */
 class AlbumRepository
 {
@@ -483,8 +483,8 @@ use App\\Models\\Album;
 
 /**
  * @method Album firstOrCreate(array $attributes)
- * @method Album firstOrNew(array $attributes)
- * @method Album updateOrCreate(array $attributes, array $values)
+ * @phpstan-method Album firstOrNew(array $attributes)
+ * @psalm-method Album updateOrCreate(array $attributes, array $values)
  */
 class AlbumRepository
 {

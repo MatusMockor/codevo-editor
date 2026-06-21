@@ -2714,7 +2714,7 @@ function phpLaravelRepositoryPhpDocMethodReturnTypes(
     (docBlock) => {
       const returnTypes: string[] = [];
       const pattern = new RegExp(
-        `@method\\s+(?:static\\s+)?([^\\s(]+)\\s+${escapeRegExp(
+        `@(?:(?:phpstan|psalm)-)?method\\s+(?:static\\s+)?([^\\s(]+)\\s+${escapeRegExp(
           methodName,
         )}\\s*\\(`,
         "g",
