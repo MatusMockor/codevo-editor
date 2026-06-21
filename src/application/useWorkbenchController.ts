@@ -305,6 +305,10 @@ interface OpenFileOptions {
   recordNavigation?: boolean;
 }
 
+interface OpenWorkspacePathOptions {
+  cachePreviousWorkspace?: boolean;
+}
+
 interface OpenGitChangeOptions {
   pin?: boolean;
 }
@@ -3160,7 +3164,9 @@ export function useWorkbenchController(
   );
 
   const openWorkspacePath = useCallback(
-    async (path: string) => {
+    async (path: string, options: OpenWorkspacePathOptions = {}) => {
+      const shouldCachePreviousWorkspace =
+        options.cachePreviousWorkspace !== false;
       const requestToken = openWorkspaceRequestTokenRef.current + 1;
       openWorkspaceRequestTokenRef.current = requestToken;
       openWorkspaceRequestPathRef.current = path;
@@ -3173,9 +3179,14 @@ export function useWorkbenchController(
         previousRootPath &&
         !workspaceRootKeysEqual(previousRootPath, path);
 
-      if (switchingWorkspace) {
+      if (switchingWorkspace && shouldCachePreviousWorkspace) {
         openFileRequestTokenRef.current += 1;
         cacheCurrentWorkspaceState(previousRootPath);
+      } else if (switchingWorkspace) {
+        openFileRequestTokenRef.current += 1;
+      }
+
+      if (switchingWorkspace) {
         await Promise.allSettled([
           closeSyncedLanguageServerDocumentsForRoot(previousRootPath),
           closeSyncedJavaScriptTypeScriptDocumentsForRoot(previousRootPath),
@@ -3566,6 +3577,9 @@ export function useWorkbenchController(
         return;
       }
 
+      openFileRequestTokenRef.current += 1;
+      gitDiffRequestTokenRef.current += 1;
+      editorGitBaselineRequestTokenRef.current += 1;
       const currentIndex = workspaceTabIndexForPath(currentTabs, tabPath);
       const nextPath =
         nextTabs[Math.min(currentIndex, nextTabs.length - 1)] ??
@@ -3594,7 +3608,7 @@ export function useWorkbenchController(
       }
 
       if (nextPath) {
-        await openWorkspacePath(nextPath);
+        await openWorkspacePath(nextPath, { cachePreviousWorkspace: false });
         return;
       }
 

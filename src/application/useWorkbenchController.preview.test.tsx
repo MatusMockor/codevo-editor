@@ -1308,6 +1308,76 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("cancels pending file opens while closing the active project tab", async () => {
+    const path = "/workspace-a/src/User.php";
+    const openFile = createDeferred<string>();
+    const disposeWorkspace = createDeferred<void>();
+    const workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway = {
+      disposeWorkspace: vi.fn((rootPath) =>
+        rootPath === "/workspace-a"
+          ? disposeWorkspace.promise
+          : Promise.resolve(),
+      ),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
+      ),
+      workspaceRuntimeLifecycleGateway,
+    });
+    await flushAsyncTurns();
+
+    let openPromise: Promise<boolean> = Promise.resolve(true);
+    await act(async () => {
+      openPromise = getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.readTextFile,
+      ).toHaveBeenCalledWith(path);
+    });
+
+    let closePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      closePromise = getWorkbench().closeWorkspaceTab("/workspace-a");
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(workspaceRuntimeLifecycleGateway.disposeWorkspace).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    let opened = true;
+    await act(async () => {
+      openFile.resolve("<?php\nclass User {}\n");
+      opened = await openPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(opened).toBe(false);
+    expect(getWorkbench().activePath).not.toBe(path);
+    expect(
+      getWorkbench().openDocuments.some((document) => document.path === path),
+    ).toBe(false);
+
+    await act(async () => {
+      disposeWorkspace.resolve(undefined);
+      await closePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
+    expect(getWorkbench().activePath).not.toBe(path);
+  });
+
   it("restores cached JavaScript and TypeScript runtime status when activating a kept-alive project tab", async () => {
     let publishRuntimeStatus:
       | ((status: LanguageServerRuntimeStatus) => void)

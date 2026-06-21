@@ -6064,3 +6064,54 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Pending Workspace Open Tab-Close Guard
 
 - Committed as `cd48cca3 Cancel pending workspace opens on tab close`.
+
+## Next Slice: Active Project Close Pending Open Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `119ea591 Record pending workspace open guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 859 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `closeWorkspaceTab` removed the active project tab only after async synced-document cleanup, runtime disposal, and settings persistence.
+- While that close was pending, `currentWorkspaceRootRef` still pointed at the closing workspace.
+- A pending `openFile` read from the closing workspace could finish in that window, pass the active-root guard, and write editor state for a tab the user had already closed.
+- The close-driven handoff to the next project tab also used the same workspace-open path as normal tab switching, which could cache the closing workspace's state even though the tab was being removed.
+
+### Implementation Choice
+
+- Invalidate pending editor/file/diff/baseline request tokens immediately after the active project close is confirmed.
+- Add an `openWorkspacePath` option to skip caching the previous workspace when the switch is caused by closing that previous workspace.
+- Keep normal project-tab activation caching unchanged.
+- Add a regression that starts a pending file open in `/workspace-a`, begins closing `/workspace-a`, holds runtime disposal, resolves the file read, and asserts the stale open is canceled before `/workspace-b` activates.
+
+### Acceptance Criteria
+
+- Pending file opens cannot write editor state while the active project tab is closing.
+- Closing an active project tab does not re-cache the workspace being removed.
+- Normal project-tab activation and cached-state behavior remain unchanged.
+- Focused project-tab tests, full preview controller tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Active Project Close Pending Open Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "pending file opens|open file errors|project tab"` (128 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx` (326 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 860 tests)
+- PASS: `git diff --check`
+
+### Parallel Audit Queue
+
+- JS/TS P0: symbol rename currently returns a Monaco-only workspace edit; closed-file edits from TypeScript rename are not persisted through the controller/filesystem applier.
+- JS/TS P0: versioned `documentChanges` are flattened away, so stale document-version edits can be applied to changed open models.
+- PHP/Laravel P0: managed PHPactor orphan cleanup can kill sibling workspace-tab sessions because cleanup targets the shared managed executable too broadly.
+- PHP/Laravel P0: PHP diagnostics/runtime status are active-root only and lack JS/TS-style background-tab caching.
+- PHP/Laravel P0: PHP LSP command outputs need the same Tauri boundary workspace filtering as JS/TS for locations, edits, commands, and workspace symbols.
+- PHP provider P1: Monaco PHP providers need same-root session stamping like JS/TS providers to drop stale hover/completion/code-action results after session restart.
