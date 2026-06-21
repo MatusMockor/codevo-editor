@@ -1848,3 +1848,44 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `c6c30640 Guard workspace settings rollbacks by active root`.
+
+### Slice: Smart Mode Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `47582d89 Record workspace settings rollback guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed smart-mode changes from a previous project tab from mutating the newly active workspace mode, settings, message, index, or error notices.
+
+#### Implementation Choice
+
+- Capture `requestedRoot` in `setSmartMode`.
+- Re-check the active workspace root after `smartModeGateway.setMode` and after settings persistence before applying mode state, messages, or index actions.
+- Run language-server stop/start cleanup and index operations against `requestedRoot` instead of the current closure root.
+- Replace the catch-side global IDE Mode report with `reportErrorForActiveWorkspaceRoot`.
+- Add regressions where `/workspace-a` starts a smart-mode change, the user switches to `/workspace-b`, and stale `/workspace-a` completions or errors cannot mutate `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale smart-mode completions do not change the active workspace intelligence mode or saved workspace settings after switching tabs.
+- Stale smart-mode errors do not create IDE Mode notices in the newly active workspace.
+- Existing index clear stale-error and stale-success guards still pass.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale smart mode completions after switching project tabs|ignores stale smart mode errors after switching project tabs|ignores index clear errors after switching project tabs|ignores index clear success messages after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `08967328 Guard smart mode changes by active workspace`.
