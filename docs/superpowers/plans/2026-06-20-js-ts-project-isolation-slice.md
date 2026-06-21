@@ -7248,4 +7248,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Document Link Provider
 
-- Pending commit after verification.
+- Committed as `3fed4db6 Register PHP document link provider`.
