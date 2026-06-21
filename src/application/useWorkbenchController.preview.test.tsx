@@ -11673,6 +11673,625 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("opens PHP call hierarchy from command palette actions", async () => {
+    const path = "/workspace/app/Services/UserService.php";
+    const callerPath = "/workspace/app/Http/Controllers/UserController.php";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 112,
+    };
+    const item = {
+      data: { symbolId: "App\\Services\\UserService::loadUser" },
+      detail: "app/Services/UserService.php",
+      kind: 6,
+      name: "loadUser",
+      range: range(6, 4, 9, 5),
+      selectionRange: range(6, 20, 6, 28),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const caller = {
+      data: { symbolId: "App\\Http\\Controllers\\UserController::show" },
+      detail: "app/Http/Controllers/UserController.php",
+      kind: 6,
+      name: "show",
+      range: range(8, 4, 11, 5),
+      selectionRange: range(8, 20, 8, 24),
+      tags: [],
+      uri: fileUriFromPath(callerPath),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockResolvedValue([item]);
+    vi.mocked(languageServerFeaturesGateway.incomingCalls).mockResolvedValue([
+      {
+        from: caller,
+        fromRanges: [range(9, 15, 9, 25)],
+      },
+    ]);
+    vi.mocked(languageServerFeaturesGateway.outgoingCalls).mockResolvedValue([]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === callerPath) {
+          return "<?php\n\n$user = $service->loadUser();\n";
+        }
+
+        return "<?php\n\nclass UserService\n{\n    public function loadUser(): string\n    {\n        return 'Ada';\n    }\n}\n";
+      }),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 7,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.showCallHierarchy",
+    );
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      languageServerFeaturesGateway.prepareCallHierarchy,
+    ).toHaveBeenCalledWith("/workspace", {
+      character: 24,
+      line: 6,
+      path,
+    });
+    expect(languageServerFeaturesGateway.incomingCalls).toHaveBeenCalledWith(
+      "/workspace",
+      item,
+    );
+    expect(languageServerFeaturesGateway.outgoingCalls).toHaveBeenCalledWith(
+      "/workspace",
+      item,
+    );
+    expect(getWorkbench().callHierarchyView?.item.name).toBe("loadUser");
+    expect(getWorkbench().callHierarchyView?.incoming).toHaveLength(1);
+
+    const [row] = callHierarchyRows(getWorkbench().callHierarchyView!);
+
+    await act(async () => {
+      await getWorkbench().openCallHierarchyRow(row);
+    });
+
+    expect(getWorkbench().callHierarchyView).toBe(null);
+    expect(getWorkbench().activePath).toBe(callerPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: callerPath,
+      position: {
+        column: 16,
+        lineNumber: 10,
+      },
+    });
+  });
+
+  it("keeps PHP call hierarchy open for rows from inactive project tabs", async () => {
+    const path = "/workspace-b/app/Services/UserService.php";
+    const callerPath = "/workspace-b/app/Http/Controllers/UserController.php";
+    const staleCallerPath =
+      "/workspace-a/app/Http/Controllers/UserController.php";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 113,
+    };
+    const item = {
+      data: { symbolId: "App\\Services\\UserService::loadUser" },
+      detail: "app/Services/UserService.php",
+      kind: 6,
+      name: "loadUser",
+      range: range(6, 4, 9, 5),
+      selectionRange: range(6, 20, 6, 28),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const caller = {
+      data: { symbolId: "App\\Http\\Controllers\\UserController::show" },
+      detail: "app/Http/Controllers/UserController.php",
+      kind: 6,
+      name: "show",
+      range: range(8, 4, 11, 5),
+      selectionRange: range(8, 20, 8, 24),
+      tags: [],
+      uri: fileUriFromPath(callerPath),
+    };
+    const staleCaller = {
+      ...caller,
+      name: "staleShow",
+      uri: fileUriFromPath(staleCallerPath),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockResolvedValue([item]);
+    vi.mocked(languageServerFeaturesGateway.incomingCalls).mockResolvedValue([
+      {
+        from: caller,
+        fromRanges: [range(9, 15, 9, 25)],
+      },
+    ]);
+    vi.mocked(languageServerFeaturesGateway.outgoingCalls).mockResolvedValue([]);
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 7,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().callHierarchyView?.item.name).toBe("loadUser");
+
+    const [staleRow] = callHierarchyRows({
+      incoming: [
+        {
+          from: staleCaller,
+          fromRanges: [range(9, 15, 9, 25)],
+        },
+      ],
+      item,
+      outgoing: [],
+    });
+
+    await act(async () => {
+      await getWorkbench().openCallHierarchyRow(staleRow);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().callHierarchyView?.item.name).toBe("loadUser");
+    expect(getWorkbench().activePath).toBe(path);
+    expect(readTextFile).not.toHaveBeenCalledWith(staleCallerPath);
+    expect(
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "navigation.back")
+        ?.isEnabled(getWorkbench().commandContext),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP call hierarchy errors after switching project tabs", async () => {
+    const path = "/workspace-a/app/Services/UserService.php";
+    const prepareCallHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareCallHierarchy"]>
+        >
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 114,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockImplementationOnce(async () => prepareCallHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass UserService {}\n"),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await flushAsyncTurns(4);
+
+    expect(languageServerFeaturesGateway.prepareCallHierarchy).toHaveBeenCalledWith(
+      "/workspace-a",
+      {
+        character: 24,
+        line: 0,
+        path,
+      },
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    prepareCallHierarchy.reject(new Error("stale PHP call hierarchy"));
+    await act(async () => {
+      await commandPromise;
+    });
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe(
+      "Error: stale PHP call hierarchy",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Call Hierarchy" &&
+          notice.message.includes("stale PHP call hierarchy"),
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP call hierarchy results after switching project tabs", async () => {
+    const path = "/workspace-a/app/Services/UserService.php";
+    const prepareCallHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareCallHierarchy"]>
+        >
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 115,
+    };
+    const item = {
+      data: { symbolId: "App\\Services\\UserService::staleLoadUser" },
+      detail: "app/Services/UserService.php",
+      kind: 6,
+      name: "staleLoadUser",
+      range: range(6, 4, 9, 5),
+      selectionRange: range(6, 20, 6, 33),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockImplementationOnce(async () => prepareCallHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass UserService {}\n"),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await flushAsyncTurns(4);
+
+    expect(languageServerFeaturesGateway.prepareCallHierarchy).toHaveBeenCalledWith(
+      "/workspace-a",
+      {
+        character: 24,
+        line: 0,
+        path,
+      },
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    prepareCallHierarchy.resolve([item]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(languageServerFeaturesGateway.incomingCalls).not.toHaveBeenCalled();
+    expect(languageServerFeaturesGateway.outgoingCalls).not.toHaveBeenCalled();
+    expect(getWorkbench().callHierarchyView).toBeNull();
+  });
+
+  it("drops stale PHP call hierarchy follow-up results after switching project tabs", async () => {
+    const path = "/workspace-a/app/Services/UserService.php";
+    const incomingCalls =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["incomingCalls"]>>
+      >();
+    const outgoingCalls =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["outgoingCalls"]>>
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 116,
+    };
+    const item = {
+      data: { symbolId: "App\\Services\\UserService::loadUser" },
+      detail: "app/Services/UserService.php",
+      kind: 6,
+      name: "loadUser",
+      range: range(6, 4, 9, 5),
+      selectionRange: range(6, 20, 6, 28),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const caller = {
+      data: { symbolId: "App\\Http\\Controllers\\UserController::show" },
+      detail: "app/Http/Controllers/UserController.php",
+      kind: 6,
+      name: "show",
+      range: range(8, 4, 11, 5),
+      selectionRange: range(8, 20, 8, 24),
+      tags: [],
+      uri: fileUriFromPath(
+        "/workspace-a/app/Http/Controllers/UserController.php",
+      ),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockResolvedValueOnce([item]);
+    vi.mocked(
+      languageServerFeaturesGateway.incomingCalls,
+    ).mockImplementationOnce(async () => incomingCalls.promise);
+    vi.mocked(
+      languageServerFeaturesGateway.outgoingCalls,
+    ).mockImplementationOnce(async () => outgoingCalls.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass UserService {}\n"),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await vi.waitFor(() => {
+      expect(languageServerFeaturesGateway.incomingCalls).toHaveBeenCalledWith(
+        "/workspace-a",
+        item,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    incomingCalls.resolve([
+      {
+        from: caller,
+        fromRanges: [range(9, 15, 9, 25)],
+      },
+    ]);
+    outgoingCalls.resolve([]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().callHierarchyView).toBeNull();
+  });
+
+  it("drops stale PHP call hierarchy after same-root session restart", async () => {
+    const path = "/workspace/app/Services/UserService.php";
+    const prepareCallHierarchy =
+      createDeferred<
+        Awaited<
+          ReturnType<LanguageServerFeaturesGateway["prepareCallHierarchy"]>
+        >
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(117)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(117)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const item = {
+      data: { symbolId: "App\\Services\\UserService::loadUser" },
+      detail: "app/Services/UserService.php",
+      kind: 6,
+      name: "loadUser",
+      range: range(6, 4, 9, 5),
+      selectionRange: range(6, 20, 6, 28),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockImplementationOnce(async () => prepareCallHierarchy.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass UserService {}\n"),
+      runtimeStatus: runningStatus(117),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 1,
+      });
+    });
+
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+      commandPromise = Promise.resolve(runResult);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        languageServerFeaturesGateway.prepareCallHierarchy,
+      ).toHaveBeenCalled();
+    });
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(118));
+    });
+    await flushAsyncTurns();
+
+    prepareCallHierarchy.resolve([item]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(languageServerFeaturesGateway.incomingCalls).not.toHaveBeenCalled();
+    expect(languageServerFeaturesGateway.outgoingCalls).not.toHaveBeenCalled();
+    expect(getWorkbench().callHierarchyView).toBeNull();
+  });
+
   it("clears JavaScript and TypeScript call hierarchy when the last project tab closes", async () => {
     const path = "/workspace/src/userService.ts";
     const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
