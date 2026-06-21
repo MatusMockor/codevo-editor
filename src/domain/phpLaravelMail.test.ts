@@ -18,6 +18,16 @@ describe("phpLaravelMail", () => {
       ["Mail::driver(driver: 'postmark')", "Mail::driver"],
       ["Mail::purge(name: 'postmark')", "Mail::purge"],
       ["Mail::setDefaultDriver(name: 'postmark')", "Mail::setDefaultDriver"],
+      ["(new MailMessage)->mailer('postmark')", "MailMessage::mailer"],
+      ["new MailMessage()->mailer('postmark')", "MailMessage::mailer"],
+      [
+        "(new \\Illuminate\\Notifications\\Messages\\MailMessage())->mailer('postmark')",
+        "MailMessage::mailer",
+      ],
+      [
+        "(new MailMessage)->subject('Invoice')->mailer(mailer: 'postmark')",
+        "MailMessage::mailer",
+      ],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -41,6 +51,11 @@ describe("phpLaravelMail", () => {
     const interpolated = `<?php\n\nMail::mailer("post$mark");\n`;
     const invalid = `<?php\n\nMail::mailer('postmark/main');\n`;
     const wrongCall = `<?php\n\nCache::store('postmark');\n`;
+    const genericMailer = `<?php\n\n$message->mailer('postmark');\n`;
+    const wrongMessageClass = `<?php\n\n(new NewsletterMessage)->mailer('postmark');\n`;
+    const wrongNamespacedMailMessage = `<?php\n\n(new \\App\\Support\\MailMessage)->mailer('postmark');\n`;
+    const wrongMessageArgument = `<?php\n\n(new MailMessage)->mailer(name: 'postmark');\n`;
+    const nestedNewMessage = `<?php\n\ntap(new MailMessage)->mailer('postmark');\n`;
 
     expect(
       phpLaravelMailMailerReferenceContextAt(
@@ -64,6 +79,36 @@ describe("phpLaravelMail", () => {
       phpLaravelMailMailerReferenceContextAt(
         wrongCall,
         positionAfter(wrongCall, "postmark"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelMailMailerReferenceContextAt(
+        genericMailer,
+        positionAfter(genericMailer, "postmark"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelMailMailerReferenceContextAt(
+        wrongMessageClass,
+        positionAfter(wrongMessageClass, "postmark"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelMailMailerReferenceContextAt(
+        wrongNamespacedMailMessage,
+        positionAfter(wrongNamespacedMailMessage, "postmark"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelMailMailerReferenceContextAt(
+        wrongMessageArgument,
+        positionAfter(wrongMessageArgument, "postmark"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelMailMailerReferenceContextAt(
+        nestedNewMessage,
+        positionAfter(nestedNewMessage, "postmark"),
       ),
     ).toBeNull();
   });

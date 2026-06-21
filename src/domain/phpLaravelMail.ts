@@ -1,5 +1,9 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
+  PHP_CLASS_NAME_PATTERN,
+  phpStatementPrefixBeforeOffset,
+} from "./phpReceiverExpressions";
+import {
   phpStringArgumentContextAt,
   type PhpStringArgumentContext,
 } from "./phpStringArgumentContext";
@@ -11,11 +15,16 @@ const mailMailerStaticCallMethods = {
   purge: "Mail::purge",
   setdefaultdriver: "Mail::setDefaultDriver",
 } as const;
+const mailMailerMessageCallMethods = {
+  mailer: "MailMessage::mailer",
+} as const;
 
 type MailMailerStaticMethodName = keyof typeof mailMailerStaticCallMethods;
+type MailMailerMessageMethodName = keyof typeof mailMailerMessageCallMethods;
 
 export type PhpLaravelMailMailerReferenceCall =
-  (typeof mailMailerStaticCallMethods)[MailMailerStaticMethodName];
+  | (typeof mailMailerStaticCallMethods)[MailMailerStaticMethodName]
+  | (typeof mailMailerMessageCallMethods)[MailMailerMessageMethodName];
 
 export interface PhpLaravelMailMailerReferenceContext {
   call: PhpLaravelMailMailerReferenceCall;
@@ -35,18 +44,14 @@ export function phpLaravelMailMailerReferenceContextAt(
   }
 
   const mailerName = argument.closed ? argument.value : argument.prefix;
+  const call = laravelMailMailerReferenceCallAt(source, argument);
 
   if (
-    !isMailMailerArgument(argument) ||
+    !call ||
+    !isMailMailerArgument(argument, call) ||
     !isUsableLaravelMailMailerName(argument.prefix) ||
     !isUsableLaravelMailMailerName(mailerName)
   ) {
-    return null;
-  }
-
-  const call = laravelMailMailerReferenceCallAt(source, argument);
-
-  if (!call) {
     return null;
   }
 
@@ -110,6 +115,17 @@ function laravelMailMailerReferenceCallAt(
     return mailMailerStaticCallMethods[staticMethod];
   }
 
+  const memberMatch = /(?:->|\?->)\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+    beforeCall,
+  );
+  const memberMethod = memberMatch?.[1]?.toLowerCase() ?? null;
+
+  if (memberMethod && isMailMailerMessageMethodName(memberMethod)) {
+    const call = mailMailerMessageCallMethods[memberMethod];
+
+    return isSupportedMailMessageMailerCallAt(source, argument) ? call : null;
+  }
+
   return null;
 }
 
@@ -119,16 +135,95 @@ function isMailMailerStaticMethodName(
   return methodName in mailMailerStaticCallMethods;
 }
 
-function isMailMailerArgument(argument: PhpStringArgumentContext): boolean {
-  if (argument.argumentIndex === 0) {
-    return true;
-  }
+function isMailMailerMessageMethodName(
+  methodName: string,
+): methodName is MailMailerMessageMethodName {
+  return methodName in mailMailerMessageCallMethods;
+}
 
+function isMailMailerArgument(
+  argument: PhpStringArgumentContext,
+  call: PhpLaravelMailMailerReferenceCall,
+): boolean {
   const argumentName = argument.argumentName?.toLowerCase();
 
-  return (
-    argumentName === "driver" ||
-    argumentName === "mailer" ||
-    argumentName === "name"
+  if (call === "MailMessage::mailer") {
+    return argumentName
+      ? argumentName === "mailer"
+      : argument.argumentIndex === 0;
+  }
+
+  if (argumentName) {
+    return (
+      argumentName === "driver" ||
+      argumentName === "mailer" ||
+      argumentName === "name"
+    );
+  }
+
+  return argument.argumentIndex === 0;
+}
+
+const phpMailMessageClassReferencePattern = new RegExp(
+  String.raw`new\s+(${PHP_CLASS_NAME_PATTERN})\s*(?:\([^)]*\))?`,
+  "gi",
+);
+
+function isSupportedMailMessageMailerCallAt(
+  source: string,
+  argument: PhpStringArgumentContext,
+): boolean {
+  const statementPrefix = phpStatementPrefixBeforeOffset(
+    source,
+    argument.openParen,
   );
+  const matches = Array.from(
+    statementPrefix.matchAll(phpMailMessageClassReferencePattern),
+  );
+  const match = matches[matches.length - 1];
+
+  if (!match || match.index === undefined) {
+    return false;
+  }
+
+  const className = match[1] ?? "";
+
+  if (!isMailMessageClassName(className)) {
+    return false;
+  }
+
+  const beforeNew = statementPrefix.slice(0, match.index);
+
+  if (isNestedCallArgumentBeforeNew(beforeNew)) {
+    return false;
+  }
+
+  const afterNew = statementPrefix.slice(match.index + match[0].length);
+
+  return /^\s*\)?(?:\s*(?:->|\?->)\s*[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?)*\s*(?:->|\?->)\s*mailer\s*$/.test(
+    afterNew,
+  );
+}
+
+function isMailMessageClassName(className: string): boolean {
+  const normalizedClassName = className.replace(/^\\/, "").toLowerCase();
+
+  return (
+    normalizedClassName === "mailmessage" ||
+    normalizedClassName === "illuminate\\notifications\\messages\\mailmessage"
+  );
+}
+
+function isNestedCallArgumentBeforeNew(beforeNew: string): boolean {
+  const trimmed = beforeNew.trimEnd();
+
+  if (!trimmed.endsWith("(")) {
+    return false;
+  }
+
+  const wrapperIndex = beforeNew.lastIndexOf("(");
+  const previousCharacter =
+    wrapperIndex > 0 ? beforeNew[wrapperIndex - 1] : "";
+
+  return /[A-Za-z0-9_$)\]]/.test(previousCharacter);
 }
