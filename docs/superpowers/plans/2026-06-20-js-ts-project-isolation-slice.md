@@ -7488,4 +7488,6 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test` (65 files, 959 tests)
 - PASS: `git diff --check`
 
-### Commit Status: Pending
+### Commit Status: PHP Monaco Inlay Hints Provider
+
+- Committed as `46186545 Register PHP inlay hints provider`.
