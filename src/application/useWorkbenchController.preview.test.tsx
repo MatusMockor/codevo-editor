@@ -1801,6 +1801,105 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveLength(1);
   });
 
+  it("caches PHP runtime status and diagnostics for background project tabs", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const workspaceBStatus = createDeferred<LanguageServerRuntimeStatus>();
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn((rootPath) =>
+        rootPath === "/workspace-b"
+          ? workspaceBStatus.promise
+          : Promise.resolve(runningStatus(rootPath, 301)),
+      ),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, 303)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const workspaceBPath = "/workspace-b/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-b", 302));
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Workspace B PHP issue",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-b",
+        sessionId: 302,
+        uri: fileUriFromPath(workspaceBPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerRuntimeStatus).not.toEqual(
+      expect.objectContaining({ rootPath: "/workspace-b" }),
+    );
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceBPath],
+    ).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace-b",
+        sessionId: 302,
+      }),
+    );
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[workspaceBPath],
+    ).toHaveLength(1);
+
+    act(() => {
+      workspaceBStatus.resolve(runningStatus("/workspace-b", 302));
+    });
+    await flushAsyncTurns(4);
+  });
+
   it("ignores PHP diagnostics without an explicit workspace root", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)
