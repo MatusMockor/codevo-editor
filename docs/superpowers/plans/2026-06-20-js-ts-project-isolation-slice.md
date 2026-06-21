@@ -4657,4 +4657,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Diagnostic Filter Active Workspace Guard
 
-- Pending commit.
+- Committed as `54c53d07 Guard PHP diagnostic filter errors by active workspace`.
