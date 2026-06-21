@@ -9058,3 +9058,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Eloquent Model Connection Properties
 
 - Committed as `1c0ce445 Support Laravel model connection navigation`.
+- Follow-up committed as `ea00168f Harden Laravel model connection detection`.
