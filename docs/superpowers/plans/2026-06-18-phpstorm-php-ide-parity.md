@@ -6177,3 +6177,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `359ecf6c Guard stale PHP constant hierarchy diagnostics`.
+
+## Slice: Stale PHP Trait Host Method Search Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c30b44e9 Record stale PHP constant hierarchy guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP trait host-method searches from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root in `phpTraitHostMethodExists`.
+- Run trait-host and descendant host text searches against the requested root.
+- Guard after text search, before and after candidate host reads, after recursive trait and descendant hierarchy checks, after failed reads, and before returning from the helper.
+- Add a preview regression where a trait method diagnostic from `/workspace-a` starts a delayed host text search, the workspace switches to `/workspace-b`, and the delayed search returns a host candidate.
+- Assert the stale diagnostic traversal does not read the stale host candidate.
+
+### Acceptance Criteria
+
+- Stale PHP trait host-method searches stop after tab switch.
+- Stale trait diagnostics do not start host file reads after workspace changes.
+- Existing PHP trait host-method diagnostic filtering behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP trait host-method search"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
