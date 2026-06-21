@@ -3758,3 +3758,45 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `eb39dcf8 Treat Laravel mutation helpers as terminals`.
+
+## Slice: Laravel Controller Group Route Actions - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `73d08189 Record indexed definition guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Resolve Laravel `Route::controller(...)->group(...)` action strings to the paired controller method before LSP fallback.
+
+### Implementation Choice
+
+- Extend `phpIdentifierContextAt` route-action detection beyond `[Controller::class, 'method']`.
+- Recognize second-argument route action strings inside `Route::get/post/put/patch/delete/options/any/match(...)` calls nested in a `Route::controller(Controller::class)->group(...)` body.
+- Preserve existing array route-action behavior.
+- Add domain coverage for `show` and `store` strings in a controller group.
+- Add workbench go-to-definition coverage proving the controller group action opens the indexed controller method without calling the LSP fallback.
+
+### Acceptance Criteria
+
+- Controller group route action strings are identified as `laravelRouteActionMethod` contexts.
+- Go to Definition from a controller group action string opens the matching controller method.
+- Existing Laravel route action string behavior remains unchanged.
+- Focused/full navigation and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx -t "Laravel controller group route action strings|resolves Laravel controller group route action strings|resolves Laravel route action strings to the paired controller method"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `39c8fcfe Resolve Laravel controller group route actions`.
