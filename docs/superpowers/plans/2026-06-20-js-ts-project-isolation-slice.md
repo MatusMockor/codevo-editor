@@ -7773,4 +7773,6 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - `npm test` passed: 65 files, 990 tests.
 - `git diff --check` passed before commit prep.
 
-### Commit Status: Pending
+### Commit Status: PHP LSP Type Hierarchy In Workbench
+
+- Committed as `820b32be Use PHP type hierarchy in workbench`.
