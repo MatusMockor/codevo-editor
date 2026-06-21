@@ -6119,3 +6119,45 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PHP/Laravel P0: PHP diagnostics/runtime status are active-root only and lack JS/TS-style background-tab caching.
 - PHP/Laravel P0: PHP LSP command outputs need the same Tauri boundary workspace filtering as JS/TS for locations, edits, commands, and workspace symbols.
 - PHP provider P1: Monaco PHP providers need same-root session stamping like JS/TS providers to drop stale hover/completion/code-action results after session restart.
+
+## Next Slice: JavaScript TypeScript Rename Workspace Applier
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `77c0844f Record active close guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 860 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Planck's JS/TS audit identified a P0 VS Code parity gap: editor symbol rename returned a Monaco-only workspace edit.
+- Monaco can update the active/open model, but closed-file edits from TypeScript rename were not routed through the controller/filesystem applier.
+- That means a TypeScript rename touching unopened import consumers could be lost instead of persisted like VS Code.
+
+### Implementation Choice
+
+- Keep the old Monaco WorkspaceEdit fallback when no controller applier is supplied.
+- When the controller applier exists, apply the TypeScript rename workspace edit through the same `applyWorkspaceEditWithOpenModels` path used by server/applyEdit and command edits.
+- Return an empty Monaco WorkspaceEdit after applying through the guarded applier so Monaco treats rename as handled without applying the same open-model edits twice.
+- Add provider coverage for an edit that touches the open model, a closed file in the same root, and a sibling workspace path.
+
+### Acceptance Criteria
+
+- Open-model rename edits still update the open Monaco model.
+- Closed-file rename edits are passed to `applyWorkspaceEdit` for filesystem persistence.
+- Sibling workspace rename edits are filtered out.
+- Existing stale rename, command edit, code action, and workspace edit provider tests remain green.
+- Focused provider tests, full provider tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: JavaScript TypeScript Rename Workspace Applier
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "rename edits|rename requests|workspace applier|workspace edits"` (8 tests)
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts` (61 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 861 tests)
+- PASS: `git diff --check`

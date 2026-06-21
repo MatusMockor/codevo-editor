@@ -1404,14 +1404,31 @@ async function provideRenameEdits(
       return null;
     }
 
-    return edit
-      ? toMonacoWorkspaceEdit(
-          monaco,
-          workspaceEditContext(model),
-          edit,
-          request.rootPath,
-        )
-      : null;
+    if (!edit) {
+      return null;
+    }
+
+    if (context.applyWorkspaceEdit) {
+      await applyWorkspaceEditWithOpenModels(
+        monaco,
+        context,
+        edit,
+        request.rootPath,
+      );
+
+      if (!isFeatureRequestActive(context, request)) {
+        return null;
+      }
+
+      return { edits: [] };
+    }
+
+    return toMonacoWorkspaceEdit(
+      monaco,
+      workspaceEditContext(model),
+      edit,
+      request.rootPath,
+    );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;

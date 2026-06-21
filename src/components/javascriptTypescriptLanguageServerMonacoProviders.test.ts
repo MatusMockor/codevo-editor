@@ -3588,6 +3588,88 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("persists TypeScript rename edits through the workspace applier while keeping open models current", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const siblingRootModel = {
+      ...textModel(),
+      uri: {
+        fsPath: "/project-neighbor/src/user.ts",
+        path: "/project-neighbor/src/user.ts",
+      },
+    };
+    const renameEdit = {
+      changes: {
+        ...workspaceEdit("file:///project/src/user.ts", "OpenRename").changes,
+        ...workspaceEdit("file:///project/src/helper.ts", "ClosedRename").changes,
+        ...workspaceEdit(
+          "file:///project-neighbor/src/user.ts",
+          "Ignored sibling root",
+        ).changes,
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const gateway = featuresGateway({
+      rename: renameEdit,
+    });
+    monaco.editor.getModels.mockReturnValue([model, siblingRootModel]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+      }),
+    );
+    const renameProvider = (monaco.languages.registerRenameProvider as any).mock
+      .calls[0][1];
+
+    const rename = await renameProvider.provideRenameEdits(
+      model,
+      { column: 4, lineNumber: 1 },
+      "Account",
+    );
+
+    expect(gateway.rename).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 3,
+        line: 0,
+        path: "/project/src/user.ts",
+      },
+      "Account",
+    );
+    expect(model.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 6,
+            endLineNumber: 1,
+            startColumn: 2,
+            startLineNumber: 1,
+          }),
+          text: "OpenRename",
+        },
+      ],
+      expect.any(Function),
+    );
+    expect(siblingRootModel.pushEditOperations).not.toHaveBeenCalled();
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      {
+        changes: {
+          ...workspaceEdit("file:///project/src/user.ts", "OpenRename").changes,
+          ...workspaceEdit("file:///project/src/helper.ts", "ClosedRename")
+            .changes,
+        },
+      },
+      {
+        editedOpenPaths: ["/project/src/user.ts"],
+        rootPath: "/project",
+      },
+    );
+    expect(rename).toEqual({ edits: [] });
+  });
+
   it("persists edit-bearing TypeScript code actions through the workspace applier", async () => {
     const monaco = createMonaco();
     const model = textModel();
