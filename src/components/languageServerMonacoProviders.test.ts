@@ -1777,6 +1777,45 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight PHP selection ranges when no project tab is active", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const selectionRanges =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.selectionRanges).mockImplementationOnce(
+      async () => selectionRanges.promise,
+    );
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const selectionRangesPromise =
+      registered.selectionRangeProvider.provideSelectionRanges(model(), [
+        { column: 12, lineNumber: 4 },
+      ]);
+
+    await Promise.resolve();
+    activeRoot = null;
+    selectionRanges.resolve([
+      {
+        parent: null,
+        range: range(3, 8, 3, 20),
+      },
+    ]);
+
+    await expect(selectionRangesPromise).resolves.toBeNull();
+    expect(gateway.selectionRanges).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      [{ character: 11, line: 3 }],
+    );
+  });
+
   it("resolves LSP-backed code actions", async () => {
     const registered = createRegisteredProviders();
     const unresolvedAction = {
