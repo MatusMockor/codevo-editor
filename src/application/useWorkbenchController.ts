@@ -10590,7 +10590,16 @@ export function useWorkbenchController(
 
   const openPhpLaravelModelAttributeTarget = useCallback(
     async (className: string, attributeName: string): Promise<boolean> => {
-      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (
+        !isLaravelFrameworkActive ||
+        !requestedRoot ||
+        !requestedDescriptor?.php
+      ) {
         return false;
       }
 
@@ -10601,8 +10610,17 @@ export function useWorkbenchController(
       }
 
       for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         try {
           const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           const target = phpLaravelModelAttributeTargetFromSource(
             content,
             attributeName,
@@ -10612,12 +10630,20 @@ export function useWorkbenchController(
             continue;
           }
 
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           return openNavigationTarget(
             path,
             target.position,
             target.attributeName,
           );
         } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           continue;
         }
       }

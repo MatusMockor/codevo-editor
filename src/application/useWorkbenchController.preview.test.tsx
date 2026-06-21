@@ -10962,6 +10962,129 @@ class Comment
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  it("stops stale Laravel model attribute target candidates after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace-a/app/Models/Comment.php";
+    const packageCommentPath =
+      "/workspace-a/vendor/shared/package/src/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->content;
+    }
+}
+`;
+    const commentSource = `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public string $content;
+
+    protected $appends = [
+        'content',
+    ];
+}
+`;
+    const staleAttributeRead = createDeferred<string>();
+    let commentReadCount = 0;
+    let packageCommentReadCount = 0;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === commentPath) {
+        commentReadCount += 1;
+        return commentReadCount === 3
+          ? staleAttributeRead.promise
+          : commentSource;
+      }
+
+      if (path === packageCommentPath) {
+        packageCommentReadCount += 1;
+        return commentSource;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        packageName: "app/app",
+        packages: [
+          {
+            classmapRoots: [],
+            dev: false,
+            installPath: "../shared/package",
+            name: "shared/package",
+            packageType: "library",
+            psr4Roots: [
+              {
+                dev: false,
+                namespace: "App\\",
+                paths: ["src/"],
+              },
+            ],
+            version: "1.0.0",
+          },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "content"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(commentReadCount).toBe(3);
+    });
+    const packageReadsBeforeSwitch = packageCommentReadCount;
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleAttributeRead.reject(new Error("stale attribute source"));
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(packageCommentReadCount).toBe(packageReadsBeforeSwitch);
+    expect(getWorkbench().activePath).not.toBe(packageCommentPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("drops stale indexed go to definition errors after switching project tabs", async () => {
     const controllerPath = "/workspace-a/src/CommentController.php";
     const symbolSearch =
