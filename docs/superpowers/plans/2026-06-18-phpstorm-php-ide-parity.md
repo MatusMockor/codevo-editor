@@ -6736,4 +6736,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `2ccf2fb8 Display multi-target MorphTo relation properties`.
