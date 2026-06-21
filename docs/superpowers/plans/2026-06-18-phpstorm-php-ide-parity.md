@@ -7576,3 +7576,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `c2760fc1 Guard queued PHP didChange across workspace switches`.
+
+## Slice: PHP JavaScript TypeScript FlushPending Workspace Switch Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `879c1b81 Record PHP queued didChange guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 816 tests)
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prevent explicit first-use `flushPending...Document` calls from sending stale PHP or JS/TS `didChange` requests after a workspace tab switch while `didOpen` is still pending.
+
+### Implementation Choice
+
+- Reuse the PHP and JS/TS document sync generation guards in `flushPendingDocumentChange` and `flushPendingJavaScriptTypeScriptDocumentChange`.
+- Re-check active root, session freshness, and sync generation after every awaited didOpen/queue wait and again inside the queued didChange callback.
+- Add PHP and JS/TS first-use flush regressions where didOpen is pending, the user switches workspace tabs, and stale didChange must be dropped.
+
+### Acceptance Criteria
+
+- First-use PHP flushes behind pending didOpen do not leak didChange to the previous workspace.
+- First-use JS/TS flushes behind pending didOpen do not leak didChange to the previous workspace.
+- Existing queued didChange guards and didOpen sequencing still pass.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "first-use PHP edits|first-use JavaScript and TypeScript edits"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP didOpen|JavaScript and TypeScript didOpen|queued PHP edits|queued JavaScript and TypeScript edits|first-use PHP edits|first-use JavaScript and TypeScript edits"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

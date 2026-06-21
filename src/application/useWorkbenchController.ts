@@ -2404,6 +2404,23 @@ export function useWorkbenchController(
         return;
       }
 
+      if (
+        !isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
+        return;
+      }
+
+      const requestedSessionId = languageServerRuntimeStatus.sessionId;
+      const requestedSyncGeneration = documentSyncGenerationRef.current;
+      const isRequestedSyncCurrent = () =>
+        documentSyncGenerationRef.current === requestedSyncGeneration &&
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
+        isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId);
+
       if (!syncedDocumentPathsRef.current.has(syncKey)) {
         const document =
           activeDocumentRef.current?.path === path
@@ -2413,10 +2430,17 @@ export function useWorkbenchController(
         if (document && isLanguageServerDocument(document)) {
           await syncOpenDocument(document);
         }
+
+        if (!isRequestedSyncCurrent()) {
+          return;
+        }
       }
 
       if (!syncedDocumentPathsRef.current.has(syncKey)) {
         await documentSyncQueuesRef.current[syncKey];
+        if (!isRequestedSyncCurrent()) {
+          return;
+        }
         return;
       }
 
@@ -2424,6 +2448,9 @@ export function useWorkbenchController(
 
       if (!pendingDocument) {
         await documentSyncQueuesRef.current[syncKey];
+        if (!isRequestedSyncCurrent()) {
+          return;
+        }
         pendingDocument = pendingDocumentChangesRef.current[syncKey];
 
         if (!pendingDocument) {
@@ -2431,17 +2458,31 @@ export function useWorkbenchController(
         }
       }
 
+      if (!isRequestedSyncCurrent()) {
+        return;
+      }
+
       clearDocumentChangeTimer(syncKey);
       delete pendingDocumentChangesRef.current[syncKey];
 
-      await enqueueDocumentSync(syncKey, () =>
-        languageServerDocumentSyncGateway.didChange(rootPath, pendingDocument),
-      );
+      await enqueueDocumentSync(syncKey, async () => {
+        if (!isRequestedSyncCurrent()) {
+          return;
+        }
+
+        await languageServerDocumentSyncGateway.didChange(
+          rootPath,
+          pendingDocument,
+        );
+      });
     },
     [
       clearDocumentChangeTimer,
       enqueueDocumentSync,
+      isLanguageServerSessionCurrentForRoot,
       languageServerDocumentSyncGateway,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
       syncOpenDocument,
     ],
   );
@@ -2470,7 +2511,12 @@ export function useWorkbenchController(
 
       const requestedSessionId =
         javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSyncGeneration =
+        javaScriptTypeScriptDocumentSyncGenerationRef.current;
       const isRequestedSessionCurrent = () =>
+        javaScriptTypeScriptDocumentSyncGenerationRef.current ===
+          requestedSyncGeneration &&
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
         isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
           rootPath,
           requestedSessionId,
@@ -2526,12 +2572,16 @@ export function useWorkbenchController(
       delete javaScriptTypeScriptPendingDocumentChangesRef.current[syncKey];
 
       try {
-        await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
-          javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
+        await enqueueJavaScriptTypeScriptDocumentSync(syncKey, async () => {
+          if (!isRequestedSessionCurrent()) {
+            return;
+          }
+
+          await javaScriptTypeScriptLanguageServerDocumentSyncGateway.didChange(
             rootPath,
             pendingDocument,
-          ),
-        );
+          );
+        });
       } catch (error) {
         if (isRequestedSessionCurrent()) {
           throw error;
