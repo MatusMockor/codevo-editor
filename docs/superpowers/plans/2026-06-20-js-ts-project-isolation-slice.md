@@ -4795,4 +4795,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Property Static Definition Miss Message Guard
 
-- Pending commit.
+- Committed as `aadd08e5 Guard PHP property static definition messages by workspace`.
