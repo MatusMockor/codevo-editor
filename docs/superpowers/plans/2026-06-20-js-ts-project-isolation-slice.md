@@ -8704,3 +8704,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Log Stack Array Channels
 
 - Committed as `1d6b5273 Support Laravel log stack channel navigation`.
+
+## Next Slice: Laravel Mail Manager Maintenance Mailer Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `f7e8b740 Record Laravel log stack commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- The initial Mail mailer slice focused on `Mail::mailer(...)` and `Mail::driver(...)`; Laravel's mail manager also exposes mailer-name maintenance calls such as `Mail::purge(...)` and `Mail::setDefaultDriver(...)`.
+- This is a tiny extension of the existing Mail mailer detector and reuses the same `mail.mailers.<mailer>` config mapping.
+
+### Implementation Choice
+
+- Add `Mail::purge(...)` and `Mail::setDefaultDriver(...)` to the supported Mail facade mailer-name calls.
+- Keep helper and notification receiver support out of scope.
+- Reuse the existing Mail completion and Go to Definition pipeline.
+
+### Verification: Laravel Mail Manager Maintenance Mailer Names
+
+- `npm test -- src/domain/phpLaravelMail.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Mail mailer names"` passed: 2 passed, 411 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpLaravelMail.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 413 passed.
+- `npm test` passed: 76 files, 1098 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Mail Manager Maintenance Mailer Names
+
+- Committed as `fa484f3e Extend Laravel mailer navigation calls`.
