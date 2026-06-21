@@ -12,6 +12,7 @@ import type {
   LanguageServerLinkedEditingRanges,
   LanguageServerLocation,
   LanguageServerRange,
+  LanguageServerSemanticTokens,
   LanguageServerWorkspaceEdit,
   LanguageServerWorkspaceEditEvent,
   LanguageServerWorkspaceEditGateway,
@@ -24,7 +25,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, code lens, inlay hint, folding range, formatting, range formatting, on type formatting and linked editing range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, code lens, inlay hint, folding range, formatting, range formatting, on type formatting, linked editing range and semantic token providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -63,6 +64,8 @@ describe("registerLanguageServerMonacoProviders", () => {
       [],
     );
     expect(registered.linkedEditingRangeLanguage).toBe("php");
+    expect(registered.documentSemanticTokensLanguage).toBe("php");
+    expect(registered.rangeSemanticTokensLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
         "quickfix",
@@ -97,6 +100,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.rangeFormattingDispose).toHaveBeenCalled();
     expect(registered.onTypeFormattingDispose).toHaveBeenCalled();
     expect(registered.linkedEditingRangeDispose).toHaveBeenCalled();
+    expect(registered.documentSemanticTokensDispose).toHaveBeenCalled();
+    expect(registered.rangeSemanticTokensDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -3309,6 +3314,232 @@ describe("registerLanguageServerMonacoProviders", () => {
     await expect(rootRangePromise).resolves.toEqual([]);
   });
 
+  it("maps PHP document semantic tokens and exposes a stable legend", async () => {
+    const registered = createRegisteredProviders();
+    const tokenData = [0, 1, 4, 12, 0, 0, 6, 5, 8, 1];
+    const gateway = featuresGateway({
+      semanticTokens: {
+        data: tokenData,
+        resultId: "full-1",
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+      }),
+    );
+
+    await expect(
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
+        model(),
+      ),
+    ).resolves.toEqual({
+      data: Uint32Array.from(tokenData),
+      resultId: "full-1",
+    });
+    expect(registered.documentSemanticTokensProvider.getLegend()).toEqual({
+      tokenModifiers: [
+        "declaration",
+        "definition",
+        "readonly",
+        "static",
+        "deprecated",
+        "abstract",
+        "async",
+        "modification",
+        "documentation",
+        "defaultLibrary",
+      ],
+      tokenTypes: [
+        "namespace",
+        "type",
+        "class",
+        "enum",
+        "interface",
+        "struct",
+        "typeParameter",
+        "parameter",
+        "variable",
+        "property",
+        "enumMember",
+        "event",
+        "function",
+        "method",
+        "macro",
+        "keyword",
+        "modifier",
+        "comment",
+        "string",
+        "number",
+        "regexp",
+        "operator",
+      ],
+    });
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.semanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+    );
+  });
+
+  it("maps PHP range semantic tokens and range", async () => {
+    const registered = createRegisteredProviders();
+    const tokenData = [0, 0, 3, 15, 0];
+    const gateway = featuresGateway({
+      rangeSemanticTokens: {
+        data: tokenData,
+        resultId: null,
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+      }),
+    );
+
+    await expect(
+      registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        model(),
+        new registered.monaco.Range(3, 2, 4, 5),
+      ),
+    ).resolves.toEqual({
+      data: Uint32Array.from(tokenData),
+    });
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      range(2, 1, 3, 4),
+    );
+  });
+
+  it("does not request PHP semantic tokens when capability is disabled", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      rangeSemanticTokens: {
+        data: [0, 0, 3, 15, 0],
+        resultId: null,
+      },
+      semanticTokens: {
+        data: [0, 1, 4, 12, 0],
+        resultId: "disabled",
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        runtimeStatus: runningStatus({ semanticTokens: false }),
+      }),
+    );
+
+    await expect(
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
+        model(),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        model(),
+        new registered.monaco.Range(3, 2, 4, 5),
+      ),
+    ).resolves.toBeNull();
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.semanticTokens).not.toHaveBeenCalled();
+    expect(gateway.rangeSemanticTokens).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP semantic token results after session or root changes", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const fullTokens = createDeferred<LanguageServerSemanticTokens | null>();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.semanticTokens).mockImplementationOnce(
+      async () => fullTokens.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const fullPromise =
+      sessionRegistered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
+        model(),
+      );
+
+    for (
+      let tick = 0;
+      tick < 5 && vi.mocked(sessionGateway.semanticTokens).mock.calls.length === 0;
+      tick += 1
+    ) {
+      await Promise.resolve();
+    }
+    expect(sessionGateway.semanticTokens).toHaveBeenCalledTimes(1);
+    activeSessionId = 2;
+    fullTokens.resolve({
+      data: [0, 1, 4, 12, 0],
+      resultId: "stale-full",
+    });
+
+    await expect(fullPromise).resolves.toBeNull();
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rangeTokens = createDeferred<LanguageServerSemanticTokens | null>();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.rangeSemanticTokens).mockImplementationOnce(
+      async () => rangeTokens.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rangePromise =
+      rootRegistered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        model(),
+        new rootRegistered.monaco.Range(3, 2, 4, 5),
+      );
+
+    for (
+      let tick = 0;
+      tick < 5 &&
+      vi.mocked(rootGateway.rangeSemanticTokens).mock.calls.length === 0;
+      tick += 1
+    ) {
+      await Promise.resolve();
+    }
+    expect(rootGateway.rangeSemanticTokens).toHaveBeenCalledTimes(1);
+    activeRoot = null;
+    rangeTokens.resolve({
+      data: [0, 0, 3, 15, 0],
+      resultId: "stale-range",
+    });
+
+    await expect(rangePromise).resolves.toBeNull();
+  });
+
   it("maps PHP linked editing ranges and wordPattern", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -6442,6 +6673,187 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(backedHint.kind).toBeUndefined();
   });
 
+  it("provides mapped PHP semantic tokens with the active runtime legend", async () => {
+    const registered = createRegisteredProviders();
+    const customLegend = {
+      tokenModifiers: ["static", "deprecated"],
+      tokenTypes: ["class", "method"],
+    };
+    const tokens: LanguageServerSemanticTokens = {
+      data: [0, 6, 4, 0, 0, 1, 2, 3, 1, 1],
+      resultId: "php-semantic-1",
+    };
+    const gateway = featuresGateway({ semanticTokens: tokens });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        runtimeStatus: runningStatus({ semanticTokensLegend: customLegend }),
+      }),
+    );
+
+    const result =
+      await registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
+        model(),
+      );
+
+    expect(registered.documentSemanticTokensProvider.getLegend()).toEqual(
+      customLegend,
+    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.semanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+    );
+    expect(result).toEqual({
+      data: Uint32Array.from(tokens.data),
+      resultId: "php-semantic-1",
+    });
+  });
+
+  it("provides mapped PHP range semantic tokens", async () => {
+    const registered = createRegisteredProviders();
+    const rangeTokens: LanguageServerSemanticTokens = {
+      data: [0, 2, 4, 8, 0, 1, 4, 3, 9, 1],
+      resultId: "php-range-semantic-1",
+    };
+    const gateway = featuresGateway({ rangeSemanticTokens: rangeTokens });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway, flushPendingDocumentChange }),
+    );
+
+    const result =
+      await registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        model(),
+        new registered.monaco.Range(2, 3, 4, 12),
+      );
+
+    expect(registered.rangeSemanticTokensProvider.getLegend()).toEqual(
+      registered.documentSemanticTokensProvider.getLegend(),
+    );
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.rangeSemanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      range(1, 2, 3, 11),
+    );
+    expect(result).toEqual({
+      data: Uint32Array.from(rangeTokens.data),
+      resultId: "php-range-semantic-1",
+    });
+  });
+
+  it("does not request PHP semantic tokens when capability is disabled", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      semanticTokens: {
+        data: [0, 1, 1, 0, 0],
+        resultId: "disabled",
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        runtimeStatus: runningStatus({ semanticTokens: false }),
+      }),
+    );
+
+    await expect(
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
+        model(),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      registered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        model(),
+        new registered.monaco.Range(1, 1, 1, 5),
+      ),
+    ).resolves.toBeNull();
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.semanticTokens).not.toHaveBeenCalled();
+    expect(gateway.rangeSemanticTokens).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP semantic token results after workspace or session changes", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const semanticTokens = createDeferred<LanguageServerSemanticTokens | null>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.semanticTokens).mockImplementationOnce(
+      async () => semanticTokens.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const tokensPromise =
+      registered.documentSemanticTokensProvider.provideDocumentSemanticTokens(
+        model(),
+      );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    semanticTokens.resolve({
+      data: [0, 1, 1, 0, 0],
+      resultId: "stale-session",
+    });
+
+    await expect(tokensPromise).resolves.toBeNull();
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rangeTokens = createDeferred<LanguageServerSemanticTokens | null>();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.rangeSemanticTokens).mockImplementationOnce(
+      async () => rangeTokens.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rangeTokensPromise =
+      rootRegistered.rangeSemanticTokensProvider.provideDocumentRangeSemanticTokens(
+        model(),
+        new rootRegistered.monaco.Range(2, 3, 4, 12),
+      );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rangeTokens.resolve({
+      data: [0, 2, 4, 8, 0],
+      resultId: "stale-root",
+    });
+
+    await expect(rangeTokensPromise).resolves.toBeNull();
+    expect(rootGateway.rangeSemanticTokens).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      range(1, 2, 3, 11),
+    );
+  });
+
 });
 
 function createRegisteredProviders() {
@@ -6452,6 +6864,7 @@ function createRegisteredProviders() {
   const definitionDispose = vi.fn();
   const documentHighlightDispose = vi.fn();
   const documentLinkDispose = vi.fn();
+  const documentSemanticTokensDispose = vi.fn();
   const documentSymbolDispose = vi.fn();
   const documentFormattingDispose = vi.fn();
   const foldingRangeDispose = vi.fn();
@@ -6461,6 +6874,7 @@ function createRegisteredProviders() {
   const linkedEditingRangeDispose = vi.fn();
   const onTypeFormattingDispose = vi.fn();
   const rangeFormattingDispose = vi.fn();
+  const rangeSemanticTokensDispose = vi.fn();
   const referenceDispose = vi.fn();
   const completionDispose = vi.fn();
   const renameDispose = vi.fn();
@@ -6492,6 +6906,9 @@ function createRegisteredProviders() {
     documentLinkDispose: ReturnType<typeof vi.fn>;
     documentLinkLanguage: string | null;
     documentLinkProvider: any;
+    documentSemanticTokensDispose: ReturnType<typeof vi.fn>;
+    documentSemanticTokensLanguage: string | null;
+    documentSemanticTokensProvider: any;
     documentSymbolDispose: ReturnType<typeof vi.fn>;
     documentSymbolLanguage: string | null;
     documentSymbolProvider: any;
@@ -6520,6 +6937,9 @@ function createRegisteredProviders() {
     rangeFormattingDispose: ReturnType<typeof vi.fn>;
     rangeFormattingLanguage: string | null;
     rangeFormattingProvider: any;
+    rangeSemanticTokensDispose: ReturnType<typeof vi.fn>;
+    rangeSemanticTokensLanguage: string | null;
+    rangeSemanticTokensProvider: any;
     referenceDispose: ReturnType<typeof vi.fn>;
     referenceLanguage: string | null;
     referenceProvider: any;
@@ -6560,6 +6980,9 @@ function createRegisteredProviders() {
     documentLinkDispose,
     documentLinkLanguage: null,
     documentLinkProvider: null,
+    documentSemanticTokensDispose,
+    documentSemanticTokensLanguage: null,
+    documentSemanticTokensProvider: null,
     documentSymbolDispose,
     documentSymbolLanguage: null,
     documentSymbolProvider: null,
@@ -6588,6 +7011,9 @@ function createRegisteredProviders() {
     rangeFormattingDispose,
     rangeFormattingLanguage: null,
     rangeFormattingProvider: null,
+    rangeSemanticTokensDispose,
+    rangeSemanticTokensLanguage: null,
+    rangeSemanticTokensProvider: null,
     referenceDispose,
     referenceLanguage: null,
     referenceProvider: null,
@@ -6728,6 +7154,16 @@ function createRegisteredProviders() {
         registered.rangeFormattingLanguage = language;
         registered.rangeFormattingProvider = provider;
         return { dispose: rangeFormattingDispose };
+      }),
+      registerDocumentRangeSemanticTokensProvider: vi.fn((language, provider) => {
+        registered.rangeSemanticTokensLanguage = language;
+        registered.rangeSemanticTokensProvider = provider;
+        return { dispose: rangeSemanticTokensDispose };
+      }),
+      registerDocumentSemanticTokensProvider: vi.fn((language, provider) => {
+        registered.documentSemanticTokensLanguage = language;
+        registered.documentSemanticTokensProvider = provider;
+        return { dispose: documentSemanticTokensDispose };
       }),
       registerDocumentSymbolProvider: vi.fn((language, provider) => {
         registered.documentSymbolLanguage = language;
@@ -6891,6 +7327,9 @@ function featuresGateway(
     rangeFormatting: Awaited<
       ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>
     >;
+    rangeSemanticTokens: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["rangeSemanticTokens"]>
+    >;
     references: LanguageServerLocation[];
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
@@ -6904,6 +7343,9 @@ function featuresGateway(
     rename: Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>;
     selectionRanges: Awaited<
       ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>
+    >;
+    semanticTokens: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["semanticTokens"]>
     >;
     signatureHelp: Awaited<
       ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>
@@ -6946,11 +7388,13 @@ function featuresGateway(
     prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
-    rangeSemanticTokens: vi.fn(async () => null),
+    rangeSemanticTokens: vi.fn(
+      async () => responses.rangeSemanticTokens ?? null,
+    ),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),
     selectionRanges: vi.fn(async () => responses.selectionRanges ?? []),
-    semanticTokens: vi.fn(async () => null),
+    semanticTokens: vi.fn(async () => responses.semanticTokens ?? null),
     signatureHelp: vi.fn(async () => responses.signatureHelp ?? null),
     sourceDefinition: vi.fn(async () => []),
     typeDefinition: vi.fn(async () => responses.typeDefinition ?? []),

@@ -18,6 +18,7 @@ import {
   type LanguageServerLocation,
   type LanguageServerRange,
   type LanguageServerSelectionRange,
+  type LanguageServerSemanticTokens,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
   type LanguageServerWorkspaceEdit,
@@ -93,6 +94,44 @@ interface ExecuteCommandPayload {
 
 const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.php.executeLanguageServerCommand";
+const PHP_SEMANTIC_TOKENS_LEGEND = {
+  tokenModifiers: [
+    "declaration",
+    "definition",
+    "readonly",
+    "static",
+    "deprecated",
+    "abstract",
+    "async",
+    "modification",
+    "documentation",
+    "defaultLibrary",
+  ],
+  tokenTypes: [
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "macro",
+    "keyword",
+    "modifier",
+    "comment",
+    "string",
+    "number",
+    "regexp",
+    "operator",
+  ],
+} satisfies Monaco.languages.SemanticTokensLegend;
 
 export interface LanguageServerMonacoProviderContext {
   applyWorkspaceEdit?: PhpWorkspaceEditApplier;
@@ -117,6 +156,7 @@ export function registerLanguageServerMonacoProviders(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
 ): Disposable {
+  const registry = monaco.languages as Partial<typeof monaco.languages>;
   let workspaceEditUnsubscribe: (() => void) | null = null;
   let workspaceEditSubscriptionDisposed = false;
   const workspaceEditSubscriptionDisposable = {
@@ -365,6 +405,21 @@ export function registerLanguageServerMonacoProviders(
           provideLinkedEditingRanges(monaco, context, model, position),
       })
     : { dispose: () => undefined };
+  const semanticTokens = registry.registerDocumentSemanticTokensProvider
+    ? registry.registerDocumentSemanticTokensProvider("php", {
+        getLegend: () => semanticTokensLegendForActiveRuntime(context),
+        provideDocumentSemanticTokens: (model) =>
+          provideDocumentSemanticTokens(context, model),
+        releaseDocumentSemanticTokens: () => undefined,
+      })
+    : { dispose: () => undefined };
+  const rangeSemanticTokens = registry.registerDocumentRangeSemanticTokensProvider
+    ? registry.registerDocumentRangeSemanticTokensProvider("php", {
+        getLegend: () => semanticTokensLegendForActiveRuntime(context),
+        provideDocumentRangeSemanticTokens: (model, range) =>
+          provideDocumentRangeSemanticTokens(context, model, range),
+      })
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -391,6 +446,8 @@ export function registerLanguageServerMonacoProviders(
       rangeFormatting.dispose();
       onTypeFormatting.dispose();
       linkedEditingRange.dispose();
+      semanticTokens.dispose();
+      rangeSemanticTokens.dispose();
     },
   };
 }
@@ -1549,6 +1606,44 @@ function onTypeFormattingTriggerCharacters(
   return triggers && triggers.length > 0 ? triggers : [];
 }
 
+function semanticTokensLegendForActiveRuntime(
+  context: LanguageServerMonacoProviderContext,
+): Monaco.languages.SemanticTokensLegend {
+  const status = context.getRuntimeStatus();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (
+    status?.kind !== "running" ||
+    !status.rootPath ||
+    !rootPath ||
+    !workspaceRootKeysEqual(status.rootPath, rootPath)
+  ) {
+    return PHP_SEMANTIC_TOKENS_LEGEND;
+  }
+
+  if (!isUsableSemanticTokensLegend(status.capabilities.semanticTokensLegend)) {
+    return PHP_SEMANTIC_TOKENS_LEGEND;
+  }
+
+  return status.capabilities.semanticTokensLegend;
+}
+
+function isUsableSemanticTokensLegend(
+  legend: unknown,
+): legend is Monaco.languages.SemanticTokensLegend {
+  if (!legend || typeof legend !== "object") {
+    return false;
+  }
+
+  const candidate = legend as Partial<Monaco.languages.SemanticTokensLegend>;
+
+  return (
+    isStringArray(candidate.tokenTypes) &&
+    candidate.tokenTypes.length > 0 &&
+    isStringArray(candidate.tokenModifiers)
+  );
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -2087,6 +2182,19 @@ function toMonacoLinkedEditingRanges(
     ...(ranges.wordPattern
       ? { wordPattern: safeRegExp(ranges.wordPattern) }
       : {}),
+  };
+}
+
+function toMonacoSemanticTokens(
+  tokens: LanguageServerSemanticTokens | null,
+): Monaco.languages.SemanticTokens | null {
+  if (!tokens || tokens.data.length === 0) {
+    return null;
+  }
+
+  return {
+    data: Uint32Array.from(tokens.data),
+    ...(tokens.resultId ? { resultId: tokens.resultId } : {}),
   };
 }
 
@@ -2632,6 +2740,70 @@ async function provideSelectionRanges(
   }
 }
 
+async function provideDocumentSemanticTokens(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+): Promise<Monaco.languages.SemanticTokens | null> {
+  const request = featureDocumentRequestContext(context, model, "semanticTokens");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const tokens = await context.featuresGateway.semanticTokens(
+      request.rootPath,
+      request.path,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    return toMonacoSemanticTokens(tokens);
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
+}
+
+async function provideDocumentRangeSemanticTokens(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+): Promise<Monaco.languages.SemanticTokens | null> {
+  const request = featureDocumentRequestContext(context, model, "semanticTokens");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const tokens = await context.featuresGateway.rangeSemanticTokens(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    return toMonacoSemanticTokens(tokens);
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
+}
+
 function phpMethodCompletionKind(
   monaco: MonacoApi,
   item: PhpMethodCompletion,
@@ -3156,6 +3328,7 @@ function featureDocumentRequestContext(
     | "references"
     | "rename"
     | "selectionRange"
+    | "semanticTokens"
     | "typeDefinition",
 ) {
   const activeDocument = context.getActiveDocument();

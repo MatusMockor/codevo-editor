@@ -7531,3 +7531,41 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS Bulk Close Session Guard
 
 - Committed as `77d15704 Guard JS TS bulk close by session`.
+
+## Next Slice: PHP Monaco Semantic Token Providers
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `eaa6ed7c Record JS TS bulk close guard commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already expose full and range semantic tokens.
+- JS/TS Monaco registers full and range semantic-token providers, but the PHP Monaco provider did not yet expose those tokens to Monaco.
+- Semantic highlighting is a visible IDE parity feature and uses the same root/session stale-result pattern as the other document-scoped providers.
+
+### Implementation Choice
+
+- Register optional PHP document and range semantic-token providers.
+- Use a stable PHP semantic-token legend and map LSP token arrays into Monaco `SemanticTokens`.
+- Reuse PHP document request context, pending change flush, capability gate, active session guard, stale result dropping, and error reporting.
+
+### Acceptance Criteria
+
+- PHP full semantic tokens route to `featuresGateway.semanticTokens` and map `data`/`resultId`.
+- PHP range semantic tokens route to `featuresGateway.rangeSemanticTokens` with a converted Monaco range.
+- Disabled capability and stale root/session responses do not call or return stale tokens.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Semantic Token Providers
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "semantic token|SemanticToken"` (9 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (124 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 968 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Pending
