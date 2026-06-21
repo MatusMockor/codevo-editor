@@ -606,6 +606,39 @@ class AlbumController
         $afterValueOrFailTerminal = Album::query()
             ->valueOrFail('title')
             ->first();
+        $afterSumTerminal = Album::query()
+            ->sum('plays')
+            ->first();
+        $afterAvgTerminal = Album::query()
+            ->avg('plays')
+            ->first();
+        $afterAverageTerminal = Album::query()
+            ->average('plays')
+            ->first();
+        $afterMinTerminal = Album::query()
+            ->min('plays')
+            ->first();
+        $afterMaxTerminal = Album::query()
+            ->max('plays')
+            ->first();
+        $afterAggregateTerminal = Album::query()
+            ->aggregate('max', ['plays'])
+            ->first();
+        $afterNumericAggregateTerminal = Album::query()
+            ->numericAggregate('avg', ['plays'])
+            ->first();
+        $afterRawValueTerminal = Album::query()
+            ->rawValue('count(*)')
+            ->first();
+        $afterExistsOrTerminal = Album::query()
+            ->existsOr(fn () => false)
+            ->first();
+        $afterDoesntExistOrTerminal = Album::query()
+            ->doesntExistOr(fn () => false)
+            ->first();
+        $afterImplodeTerminal = Album::query()
+            ->implode('title', ',')
+            ->first();
         $afterUpdateTerminal = Album::query()
             ->update(['title' => 'Blue'])
             ->first();
@@ -662,6 +695,17 @@ class AlbumController
         $afterValueTerminal->tit
         $afterSoleValueTerminal->tit
         $afterValueOrFailTerminal->tit
+        $afterSumTerminal->tit
+        $afterAvgTerminal->tit
+        $afterAverageTerminal->tit
+        $afterMinTerminal->tit
+        $afterMaxTerminal->tit
+        $afterAggregateTerminal->tit
+        $afterNumericAggregateTerminal->tit
+        $afterRawValueTerminal->tit
+        $afterExistsOrTerminal->tit
+        $afterDoesntExistOrTerminal->tit
+        $afterImplodeTerminal->tit
         $afterUpdateTerminal->tit
         $afterDeleteTerminal->tit
         $afterIncrementTerminal->tit
@@ -876,6 +920,28 @@ class AlbumController
         laravelOptions,
       ),
     ).toBeNull();
+    for (const terminalVariableName of [
+      "afterSumTerminal",
+      "afterAvgTerminal",
+      "afterAverageTerminal",
+      "afterMinTerminal",
+      "afterMaxTerminal",
+      "afterAggregateTerminal",
+      "afterNumericAggregateTerminal",
+      "afterRawValueTerminal",
+      "afterExistsOrTerminal",
+      "afterDoesntExistOrTerminal",
+      "afterImplodeTerminal",
+    ]) {
+      expect(
+        phpVariableTypeInSource(
+          source,
+          positionAfter(source, `$${terminalVariableName}->tit`),
+          terminalVariableName,
+          laravelOptions,
+        ),
+      ).toBeNull();
+    }
     expect(
       phpVariableTypeInSource(
         source,
