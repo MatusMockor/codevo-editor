@@ -16362,6 +16362,15 @@ export function useWorkbenchController(
   const canSearchClassOpenSymbols = Boolean(
     shouldIndexWorkspace(intelligenceMode) ||
       (isRunningLanguageServerForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        workspaceRoot,
+      ) &&
+        canUseLanguageServerFeature(
+          languageServerRuntimeStatus.capabilities,
+          "workspaceSymbol",
+        )) ||
+      (isRunningLanguageServerForWorkspace(
         javaScriptTypeScriptLanguageServerRuntimeStatus,
         javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
         workspaceRoot,
@@ -16383,6 +16392,52 @@ export function useWorkbenchController(
       if (shouldIndexWorkspace(intelligenceMode)) {
         searches.push(
           projectSymbolSearch.searchProjectSymbols(requestedRoot, query, limit),
+        );
+      }
+
+      if (
+        isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          requestedRoot,
+        ) &&
+        canUseLanguageServerFeature(
+          languageServerRuntimeStatus.capabilities,
+          "workspaceSymbol",
+        )
+      ) {
+        const requestedSessionId = languageServerRuntimeStatus.sessionId;
+        const isRequestedWorkspaceSymbolSessionActive = () =>
+          isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId);
+
+        searches.push(
+          languageServerFeaturesGateway
+            .workspaceSymbols(requestedRoot, query)
+            .then((symbols) => {
+              if (!isRequestedWorkspaceSymbolSessionActive()) {
+                return [];
+              }
+
+              return symbols
+                .map((symbol) =>
+                  projectSymbolFromLanguageServerWorkspaceSymbol(
+                    requestedRoot,
+                    symbol,
+                  ),
+                )
+                .filter(
+                  (symbol): symbol is ProjectSymbolSearchResult =>
+                    symbol !== null,
+                );
+            })
+            .catch((error) => {
+              if (!isRequestedWorkspaceSymbolSessionActive()) {
+                return [];
+              }
+
+              reportError("PHP Workspace Symbols", error);
+              return [];
+            }),
         );
       }
 
@@ -16445,9 +16500,13 @@ export function useWorkbenchController(
     },
     [
       intelligenceMode,
+      languageServerFeaturesGateway,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      isLanguageServerSessionActiveForRoot,
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       projectSymbolSearch,
       reportError,

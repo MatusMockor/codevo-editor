@@ -7652,3 +7652,41 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Workspace Symbol Provider
 
 - Committed as `3deaaf50 Register PHP workspace symbol provider`.
+
+## Next Slice: PHP LSP Workspace Symbols For Cmd+O
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c31071f3 Record PHP workspace symbol provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP LSP workspace symbols are now available through the gateway and Monaco provider.
+- The workbench Cmd+O/open-class workflow already uses JS/TS LSP workspace symbols in Basic mode, but PHP still depends on indexed symbols unless smart indexing is enabled.
+- Wiring PHP LSP workspace symbols into class search makes Basic-mode PHP navigation useful before the project index is available.
+
+### Implementation Choice
+
+- Extend class-open availability to include a running PHP language server with `workspaceSymbol` capability.
+- Query PHP `languageServerFeaturesGateway.workspaceSymbols(root, query)` alongside indexed symbols and JS/TS LSP symbols.
+- Reuse existing LSP workspace-symbol to project-symbol mapping, result deduplication, and root/session stale-result guards.
+
+### Acceptance Criteria
+
+- Basic-mode PHP Cmd+O/open-class can show PHP LSP workspace symbol results without project indexing.
+- Stale PHP workspace symbol errors/results after workspace-tab switch are ignored.
+- Stale PHP workspace symbol errors/results after same-root PHP session restart are ignored.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP LSP Workspace Symbols For Cmd+O
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP workspace symbols|workspace symbol errors|workspace symbol results|JavaScript and TypeScript workspace symbols"` passed: 10 passed, 344 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 354 passed.
+- `npm run check` passed.
+- `npm test` passed: 65 files, 978 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Pending

@@ -15670,6 +15670,388 @@ export abstract class BaseAdapter implements PlatformAdapter {
     });
   });
 
+  it("uses PHP workspace symbols for Cmd+O in Basic mode", async () => {
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 22,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.workspaceSymbols).mockResolvedValue([
+      {
+        containerName: "App\\Services",
+        kind: 5,
+        location: {
+          range: range(4, 13, 8, 1),
+          uri: fileUriFromPath("/workspace/app/Services/UserService.php"),
+        },
+        name: "UserService",
+      },
+      {
+        containerName: "App\\Contracts",
+        kind: 11,
+        location: {
+          range: range(1, 17, 3, 1),
+          uri: fileUriFromPath("/workspace/app/Contracts/UserRepository.php"),
+        },
+        name: "UserRepository",
+      },
+      {
+        containerName: "App\\Services\\UserService",
+        kind: 6,
+        location: {
+          range: range(5, 2, 7, 3),
+          uri: fileUriFromPath("/workspace/app/Services/UserService.php"),
+        },
+        name: "loadUser",
+      },
+    ]);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).not.toHaveBeenCalled();
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+    expect(getWorkbench().classOpenResults.map((result) => result.name)).toEqual([
+      "UserService",
+      "UserRepository",
+    ]);
+    expect(getWorkbench().classOpenResults[0]).toMatchObject({
+      kind: "class",
+      lineNumber: 5,
+      relativePath: "app/Services/UserService.php",
+    });
+  });
+
+  it("drops stale PHP workspace symbol errors after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 127,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace-a",
+      "User",
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.reject(new Error("stale PHP workspace symbols"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe(
+      "Error: stale PHP workspace symbols",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "PHP Workspace Symbols" &&
+          notice.message.includes("stale PHP workspace symbols"),
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP workspace symbol results after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 128,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace-a",
+      "User",
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.resolve([
+      {
+        containerName: "App\\Services",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace-a/app/Services/StaleUser.php"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().classOpenResults.some(
+        (result) => result.name === "StaleUser",
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP workspace symbol errors after same-root session restart", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(511)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(511)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      runtimeStatus: runningStatus(511),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+
+    act(() => {
+      publishStatus?.(runningStatus(512));
+    });
+    await flushAsyncTurns();
+
+    workspaceSymbols.reject(new Error("stale PHP workspace symbols"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().message).not.toBe(
+      "Error: stale PHP workspace symbols",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "PHP Workspace Symbols" &&
+          notice.message.includes("stale PHP workspace symbols"),
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale PHP workspace symbol results after same-root session restart", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    let publishStatus: ((status: LanguageServerRuntimeStatus) => void) | null =
+      null;
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(521)),
+      openLog: vi.fn(async () => "/tmp/phpactor-language-server.log"),
+      start: vi.fn(async () => runningStatus(521)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      languageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      languageServerRuntimeGateway,
+      runtimeStatus: runningStatus(521),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "class.quickOpen")
+        ?.run();
+      getWorkbench().setClassOpenQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(languageServerFeaturesGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/workspace",
+      "User",
+    );
+
+    act(() => {
+      publishStatus?.(runningStatus(522));
+    });
+    await flushAsyncTurns();
+
+    workspaceSymbols.resolve([
+      {
+        containerName: "App\\Services",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace/app/Services/StaleUser.php"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(
+      getWorkbench().classOpenResults.some(
+        (result) => result.name === "StaleUser",
+      ),
+    ).toBe(false);
+  });
+
   it("drops stale JavaScript and TypeScript workspace symbol errors after switching project tabs", async () => {
     const workspaceSymbols =
       createDeferred<
