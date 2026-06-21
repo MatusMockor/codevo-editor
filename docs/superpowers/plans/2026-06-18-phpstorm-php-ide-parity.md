@@ -2862,3 +2862,39 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `24aaa0cf Cover Laravel relation method fluent boundaries`.
+
+## Slice: Laravel In Random Order Builder Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e9ff87c3 Record Laravel relation fluent boundary commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize Laravel `inRandomOrder()` as a builder-preserving query helper across Eloquent and base query-builder surfaces.
+
+### Implementation Choice
+
+- Add `inRandomOrder` to Eloquent static builder and fluent builder method recognition.
+- Add `inRandomOrder` to database query-builder fluent method recognition.
+- Cover method recognition, return-type inference, and relation-method semantic inference through `$this->posts()->inRandomOrder()->first()`.
+
+### Acceptance Criteria
+
+- `inRandomOrder` is recognized as a Laravel Eloquent builder method name.
+- Eloquent builder calls through `inRandomOrder` preserve `Builder<Model>` inference.
+- Relation-method chains through `inRandomOrder()->first()` infer the related model.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`

@@ -1092,6 +1092,7 @@ class Comment extends Model
         $relationMethodFirstOrNewPost = $this->posts()->firstOrNew(['title' => 'Draft']);
         $relationMethodLatestPost = $this->posts()->latest()->first();
         $relationMethodOldestPost = $this->posts()->oldest()->first();
+        $relationMethodRandomPost = $this->posts()->inRandomOrder()->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
@@ -1142,6 +1143,7 @@ class Comment extends Model
         $relationMethodFirstOrNewPost->tit
         $relationMethodLatestPost->tit
         $relationMethodOldestPost->tit
+        $relationMethodRandomPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
@@ -1350,6 +1352,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodOldestPost->tit"),
         "relationMethodOldestPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodRandomPost->tit"),
+        "relationMethodRandomPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
