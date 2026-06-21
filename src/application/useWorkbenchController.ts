@@ -3252,7 +3252,15 @@ export function useWorkbenchController(
           previousRootPath,
         );
       } catch (error) {
+        if (!isCurrentOpenWorkspaceRequest()) {
+          return;
+        }
+
         reportError("Settings", error);
+      }
+
+      if (!isCurrentOpenWorkspaceRequest()) {
+        return;
       }
 
       let resolvedIntelligenceMode = workspaceSettings.intelligenceMode;
@@ -3261,11 +3269,24 @@ export function useWorkbenchController(
         const smartMode = await smartModeGateway.setMode(
           workspaceSettings.intelligenceMode,
         );
+
+        if (!isCurrentOpenWorkspaceRequest()) {
+          return;
+        }
+
         resolvedIntelligenceMode = smartMode.mode;
         intelligenceModeRef.current = smartMode.mode;
         setIntelligenceMode(smartMode.mode);
       } catch (error) {
+        if (!isCurrentOpenWorkspaceRequest()) {
+          return;
+        }
+
         reportError("IDE Mode", error);
+      }
+
+      if (!isCurrentOpenWorkspaceRequest()) {
+        return;
       }
 
       if (!cachedWorkspaceState?.entriesByDirectory[path]) {

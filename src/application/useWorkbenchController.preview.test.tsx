@@ -825,6 +825,58 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale workspace-open settings persistence errors after switching project tabs", async () => {
+    const workspaceASettingsSave = createDeferred<void>();
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a", "/workspace-b"],
+    };
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => appSettings),
+      loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
+      saveAppSettings: vi.fn(async (nextSettings) => {
+        if (nextSettings.recentWorkspacePath === "/workspace-a") {
+          return workspaceASettingsSave.promise;
+        }
+      }),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings,
+      settingsGateway,
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.saveAppSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ recentWorkspacePath: "/workspace-a" }),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+
+    await act(async () => {
+      workspaceASettingsSave.reject(
+        new Error("stale workspace-open settings"),
+      );
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Settings" &&
+          notice.message.includes("stale workspace-open settings"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale directory load errors after switching project tabs", async () => {
     const workspaceADirectory = createDeferred<FileEntry[]>();
     const readDirectory = vi.fn(async (path: string) => {
@@ -4870,6 +4922,68 @@ describe("useWorkbenchController preview tabs", () => {
         (notice) =>
           notice.source === "IDE Mode" &&
           notice.message.includes("stale smart mode"),
+      ),
+    ).toBe(false);
+  });
+
+  it("ignores stale workspace-open smart mode errors after switching project tabs", async () => {
+    const workspaceASmartMode =
+      createDeferred<Awaited<ReturnType<SmartModeGateway["setMode"]>>>();
+    let setModeCalls = 0;
+    const smartModeGateway: SmartModeGateway = {
+      getState: vi.fn(async () => ({
+        message: "Basic",
+        mode: "basic" as const,
+        status: "off" as const,
+      })),
+      setMode: vi.fn(async (mode) => {
+        setModeCalls += 1;
+
+        if (setModeCalls === 1) {
+          return workspaceASmartMode.promise;
+        }
+
+        return {
+          message: "Updated",
+          mode,
+          status: "ready" as const,
+        };
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      smartModeGateway,
+    });
+    await vi.waitFor(() => {
+      expect(smartModeGateway.setMode).toHaveBeenCalledWith("basic");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(smartModeGateway.setMode).toHaveBeenCalledTimes(2);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+
+    await act(async () => {
+      workspaceASmartMode.reject(new Error("stale workspace-open smart mode"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "IDE Mode" &&
+          notice.message.includes("stale workspace-open smart mode"),
       ),
     ).toBe(false);
   });
@@ -27250,6 +27364,7 @@ final class InvoiceAdapter
     searchFiles = vi.fn(async () => []),
     searchText,
     settingsGateway,
+    smartModeGateway,
     workspaceDetectionGateway,
     workspaceDescriptor,
     workspaceRuntimeLifecycleGateway,
@@ -27286,6 +27401,7 @@ final class InvoiceAdapter
       limit: number,
     ) => Promise<TextSearchResult[]>;
     settingsGateway?: SettingsGateway;
+    smartModeGateway?: SmartModeGateway;
     workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
     workspaceDescriptor?: WorkspaceDescriptor;
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
@@ -27316,6 +27432,7 @@ final class InvoiceAdapter
       searchFiles,
       searchText,
       settingsGateway,
+      smartModeGateway,
       workspaceDetectionGateway,
       workspaceDescriptor,
       workspaceRuntimeLifecycleGateway,
@@ -27405,6 +27522,7 @@ function createControllerDependencies({
   searchFiles,
   searchText,
   settingsGateway,
+  smartModeGateway,
   workspaceDetectionGateway,
   workspaceDescriptor,
   workspaceRuntimeLifecycleGateway,
@@ -27441,6 +27559,7 @@ function createControllerDependencies({
     limit: number,
   ): Promise<TextSearchResult[]>;
   settingsGateway?: SettingsGateway;
+  smartModeGateway?: SmartModeGateway;
   workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
@@ -27614,18 +27733,19 @@ function createControllerDependencies({
         saveAppSettings: vi.fn(async () => undefined),
         saveWorkspaceSettings: vi.fn(async () => undefined),
       },
-    smartModeGateway: {
-      getState: vi.fn(async () => ({
-        message: "Basic",
-        mode: "basic" as const,
-        status: "off" as const,
-      })),
-      setMode: vi.fn(async (mode) => ({
-        message: "Updated",
-        mode,
-        status: "ready" as const,
-      })),
-    },
+    smartModeGateway:
+      smartModeGateway ?? {
+        getState: vi.fn(async () => ({
+          message: "Basic",
+          mode: "basic" as const,
+          status: "off" as const,
+        })),
+        setMode: vi.fn(async (mode) => ({
+          message: "Updated",
+          mode,
+          status: "ready" as const,
+        })),
+      },
     terminalGateway: {
       listProfiles: vi.fn(async () => []),
       resize: vi.fn(async () => undefined),

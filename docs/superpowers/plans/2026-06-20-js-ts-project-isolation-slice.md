@@ -4796,3 +4796,49 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Property Static Definition Miss Message Guard
 
 - Committed as `aadd08e5 Guard PHP property static definition messages by workspace`.
+
+## Next Slice: Workspace Open Follow-Up Request Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5f27b7bc Record PHP property static definition guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 837 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- The workspace-open request token already stopped stale requests before root publication.
+- After root publication, the same `openWorkspacePath` request still awaited app settings persistence, background runtime cleanup, and smart-mode activation.
+- If the user switched project tabs during those awaits, the stale request could report `Settings` or `IDE Mode` errors into the new active workspace, or apply the old smart-mode result.
+
+### Implementation Choice
+
+- Reuse `openWorkspaceRequestTokenRef` for the follow-up awaits inside `openWorkspacePath`.
+- Drop stale settings/runtime persistence errors before reporting.
+- Drop stale smart-mode completions and errors before applying mode state or reporting.
+- Add preview regressions for pending workspace-open settings persistence and pending workspace-open smart-mode activation.
+
+### Acceptance Criteria
+
+- Stale workspace-open settings persistence failures do not create active-workspace `Settings` notices.
+- Stale workspace-open smart-mode failures do not create active-workspace `IDE Mode` notices.
+- Stale workspace-open smart-mode completions do not apply to the newly active workspace.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Workspace Open Follow-Up Request Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace-open settings|workspace-open smart mode|workspace settings load|stale smart mode errors|stale directory load"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace tab|project tab|Settings|workspace settings|smart mode|IDE Mode|directory load"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 839 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Workspace Open Follow-Up Request Guard
+
+- Pending commit.
