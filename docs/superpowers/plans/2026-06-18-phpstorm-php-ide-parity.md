@@ -6775,4 +6775,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `fb43de80 Cover same-root JavaScript TypeScript navigation staleness`.
