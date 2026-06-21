@@ -18028,6 +18028,21 @@ class Comment
           {
             classmapRoots: [],
             dev: false,
+            installPath: "../laravel/framework",
+            name: "laravel/framework",
+            packageType: "library",
+            psr4Roots: [
+              {
+                dev: false,
+                namespace: "Illuminate\\",
+                paths: ["src/Illuminate/"],
+              },
+            ],
+            version: "13.0.0",
+          },
+          {
+            classmapRoots: [],
+            dev: false,
             installPath: "../shared/package",
             name: "shared/package",
             packageType: "library",
@@ -27756,6 +27771,137 @@ class Builder
         source: "phpactor",
       },
     ]);
+  });
+
+  it("stops stale Laravel dynamic where completion traversal after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace-a/app/Models/Comment.php";
+    const packageCommentPath =
+      "/workspace-a/vendor/shared/package/src/Models/Comment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function index(): void
+    {
+        $foundComment = Comment::whereContent('hello')->first();
+        $foundComment->getC
+    }
+}
+`;
+    const commentSource = `<?php
+namespace App\\Models;
+
+class Comment
+{
+    protected $fillable = [
+        'content',
+    ];
+
+    public function getContent(): string {}
+}
+`;
+    const staleDynamicWhereRead = createDeferred<string>();
+    let commentReadCount = 0;
+    let packageCommentReadCount = 0;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          commentReadCount += 1;
+          return commentReadCount === 1
+            ? staleDynamicWhereRead.promise
+            : commentSource;
+        }
+
+        if (path === packageCommentPath) {
+          packageCommentReadCount += 1;
+          return commentSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        packageName: "app/app",
+        packages: [
+          {
+            classmapRoots: [],
+            dev: false,
+            installPath: "../laravel/framework",
+            name: "laravel/framework",
+            packageType: "library",
+            psr4Roots: [
+              {
+                dev: false,
+                namespace: "Illuminate\\",
+                paths: ["src/Illuminate/"],
+              },
+            ],
+            version: "13.0.0",
+          },
+          {
+            classmapRoots: [],
+            dev: false,
+            installPath: "../shared/package",
+            name: "shared/package",
+            packageType: "library",
+            psr4Roots: [
+              {
+                dev: false,
+                namespace: "App\\",
+                paths: ["src/"],
+              },
+            ],
+            version: "1.0.0",
+          },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$foundComment->getC"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(commentReadCount).toBe(1);
+    });
+    const packageReadsBeforeSwitch = packageCommentReadCount;
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleDynamicWhereRead.resolve(commentSource);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(packageCommentReadCount).toBe(packageReadsBeforeSwitch);
   });
 
   it("does not expose Laravel dynamic where helpers in plain Composer projects", async () => {

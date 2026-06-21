@@ -7373,7 +7373,16 @@ export function useWorkbenchController(
       className: string,
       options: { isStatic?: boolean } = {},
     ): Promise<PhpMethodCompletion[]> => {
-      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (
+        !isLaravelFrameworkActive ||
+        !requestedRoot ||
+        !requestedDescriptor?.php
+      ) {
         return [];
       }
 
@@ -7386,17 +7395,29 @@ export function useWorkbenchController(
       const completions = new Map<string, PhpMethodCompletion>();
 
       for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         try {
           const { content } = await readPhpClassMembersFromPath(
             path,
             normalizedClassName,
           );
 
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           for (const method of phpLaravelDynamicWhereCompletionsFromSource(
             content,
             normalizedClassName,
             options,
           )) {
+            if (!isRequestedRootActive()) {
+              return [];
+            }
+
             const key = method.name.toLowerCase();
 
             if (!completions.has(key)) {
@@ -7404,8 +7425,16 @@ export function useWorkbenchController(
             }
           }
         } catch {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           continue;
         }
+      }
+
+      if (!isRequestedRootActive()) {
+        return [];
       }
 
       return Array.from(completions.values());
