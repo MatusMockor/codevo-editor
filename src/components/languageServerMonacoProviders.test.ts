@@ -18,7 +18,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action and selection range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range and rename providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -38,6 +38,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.signatureLanguage).toBe("php");
     expect(registered.codeActionLanguage).toBe("php");
     expect(registered.selectionRangeLanguage).toBe("php");
+    expect(registered.renameLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
         "quickfix",
@@ -56,6 +57,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.signatureDispose).toHaveBeenCalled();
     expect(registered.codeActionDispose).toHaveBeenCalled();
     expect(registered.selectionRangeDispose).toHaveBeenCalled();
+    expect(registered.renameDispose).toHaveBeenCalled();
   });
 
   it("does not request hover when the provider capability is disabled", async () => {
@@ -2835,6 +2837,307 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("maps PHP prepare rename range and placeholder", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      prepareRename: {
+        defaultBehavior: false,
+        placeholder: "$account",
+        range: range(10, 4, 10, 9),
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.renameProvider.resolveRenameLocation(model(), position()),
+    ).resolves.toEqual({
+      range: expect.objectContaining({
+        endColumn: 10,
+        endLineNumber: 11,
+        startColumn: 5,
+        startLineNumber: 11,
+      }),
+      text: "$account",
+    });
+    expect(gateway.prepareRename).toHaveBeenCalledWith("/project", {
+      character: 4,
+      line: 10,
+      path: "/project/src/User.php",
+    });
+  });
+
+  it("uses PHP default rename location when the language server requests default behavior", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      prepareRename: {
+        defaultBehavior: true,
+        placeholder: null,
+        range: null,
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.renameProvider.resolveRenameLocation(
+        model({
+          word: {
+            endColumn: 6,
+            startColumn: 2,
+            word: "user",
+          },
+        }),
+        position(),
+      ),
+    ).resolves.toEqual({
+      range: {
+        endColumn: 6,
+        endLineNumber: 11,
+        startColumn: 2,
+        startLineNumber: 11,
+      },
+      text: "user",
+    });
+  });
+
+  it("maps PHP rename workspace edits for in-root files", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      rename: workspaceEdit("file:///project/src/User.php", "$account"),
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.renameProvider.provideRenameEdits(
+        model(),
+        position(),
+        "$account",
+      ),
+    ).resolves.toEqual({
+      edits: [
+        {
+          resource: {
+            fsPath: "/project/src/User.php",
+            path: "/project/src/User.php",
+          },
+          textEdit: {
+            range: expect.objectContaining({
+              endColumn: 1,
+              endLineNumber: 1,
+              startColumn: 1,
+              startLineNumber: 1,
+            }),
+            text: "$account",
+          },
+          versionId: 42,
+        },
+      ],
+    });
+    expect(gateway.rename).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 4,
+        line: 10,
+        path: "/project/src/User.php",
+      },
+      "$account",
+    );
+  });
+
+  it("routes PHP rename workspace edits through the workspace applier", async () => {
+    const registered = createRegisteredProviders();
+    const openPath = "/project/src/User.php";
+    const openUri = "file:///project/src/User.php";
+    const closedUri = "file:///project/src/Helper.php";
+    const outsideUri = "file:///other/src/Outside.php";
+    const openModel = {
+      ...model({ path: openPath }),
+      pushEditOperations: vi.fn(),
+    };
+    const edit: LanguageServerWorkspaceEdit = {
+      changes: {
+        ...workspaceEdit(openUri, "$account").changes,
+        ...workspaceEdit(closedUri, "$helper").changes,
+        ...workspaceEdit(outsideUri, "$outside").changes,
+      },
+    };
+    const gateway = featuresGateway({ rename: edit });
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([openModel]);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+      }),
+    );
+
+    await expect(
+      registered.renameProvider.provideRenameEdits(
+        model(),
+        position(),
+        "$account",
+      ),
+    ).resolves.toEqual({ edits: [] });
+    expect(openModel.pushEditOperations).toHaveBeenCalledWith(
+      [],
+      [
+        {
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 1,
+            startColumn: 1,
+            startLineNumber: 1,
+          }),
+          text: "$account",
+        },
+      ],
+      expect.any(Function),
+    );
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      {
+        changes: {
+          ...workspaceEdit(openUri, "$account").changes,
+          ...workspaceEdit(closedUri, "$helper").changes,
+        },
+      },
+      {
+        editedOpenPaths: [openPath],
+        rootPath: "/project",
+      },
+    );
+  });
+
+  it("drops stale PHP prepare rename and suppresses stale errors after same-root session restart", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const prepareRename = createDeferred<
+      Awaited<ReturnType<LanguageServerFeaturesGateway["prepareRename"]>>
+    >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.prepareRename).mockImplementationOnce(
+      async () => prepareRename.promise,
+    );
+    const reportError = vi.fn();
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const renameLocationPromise = registered.renameProvider.resolveRenameLocation(
+      model(),
+      position(),
+    );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    prepareRename.reject(new Error("Cannot rename stale symbol."));
+
+    await expect(renameLocationPromise).resolves.toBeNull();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP rename edits and suppresses stale errors after same-root session restart", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const rename = createDeferred<
+      Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>
+    >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.rename).mockImplementationOnce(async () => rename.promise);
+    const reportError = vi.fn();
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const renameEditsPromise = registered.renameProvider.provideRenameEdits(
+      model(),
+      position(),
+      "$account",
+    );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    rename.reject(new Error("Cannot rename stale symbol."));
+
+    await expect(renameEditsPromise).resolves.toBeNull();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP rename after switching project tabs", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rename = createDeferred<
+      Awaited<ReturnType<LanguageServerFeaturesGateway["rename"]>>
+    >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.rename).mockImplementationOnce(async () => rename.promise);
+    const reportError = vi.fn();
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+      reportError,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const renameEditsPromise = registered.renameProvider.provideRenameEdits(
+      model(),
+      position(),
+      "$account",
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rename.resolve(workspaceEdit("file:///project/src/User.php", "$account"));
+
+    await expect(renameEditsPromise).resolves.toBeNull();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("does not return outside-root PHP rename edits", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      rename: {
+        changes: {
+          ...workspaceEdit("file:///project/src/User.php", "$account").changes,
+          ...workspaceEdit("file:///other/src/Outside.php", "$outside").changes,
+        },
+      },
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.renameProvider.provideRenameEdits(
+        model(),
+        position(),
+        "$account",
+      ),
+    ).resolves.toEqual({
+      edits: [
+        expect.objectContaining({
+          resource: {
+            fsPath: "/project/src/User.php",
+            path: "/project/src/User.php",
+          },
+        }),
+      ],
+    });
+  });
+
 });
 
 function createRegisteredProviders() {
@@ -2842,6 +3145,7 @@ function createRegisteredProviders() {
   const commandDispose = vi.fn();
   const hoverDispose = vi.fn();
   const completionDispose = vi.fn();
+  const renameDispose = vi.fn();
   const selectionRangeDispose = vi.fn();
   const signatureDispose = vi.fn();
   const registered: {
@@ -2858,6 +3162,9 @@ function createRegisteredProviders() {
     hoverLanguage: string | null;
     hoverProvider: any;
     monaco: any;
+    renameDispose: ReturnType<typeof vi.fn>;
+    renameLanguage: string | null;
+    renameProvider: any;
     selectionRangeDispose: ReturnType<typeof vi.fn>;
     selectionRangeLanguage: string | null;
     selectionRangeProvider: any;
@@ -2878,6 +3185,9 @@ function createRegisteredProviders() {
     hoverLanguage: null,
     hoverProvider: null,
     monaco: null,
+    renameDispose,
+    renameLanguage: null,
+    renameProvider: null,
     selectionRangeDispose,
     selectionRangeLanguage: null,
     selectionRangeProvider: null,
@@ -2941,6 +3251,11 @@ function createRegisteredProviders() {
         registered.hoverLanguage = language;
         registered.hoverProvider = provider;
         return { dispose: hoverDispose };
+      }),
+      registerRenameProvider: vi.fn((language, provider) => {
+        registered.renameLanguage = language;
+        registered.renameProvider = provider;
+        return { dispose: renameDispose };
       }),
       registerSelectionRangeProvider: vi.fn((language, provider) => {
         registered.selectionRangeLanguage = language;
@@ -3028,6 +3343,9 @@ function featuresGateway(
     formatting: Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>;
     hover: LanguageServerHover | null;
     inlayHints: Awaited<ReturnType<LanguageServerFeaturesGateway["inlayHints"]>>;
+    prepareRename: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["prepareRename"]>
+    >;
     references: LanguageServerLocation[];
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
@@ -3073,7 +3391,7 @@ function featuresGateway(
     onTypeFormatting: vi.fn(async () => []),
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),
-    prepareRename: vi.fn(async () => null),
+    prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     prepareTypeHierarchy: vi.fn(async () => []),
     rangeFormatting: vi.fn(async () => []),
     rangeSemanticTokens: vi.fn(async () => null),
@@ -3233,7 +3551,7 @@ function model(
     content: string;
     lineContent: string;
     path: string;
-    word: { endColumn: number; startColumn: number };
+    word: { endColumn: number; startColumn: number; word?: string };
   }> = {},
 ) {
   return {
@@ -3245,7 +3563,13 @@ function model(
       throw new Error("model source unavailable");
     }),
     getLineContent: vi.fn(() => overrides.lineContent ?? "$user"),
+    getValueInRange: vi.fn(() => "$user"),
     getVersionId: vi.fn(() => 42),
+    getWordAtPosition: vi.fn(() => ({
+      endColumn: overrides.word?.endColumn ?? 5,
+      startColumn: overrides.word?.startColumn ?? 2,
+      word: overrides.word?.word ?? "$user",
+    })),
     getWordUntilPosition: vi.fn(() => overrides.word ?? {
       endColumn: 5,
       startColumn: 2,

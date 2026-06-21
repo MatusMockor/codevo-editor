@@ -6574,3 +6574,52 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Queued didOpen Workspace-Tab Guard
 
 - Committed as `37660507 Guard queued LSP didOpen by workspace`.
+
+## Next Slice: PHP Monaco Rename Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `17321a76 Record queued didOpen guard commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP LSP prepare-rename and rename commands already exist in the frontend gateway and Tauri backend.
+- Backend filtering, versioned workspace edits, provider session stamping, and PHP workspace applier wiring are already hardened.
+- The Monaco PHP provider did not register a rename provider, so users could not invoke PhpStorm-like symbol rename from the editor.
+
+### Implementation Choice
+
+- Register a PHP `renameProvider` alongside hover, completion, signature help, code actions, and selection ranges.
+- Reuse the existing PHP feature request context, pending document flush, root/session re-checks, stale error suppression, workspace-root edit filtering, and workspace applier path.
+- Map `prepareRename` range/placeholder results to Monaco and honor server `defaultBehavior` using the word under the cursor.
+- Route rename workspace edits through the controller workspace applier when present so closed-file edits are persisted; fall back to Monaco workspace edits otherwise.
+
+### Acceptance Criteria
+
+- PHP rename provider is registered and disposed.
+- PHP prepare-rename maps explicit range/placeholder and supports default rename behavior.
+- PHP rename maps in-root workspace edits.
+- PHP rename with the workspace applier updates open models and persists closed-file edits while dropping outside-root edits.
+- Stale root/session prepare-rename and rename results/errors are dropped.
+- Focused PHP provider tests, full PHP provider tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Rename Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "rename|PHP rename|same-root session restart"` (13 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (61 tests)
+- PASS: `npm test -- src/components/EditorSurface.test.tsx` (18 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 891 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Rename Provider
+
+- Pending commit after full frontend verification.
+
+## Next Candidate Slice: JS/TS Resolve Capability Advertisement
+
+- JS/TS audit found that the TypeScript initialize payload under-advertises already-supported resolve fields.
+- Smallest follow-up: advertise `textEdits` and `label.command` in `textDocument.inlayHint.resolveSupport.properties`, then cover the initialize payload with Rust tests.

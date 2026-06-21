@@ -204,6 +204,14 @@ export function registerLanguageServerMonacoProviders(
     provideSelectionRanges: (model, positions) =>
       provideSelectionRanges(monaco, context, model, positions),
   });
+  const rename = monaco.languages.registerRenameProvider
+    ? monaco.languages.registerRenameProvider("php", {
+        provideRenameEdits: (model, position, newName) =>
+          provideRenameEdits(monaco, context, model, position, newName),
+        resolveRenameLocation: (model, position) =>
+          prepareRename(monaco, context, model, position),
+      })
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -214,7 +222,132 @@ export function registerLanguageServerMonacoProviders(
       signature.dispose();
       codeActions.dispose();
       selectionRange.dispose();
+      rename.dispose();
     },
+  };
+}
+
+async function prepareRename(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<(Monaco.languages.RenameLocation & Monaco.languages.Rejection) | null> {
+  const request = featureRequestContext(context, model, position, "prepareRename");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const prepareRename = await context.featuresGateway.prepareRename(
+      request.rootPath,
+      request.position,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    if (!prepareRename?.range || prepareRename.defaultBehavior) {
+      return defaultRenameLocation(model, position);
+    }
+
+    const range = toMonacoRange(monaco, prepareRename.range);
+
+    return {
+      range,
+      text: prepareRename.placeholder ?? model.getValueInRange(range),
+    };
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
+}
+
+async function provideRenameEdits(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  newName: string,
+): Promise<Monaco.languages.WorkspaceEdit | null> {
+  const request = featureRequestContext(context, model, position, "rename");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const edit = await context.featuresGateway.rename(
+      request.rootPath,
+      request.position,
+      newName,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    if (!edit) {
+      return null;
+    }
+
+    if (context.applyWorkspaceEdit) {
+      await applyWorkspaceEditWithOpenModels(
+        monaco,
+        context,
+        edit,
+        request.rootPath,
+      );
+
+      if (!isFeatureRequestActive(context, request)) {
+        return null;
+      }
+
+      return { edits: [] };
+    }
+
+    return toMonacoWorkspaceEdit(
+      monaco,
+      workspaceEditContext(model),
+      edit,
+      request.rootPath,
+    );
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
+}
+
+function defaultRenameLocation(
+  model: MonacoModel,
+  position: MonacoPosition,
+): (Monaco.languages.RenameLocation & Monaco.languages.Rejection) | null {
+  const word = model.getWordAtPosition(position);
+
+  if (!word) {
+    return {
+      rejectReason: "Cannot rename this symbol.",
+    } as Monaco.languages.RenameLocation & Monaco.languages.Rejection;
+  }
+
+  return {
+    range: {
+      endColumn: word.endColumn,
+      endLineNumber: position.lineNumber,
+      startColumn: word.startColumn,
+      startLineNumber: position.lineNumber,
+    },
+    text: word.word,
   };
 }
 
@@ -1629,7 +1762,7 @@ function featureRequestContext(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
-  feature: "completion" | "hover",
+  feature: "completion" | "hover" | "prepareRename" | "rename",
 ) {
   const request = featureDocumentRequestContext(context, model, feature);
 
@@ -1646,7 +1779,13 @@ function featureRequestContext(
 function featureDocumentRequestContext(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
-  feature: "codeAction" | "completion" | "hover" | "selectionRange",
+  feature:
+    | "codeAction"
+    | "completion"
+    | "hover"
+    | "prepareRename"
+    | "rename"
+    | "selectionRange",
 ) {
   const activeDocument = context.getActiveDocument();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
