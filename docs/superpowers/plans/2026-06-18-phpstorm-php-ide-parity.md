@@ -3391,3 +3391,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `8c278184 Recognize Laravel having query helpers`.
+
+## Slice: Laravel Lock Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `00a49a98 Record Laravel having helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize Laravel lock helper variants as builder-preserving methods.
+
+### Implementation Choice
+
+- Add `lock`, `lockForUpdate`, and `sharedLock` to Eloquent static/fluent builder recognition.
+- Add missing `lockForUpdate` to base query-builder recognition while preserving existing `lock` and `sharedLock` support.
+- Cover classifier behavior, Eloquent builder return-type preservation, and relation-method semantic inference through a lock helper chain ending in `first()`.
+
+### Acceptance Criteria
+
+- Lock helper variants are recognized as Laravel Eloquent builder method names.
+- Base query-builder classifiers recognize the same fluent lock helpers.
+- Eloquent builder calls through these helpers preserve `Builder<Model>` inference.
+- Relation-method chains through these helpers infer the related model after `first()`.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "raw query builder|local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending implementation commit.

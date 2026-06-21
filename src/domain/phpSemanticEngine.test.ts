@@ -1095,6 +1095,7 @@ class Comment extends Model
         $relationMethodRandomPost = $this->posts()->inRandomOrder()->first();
         $relationMethodDescendingPost = $this->posts()->orderByDesc('created_at')->first();
         $relationMethodReorderedPost = $this->posts()->reorder('created_at')->first();
+        $relationMethodLockedPost = $this->posts()->lock()->lockForUpdate()->sharedLock()->first();
         $relationMethodRawFilteredPost = $this->posts()
             ->selectRaw('posts.*')
             ->whereRaw('published = 1')
@@ -1243,6 +1244,7 @@ class Comment extends Model
         $relationMethodRandomPost->tit
         $relationMethodDescendingPost->tit
         $relationMethodReorderedPost->tit
+        $relationMethodLockedPost->tit
         $relationMethodRawFilteredPost->tit
         $relationMethodExistsFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
@@ -1484,6 +1486,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodReorderedPost->tit"),
         "relationMethodReorderedPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodLockedPost->tit"),
+        "relationMethodLockedPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
