@@ -6340,4 +6340,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `2f142c95 Guard stale Laravel morph map search`.
