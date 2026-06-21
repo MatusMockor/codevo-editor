@@ -12685,6 +12685,7 @@ class CommentController
     expect(getWorkbench().activePath).not.toBe(targetPath);
     expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
     expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().message ?? "").not.toContain("No typed target found");
   });
 
   it("drops stale contextual PHP property targets after switching project tabs", async () => {

@@ -11715,6 +11715,10 @@ export function useWorkbenchController(
         return false;
       }
 
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        !requestedRoot ||
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
       const position =
         activeEditorPositionRef.current ?? { column: 1, lineNumber: 1 };
       const receiverType = await resolvePhpExpressionType(
@@ -11722,6 +11726,11 @@ export function useWorkbenchController(
         position,
         context.receiverExpression || `$${context.variableName}`,
       );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       const variableType = context.variableName
         ? phpParameterTypeForVariable(
             activeDocument.content,
@@ -11742,7 +11751,9 @@ export function useWorkbenchController(
         : null;
 
       if (frameworkHint) {
-        return openPhpMethodHintTarget(frameworkHint);
+        const hintTargetOpened = await openPhpMethodHintTarget(frameworkHint);
+
+        return isRequestedRootActive() && hintTargetOpened;
       }
 
       if (resolvedVariableType) {
@@ -11750,6 +11761,10 @@ export function useWorkbenchController(
           resolvedVariableType,
           context.methodName,
         );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
 
         if (directTargetOpened) {
           return true;
@@ -11766,27 +11781,48 @@ export function useWorkbenchController(
             builderReceiverExpression,
           )
         : null;
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       const builderScopeMethodName =
         isLaravelFrameworkActive && builderModelType
           ? phpLaravelScopeMethodName(context.methodName)
           : null;
 
-      if (
-        builderModelType &&
-        builderScopeMethodName &&
-        (await openDirectPhpMethodTarget(builderModelType, builderScopeMethodName))
-      ) {
-        return true;
+      if (builderModelType && builderScopeMethodName) {
+        const scopeTargetOpened = await openDirectPhpMethodTarget(
+          builderModelType,
+          builderScopeMethodName,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (scopeTargetOpened) {
+          return true;
+        }
       }
 
-      if (
-        builderModelType &&
-        (await openPhpLaravelDynamicWhereTarget(
+      if (builderModelType) {
+        const dynamicWhereTargetOpened = await openPhpLaravelDynamicWhereTarget(
           builderModelType,
           context.methodName,
-        ))
-      ) {
-        return true;
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (dynamicWhereTargetOpened) {
+          return true;
+        }
+      }
+
+      if (!isRequestedRootActive()) {
+        return false;
       }
 
       setMessage(
@@ -11802,6 +11838,7 @@ export function useWorkbenchController(
       isLaravelFrameworkActive,
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
+      workspaceRoot,
     ],
   );
 

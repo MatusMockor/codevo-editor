@@ -4705,3 +4705,48 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Workspace Settings Load Request Guard
 
 - Committed as `760c863d Guard workspace settings load by open request`.
+
+## Next Slice: PHP Method Definition Miss Message Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0b839775 Record workspace settings load guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 837 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- A read-only audit found that `goToPhpMethodCallDefinition` awaited root-sensitive PHP helpers without checking that the original workspace tab was still active.
+- The direct target opener already refused stale navigation after a tab switch.
+- After that refusal, the outer callback could still set a stale `No typed target found ...` message in the newly active workspace.
+
+### Implementation Choice
+
+- Snapshot the requested workspace root at the start of `goToPhpMethodCallDefinition`.
+- Add active-root checks after awaited receiver, direct target, builder model, scope, and dynamic-where resolution.
+- Return before setting the miss message when the command belongs to an inactive project tab.
+- Extend the existing stale contextual PHP method target regression to assert that no stale miss message appears.
+
+### Acceptance Criteria
+
+- Stale contextual PHP method go-to-definition requests do not open targets from inactive tabs.
+- Stale contextual PHP method go-to-definition requests do not set miss messages in the active tab.
+- Existing indexed and contextual go-to-definition tests remain green.
+- Focused/broader/full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Method Definition Miss Message Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "contextual PHP method targets|contextual PHP property targets|contextual PHP static method targets|No typed target"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "go to definition|Go to Definition|definition|contextual PHP|indexed go to definition"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Method Definition Miss Message Guard
+
+- Pending commit.
