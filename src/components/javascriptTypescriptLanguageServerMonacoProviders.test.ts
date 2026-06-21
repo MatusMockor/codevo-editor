@@ -1357,6 +1357,49 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight TypeScript selection ranges when no project tab is active", async () => {
+    const monaco = createMonaco();
+    let activeRoot: string | null = "/project";
+    const selectionRanges =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["selectionRanges"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.selectionRanges).mockImplementationOnce(
+      async () => selectionRanges.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const selectionRangeProvider = (
+      monaco.languages.registerSelectionRangeProvider as any
+    ).mock.calls[0][1];
+    const selectionRangesPromise = selectionRangeProvider.provideSelectionRanges(
+      textModel(),
+      [{ column: 12, lineNumber: 4 }],
+    );
+
+    await Promise.resolve();
+    activeRoot = null;
+    selectionRanges.resolve([
+      {
+        parent: null,
+        range: range(3, 8, 3, 20),
+      },
+    ]);
+
+    await expect(selectionRangesPromise).resolves.toBeNull();
+    expect(gateway.selectionRanges).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/user.ts",
+      [{ character: 11, line: 3 }],
+    );
+  });
+
   it("uses the runtime semantic token legend and maps tokens through the language server", async () => {
     const monaco = createMonaco();
     const customLegend = {
