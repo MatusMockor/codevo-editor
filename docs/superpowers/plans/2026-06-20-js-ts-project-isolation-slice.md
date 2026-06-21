@@ -8349,3 +8349,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Typed Config Repository Calls
 
 - Committed as `8fc8ee7e Support Laravel typed config keys`.
+
+## Next Slice: Laravel View Factory Preview Coverage
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5b038fa9 Record Laravel typed config commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- The Laravel view parser already recognizes common factory forms beyond `view(...)`, including `View::make(...)`, `view()->make(...)`, `response()->view(...)`, and `View::exists(...)`.
+- The workbench preview layer only had user-facing coverage for `view(...)` and `Route::view(...)`, so regressions in completion/navigation wiring for factory calls could slip through even though the domain parser stayed green.
+
+### Implementation Choice
+
+- Add preview completion coverage for `View::make('comments.sh')` and `response()->view('dashb')`.
+- Add preview Go to Definition coverage proving `View::make('comments.show')` opens the Blade file before LSP fallback.
+- Keep production code unchanged unless the new preview regression exposes a wiring gap.
+
+### Acceptance Criteria
+
+- Laravel view factory completions return local Blade/PHP view targets with correct insert text.
+- Laravel view factory Go to Definition opens the local view before LSP fallback.
+- Existing Laravel view helper and stale-tab behavior remain unchanged.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel View Factory Preview Coverage
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Blade views|view factory"` passed: 5 passed, 395 skipped.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 400 passed.
+- `npm test` passed: 69 files, 1055 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel View Factory Preview Coverage
+
+- Committed as `ddcc57c7 Cover Laravel view factory navigation`.
