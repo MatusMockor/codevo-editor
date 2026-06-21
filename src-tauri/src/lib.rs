@@ -2700,6 +2700,55 @@ fn javascript_typescript_workspace_did_rename_files(
 }
 
 #[tauri::command]
+fn text_document_will_rename_files(
+    root_path: String,
+    old_path: String,
+    new_path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<Option<LanguageServerWorkspaceEdit>, String> {
+    ensure_lsp_path_in_workspace(&root_path, &old_path)?;
+    ensure_lsp_path_in_workspace(&root_path, &new_path)?;
+
+    let factory = LspTextDocumentFeatureRequestFactory;
+    let request = factory.will_rename_files(&[WorkspaceFileRename { old_path, new_path }]);
+    let Some(result) = registry.send_request(&root_path, &request.method, request.params)? else {
+        return Ok(None);
+    };
+
+    filter_optional_lsp_workspace_edit_to_workspace(
+        &root_path,
+        parse_optional_workspace_edit_result(&result)?,
+    )
+}
+
+#[tauri::command]
+fn workspace_did_rename_files(
+    root_path: String,
+    old_path: String,
+    new_path: String,
+    registry: State<'_, PhpLanguageServerRegistry>,
+) -> Result<(), String> {
+    ensure_lsp_path_in_workspace(&root_path, &old_path)?;
+    ensure_lsp_path_in_workspace(&root_path, &new_path)?;
+
+    registry.send_notification(
+        &root_path,
+        &JsonRpcNotification {
+            jsonrpc: "2.0".to_string(),
+            method: "workspace/didRenameFiles".to_string(),
+            params: json!({
+                "files": [
+                    {
+                        "oldUri": file_uri(Path::new(&old_path)),
+                        "newUri": file_uri(Path::new(&new_path)),
+                    }
+                ],
+            }),
+        },
+    )
+}
+
+#[tauri::command]
 fn javascript_typescript_workspace_did_change_watched_files(
     root_path: String,
     changes: Vec<WorkspaceFileChange>,
@@ -5096,6 +5145,8 @@ pub fn run() {
             text_document_type_hierarchy_subtypes,
             text_document_type_hierarchy_supertypes,
             text_document_type_definition,
+            text_document_will_rename_files,
+            workspace_did_rename_files,
             upsert_workspace_index_file,
             workspace_symbols,
             write_terminal_input,

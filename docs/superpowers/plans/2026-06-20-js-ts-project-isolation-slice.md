@@ -6807,3 +6807,80 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS Completion Item Tag Support Advertisement
 
 - Committed as `02416e43 Advertise TypeScript completion item tags`.
+
+## Next Slice: PHP File Rename Backend Command Parity
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e5e0fa23 Record TypeScript completion tag support commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- The frontend PHP feature gateway exposes `willRenameFiles` and `didRenameFiles` command names.
+- The Tauri backend currently has JS/TS file rename command implementations, but PHP lacks matching commands.
+- Adding backend parity is the smallest safe step toward PhpStorm-like PHP file rename hooks before wiring the controller flow.
+
+### Implementation Choice
+
+- Add PHP `text_document_will_rename_files` using the existing LSP file-rename request factory, workspace path guards, response parsing, and workspace edit filtering.
+- Add PHP `workspace_did_rename_files` using the existing `workspace/didRenameFiles` notification payload shape.
+- Register both commands in the Tauri invoke handler.
+
+### Acceptance Criteria
+
+- PHP feature gateway command names resolve to backend Tauri commands.
+- Old and new paths are guarded to the active workspace root.
+- Returned workspace edits are filtered to the workspace root.
+- Focused Rust tests, `rustfmt --check`, and `git diff --check` pass.
+
+### Verification: PHP File Rename Backend Command Parity
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml will_rename_files --lib --quiet` (1 test)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml workspace_did_rename_files --lib --quiet` (0 matching tests, lib target compiled)
+- PASS: `rustfmt --check --config skip_children=true src-tauri/src/lib.rs`
+- PASS: `git diff --check`
+
+### Commit Status: PHP File Rename Backend Command Parity
+
+- Pending commit after verification.
+
+## Next Slice: JS/TS Completion InsertTextMode Capability Advertisement
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e5e0fa23 Record TypeScript completion tag support commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- The app already parses completion `insertTextMode` and maps it to Monaco's whitespace-preserving completion behavior.
+- The TypeScript initialize payload does not yet advertise `completionItem.insertTextModeSupport`.
+- Advertising the already-supported metadata improves VS Code-like completion fidelity without changing routing or workspace state.
+
+### Implementation Choice
+
+- Add `textDocument.completion.completionItem.insertTextModeSupport.valueSet: [1, 2]` to TypeScript initialization.
+- Extend the existing TypeScript initialize payload regression.
+- Keep PHP initialization unchanged.
+
+### Acceptance Criteria
+
+- TypeScript initialization advertises both supported insert text modes.
+- Existing completion metadata parser coverage remains green.
+- Focused Rust tests, full relevant suites, `rustfmt --check`, and `git diff --check` pass.
+
+### Verification: JS/TS Completion InsertTextMode Capability Advertisement
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib --quiet` (1 test)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_features::tests::parses_completion_list_and_array_variants --lib --quiet` (1 test)
+- PASS: `rustfmt --check src-tauri/src/lsp.rs`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Completion InsertTextMode Capability Advertisement
+
+- Pending commit after verification.
