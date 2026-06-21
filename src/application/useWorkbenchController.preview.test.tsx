@@ -4240,6 +4240,14 @@ describe("useWorkbenchController preview tabs", () => {
       "/workspace",
     );
     expect(getWorkbench().phpTree.nodes).toHaveLength(1);
+    act(() => {
+      getWorkbench().setQuickOpenOpen(true);
+      getWorkbench().setQuickOpenQuery("User");
+      getWorkbench().setClassOpenOpen(true);
+      getWorkbench().setClassOpenQuery("Service");
+      getWorkbench().setTextSearchOpen(true);
+      getWorkbench().setTextSearchQuery("needle");
+    });
 
     await act(async () => {
       await getWorkbench().closeWorkspaceTab("/workspace");
@@ -4258,6 +4266,15 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().workspaceTabs).toEqual([]);
     expect(getWorkbench().phpTree.nodes).toEqual([]);
     expect(getWorkbench().phpTreeLoading).toBe(false);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+    expect(getWorkbench().quickOpenQuery).toBe("");
+    expect(getWorkbench().quickOpenLoading).toBe(false);
+    expect(getWorkbench().classOpenOpen).toBe(false);
+    expect(getWorkbench().classOpenQuery).toBe("");
+    expect(getWorkbench().classOpenLoading).toBe(false);
+    expect(getWorkbench().textSearchOpen).toBe(false);
+    expect(getWorkbench().textSearchQuery).toBe("");
+    expect(getWorkbench().textSearchLoading).toBe(false);
     expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
       expect.objectContaining({
         recentWorkspacePath: null,
