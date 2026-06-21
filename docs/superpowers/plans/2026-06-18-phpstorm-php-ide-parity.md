@@ -4806,3 +4806,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `bcc02a6b Cover morph map constants in workbench completions`.
+
+## Slice: Laravel Morph Map Array Constant Aliases - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `de38bad8 Record morph map workbench completion commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Resolve Laravel `morphTo()` fallback targets when `Relation::morphMap()` receives a class constant that aliases another local morph-map array constant.
+
+### Implementation Choice
+
+- Add semantic coverage for `Relation::morphMap(self::ACTIVE_MORPH_MAP)` where `ACTIVE_MORPH_MAP = self::MORPH_MAP`.
+- Extend `phpLaravelMorphMapArrayConstantBody` to recursively resolve class-constant map aliases.
+- Track visited `Class::CONSTANT` keys to prevent recursive alias cycles from hanging inference.
+- Preserve existing inline arrays, direct array constants, class-string constant values, and ambiguous morphTo behavior.
+
+### Acceptance Criteria
+
+- `private const ACTIVE_MORPH_MAP = self::MORPH_MAP` resolves through `Relation::morphMap(self::ACTIVE_MORPH_MAP)`.
+- `$comment->commentable`, `$this->morphTo()->first()`, and `$comment->commentable->...` infer `App\Models\Post` when the aliased map has one target.
+- Recursive constant lookup stops safely on already-visited constants.
+- Focused morph-map tests, full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- FAIL then fixed: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morph map array constant aliases"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morph map"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `5914c381 Resolve morph map array constant aliases`.
