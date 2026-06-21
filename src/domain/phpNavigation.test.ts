@@ -353,10 +353,15 @@ class CommentController
     public function show(Comment $comment): void
     {
         $comment->load('children');
+        $comment->loadCount('loadedChildren');
+        $comment->loadAggregate('aggregateChildren', 'votes', 'sum');
         Comment::with('parent')->first();
+        Comment::withCount('countedChildren')->first();
+        Comment::withExists('existingChildren')->first();
         Comment::with('children.parent')->first();
         Comment::query()->whereHas('attachments', fn ($query) => $query);
         Comment::query()->withWhereHas('eagerAttachments', fn ($query) => $query);
+        Comment::query()->withSum('summedChildren', 'votes');
         Comment::query()->whereRelation('children', 'is_visible', true);
         Comment::query()->orWhereRelation('visibleChildren', 'is_visible', true);
         Comment::query()->withWhereRelation('eagerVisibleChildren', 'is_visible', true);
@@ -389,6 +394,24 @@ class CommentController
       relationName: "children",
     });
     expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'loadedChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "loadCount",
+      receiverExpression: "$comment",
+      relationName: "loadedChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'aggregateChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "loadAggregate",
+      receiverExpression: "$comment",
+      relationName: "aggregateChildren",
+    });
+    expect(
       phpIdentifierContextAt(source, positionAfter(source, "'parent'")),
     ).toEqual({
       className: "Comment",
@@ -396,6 +419,24 @@ class CommentController
       methodName: "with",
       receiverExpression: null,
       relationName: "parent",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'countedChildren'")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "withCount",
+      receiverExpression: null,
+      relationName: "countedChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'existingChildren'")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "withExists",
+      receiverExpression: null,
+      relationName: "existingChildren",
     });
     expect(
       phpIdentifierContextAt(source, positionAfter(source, "'attachments'")),
@@ -414,6 +455,15 @@ class CommentController
       methodName: "withWhereHas",
       receiverExpression: "Comment::query()",
       relationName: "eagerAttachments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'summedChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "withSum",
+      receiverExpression: "Comment::query()",
+      relationName: "summedChildren",
     });
     expect(
       phpIdentifierContextAt(source, positionAfter(source, "children.parent")),
@@ -731,10 +781,13 @@ class CommentController
     public function show(Comment $comment): void
     {
         $comment->load('children');
+        $comment->loadCount('loadedChi');
         Comment::with('parent');
+        Comment::withCount('countedChi');
         Comment::with('children.parent');
         Comment::query()->whereHas('attachments', fn ($query) => $query);
         Comment::query()->withWhereHas('eagerAtt', fn ($query) => $query);
+        Comment::query()->withSum('summedChi', 'votes');
         Comment::query()->whereRelation('children', 'is_visible', true);
         Comment::query()->orWhereRelation('visibleChi', 'is_visible', true);
         Comment::query()->withWhereRelation('eagerVisibleChi', 'is_visible', true);
@@ -776,12 +829,34 @@ class CommentController
     expect(
       phpLaravelRelationStringCompletionContextAt(
         source,
+        cursorAfter(source, "loadCount('loadedChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "loadCount",
+      prefix: "loadedChi",
+      receiverExpression: "$comment",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
         cursorAfter(source, "Comment::with('par"),
       ),
     ).toEqual({
       className: "Comment",
       methodName: "with",
       prefix: "par",
+      receiverExpression: null,
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "withCount('countedChi"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      methodName: "withCount",
+      prefix: "countedChi",
       receiverExpression: null,
     });
     expect(
@@ -804,6 +879,17 @@ class CommentController
       className: null,
       methodName: "withWhereHas",
       prefix: "eagerAtt",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "withSum('summedChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "withSum",
+      prefix: "summedChi",
       receiverExpression: "Comment::query()",
     });
     expect(

@@ -6974,3 +6974,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `76adcc70 Cover Laravel withWhereHas relation strings`.
+
+## Slice: Laravel Aggregate Relation String Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e9904a61 Record Laravel withWhereHas relation string commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down Laravel relation-string navigation and completion for aggregate eager-loading helpers.
+
+### Implementation Choice
+
+- Add context coverage for `loadCount`, `loadAggregate`, `withCount`, `withExists`, and `withSum`.
+- Add completion-context coverage for `loadCount`, `withCount`, and `withSum`.
+- Keep this slice coverage-only because these helpers already participate in the relation-string method allowlist.
+
+### Acceptance Criteria
+
+- Aggregate eager-loading helper first arguments resolve as Laravel relation strings.
+- Completion context preserves the correct method name, prefix, receiver expression, and static class receiver where applicable.
+- Non-relation second arguments remain ignored by existing tests.
+- Focused/full navigation tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts -t "Laravel relation string"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
