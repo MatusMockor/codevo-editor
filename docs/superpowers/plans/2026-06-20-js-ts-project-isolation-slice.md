@@ -7608,4 +7608,6 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test` (65 files, 970 tests)
 - PASS: `git diff --check`
 
-### Commit Status: Pending
+### Commit Status: PHP Provider Refresh Events
+
+- Committed as `9566fc65 Wire PHP provider refresh events`.
