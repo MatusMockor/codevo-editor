@@ -7168,4 +7168,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Document Highlight Provider
 
-- Pending commit after verification.
+- Committed as `957d60d2 Register PHP document highlight provider`.
