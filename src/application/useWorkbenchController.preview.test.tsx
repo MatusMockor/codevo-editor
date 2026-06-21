@@ -763,6 +763,50 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale directory load errors after switching project tabs", async () => {
+    const workspaceADirectory = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace-a") {
+        return workspaceADirectory.promise;
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory,
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledWith("/workspace-a");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledWith("/workspace-b");
+    });
+
+    await act(async () => {
+      workspaceADirectory.reject(new Error("stale directory load"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Workspace" &&
+          notice.message.includes("stale directory load"),
+      ),
+    ).toBe(false);
+  });
+
   it("treats trailing-separator project tabs as the active workspace", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {

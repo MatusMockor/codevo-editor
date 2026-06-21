@@ -2731,6 +2731,10 @@ export function useWorkbenchController(
 
       try {
         const entries = await workspaceFiles.readDirectory(path);
+        if (!workspacePathBelongsToRoot(path, currentWorkspaceRootRef.current)) {
+          return;
+        }
+
         setEntriesByDirectory((current) => ({
           ...current,
           [path]: entries,
@@ -2739,6 +2743,10 @@ export function useWorkbenchController(
           setMessage(null);
         }
       } catch (error) {
+        if (!workspacePathBelongsToRoot(path, currentWorkspaceRootRef.current)) {
+          return;
+        }
+
         reportError("Workspace", error);
       } finally {
         setLoadingDirectories((current) => {
@@ -14031,6 +14039,24 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
   }
 
   return path;
+}
+
+function workspacePathBelongsToRoot(
+  path: string,
+  workspaceRoot: string | null | undefined,
+): boolean {
+  const normalizedRoot = normalizedWorkspaceRootKey(workspaceRoot);
+  const normalizedPath = normalizedWorkspaceRootKey(path);
+
+  if (!normalizedRoot) {
+    return false;
+  }
+
+  return (
+    normalizedPath === normalizedRoot ||
+    normalizedPath.startsWith(`${normalizedRoot}/`) ||
+    normalizedPath.startsWith(`${normalizedRoot}\\`)
+  );
 }
 
 function projectSymbolFromLanguageServerWorkspaceSymbol(
