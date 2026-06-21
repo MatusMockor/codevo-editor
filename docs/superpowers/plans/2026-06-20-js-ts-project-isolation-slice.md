@@ -5720,3 +5720,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Workspace Settings Clear Reset Guard
 
 - Committed as `8f369f44 Reset workspace settings on last tab close`.
+
+## Next Slice: Diagnostics Clear Workspace Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a3a7fb41 Record workspace settings reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 852 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Opening a workspace cleared PHP and JavaScript/TypeScript diagnostics, but clearing the active workspace did not.
+- Closing the last project tab could leave stale PHP or JS/TS diagnostics in the no-workspace controller state.
+- That violated the tab-isolation goal because diagnostics are workspace-scoped runtime/LSP output.
+
+### Implementation Choice
+
+- Reuse the existing PHP and JS/TS diagnostic clear helpers from `clearActiveWorkspace`.
+- Keep the JavaScript/TypeScript diagnostics root cache reset in the same clear path.
+- Add a regression that seeds both PHP and TypeScript diagnostics, closes the only project tab, and asserts the merged diagnostics map is empty.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears PHP diagnostics.
+- Closing the last project tab clears JavaScript/TypeScript diagnostics.
+- Existing diagnostic switching, stale subscription, and workspace reset guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Diagnostics Clear Workspace Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (319 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 853 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Diagnostics Clear Workspace Reset Guard
+
+- Committed as `ab16f338 Clear diagnostics on workspace reset`.
