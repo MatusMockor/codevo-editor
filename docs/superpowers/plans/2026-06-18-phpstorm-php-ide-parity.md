@@ -7692,4 +7692,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `f0d99857 Cover PHP didSave same-root restart staleness`.
