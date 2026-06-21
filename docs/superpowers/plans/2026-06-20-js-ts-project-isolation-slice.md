@@ -4110,3 +4110,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Provider Lazy Code Action Root Guard Coverage
 
 - Committed as `5156e711 Cover PHP lazy code action runtime roots`.
+
+## Next Slice: PHP Provider Completion Rootless Runtime Coverage
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5eec9001 Record project morph map completion commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP completion already had direct coverage for a running runtime status owned by another workspace root.
+- Hover, code actions, lazy code actions, and selection ranges had rootless runtime guard coverage.
+- Completion used the same shared request gate, but did not have a focused regression proving a rootless running PHP runtime cannot flush the active document or ask the PHP LSP for completions.
+
+### Implementation Choice
+
+- Add a rootless PHP completion regression next to the existing mismatched-root completion test.
+- Keep local PHP variable completions available while proving no LSP completion request or document flush occurs.
+- Keep the slice coverage-only because the shared provider guard already enforces the runtime root contract.
+
+### Acceptance Criteria
+
+- Rootless PHP runtime status does not trigger LSP completion requests.
+- Rootless PHP runtime status does not flush pending PHP document changes for completion.
+- Local PHP variable completions remain available.
+- Focused/full PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Provider Completion Rootless Runtime Coverage
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "does not request completion when the PHP runtime status"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Provider Completion Rootless Runtime Coverage
+
+- Committed as `cd7d6431 Cover PHP completion rootless runtime`.
