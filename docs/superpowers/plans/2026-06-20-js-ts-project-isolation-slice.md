@@ -4399,4 +4399,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JavaScript TypeScript Provider Same-Root Response Coverage
 
-- Pending commit.
+- Committed as `6c0caa84 Cover JavaScript TypeScript provider same-root responses`.
