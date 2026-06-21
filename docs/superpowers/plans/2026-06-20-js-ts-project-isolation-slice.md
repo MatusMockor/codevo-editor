@@ -3949,3 +3949,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Command Runtime Workspace Gates
 
 - Committed as `3e1045b4 Gate PHP runtime commands by workspace`.
+
+## Next Slice: App IDE Activity Runtime Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5eaf9d13 Record PHP command runtime gate commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Runtime labels in `App.tsx` already pass the active workspace root into `languageServerStatusLabel(...)`.
+- The status-bar IDE activity state still inspected raw PHP and JS/TS runtime `kind` values without checking whether those statuses belonged to the active workspace.
+- A stale, rootless, or mismatched active runtime status should not make the active workspace status bar look active, scanning, or problematic.
+
+### Implementation Choice
+
+- Thread `workspaceRoot` into the App IDE activity helpers.
+- Add a small runtime-kind helper that ignores runtime statuses without a matching explicit root when a workspace root is active.
+- Export the pure helper for focused unit coverage instead of rendering the full app.
+
+### Acceptance Criteria
+
+- Rootless or mismatched runtime statuses do not drive the active workspace IDE activity state.
+- Rooted matching runtime statuses still drive active/scanning/problem status-bar state.
+- Focused App/StatusBar tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: App IDE Activity Runtime Root Guard
+
+- PASS: `npm test -- src/App.test.ts`
+- PASS: `npm test -- src/App.test.ts src/components/StatusBar.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`

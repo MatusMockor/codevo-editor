@@ -50,6 +50,7 @@ import {
 } from "./domain/settings";
 import { javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
 import type { IntelligenceMode } from "./domain/workspace";
+import { workspaceRootKeysEqual } from "./domain/workspaceRootKey";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import {
@@ -360,6 +361,7 @@ function App() {
   const ideActivity = useMemo(
     () =>
       ideActivityStatus(
+        workbench.workspaceRoot,
         workbench.languageServerRuntimeStatus,
         workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
         workbench.indexProgress,
@@ -370,6 +372,7 @@ function App() {
       workbench.indexProgress,
       workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
       workbench.languageServerRuntimeStatus,
+      workbench.workspaceRoot,
     ],
   );
   const monacoTheme = useMemo(
@@ -936,7 +939,8 @@ function smartModeSummary(
   return "IDE setup needed";
 }
 
-function ideActivityStatus(
+export function ideActivityStatus(
+  workspaceRoot: string | null,
   phpRuntimeStatus: LanguageServerRuntimeStatus | null,
   javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
   indexProgress: IndexProgressState,
@@ -954,6 +958,7 @@ function ideActivityStatus(
   return {
     label: `IDE: ${labels.join(" · ")}`,
     state: ideActivityState(
+      workspaceRoot,
       phpRuntimeStatus,
       javaScriptTypeScriptRuntimeStatus,
       indexProgress,
@@ -990,14 +995,24 @@ function compactIndexActivityLabel(progress: IndexProgressState): string | null 
   return `Index ${progress.indexedFiles} files${suffix}`;
 }
 
-function ideActivityState(
+export function ideActivityState(
+  workspaceRoot: string | null,
   phpRuntimeStatus: LanguageServerRuntimeStatus | null,
   javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null,
   indexProgress: IndexProgressState,
 ): IdeActivityState {
+  const phpRuntimeKind = runtimeStatusKindForWorkspace(
+    phpRuntimeStatus,
+    workspaceRoot,
+  );
+  const javaScriptTypeScriptRuntimeKind = runtimeStatusKindForWorkspace(
+    javaScriptTypeScriptRuntimeStatus,
+    workspaceRoot,
+  );
+
   if (
-    phpRuntimeStatus?.kind === "crashed" ||
-    javaScriptTypeScriptRuntimeStatus?.kind === "crashed" ||
+    phpRuntimeKind === "crashed" ||
+    javaScriptTypeScriptRuntimeKind === "crashed" ||
     indexProgress.status === "failed" ||
     indexProgress.erroredEntries > 0
   ) {
@@ -1005,22 +1020,41 @@ function ideActivityState(
   }
 
   if (
-    phpRuntimeStatus?.kind === "starting" ||
-    javaScriptTypeScriptRuntimeStatus?.kind === "starting" ||
+    phpRuntimeKind === "starting" ||
+    javaScriptTypeScriptRuntimeKind === "starting" ||
     indexProgress.status === "scanning"
   ) {
     return "scanning";
   }
 
   if (
-    phpRuntimeStatus?.kind === "running" ||
-    javaScriptTypeScriptRuntimeStatus?.kind === "running" ||
+    phpRuntimeKind === "running" ||
+    javaScriptTypeScriptRuntimeKind === "running" ||
     indexProgress.status === "completed"
   ) {
     return "active";
   }
 
   return "idle";
+}
+
+function runtimeStatusKindForWorkspace(
+  status: LanguageServerRuntimeStatus | null,
+  workspaceRoot: string | null,
+): LanguageServerRuntimeStatus["kind"] | null {
+  if (!status) {
+    return null;
+  }
+
+  if (!workspaceRoot) {
+    return status.kind;
+  }
+
+  if (!status.rootPath || !workspaceRootKeysEqual(status.rootPath, workspaceRoot)) {
+    return null;
+  }
+
+  return status.kind;
 }
 
 function indexToolbarLabel(progress: IndexProgressState): string {
