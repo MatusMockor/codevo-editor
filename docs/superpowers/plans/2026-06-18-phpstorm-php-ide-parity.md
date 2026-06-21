@@ -5417,3 +5417,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `c722dd0b Stop stale inherited PHP structure reads`.
+
+## Slice: Stale PHP Method Provider Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d3846043 Record stale inherited PHP structure read guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP method completion and signature provider results from being returned after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested workspace root at the start of `providePhpMethodCompletions` and `providePhpMethodSignature`.
+- Return an empty completion list or `null` signature when the active workspace root changes during async provider work.
+- Check the guard after named-route, relation, static method, receiver method, and signature method resolution awaits.
+- Add a preview regression where a delayed service class read is interrupted by switching from `/workspace-a` to `/workspace-b`, proving the stale method completion resolves to `[]`.
+
+### Acceptance Criteria
+
+- PHP method completions do not return stale results after tab switch.
+- PHP method signatures share the same root guard.
+- Existing PHP semantic completion behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP method completions"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `ac3f8326 Guard stale PHP method provider results`.
