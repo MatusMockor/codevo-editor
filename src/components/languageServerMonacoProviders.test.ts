@@ -150,6 +150,38 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight PHP hover when no project tab is active", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const hover = createDeferred<LanguageServerHover | null>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    const context = providerContext({
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const hoverPromise = registered.hoverProvider.provideHover(
+      model(),
+      position(),
+    );
+
+    await Promise.resolve();
+    activeRoot = null;
+    hover.resolve({ contents: "**Stale user**" });
+
+    await expect(hoverPromise).resolves.toBeNull();
+    expect(gateway.hover).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 4,
+        line: 10,
+        path: "/project/src/User.php",
+      },
+    );
+  });
+
   it("maps completion responses to Monaco suggestions", async () => {
     const registered = createRegisteredProviders();
     const source = phpCompletionFixtureSource();

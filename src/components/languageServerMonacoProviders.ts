@@ -610,10 +610,19 @@ async function provideHover(
 
   try {
     await context.flushPendingDocumentChange(request.path);
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
+
     const hover = await context.featuresGateway.hover(
       request.rootPath,
       request.position,
     );
+
+    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+      return null;
+    }
 
     if (!hover) {
       return null;
@@ -623,7 +632,9 @@ async function provideHover(
       contents: [{ value: hover.contents }],
     };
   } catch (error) {
-    context.reportError(error);
+    if (isStoredWorkspaceRootActive(context, request.rootPath)) {
+      context.reportError(error);
+    }
     return null;
   }
 }
