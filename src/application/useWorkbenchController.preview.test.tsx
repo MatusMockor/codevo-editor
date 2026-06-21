@@ -3920,6 +3920,102 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).not.toBe("Soft reindex started.");
   });
 
+  it("ignores stale smart mode completions after switching project tabs", async () => {
+    const smartModeUpdate =
+      createDeferred<Awaited<ReturnType<SmartModeGateway["setMode"]>>>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.smartModeGateway.setMode).mockImplementationOnce(
+      async () => smartModeUpdate.promise,
+    );
+
+    let modePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      modePromise = getWorkbench().setSmartMode("fullSmart");
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+        "fullSmart",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      smartModeUpdate.resolve({
+        message: "Workspace A mode ready",
+        mode: "fullSmart",
+        status: "ready",
+      });
+      await modePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+    expect(getWorkbench().workspaceSettings.intelligenceMode).toBe("basic");
+    expect(getWorkbench().message).not.toBe("Workspace A mode ready");
+  });
+
+  it("ignores stale smart mode errors after switching project tabs", async () => {
+    const smartModeUpdate =
+      createDeferred<Awaited<ReturnType<SmartModeGateway["setMode"]>>>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.smartModeGateway.setMode).mockImplementationOnce(
+      async () => smartModeUpdate.promise,
+    );
+
+    let modePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      modePromise = getWorkbench().setSmartMode("fullSmart");
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+        "fullSmart",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      smartModeUpdate.reject(new Error("stale smart mode"));
+      await modePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "IDE Mode" &&
+          notice.message.includes("stale smart mode"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores index clear errors after switching project tabs", async () => {
     const indexClear =
       createDeferred<

@@ -5025,7 +5025,8 @@ export function useWorkbenchController(
 
   const setSmartMode = useCallback(
     async (mode: IntelligenceMode) => {
-      if (!workspaceRoot) {
+      const requestedRoot = workspaceRoot;
+      if (!requestedRoot) {
         return;
       }
 
@@ -5036,42 +5037,49 @@ export function useWorkbenchController(
       try {
         const previousMode = intelligenceMode;
         const state = await smartModeGateway.setMode(mode);
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+
         const nextMode = state.mode;
 
         if (shouldStartLanguageServer(previousMode) && !shouldStartLanguageServer(nextMode)) {
-          await stopLanguageServerRuntime();
+          await stopLanguageServerRuntime(requestedRoot);
         }
 
         if (!shouldStartLanguageServer(previousMode) && shouldStartLanguageServer(nextMode)) {
           autoStartedLanguageServerRootRef.current = null;
           delete phpLanguageServerAutostartAttemptsByRootRef.current[
-            normalizedWorkspaceRootKey(workspaceRoot)
+            normalizedWorkspaceRootKey(requestedRoot)
           ];
         }
 
         intelligenceModeRef.current = nextMode;
         setIntelligenceMode(nextMode);
-        await persistWorkspaceSettings(workspaceRoot, {
+        await persistWorkspaceSettings(requestedRoot, {
           ...workspaceSettingsRef.current,
           intelligenceMode: nextMode,
         });
-
-        if (shouldIndexWorkspace(nextMode)) {
-          setMessage(state.message);
-          await startInitialIndexScan(workspaceRoot);
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
-        await clearWorkspaceIndex(workspaceRoot, state.message);
+        if (shouldIndexWorkspace(nextMode)) {
+          setMessage(state.message);
+          await startInitialIndexScan(requestedRoot);
+          return;
+        }
+
+        await clearWorkspaceIndex(requestedRoot, state.message);
       } catch (error) {
-        reportError("IDE Mode", error);
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "IDE Mode", error);
       }
     },
     [
       clearWorkspaceIndex,
       intelligenceMode,
       persistWorkspaceSettings,
-      reportError,
+      reportErrorForActiveWorkspaceRoot,
       smartModeGateway,
       startInitialIndexScan,
       stopLanguageServerRuntime,
