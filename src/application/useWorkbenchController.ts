@@ -10032,7 +10032,12 @@ export function useWorkbenchController(
 
   const openDirectPhpMethodTarget = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
-      if (!workspaceRoot) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
         return false;
       }
 
@@ -10041,10 +10046,15 @@ export function useWorkbenchController(
 
       if (shouldIndexWorkspace(intelligenceMode)) {
         const symbols = await projectSymbolSearch.searchProjectSymbols(
-          workspaceRoot,
+          requestedRoot,
           methodName,
           50,
         );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         const target = symbols.find(
           (symbol) =>
             symbol.kind === "method" &&
@@ -10053,6 +10063,10 @@ export function useWorkbenchController(
         );
 
         if (target) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           return openNavigationTarget(
             target.path,
             editorPositionFromProjectSymbol(target),
@@ -10061,7 +10075,7 @@ export function useWorkbenchController(
         }
       }
 
-      if (!workspaceDescriptor?.php) {
+      if (!requestedDescriptor?.php) {
         return false;
       }
 
@@ -10076,16 +10090,33 @@ export function useWorkbenchController(
           return false;
         }
 
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         visitedClassNames.add(visitedKey);
 
         for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           try {
             const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
             const position =
               phpMethodPositionOrNull(content, methodName) ??
               phpDocMethodPositionOrNull(content, methodName);
 
             if (position) {
+              if (!isRequestedRootActive()) {
+                return false;
+              }
+
               return openNavigationTarget(path, position, `${methodName}()`);
             }
 
@@ -10131,6 +10162,10 @@ export function useWorkbenchController(
               }
             }
           } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
             continue;
           }
         }
@@ -10144,6 +10179,10 @@ export function useWorkbenchController(
 
       const boundConcreteClassName =
         await resolvePhpFrameworkBoundConcrete(className);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
 
       return boundConcreteClassName
         ? openMethodInClassHierarchy(boundConcreteClassName)
