@@ -574,3 +574,43 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `410a3bb5 Guard PHP signature help after workspace loss`.
+
+### Slice: PHP Code Action Active Workspace Loss Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5163d811 Record PHP signature root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent stale PHP LSP code actions from returning after the active project tab closes while the code action request is in flight.
+
+#### Implementation Choice
+
+- Convert `provideCodeActions` to async control flow so it can re-check the captured root after pending document flush and again after the LSP code-action response resolves.
+- Return only local code actions when the captured root is no longer active.
+- Suppress stale LSP code-action errors once the request root is inactive.
+- Add a regression that starts code actions under `/project`, clears the active workspace root before the delayed LSP response, and verifies no LSP actions reach Monaco.
+
+#### Acceptance Criteria
+
+- In-flight PHP LSP code actions are dropped after `getWorkspaceRoot()` becomes `null`.
+- Local quickfix fallback behavior remains available when no LSP request can be made.
+- Existing LSP code-action mapping and wrong-root guards still pass.
+- Generic PHP provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "drops in-flight PHP LSP code actions when no project tab is active|requests LSP code actions and maps edits, commands and diagnostics"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `0b4247e5 Guard PHP code actions after workspace loss`.
