@@ -7575,4 +7575,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `c2760fc1 Guard queued PHP didChange across workspace switches`.
