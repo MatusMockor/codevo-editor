@@ -5733,4 +5733,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `915ab10f Guard stale Laravel named route targets`.
