@@ -13795,6 +13795,212 @@ class User
     ]);
   });
 
+  it("refreshes Laravel morph map completions after editing service provider files", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const commentPath = "/workspace/app/Models/Comment.php";
+    const postPath = "/workspace/app/Models/Post.php";
+    const providerPath = "/workspace/app/Providers/AppServiceProvider.php";
+    const userPath = "/workspace/app/Models/User.php";
+    const commentModelSource = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+
+class Comment extends Model
+{
+    public function mappedOwner(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+`;
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $owner = $comment->mappedOwner()->first();
+        $owner->get
+    }
+}
+`;
+    const userProviderSource = `<?php
+namespace App\\Providers;
+
+use App\\Models\\User;
+use Illuminate\\Database\\Eloquent\\Relations\\Relation;
+
+class AppServiceProvider
+{
+    public function boot(): void
+    {
+        Relation::morphMap([
+            'owner' => User::class,
+        ]);
+    }
+}
+`;
+    const postProviderSource = `<?php
+namespace App\\Providers;
+
+use App\\Models\\Post;
+use Illuminate\\Database\\Eloquent\\Relations\\Relation;
+
+class AppServiceProvider
+{
+    public function boot(): void
+    {
+        Relation::morphMap([
+            'owner' => Post::class,
+        ]);
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: [
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Comment",
+          kind: "class",
+          lineNumber: 6,
+          name: "Comment",
+          path: commentPath,
+          relativePath: "app/Models/Comment.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\Post",
+          kind: "class",
+          lineNumber: 5,
+          name: "Post",
+          path: postPath,
+          relativePath: "app/Models/Post.php",
+        },
+        {
+          column: 7,
+          containerName: null,
+          fullyQualifiedName: "App\\Models\\User",
+          kind: "class",
+          lineNumber: 5,
+          name: "User",
+          path: userPath,
+          relativePath: "app/Models/User.php",
+        },
+      ],
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === commentPath) {
+          return commentModelSource;
+        }
+
+        if (path === providerPath) {
+          return userProviderSource;
+        }
+
+        if (path === postPath) {
+          return `<?php
+namespace App\\Models;
+
+class Post
+{
+    public function getTitle(): string {}
+}
+`;
+        }
+
+        if (path === userPath) {
+          return `<?php
+namespace App\\Models;
+
+class User
+{
+    public function getName(): string {}
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root: string, query: string, _limit: number) =>
+        query.includes("morphMap") ? [
+          {
+            column: 19,
+            lineText: "        Relation::morphMap([",
+            lineNumber: 10,
+            path: providerPath,
+            relativePath: "app/Providers/AppServiceProvider.php",
+          },
+        ] : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$owner->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        name: "getName",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(providerPath, "AppServiceProvider.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument(postProviderSource);
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$owner->get"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Post",
+        name: "getTitle",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+  });
+
   it("opens Laravel relation methods from relation-name strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const commentPath = "/workspace/app/Models/Comment.php";

@@ -5282,6 +5282,9 @@ export function useWorkbenchController(
       }
 
       pinDocument(activeDocument.path);
+      if (activeDocument.language === "php") {
+        phpLaravelMorphMapModelTypeCacheRef.current = {};
+      }
       setDocuments((current) => ({
         ...current,
         [activeDocument.path]: {
