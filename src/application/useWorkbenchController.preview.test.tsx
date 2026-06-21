@@ -4283,6 +4283,39 @@ describe("useWorkbenchController preview tabs", () => {
   });
 
   it("clears the workbench and stops runtime when the last project tab closes", async () => {
+    let publishMetadataScanCompletion:
+      | ((event: MetadataScanCompletionEvent) => void)
+      | null = null;
+    const indexProgressGateway: IndexProgressGateway = {
+      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "cleared" as const,
+      })),
+      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "started" as const,
+      })),
+      startReindex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "started" as const,
+      })),
+      subscribeMetadataScanCompletion: vi.fn(async (listener) => {
+        publishMetadataScanCompletion = listener;
+        return () => undefined;
+      }),
+    };
+    const runningPhpStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
     const phpTree: Awaited<ReturnType<PhpTreeGateway["getPhpTree"]>> = {
       nodes: [
         {
@@ -4313,6 +4346,8 @@ describe("useWorkbenchController preview tabs", () => {
           message: false,
         },
       },
+      indexProgressGateway,
+      runtimeStatus: runningPhpStatus,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
@@ -4370,6 +4405,29 @@ describe("useWorkbenchController preview tabs", () => {
         notice.message.includes("workspace a transient"),
       ),
     ).toBe(true);
+    act(() => {
+      publishMetadataScanCompletion?.({
+        databasePath: "/tmp/index.sqlite",
+        message: null,
+        report: {
+          changedFiles: 0,
+          errorDetails: [],
+          erroredEntries: 0,
+          indexedFiles: 1,
+          parsedFiles: 1,
+          removedFiles: 0,
+          skippedDetails: [],
+          skippedEntries: 0,
+          symbolsIndexed: 1,
+        },
+        rootPath: "/workspace",
+        status: "completed",
+      });
+    });
+    await flushAsyncTurns();
+    await vi.waitFor(() => {
+      expect(getWorkbench().phpIdeReadinessVersion).toBeGreaterThan(0);
+    });
 
     await act(async () => {
       await getWorkbench().closeWorkspaceTab("/workspace");
@@ -4391,6 +4449,7 @@ describe("useWorkbenchController preview tabs", () => {
       true,
     );
     expect(getWorkbench().workspaceSettings.statusBar.message).toBe(true);
+    expect(getWorkbench().phpIdeReadinessVersion).toBe(0);
     expect(getWorkbench().message).toBeNull();
     expect(getWorkbench().notices).toEqual([]);
     expect(getWorkbench().editorRevealTarget).toBeNull();

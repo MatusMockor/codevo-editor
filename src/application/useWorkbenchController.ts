@@ -2172,6 +2172,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
     javaScriptTypeScriptDiagnosticsByRootRef.current = {};
     lastLanguageServerCrashRef.current = null;
+    lastPhpIdeReadinessSignatureRef.current = null;
     openFileRequestTokenRef.current += 1;
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
@@ -2233,6 +2234,7 @@ export function useWorkbenchController(
     setNotices([]);
     clearLanguageServerDiagnostics();
     clearJavaScriptTypeScriptLanguageServerDiagnostics();
+    setPhpIdeReadinessVersion(0);
     applyWorkspaceSettings(defaultWorkspaceSettings());
     setIntelligenceMode("basic");
     intelligenceModeRef.current = "basic";
