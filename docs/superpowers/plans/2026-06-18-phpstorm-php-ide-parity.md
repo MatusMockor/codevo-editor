@@ -7417,3 +7417,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `3f80f162 Support PHPStan Psalm PHPDoc param tags`.
+
+## Slice: PHPStan Psalm PHPDoc Var Tags - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e28cef58 Record PHPStan Psalm PHPDoc param tag commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat `@phpstan-var` and `@psalm-var` like `@var` for local variable and property PHPDoc type inference.
+
+### Implementation Choice
+
+- Extend local variable PHPDoc `@var` lookup to accept PHPStan/Psalm prefixes.
+- Extend property docblock `@var` lookup to accept the same prefixes.
+- Convert existing local generic var and property var fixtures to prefixed tags.
+
+### Acceptance Criteria
+
+- `@phpstan-var` local generic types keep their full spaced generic type.
+- `@psalm-var` local types remain scoped to their own docblock.
+- Property type inference works from `@psalm-var`.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "basic class and property symbols|PHPDoc @var|spaced PHPDoc generic"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

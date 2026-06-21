@@ -59,7 +59,7 @@ use App\\Repositories\\CommentRepository;
 
 class CommentController
 {
-    /** @var CommentRepository */
+    /** @psalm-var CommentRepository */
     private $legacyRepository;
 
     public function __construct(
@@ -3084,7 +3084,7 @@ class CommentModel
 
   it("keeps spaced PHPDoc generic @var types intact", () => {
     const source = `<?php
-/** @var \\Illuminate\\Database\\Eloquent\\Collection<int, \\App\\Models\\Album> $albums */
+/** @phpstan-var \\Illuminate\\Database\\Eloquent\\Collection<int, \\App\\Models\\Album> $albums */
 $album = $albums->first();
 `;
     const rawType = phpDocRawTypeForVariableBefore(
@@ -3103,10 +3103,10 @@ $album = $albums->first();
 
   it("keeps PHPDoc @var types scoped to their own docblock", () => {
     const source = `<?php
-/** @var \\Illuminate\\Database\\Eloquent\\Builder<Album> $typedQuery */
+/** @phpstan-var \\Illuminate\\Database\\Eloquent\\Builder<Album> $typedQuery */
 $typed = $typedQuery->first();
 
-/** @var Result<Album> $result */
+/** @psalm-var Result<Album> $result */
 $resultAlbum = $result->first();
 `;
 

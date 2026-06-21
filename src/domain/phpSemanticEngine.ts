@@ -685,7 +685,7 @@ export function phpDocRawTypeForVariableBefore(
   const before = source.slice(0, offset);
   const docBlockPattern = /\/\*\*[\s\S]*?\*\//g;
   const pattern = new RegExp(
-    `@var\\s+([^\\r\\n*]+?)\\s+\\$${escapeRegExp(
+    `@(?:(?:phpstan|psalm)-)?var\\s+([^\\r\\n*]+?)\\s+\\$${escapeRegExp(
       variableName,
     )}\\b`,
   );
@@ -821,7 +821,7 @@ function phpDocTypeForProperty(
   propertyName: string,
 ): string | null {
   const pattern = new RegExp(
-    `\\/\\*\\*[\\s\\S]*?@var\\s+([^\\r\\n*]+)[\\s\\S]*?\\*\\/\\s*(?:public|protected|private)?\\s+(?:readonly\\s+)?(?:static\\s+)?(?:[^\\n;=]+?\\s+)?\\$${escapeRegExp(
+    `\\/\\*\\*[\\s\\S]*?@(?:(?:phpstan|psalm)-)?var\\s+([^\\r\\n*]+)[\\s\\S]*?\\*\\/\\s*(?:public|protected|private)?\\s+(?:readonly\\s+)?(?:static\\s+)?(?:[^\\n;=]+?\\s+)?\\$${escapeRegExp(
       propertyName,
     )}\\b`,
     "g",
