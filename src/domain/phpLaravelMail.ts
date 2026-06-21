@@ -8,6 +8,8 @@ const laravelMailMailerConfigPrefix = "mail.mailers.";
 const mailMailerStaticCallMethods = {
   driver: "Mail::driver",
   mailer: "Mail::mailer",
+  purge: "Mail::purge",
+  setdefaultdriver: "Mail::setDefaultDriver",
 } as const;
 
 type MailMailerStaticMethodName = keyof typeof mailMailerStaticCallMethods;

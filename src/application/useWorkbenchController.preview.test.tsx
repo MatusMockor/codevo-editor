@@ -32964,6 +32964,8 @@ class MailController
     {
         Mail::mailer('post');
         Mail::driver('sm');
+        Mail::purge('post');
+        Mail::setDefaultDriver('sm');
     }
 }
 `;
@@ -33042,6 +33044,36 @@ return [
         returnType: null,
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Mail::purge('post"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/mail.php",
+        insertText: "postmark",
+        kind: "config",
+        name: "postmark",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Mail::setDefaultDriver('sm"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/mail.php",
+        insertText: "smtp",
+        kind: "config",
+        name: "smtp",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
   });
 
   it("opens Laravel Mail mailer names before LSP fallback", async () => {
@@ -33049,14 +33081,13 @@ return [
     const mailConfigPath = "/workspace/config/mail.php";
     const controllerSource = `<?php
 
-use App\\Mail\\OrderShipped;
 use Illuminate\\Support\\Facades\\Mail;
 
 class MailController
 {
     public function send(): void
     {
-        Mail::mailer('postmark')->to('[email protected]')->send(new OrderShipped());
+        Mail::purge('postmark');
     }
 }
 `;
@@ -33113,7 +33144,7 @@ return [
     });
     act(() => {
       getWorkbench().updateActiveEditorPosition(
-        positionAfter(controllerSource, "Mail::mailer('postmark"),
+        positionAfter(controllerSource, "Mail::purge('postmark"),
       );
     });
 

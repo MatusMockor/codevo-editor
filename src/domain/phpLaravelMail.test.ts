@@ -12,8 +12,12 @@ describe("phpLaravelMail", () => {
     const samples = [
       ["Mail::mailer('postmark')", "Mail::mailer"],
       ["Mail::driver('postmark')", "Mail::driver"],
+      ["Mail::purge('postmark')", "Mail::purge"],
+      ["Mail::setDefaultDriver('postmark')", "Mail::setDefaultDriver"],
       ["Mail::mailer(name: 'postmark')", "Mail::mailer"],
       ["Mail::driver(driver: 'postmark')", "Mail::driver"],
+      ["Mail::purge(name: 'postmark')", "Mail::purge"],
+      ["Mail::setDefaultDriver(name: 'postmark')", "Mail::setDefaultDriver"],
     ] as const;
 
     for (const [expression, call] of samples) {
