@@ -3103,4 +3103,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending implementation commit.
+- Committed as `184dc8cd Recognize Laravel JSON query helpers`.
