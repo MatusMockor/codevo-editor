@@ -6806,4 +6806,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Completion Item Tag Support Advertisement
 
-- Pending commit after verification.
+- Committed as `02416e43 Advertise TypeScript completion item tags`.
