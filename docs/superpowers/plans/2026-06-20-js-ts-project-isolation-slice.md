@@ -4841,4 +4841,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Workspace Open Follow-Up Request Guard
 
-- Pending commit.
+- Committed as `32c040dd Guard workspace open follow-up awaits by request`.
