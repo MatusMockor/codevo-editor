@@ -413,6 +413,30 @@ Route::view('/dashboard', 'dashboard')->name('dashboard.index');
     ]);
   });
 
+  it("extracts literal names from named route definition arguments", () => {
+    const source = `<?php
+Route::name(name: 'admin.')->group(function () {
+    Route::get('/dashboard', DashboardController::class)->name(name: 'dashboard');
+});
+
+Route::get('/comments/{comment}', [CommentController::class, 'show'])
+    ->name(name: 'comments.show');
+
+Route::get('/ignored', IgnoredController::class)->name(label: 'comments.ignored');
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "admin.dashboard",
+        position: positionOf(source, "dashboard');"),
+      },
+      {
+        name: "comments.show",
+        position: positionOf(source, "comments.show"),
+      },
+    ]);
+  });
+
   it("combines group prefixes and ignores dynamic/unrelated route names", () => {
     const source = `<?php
 Route::name('admin.')->group(function () {

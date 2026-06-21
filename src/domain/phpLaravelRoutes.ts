@@ -220,7 +220,9 @@ export function phpLaravelNamedRouteDefinitions(
         continue;
       }
 
-      const literal = firstClosedLiteralArgumentAtOpenParen(source, nameOpenParen);
+      const literal = firstClosedLiteralArgumentAtOpenParen(source, nameOpenParen, {
+        namedArgumentNames: ["name"],
+      });
 
       if (!literal) {
         continue;
@@ -708,7 +710,11 @@ function laravelRouteGroupPrefixLiterals(
   const prefixLiterals: PhpStringLiteral[] = [];
 
   if (routeMethod === "name" || routeMethod === "as") {
-    const literal = firstClosedLiteralArgumentAtOpenParen(source, routeOpenParen);
+    const literal = firstClosedLiteralArgumentAtOpenParen(
+      source,
+      routeOpenParen,
+      routeMethod === "name" ? { namedArgumentNames: ["name"] } : undefined,
+    );
 
     if (literal) {
       prefixLiterals.push(literal);
@@ -716,17 +722,22 @@ function laravelRouteGroupPrefixLiterals(
   }
 
   const chainSource = source.slice(routeCloseParen + 1, groupOpenParen);
-  const prefixPattern = /->\s*(?:name|as)\s*\(/gi;
+  const prefixPattern = /->\s*(name|as)\s*\(/gi;
 
   for (const match of chainSource.matchAll(prefixPattern)) {
     const prefixOpenParen =
       routeCloseParen + 1 + (match.index ?? 0) + match[0].lastIndexOf("(");
+    const prefixMethod = match[1]?.toLowerCase() ?? "";
 
     if (!isPhpCodeOffset(source, prefixOpenParen)) {
       continue;
     }
 
-    const literal = firstClosedLiteralArgumentAtOpenParen(source, prefixOpenParen);
+    const literal = firstClosedLiteralArgumentAtOpenParen(
+      source,
+      prefixOpenParen,
+      prefixMethod === "name" ? { namedArgumentNames: ["name"] } : undefined,
+    );
 
     if (literal) {
       prefixLiterals.push(literal);
@@ -897,8 +908,9 @@ function isSupportedNamedRouteArgumentName(
 function firstClosedLiteralArgumentAtOpenParen(
   source: string,
   openParen: number,
+  options: { namedArgumentNames?: readonly string[] } = {},
 ): PhpStringLiteral | null {
-  const literal = firstLiteralArgumentAtOpenParen(source, openParen);
+  const literal = firstLiteralArgumentAtOpenParen(source, openParen, options);
 
   if (!literal) {
     return null;
@@ -918,9 +930,16 @@ function firstClosedLiteralArgumentAtOpenParen(
 function firstLiteralArgumentAtOpenParen(
   source: string,
   openParen: number,
+  options: { namedArgumentNames?: readonly string[] } = {},
 ): PhpStringLiteral | null {
   const argumentStart = skipWhitespace(source, openParen + 1);
-  const literal = stringLiteralStartingAt(source, argumentStart);
+  const namedLiteralStart = namedLiteralArgumentQuoteStartAt(
+    source,
+    argumentStart,
+    options.namedArgumentNames ?? [],
+  );
+  const literalStart = namedLiteralStart ?? argumentStart;
+  const literal = stringLiteralStartingAt(source, literalStart);
 
   if (!literal?.closed) {
     return null;
@@ -943,6 +962,32 @@ function firstLiteralArgumentAtOpenParen(
   }
 
   return literal;
+}
+
+function namedLiteralArgumentQuoteStartAt(
+  source: string,
+  argumentStart: number,
+  allowedNames: readonly string[],
+): number | null {
+  if (allowedNames.length === 0) {
+    return null;
+  }
+
+  const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*/.exec(
+    source.slice(argumentStart, argumentStart + 96),
+  );
+
+  if (!match?.[0] || !match[1]) {
+    return null;
+  }
+
+  const normalizedName = match[1].toLowerCase();
+
+  if (!allowedNames.some((name) => name.toLowerCase() === normalizedName)) {
+    return null;
+  }
+
+  return argumentStart + match[0].length;
 }
 
 function stringLiteralAtOffset(
