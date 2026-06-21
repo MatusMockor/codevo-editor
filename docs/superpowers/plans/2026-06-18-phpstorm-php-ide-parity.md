@@ -3800,3 +3800,45 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `39c8fcfe Resolve Laravel controller group route actions`.
+
+## Slice: Laravel Redirect Facade Route Names - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `26172898 Record Laravel controller group route action commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Provide Laravel named-route completions for `Redirect::route(...)` facade calls.
+
+### Implementation Choice
+
+- Add `Redirect::route` to the named-route reference call union.
+- Detect `Redirect::route('name')` as a supported first-argument named-route context.
+- Preserve existing `route`, `to_route`, `redirect()->route`, `URL::route`, and `Route::has` behavior.
+- Add parser coverage for the new facade context.
+- Add workbench coverage proving route-name completions work inside `Redirect::route('comments.pre')`.
+
+### Acceptance Criteria
+
+- `Redirect::route(...)` string literals produce a named-route reference context.
+- Laravel named-route completions work inside `Redirect::route(...)`.
+- Existing named-route helper completions still pass.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "supported first string arguments|Redirect facade route strings|suggests Laravel named routes inside route helper strings"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `ae52e331 Complete Laravel Redirect facade route names`.
