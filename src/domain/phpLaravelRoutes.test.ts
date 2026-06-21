@@ -544,6 +544,42 @@ Route::name('admin.')->group(function () {
     ]);
   });
 
+  it("expands Laravel resource route names from named arguments", () => {
+    const source = `<?php
+Route::resource(name: 'comments', controller: CommentController::class);
+Route::apiResource(name: 'api.comments', controller: ApiCommentController::class);
+Route::name('admin.')->group(function () {
+    Route::resource(name: 'reports', controller: ReportController::class);
+});
+Route::resource(label: 'ignored', controller: IgnoredController::class);
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      ...expectedRouteDefinitions(source, "comments", [
+        "index",
+        "create",
+        "store",
+        "show",
+        "edit",
+        "update",
+        "destroy",
+      ]),
+      ...expectedRouteDefinitions(source, "api.comments", [
+        "index",
+        "store",
+        "show",
+        "update",
+        "destroy",
+      ]),
+      ...expectedRouteDefinitions(
+        source,
+        "admin.reports",
+        ["index", "create", "store", "show", "edit", "update", "destroy"],
+        "reports",
+      ),
+    ]);
+  });
+
   it("expands literal Laravel singleton route names", () => {
     const source = `<?php
 Route::singleton('profile', ProfileController::class);
@@ -586,6 +622,28 @@ Route::name('admin.')->group(function () {
         name: "admin.reports.thumbnail.update",
         position: positionOf(source, "reports.thumbnail"),
       },
+    ]);
+  });
+
+  it("expands Laravel singleton route names from named arguments", () => {
+    const source = `<?php
+Route::singleton(name: 'profile', controller: ProfileController::class);
+Route::apiSingleton(name: 'api.profile', controller: ApiProfileController::class);
+Route::name('admin.')->group(function () {
+    Route::singleton(name: 'reports.thumbnail', controller: ReportThumbnailController::class);
+});
+Route::singleton(label: 'ignored', controller: IgnoredController::class);
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      ...expectedRouteDefinitions(source, "profile", ["show", "edit", "update"]),
+      ...expectedRouteDefinitions(source, "api.profile", ["show", "update"]),
+      ...expectedRouteDefinitions(
+        source,
+        "admin.reports.thumbnail",
+        ["show", "edit", "update"],
+        "reports.thumbnail",
+      ),
     ]);
   });
 

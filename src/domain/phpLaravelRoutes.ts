@@ -151,7 +151,9 @@ export function phpLaravelNamedRouteDefinitions(
     const resourceArrayActions = laravelResourceArrayRouteActions.get(routeMethod);
 
     if (resourceActions) {
-      const literal = firstLiteralArgumentAtOpenParen(source, openParen);
+      const literal = firstLiteralArgumentAtOpenParen(source, openParen, {
+        namedArgumentNames: ["name"],
+      });
 
       if (!literal) {
         continue;

@@ -19015,7 +19015,7 @@ class CommentController
 
         if (path === routesPath) {
           return `<?php
-Route::resource('comments', CommentController::class);
+Route::resource(name: 'comments', controller: CommentController::class);
 `;
         }
 
@@ -19027,7 +19027,8 @@ Route::resource('comments', CommentController::class);
               {
                 column: 1,
                 lineNumber: 2,
-                lineText: "Route::resource('comments', CommentController::class);",
+                lineText:
+                  "Route::resource(name: 'comments', controller: CommentController::class);",
                 path: routesPath,
                 relativePath: "routes/web.php",
               },
