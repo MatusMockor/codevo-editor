@@ -5861,23 +5861,41 @@ export function useWorkbenchController(
 
   const findPhpClassSourcePathsByFileName = useCallback(
     async (className: string): Promise<string[]> => {
-      if (!workspaceRoot) {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
         return [];
       }
 
       const normalizedClassName = className.trim().replace(/^\\+/, "");
       const shortName = shortPhpName(normalizedClassName);
       const fileName = `${shortName}.php`;
-      const results = await fileSearch.searchFiles(workspaceRoot, fileName, 40);
+      const results = await fileSearch.searchFiles(requestedRoot, fileName, 40);
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
       const paths: string[] = [];
 
       for (const result of results) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         if (result.name.toLowerCase() !== fileName.toLowerCase()) {
           continue;
         }
 
         try {
           const content = await readNavigationFileContent(result.path);
+
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           const sourceClassName = phpCurrentClassName(content);
 
           if (sourceClassName?.toLowerCase() !== normalizedClassName.toLowerCase()) {
@@ -5886,8 +5904,16 @@ export function useWorkbenchController(
 
           paths.push(result.path);
         } catch {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           continue;
         }
+      }
+
+      if (!isRequestedRootActive()) {
+        return [];
       }
 
       return paths;
@@ -5897,7 +5923,12 @@ export function useWorkbenchController(
 
   const resolvePhpClassSourcePaths = useCallback(
     async (className: string): Promise<string[]> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return [];
       }
 
@@ -5909,8 +5940,8 @@ export function useWorkbenchController(
 
       const paths = new Set(
         phpClassPathCandidates(
-          workspaceRoot,
-          workspaceDescriptor.php,
+          requestedRoot,
+          requestedDescriptor.php,
           normalizedClassName,
         ),
       );
@@ -5918,13 +5949,22 @@ export function useWorkbenchController(
 
       if (shouldIndexWorkspace(intelligenceMode)) {
         const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
-          workspaceRoot,
+          requestedRoot,
           shortPhpName(normalizedClassName),
           50,
         );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         const normalizedLookup = normalizedClassName.toLowerCase();
 
         for (const symbol of indexedSymbols) {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
           if (!isTypeProjectSymbol(symbol)) {
             continue;
           }
@@ -5939,6 +5979,10 @@ export function useWorkbenchController(
       }
 
       if (paths.size === 0 || !hasIndexedPath) {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         const cacheKey = normalizedClassName.toLowerCase();
         const cachedPaths = phpClassSourcePathCacheRef.current[cacheKey];
         const fallbackPaths =
@@ -5947,6 +5991,10 @@ export function useWorkbenchController(
             normalizedClassName,
           ));
 
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         if (!cachedPaths && fallbackPaths.length > 0) {
           phpClassSourcePathCacheRef.current[cacheKey] = fallbackPaths;
         }
@@ -5954,6 +6002,10 @@ export function useWorkbenchController(
         for (const path of fallbackPaths) {
           paths.add(path);
         }
+      }
+
+      if (!isRequestedRootActive()) {
+        return [];
       }
 
       return [...paths];

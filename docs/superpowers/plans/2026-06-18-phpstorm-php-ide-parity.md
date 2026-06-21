@@ -5815,3 +5815,45 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `1047e268 Guard stale Laravel relation completions`.
+
+## Slice: Stale PHP Class Source Resolver Fallback Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e46d1031 Record stale Laravel relation completion guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP class source path resolution from falling back into the newly active workspace after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root in `findPhpClassSourcePathsByFileName`.
+- Guard after file search, before/after candidate source reads, after failed reads, and before returning fallback paths.
+- Capture the requested root and descriptor in `resolvePhpClassSourcePaths`.
+- Guard after indexed symbol search, while processing index results, before/after file-name fallback, and before returning resolved paths.
+- Add a preview regression where PHP method completions start in `/workspace-a`, indexed class lookup is delayed, the workspace switches to `/workspace-b`, and the delayed indexed lookup returns no symbols.
+- Assert the stale completion request returns no suggestions and does not start a `/workspace-b` file-name fallback search.
+
+### Acceptance Criteria
+
+- Stale PHP class source path resolution stops after tab switch.
+- Stale class resolver misses do not start fallback file searches in the newly active workspace.
+- Existing PHP method completion behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP class source resolver fallback"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

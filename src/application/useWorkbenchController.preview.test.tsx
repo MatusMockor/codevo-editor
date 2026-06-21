@@ -12106,6 +12106,95 @@ class CommentsService
     await expect(completionsPromise).resolves.toEqual([]);
   });
 
+  it("stops stale PHP class source resolver fallback after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Services\\CommentsService;
+
+class CommentController
+{
+    public function __construct(
+        private readonly CommentsService $commentsService,
+    ) {}
+
+    public function store(): void
+    {
+        $this->commentsService->cre
+    }
+}
+`;
+    const symbolSearch =
+      createDeferred<
+        Awaited<
+          ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>
+        >
+      >();
+    const searchFiles = vi.fn(async () => []);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchFiles,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementationOnce(async () => symbolSearch.promise);
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    await act(async () => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$this->commentsService->cre"),
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "CommentsService", 50);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    symbolSearch.resolve([]);
+
+    expect(completionsPromise).not.toBeNull();
+    await expect(completionsPromise).resolves.toEqual([]);
+    await flushAsyncTurns(24);
+
+    expect(searchFiles).not.toHaveBeenCalledWith(
+      "/workspace-b",
+      "CommentsService.php",
+      40,
+    );
+  });
+
   it("keeps late-static fluent return types bound to the receiver class", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const baseCommentPath = "/workspace/app/Models/BaseComment.php";
