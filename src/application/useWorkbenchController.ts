@@ -189,6 +189,7 @@ import {
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelModelAccessorTargetFromSource,
   phpLaravelModelAttributeTargetFromSource,
+  phpLaravelMorphMapEntriesFromSource,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
   phpLaravelRelationPropertyCompletionsFromSource,
   phpLaravelRelationTargetClassNameFromExpression,
@@ -341,6 +342,27 @@ const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
 const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
 
 export type SidebarView = "files" | "git" | "php";
+
+function isLaravelMorphToReturnTypeName(returnType: string | null): boolean {
+  const typeName = phpDeclaredTypeCandidate(returnType ?? "") ?? returnType ?? "";
+  const normalizedTypeName = typeName
+    .trim()
+    .replace(/^\?/, "")
+    .replace(/^\\+/, "")
+    .split("<")[0]
+    ?.toLowerCase();
+
+  return (
+    normalizedTypeName === "morphto" ||
+    normalizedTypeName?.endsWith("\\morphto") === true
+  );
+}
+
+function isLaravelMorphToFactoryExpression(expression: string): boolean {
+  return /\$(?:this|[A-Za-z_][A-Za-z0-9_]*)\??->morphTo\s*\(/i.test(
+    expression,
+  );
+}
 
 export function useWorkbenchController(
   workspaceGateways: WorkbenchWorkspaceGateways,
@@ -613,6 +635,9 @@ export function useWorkbenchController(
     {},
   );
   const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
+  const phpLaravelMorphMapModelTypeCacheRef = useRef<
+    Record<string, string | null>
+  >({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
   const openPathsRef = useRef<string[]>([]);
@@ -1518,6 +1543,7 @@ export function useWorkbenchController(
       phpClassSourcePathCacheRef.current = {};
       phpClassMemberCacheRef.current = {};
       phpFrameworkBindingCacheRef.current = {};
+      phpLaravelMorphMapModelTypeCacheRef.current = {};
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
       );
@@ -1606,6 +1632,7 @@ export function useWorkbenchController(
     phpClassSourcePathCacheRef.current = {};
     phpClassMemberCacheRef.current = {};
     phpFrameworkBindingCacheRef.current = {};
+    phpLaravelMorphMapModelTypeCacheRef.current = {};
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
     setPhpTree(emptyPhpTree());
@@ -2934,6 +2961,7 @@ export function useWorkbenchController(
       phpClassSourcePathCacheRef.current = {};
       phpClassMemberCacheRef.current = {};
       phpFrameworkBindingCacheRef.current = {};
+      phpLaravelMorphMapModelTypeCacheRef.current = {};
       setPhpIdeReadinessVersion(0);
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
@@ -5594,6 +5622,64 @@ export function useWorkbenchController(
     [resolvePhpDeclaredType],
   );
 
+  const resolvePhpLaravelProjectMorphMapModelType =
+    useCallback(async (): Promise<string | null> => {
+      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
+        return null;
+      }
+
+      const cacheKey = `${workspaceRoot}:${activePhpFrameworkProviderSignature}`;
+
+      if (
+        Object.prototype.hasOwnProperty.call(
+          phpLaravelMorphMapModelTypeCacheRef.current,
+          cacheKey,
+        )
+      ) {
+        return phpLaravelMorphMapModelTypeCacheRef.current[cacheKey] ?? null;
+      }
+
+      const modelTypes = new Set<string>();
+      const searchResults = await Promise.all(
+        ["morphMap", "enforceMorphMap"].map((query) =>
+          textSearch.searchText(workspaceRoot, query, 200),
+        ),
+      );
+      const visitedPaths = new Set<string>();
+
+      for (const result of searchResults.flat()) {
+        if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+          continue;
+        }
+
+        visitedPaths.add(result.path);
+
+        try {
+          const content = await readNavigationFileContent(result.path);
+
+          for (const entry of phpLaravelMorphMapEntriesFromSource(content)) {
+            modelTypes.add(entry.modelClassName.replace(/^\\+/, ""));
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      const modelType =
+        modelTypes.size === 1 ? (Array.from(modelTypes)[0] ?? null) : null;
+
+      phpLaravelMorphMapModelTypeCacheRef.current[cacheKey] = modelType;
+
+      return modelType;
+    }, [
+      activePhpFrameworkProviderSignature,
+      isLaravelFrameworkActive,
+      readNavigationFileContent,
+      textSearch,
+      workspaceDescriptor,
+      workspaceRoot,
+    ]);
+
   const resolvePhpFrameworkBoundConcrete = useCallback(
     async (className: string): Promise<string | null> => {
       if (!activePhpFrameworkProviders.length || !workspaceRoot) {
@@ -7743,6 +7829,19 @@ export function useWorkbenchController(
             return resolvedFrameworkReturnType;
           }
 
+          if (
+            isLaravelFrameworkActive &&
+            methodCall.methodName.toLowerCase() === "morphto" &&
+            resolvedReceiverType
+          ) {
+            const morphMapModelType =
+              await resolvePhpLaravelProjectMorphMapModelType();
+
+            if (morphMapModelType) {
+              return `Illuminate\\Database\\Eloquent\\Relations\\MorphTo<${morphMapModelType}>`;
+            }
+          }
+
           if (isLaravelEloquentBuilderTerminalModelMethod(methodCall.methodName)) {
             const builderModelType =
               await resolvePhpEloquentBuilderModelTypeRef.current(
@@ -7802,6 +7901,9 @@ export function useWorkbenchController(
             (candidate) =>
               candidate.name.toLowerCase() === methodName.toLowerCase(),
           );
+          const methodReturnExpressions = method
+            ? phpMethodReturnExpressions(content, method.name)
+            : [];
           const returnType = method
             ? resolvePhpMethodDeclaredReturnType(
                 content,
@@ -7812,14 +7914,24 @@ export function useWorkbenchController(
             : null;
 
           if (returnType) {
+            if (
+              isLaravelFrameworkActive &&
+              isLaravelMorphToReturnTypeName(returnType) &&
+              methodReturnExpressions.some(isLaravelMorphToFactoryExpression)
+            ) {
+              const morphMapModelType =
+                await resolvePhpLaravelProjectMorphMapModelType();
+
+              if (morphMapModelType) {
+                return `Illuminate\\Database\\Eloquent\\Relations\\MorphTo<${morphMapModelType}>`;
+              }
+            }
+
             return returnType;
           }
 
           if (method) {
-            for (const expression of phpMethodReturnExpressions(
-              content,
-              method.name,
-            )) {
+            for (const expression of methodReturnExpressions) {
               const expressionReturnType = await resolveReturnExpressionType(
                 content,
                 expression,
@@ -7920,6 +8032,7 @@ export function useWorkbenchController(
       resolvePhpFrameworkBoundConcrete,
       resolvePhpClassReference,
       resolvePhpFrameworkReturnTypeReference,
+      resolvePhpLaravelProjectMorphMapModelType,
       resolvePhpMethodDeclaredReturnType,
       resolvePhpClassSourcePaths,
       resolvePhpGenericTemplateTypesForInheritedClass,
@@ -8104,10 +8217,16 @@ export function useWorkbenchController(
           }
 
           if (relationMethod) {
+            let hasMorphToReturnExpression = false;
+
             for (const expression of phpMethodReturnExpressions(
               content,
               relationMethod.name,
             )) {
+              if (isLaravelMorphToFactoryExpression(expression)) {
+                hasMorphToReturnExpression = true;
+              }
+
               const relationTargetClassName =
                 phpLaravelRelationTargetClassNameFromExpression(
                   expression,
@@ -8122,6 +8241,15 @@ export function useWorkbenchController(
 
               if (resolvedRelationTargetClassName) {
                 return resolvedRelationTargetClassName;
+              }
+            }
+
+            if (hasMorphToReturnExpression && isLaravelFrameworkActive) {
+              const morphMapModelType =
+                await resolvePhpLaravelProjectMorphMapModelType();
+
+              if (morphMapModelType) {
+                return morphMapModelType;
               }
             }
           }
@@ -8190,6 +8318,8 @@ export function useWorkbenchController(
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
       resolvePhpDeclaredType,
+      resolvePhpLaravelProjectMorphMapModelType,
+      isLaravelFrameworkActive,
       workspaceDescriptor,
       workspaceRoot,
     ],
