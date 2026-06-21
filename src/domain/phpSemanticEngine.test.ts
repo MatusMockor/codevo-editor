@@ -1088,9 +1088,15 @@ class Comment extends Model
         $relationMethodFoundOrPost = $this->posts()->findOr(1, fn () => null);
         $relationMethodFoundSolePost = $this->posts()->findSole(1);
         $relationMethodFirstWherePost = $this->posts()->firstWhere('published', true);
+        $relationMethodFirstOrPost = $this->posts()->firstOr(fn () => new Post());
+        $relationMethodFirstOrNewPost = $this->posts()->firstOrNew(['title' => 'Draft']);
+        $relationMethodLatestPost = $this->posts()->latest()->first();
+        $relationMethodOldestPost = $this->posts()->oldest()->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
+        $relationMethodAfterExistsTerminal = $this->posts()->exists()->first();
+        $relationMethodAfterDoesntExistTerminal = $this->posts()->doesntExist()->first();
         $relationMethodPosts = $this->posts()->get();
         $relationMethodCollectionPost = $this->posts()->get()->first();
         $relationMethodLazyPosts = $this->posts()->lazy();
@@ -1132,9 +1138,15 @@ class Comment extends Model
         $relationMethodFoundOrPost->tit
         $relationMethodFoundSolePost->tit
         $relationMethodFirstWherePost->tit
+        $relationMethodFirstOrPost->tit
+        $relationMethodFirstOrNewPost->tit
+        $relationMethodLatestPost->tit
+        $relationMethodOldestPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
+        $relationMethodAfterExistsTerminal->tit
+        $relationMethodAfterDoesntExistTerminal->tit
         $relationMethodPosts->first()->tit
         $relationMethodCollectionPost->tit
         $relationMethodLazyPosts->first()->tit
@@ -1312,6 +1324,38 @@ class Tag extends Model
     expect(
       phpVariableTypeInSource(
         source,
+        positionAfter(source, "$relationMethodFirstOrPost->tit"),
+        "relationMethodFirstOrPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodFirstOrNewPost->tit"),
+        "relationMethodFirstOrNewPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodLatestPost->tit"),
+        "relationMethodLatestPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodOldestPost->tit"),
+        "relationMethodOldestPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
         positionAfter(source, "$relationMethodFoundManyPosts->first()->tit"),
         "relationMethodFoundManyPosts",
         laravelOptions,
@@ -1330,6 +1374,22 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodAfterValueTerminal->tit"),
         "relationMethodAfterValueTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodAfterExistsTerminal->tit"),
+        "relationMethodAfterExistsTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodAfterDoesntExistTerminal->tit"),
+        "relationMethodAfterDoesntExistTerminal",
         laravelOptions,
       ),
     ).toBeNull();

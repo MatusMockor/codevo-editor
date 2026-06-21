@@ -2823,3 +2823,38 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `d1a1451c Cover Laravel relation method finder variants`.
+
+## Slice: Laravel Relation Method Fluent And Boundary Variants - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b1281ed9 Record PHP lazy code action root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock relation-method semantic inference across common builder-preserving relation helpers and boolean terminal boundaries.
+
+### Implementation Choice
+
+- Extend the relation-method semantic fixture with `firstOr()`, `firstOrNew()`, `latest()->first()`, and `oldest()->first()`.
+- Add `exists()->first()` and `doesntExist()->first()` negative assertions so boolean terminal calls do not leak related-model inference into invalid follow-up chains.
+- Keep the slice focused on coverage because the existing Laravel semantic resolver already handles these variants.
+
+### Acceptance Criteria
+
+- Relation-method chains ending in `firstOr` and `firstOrNew` infer `App\Models\Post`.
+- Relation-method chains through `latest()` and `oldest()` infer `App\Models\Post` after `first()`.
+- `$this->posts()->exists()->first()` and `$this->posts()->doesntExist()->first()` do not infer a related model.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
