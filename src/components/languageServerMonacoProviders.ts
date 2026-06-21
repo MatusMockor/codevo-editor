@@ -26,6 +26,7 @@ import {
   type LanguageServerWorkspaceEdit,
   type LanguageServerWorkspaceEditEvent,
   type LanguageServerWorkspaceEditGateway,
+  type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import { isLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
@@ -54,6 +55,20 @@ type MonacoEventEmitter<T> = {
 type WorkspaceEditContext = {
   path: string | null;
   versionId: number | undefined;
+};
+type MonacoWorkspaceSymbol = {
+  containerName?: string;
+  kind: Monaco.languages.SymbolKind;
+  location: Monaco.languages.Location;
+  name: string;
+};
+type MonacoWorkspaceSymbolProvider = {
+  provideWorkspaceSymbols(query: string): Promise<MonacoWorkspaceSymbol[]>;
+};
+type MonacoWorkspaceSymbolRegistry = {
+  registerWorkspaceSymbolProvider?(
+    provider: MonacoWorkspaceSymbolProvider,
+  ): Disposable;
 };
 export interface PhpWorkspaceEditApplicationContext {
   editedOpenPaths: string[];
@@ -417,6 +432,13 @@ export function registerLanguageServerMonacoProviders(
           provideDocumentSymbols(monaco, context, model),
       })
     : { dispose: () => undefined };
+  const workspaceSymbolRegistry = registry as MonacoWorkspaceSymbolRegistry;
+  const workspaceSymbol = workspaceSymbolRegistry.registerWorkspaceSymbolProvider
+    ? workspaceSymbolRegistry.registerWorkspaceSymbolProvider({
+        provideWorkspaceSymbols: (query) =>
+          provideWorkspaceSymbols(monaco, context, query),
+      })
+    : { dispose: () => undefined };
   const documentLink = monaco.languages.registerLinkProvider
     ? monaco.languages.registerLinkProvider("php", {
         provideLinks: (model) => provideDocumentLinks(monaco, context, model),
@@ -523,6 +545,7 @@ export function registerLanguageServerMonacoProviders(
       typeDefinition.dispose();
       documentHighlight.dispose();
       documentSymbol.dispose();
+      workspaceSymbol.dispose();
       documentLink.dispose();
       codeLens.dispose();
       inlayHints.dispose();
@@ -936,6 +959,36 @@ async function provideDocumentSymbols(
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
+  }
+}
+
+async function provideWorkspaceSymbols(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  query: string,
+): Promise<MonacoWorkspaceSymbol[]> {
+  const request = workspaceSymbolRequestContext(context);
+
+  if (!request) {
+    return [];
+  }
+
+  try {
+    const symbols = await context.featuresGateway.workspaceSymbols(
+      request.rootPath,
+      query,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return [];
+    }
+
+    return symbols.flatMap((symbol) =>
+      toMonacoWorkspaceSymbol(monaco, request.rootPath, symbol),
+    );
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return [];
   }
 }
 
@@ -2138,6 +2191,31 @@ function toMonacoDocumentSymbol(
     selectionRange: toMonacoRange(monaco, symbol.selectionRange),
     tags: monacoSymbolTagsFromLspTags(monaco, symbol.tags),
   };
+}
+
+function toMonacoWorkspaceSymbol(
+  monaco: MonacoApi,
+  rootPath: string,
+  symbol: LanguageServerWorkspaceSymbol,
+): MonacoWorkspaceSymbol[] {
+  if (!symbol.location) {
+    return [];
+  }
+
+  const [location] = toMonacoLocation(monaco, rootPath, symbol.location);
+
+  if (!location) {
+    return [];
+  }
+
+  return [
+    {
+      ...(symbol.containerName ? { containerName: symbol.containerName } : {}),
+      kind: monacoSymbolKindFromLspKind(monaco, symbol.kind),
+      location,
+      name: symbol.name,
+    },
+  ];
 }
 
 function toMonacoDocumentLink(
@@ -3490,6 +3568,27 @@ function featureDocumentRequestContext(
   }
 
   return { path, rootPath, sessionId: status.sessionId };
+}
+
+function workspaceSymbolRequestContext(
+  context: LanguageServerMonacoProviderContext,
+) {
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (!rootPath) {
+    return null;
+  }
+
+  const status = runningRuntimeStatusForRoot(context, rootPath);
+
+  if (
+    !status ||
+    !canUseLanguageServerFeature(status.capabilities, "workspaceSymbol")
+  ) {
+    return null;
+  }
+
+  return { rootPath, sessionId: status.sessionId };
 }
 
 async function flushPendingDocumentChangeForActiveRequest(

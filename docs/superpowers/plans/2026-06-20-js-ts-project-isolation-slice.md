@@ -7611,3 +7611,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Provider Refresh Events
 
 - Committed as `9566fc65 Wire PHP provider refresh events`.
+
+## Next Slice: PHP Monaco Workspace Symbol Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `bd5f5955 Record PHP provider refresh event commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support `workspaceSymbol`.
+- JS/TS Monaco exposes workspace symbols to project-wide symbol search, but PHP Monaco did not yet register a workspace symbol provider.
+- This is a small provider parity step that improves PHP IDE navigation without touching controller quick-open behavior yet.
+
+### Implementation Choice
+
+- Register an optional PHP Monaco workspace symbol provider.
+- Use the active workspace root and current PHP runtime session/capability gate before calling `featuresGateway.workspaceSymbols`.
+- Map LSP workspace symbols into Monaco symbols with root-filtered locations and existing symbol-kind mapping.
+- Drop stale root/session results and return an empty list on unavailable, stale, or error paths.
+
+### Acceptance Criteria
+
+- PHP workspace symbol queries route to `featuresGateway.workspaceSymbols(root, query)`.
+- Symbols outside the active root, neighbor-root paths, or missing locations are filtered out.
+- Disabled capability and stale root/session responses do not call or return stale symbols.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Workspace Symbol Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "workspace symbol|registers php"` (4 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (129 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 973 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Pending

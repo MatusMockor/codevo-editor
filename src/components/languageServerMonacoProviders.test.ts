@@ -27,7 +27,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, code lens, inlay hint, folding range, formatting, range formatting, on type formatting, linked editing range and semantic token providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, workspace symbol, document link, code lens, inlay hint, folding range, formatting, range formatting, on type formatting, linked editing range and semantic token providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -55,6 +55,14 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.typeDefinitionLanguage).toBe("php");
     expect(registered.documentHighlightLanguage).toBe("php");
     expect(registered.documentSymbolLanguage).toBe("php");
+    expect(
+      registered.monaco.languages.registerWorkspaceSymbolProvider,
+    ).toHaveBeenCalledTimes(1);
+    expect(registered.workspaceSymbolProvider).toEqual(
+      expect.objectContaining({
+        provideWorkspaceSymbols: expect.any(Function),
+      }),
+    );
     expect(registered.documentLinkLanguage).toBe("php");
     expect(registered.codeLensLanguage).toBe("php");
     expect(registered.inlayHintsLanguage).toBe("php");
@@ -94,6 +102,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.typeDefinitionDispose).toHaveBeenCalled();
     expect(registered.documentHighlightDispose).toHaveBeenCalled();
     expect(registered.documentSymbolDispose).toHaveBeenCalled();
+    expect(registered.workspaceSymbolDispose).toHaveBeenCalled();
     expect(registered.documentLinkDispose).toHaveBeenCalled();
     expect(registered.codeLensDispose).toHaveBeenCalled();
     expect(registered.inlayHintsDispose).toHaveBeenCalled();
@@ -2679,6 +2688,207 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
 
     await expect(rootPromise).resolves.toBeNull();
+  });
+
+  it("maps PHP workspace symbol responses through the active project root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      workspaceSymbols: [
+        {
+          containerName: "App\\Models",
+          kind: 5,
+          location: {
+            range: range(2, 6, 2, 10),
+            uri: "file:///project/src/User.php",
+          },
+          name: "User",
+        },
+        {
+          containerName: "App\\Other",
+          kind: 12,
+          location: {
+            range: range(4, 0, 4, 12),
+            uri: "file:///other/src/Other.php",
+          },
+          name: "other_user",
+        },
+        {
+          containerName: "App\\Neighbor",
+          kind: 12,
+          location: {
+            range: range(6, 0, 6, 12),
+            uri: "file:///project-neighbor/src/Neighbor.php",
+          },
+          name: "neighbor_user",
+        },
+        {
+          containerName: null,
+          kind: 13,
+          location: null,
+          name: "$unresolved",
+        },
+      ],
+    });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway }),
+    );
+
+    const symbols =
+      await registered.workspaceSymbolProvider.provideWorkspaceSymbols("User");
+
+    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
+    expect(symbols).toEqual([
+      {
+        containerName: "App\\Models",
+        kind: registered.monaco.languages.SymbolKind.Class,
+        location: {
+          range: expect.objectContaining({
+            endColumn: 11,
+            endLineNumber: 3,
+            startColumn: 7,
+            startLineNumber: 3,
+          }),
+          uri: { fsPath: "/project/src/User.php", path: "/project/src/User.php" },
+        },
+        name: "User",
+      },
+    ]);
+  });
+
+  it("does not request PHP workspace symbols when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      workspaceSymbols: [
+        {
+          containerName: "App\\Models",
+          kind: 5,
+          location: {
+            range: range(2, 6, 2, 10),
+            uri: "file:///project/src/User.php",
+          },
+          name: "User",
+        },
+      ],
+    });
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        runtimeStatus: runningStatus({ workspaceSymbol: false }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.workspaceSymbolProvider.provideWorkspaceSymbols("User"),
+    ).resolves.toEqual([]);
+    expect(disabledGateway.workspaceSymbols).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway();
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.workspaceSymbolProvider.provideWorkspaceSymbols("User"),
+    ).resolves.toEqual([]);
+    expect(mismatchedGateway.workspaceSymbols).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP workspace symbol results after session or root changes", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.workspaceSymbols).mockImplementationOnce(
+      async () => sessionSymbols.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const sessionPromise =
+      sessionRegistered.workspaceSymbolProvider.provideWorkspaceSymbols("User");
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    sessionSymbols.resolve([
+      {
+        containerName: "App\\Models",
+        kind: 5,
+        location: {
+          range: range(2, 6, 2, 10),
+          uri: "file:///project/src/User.php",
+        },
+        name: "StaleUser",
+      },
+    ]);
+
+    await expect(sessionPromise).resolves.toEqual([]);
+    expect(sessionGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/project",
+      "User",
+    );
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.workspaceSymbols).mockImplementationOnce(
+      async () => rootSymbols.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootPromise =
+      rootRegistered.workspaceSymbolProvider.provideWorkspaceSymbols("User");
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rootSymbols.resolve([
+      {
+        containerName: "App\\Models",
+        kind: 5,
+        location: {
+          range: range(2, 6, 2, 10),
+          uri: "file:///project/src/User.php",
+        },
+        name: "StaleUser",
+      },
+    ]);
+
+    await expect(rootPromise).resolves.toEqual([]);
+    expect(rootGateway.workspaceSymbols).toHaveBeenCalledWith(
+      "/project",
+      "User",
+    );
   });
 
   it("maps PHP FoldingRange responses with a kind", async () => {
@@ -6948,6 +7158,7 @@ function createRegisteredProviders() {
   const documentLinkDispose = vi.fn();
   const documentSemanticTokensDispose = vi.fn();
   const documentSymbolDispose = vi.fn();
+  const workspaceSymbolDispose = vi.fn();
   const documentFormattingDispose = vi.fn();
   const foldingRangeDispose = vi.fn();
   const hoverDispose = vi.fn();
@@ -6994,6 +7205,8 @@ function createRegisteredProviders() {
     documentSymbolDispose: ReturnType<typeof vi.fn>;
     documentSymbolLanguage: string | null;
     documentSymbolProvider: any;
+    workspaceSymbolDispose: ReturnType<typeof vi.fn>;
+    workspaceSymbolProvider: any;
     documentFormattingDispose: ReturnType<typeof vi.fn>;
     documentFormattingLanguage: string | null;
     documentFormattingProvider: any;
@@ -7068,6 +7281,8 @@ function createRegisteredProviders() {
     documentSymbolDispose,
     documentSymbolLanguage: null,
     documentSymbolProvider: null,
+    workspaceSymbolDispose,
+    workspaceSymbolProvider: null,
     documentFormattingDispose,
     documentFormattingLanguage: null,
     documentFormattingProvider: null,
@@ -7251,6 +7466,10 @@ function createRegisteredProviders() {
         registered.documentSymbolLanguage = language;
         registered.documentSymbolProvider = provider;
         return { dispose: documentSymbolDispose };
+      }),
+      registerWorkspaceSymbolProvider: vi.fn((provider) => {
+        registered.workspaceSymbolProvider = provider;
+        return { dispose: workspaceSymbolDispose };
       }),
       registerLinkProvider: vi.fn((language, provider) => {
         registered.documentLinkLanguage = language;
