@@ -937,6 +937,43 @@ describe("useWorkbenchController preview tabs", () => {
     expect(readTextFile).not.toHaveBeenCalledWith(stalePath);
   });
 
+  it("does not close Quick Open for results from inactive project tabs", async () => {
+    const stalePath = "/workspace-a/src/User.php";
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    act(() => {
+      getWorkbench().setQuickOpenOpen(true);
+    });
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path: stalePath,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(stalePath);
+    expect(getWorkbench().quickOpenOpen).toBe(true);
+    expect(readTextFile).not.toHaveBeenCalledWith(stalePath);
+  });
+
   it("ignores stale open file errors after switching project tabs", async () => {
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();

@@ -5642,7 +5642,16 @@ export function useWorkbenchController(
 
   const openSearchResult = useCallback(
     async (result: FileSearchResult) => {
-      await openFile({ kind: "file", name: result.name, path: result.path });
+      const opened = await openFile({
+        kind: "file",
+        name: result.name,
+        path: result.path,
+      });
+
+      if (!opened) {
+        return;
+      }
+
       setQuickOpenOpen(false);
     },
     [openFile],

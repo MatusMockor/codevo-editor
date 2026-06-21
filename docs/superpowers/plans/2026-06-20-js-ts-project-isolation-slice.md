@@ -4526,3 +4526,45 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Text Search Result Active Workspace Guard
 
 - Committed as `46059ab1 Guard text search result opens by active workspace`.
+
+## Next Slice: Quick Open Result Active Workspace Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ce9d4c73 Record text search guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Quick Open used the same risky callback shape as text search: it awaited `openFile` and closed the panel without checking whether the open succeeded.
+- `openFile` already rejects results owned by inactive workspace tabs.
+- Quick Open should stay open when a stale inactive-tab result is refused.
+
+### Implementation Choice
+
+- Capture the boolean result from `openFile` in `openSearchResult`.
+- Return early when the stale file was not opened.
+- Add a preview regression where `/workspace-b` receives a stale Quick Open result for `/workspace-a`.
+
+### Acceptance Criteria
+
+- Stale Quick Open results from inactive workspace tabs do not activate the stale file.
+- Quick Open stays open when the stale result is rejected.
+- The stale file is not read from disk.
+- Focused/broader/full preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: Quick Open Result Active Workspace Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Quick Open|text search|inactive project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Quick Open|text search|Open Class|open file|inactive project tabs|stale open file"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `git diff --check`
+
+### Commit Status: Quick Open Result Active Workspace Guard
+
+- Pending commit.
