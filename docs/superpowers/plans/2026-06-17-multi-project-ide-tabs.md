@@ -301,4 +301,4 @@ This prevents project A diagnostics, completion, or implementation results from 
 
 #### Commit Status
 
-- Pending implementation commit.
+- Committed as `7725b2e5 Cover inactive workspace disposal fallback`.
