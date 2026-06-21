@@ -3864,3 +3864,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
 - PASS: `npm run check`
 - PASS: `git diff --check`
+
+### Commit Status: PHP Autostart Direct Status Root Guard
+
+- Committed as `d4a6a98e Guard PHP autostart direct roots`.
