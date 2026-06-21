@@ -5296,3 +5296,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `52660175 Guard stale indexed PHP implementation results`.
+
+## Slice: Stale PHP Language Server Definition Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `047ef3aa Record stale indexed PHP implementation guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down PHP language-server Go to Definition isolation when definition results arrive after switching project tabs or after a same-root LSP session restart.
+
+### Implementation Choice
+
+- Add PHP language-server runtime status refs and a session-active helper mirroring the JS/TS navigation guard shape.
+- Capture the requested PHP document, root, and session before language-server navigation starts async work.
+- Drop stale PHP `definition`/`implementation` navigation after document sync, after LSP responses, before chooser/open side effects, and in stale error paths.
+- Add preview regressions for delayed PHP definition results after tab switch and after same-root PHP LSP session restart, using an external target that would otherwise open in the active workspace.
+
+### Acceptance Criteria
+
+- Delayed PHP definition results from an inactive project tab are ignored.
+- Delayed PHP definition results from a previous same-root LSP session are ignored.
+- Stale PHP LSP targets do not trigger target file reads, reveal state, or success messages.
+- Existing JavaScript/TypeScript and indexed PHP navigation behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP language server definition"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `22d7320c Guard stale PHP language server navigation results`.
