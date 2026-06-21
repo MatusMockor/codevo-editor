@@ -447,6 +447,9 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                                 "labelDetailsSupport": true,
                                 "preselectSupport": true,
                                 "snippetSupport": true,
+                                "tagSupport": {
+                                    "valueSet": [1]
+                                },
                                 "resolveSupport": {
                                     "properties": ["documentation", "detail", "additionalTextEdits", "labelDetails", "command"]
                                 }
@@ -1051,6 +1054,11 @@ mod tests {
             request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
                 ["commitCharactersSupport"],
             true
+        );
+        assert_eq!(
+            request.params["capabilities"]["textDocument"]["completion"]["completionItem"]
+                ["tagSupport"]["valueSet"],
+            json!([1])
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["completion"]["completionItem"]

@@ -6770,3 +6770,40 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS On-Type Formatting Trigger Metadata
 
 - Committed as `a08fbe23 Use TypeScript on-type formatting triggers`.
+
+## Next Slice: JS/TS Completion Item Tag Support Advertisement
+
+### Checkpoint Before Slice
+
+- Delegated in parallel from latest pushed commit:
+  - `15f041d5 Record TypeScript completion resolve capability commit`
+- Landed after the on-type formatting trigger metadata slice.
+
+### Why This Slice
+
+- The app already parses completion item `tags` and maps tag `1` to Monaco's deprecated completion styling.
+- The TypeScript initialize payload advertised legacy `deprecatedSupport`, but not LSP `completionItem.tagSupport`.
+- Advertising tag support lets the language server return richer VS Code-like deprecated completion metadata that the app already handles.
+
+### Implementation Choice
+
+- Add `textDocument.completion.completionItem.tagSupport.valueSet: [1]` to TypeScript initialization.
+- Extend the existing TypeScript initialize payload regression.
+- Keep PHP initialization unchanged.
+
+### Acceptance Criteria
+
+- TypeScript initialization advertises completion item tag support for deprecated items.
+- Existing completion metadata parsing remains covered.
+- Focused Rust tests, `rustfmt --check`, full relevant suites, and `git diff --check` pass.
+
+### Verification: JS/TS Completion Item Tag Support Advertisement
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib --quiet` (1 test)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_features::tests::parses_completion_list_and_array_variants --lib --quiet` (1 test)
+- PASS: `rustfmt --check src-tauri/src/lsp.rs src-tauri/src/lsp_session.rs`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Completion Item Tag Support Advertisement
+
+- Pending commit after verification.
