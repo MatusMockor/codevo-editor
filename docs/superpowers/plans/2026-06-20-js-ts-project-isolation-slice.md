@@ -6729,3 +6729,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JS/TS Completion Resolve Capability Advertisement
 
 - Committed as `5d560f76 Advertise TypeScript completion resolve command`.
+
+## Next Slice: JS/TS On-Type Formatting Trigger Metadata
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `15f041d5 Record TypeScript completion resolve capability commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- The backend already parses whether `documentOnTypeFormattingProvider` is enabled, but drops the provider metadata that tells the client which characters should trigger on-type formatting.
+- Monaco registration currently uses fixed JS/TS trigger characters.
+- Preserving and using the advertised trigger metadata is a small VS Code-like parity improvement while keeping the existing fallback behavior.
+
+### Implementation Choice
+
+- Parse `documentOnTypeFormattingProvider.firstTriggerCharacter` plus `moreTriggerCharacter` into runtime capability metadata when the server advertises valid strings.
+- Serialize that metadata to the frontend without changing the existing boolean capability label behavior.
+- Register JS/TS Monaco on-type formatting providers with advertised trigger characters when available, falling back to `["}", ";", "\n"]`.
+
+### Acceptance Criteria
+
+- Runtime status preserves advertised on-type formatting trigger characters in order and ignores malformed entries.
+- JS/TS Monaco on-type formatting provider uses runtime trigger metadata and keeps the current fallback.
+- Focused Rust and Vitest coverage, type checks, full relevant suites, and `git diff --check` pass.
+
+### Verification: JS/TS On-Type Formatting Trigger Metadata
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml on_type_formatting_trigger_characters --lib --quiet` (2 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml capability_values_are_normalized --lib --quiet` (1 test)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml runtime_status_serializes_session_id_for_frontend_events --lib --quiet` (1 test)
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts` (63 tests)
+- PASS: `npm run check`
+- PASS: `rustfmt --check src-tauri/src/lsp.rs src-tauri/src/lsp_session.rs`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS On-Type Formatting Trigger Metadata
+
+- Pending commit after verification.

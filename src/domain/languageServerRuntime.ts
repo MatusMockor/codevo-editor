@@ -43,6 +43,7 @@ export interface LanguageServerSemanticTokensLegend {
 
 export interface LanguageServerRuntimeCapabilities
   extends LanguageServerCapabilities {
+  onTypeFormattingTriggerCharacters?: string[] | null;
   semanticTokensLegend?: LanguageServerSemanticTokensLegend | null;
 }
 

@@ -91,6 +91,31 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(monaco.dispose).toHaveBeenCalledTimes(94);
   });
 
+  it("registers advertised on-type formatting trigger characters", () => {
+    const monaco = createMonaco();
+
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        getRuntimeStatus: () =>
+          runningStatus({
+            onTypeFormattingTriggerCharacters: ["}", ";", "\n", ","],
+          }),
+      }),
+    );
+
+    const onTypeFormattingProvider = (
+      monaco.languages.registerOnTypeFormattingEditProvider as any
+    ).mock.calls[0][1];
+
+    expect(onTypeFormattingProvider.autoFormatTriggerCharacters).toEqual([
+      "}",
+      ";",
+      "\n",
+      ",",
+    ]);
+  });
+
   it("requests TypeScript language-server completions for TSX documents", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({

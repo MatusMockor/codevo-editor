@@ -82,6 +82,12 @@ type MonacoWorkspaceSymbolRegistry = {
   ): Disposable;
 };
 
+const JAVASCRIPT_TYPESCRIPT_ON_TYPE_FORMATTING_TRIGGER_CHARACTERS = [
+  "}",
+  ";",
+  "\n",
+];
+
 export interface JavaScriptTypeScriptWorkspaceEditApplicationContext {
   editedOpenPaths: string[];
   rootPath: string;
@@ -572,7 +578,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
     if (registry.registerOnTypeFormattingEditProvider) {
       disposables.push(
         registry.registerOnTypeFormattingEditProvider(language, {
-          autoFormatTriggerCharacters: ["}", ";", "\n"],
+          autoFormatTriggerCharacters:
+            onTypeFormattingTriggerCharactersForActiveRuntime(context),
           provideOnTypeFormattingEdits: (model, position, ch, options) =>
             provideOnTypeFormattingEdits(
               monaco,
@@ -2262,6 +2269,26 @@ function semanticTokensLegendForActiveRuntime(
   }
 
   return status.capabilities.semanticTokensLegend;
+}
+
+function onTypeFormattingTriggerCharactersForActiveRuntime(
+  context: JavaScriptTypeScriptLanguageServerProviderContext,
+): string[] {
+  const status = context.getRuntimeStatus();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (
+    status?.kind === "running" &&
+    status.rootPath &&
+    rootPath &&
+    workspaceRootKeysEqual(status.rootPath, rootPath) &&
+    isStringArray(status.capabilities.onTypeFormattingTriggerCharacters) &&
+    status.capabilities.onTypeFormattingTriggerCharacters.length > 0
+  ) {
+    return status.capabilities.onTypeFormattingTriggerCharacters;
+  }
+
+  return JAVASCRIPT_TYPESCRIPT_ON_TYPE_FORMATTING_TRIGGER_CHARACTERS;
 }
 
 function isUsableSemanticTokensLegend(

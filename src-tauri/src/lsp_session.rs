@@ -83,6 +83,8 @@ pub struct LanguageServerCapabilities {
     pub inlay_hint: bool,
     pub linked_editing_range: bool,
     pub on_type_formatting: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_type_formatting_trigger_characters: Option<Vec<String>>,
     pub prepare_rename: bool,
     pub range_formatting: bool,
     pub references: bool,
@@ -2222,6 +2224,9 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
         on_type_formatting: is_capability_enabled(
             capabilities.get("documentOnTypeFormattingProvider"),
         ),
+        on_type_formatting_trigger_characters: parse_on_type_formatting_trigger_characters(
+            capabilities.get("documentOnTypeFormattingProvider"),
+        ),
         prepare_rename: capabilities
             .get("renameProvider")
             .and_then(|provider| provider.get("prepareProvider"))
@@ -2266,6 +2271,32 @@ fn parse_semantic_tokens_legend(provider: Option<&Value>) -> Option<SemanticToke
         token_types,
         token_modifiers,
     })
+}
+
+fn parse_on_type_formatting_trigger_characters(provider: Option<&Value>) -> Option<Vec<String>> {
+    let provider = provider?.as_object()?;
+    let mut trigger_characters = Vec::new();
+
+    if let Some(first_trigger_character) = provider
+        .get("firstTriggerCharacter")
+        .and_then(Value::as_str)
+    {
+        trigger_characters.push(first_trigger_character.to_string());
+    }
+
+    if let Some(more_trigger_characters) = provider
+        .get("moreTriggerCharacter")
+        .and_then(Value::as_array)
+    {
+        trigger_characters.extend(
+            more_trigger_characters
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string),
+        );
+    }
+
+    (!trigger_characters.is_empty()).then_some(trigger_characters)
 }
 
 fn execute_command_provider_contains(capabilities: &Value, command: &str) -> bool {
@@ -3060,6 +3091,7 @@ mod tests {
                     inlay_hint: false,
                     linked_editing_range: false,
                     on_type_formatting: false,
+                    on_type_formatting_trigger_characters: None,
                     prepare_rename: false,
                     range_formatting: false,
                     references: false,
@@ -3102,6 +3134,11 @@ mod tests {
                 inlay_hint: true,
                 linked_editing_range: true,
                 on_type_formatting: true,
+                on_type_formatting_trigger_characters: Some(vec![
+                    "}".to_string(),
+                    ";".to_string(),
+                    "\n".to_string(),
+                ]),
                 prepare_rename: true,
                 range_formatting: true,
                 references: true,
@@ -3142,6 +3179,7 @@ mod tests {
                     "inlayHint": true,
                     "linkedEditingRange": true,
                     "onTypeFormatting": true,
+                    "onTypeFormattingTriggerCharacters": ["}", ";", "\n"],
                     "prepareRename": true,
                     "rangeFormatting": true,
                     "references": true,
@@ -3325,6 +3363,11 @@ mod tests {
                 inlay_hint: true,
                 linked_editing_range: true,
                 on_type_formatting: true,
+                on_type_formatting_trigger_characters: Some(vec![
+                    "}".to_string(),
+                    ";".to_string(),
+                    "\n".to_string(),
+                ]),
                 prepare_rename: true,
                 range_formatting: true,
                 references: true,
@@ -3343,6 +3386,69 @@ mod tests {
                 workspace_symbol: true,
             }
         );
+    }
+
+    #[test]
+    fn on_type_formatting_trigger_characters_are_preserved_when_well_formed() {
+        let capabilities = parse_capabilities(&json!({
+            "result": {
+                "capabilities": {
+                    "documentOnTypeFormattingProvider": {
+                        "firstTriggerCharacter": "}",
+                        "moreTriggerCharacter": [false, ";", 12, "\n", ","]
+                    }
+                }
+            }
+        }))
+        .expect("capabilities");
+
+        assert!(capabilities.on_type_formatting);
+        assert_eq!(
+            capabilities.on_type_formatting_trigger_characters,
+            Some(vec![
+                "}".to_string(),
+                ";".to_string(),
+                "\n".to_string(),
+                ",".to_string(),
+            ])
+        );
+        assert_eq!(
+            serde_json::to_value(capabilities).expect("serialize capabilities")
+                ["onTypeFormattingTriggerCharacters"],
+            json!(["}", ";", "\n", ","])
+        );
+    }
+
+    #[test]
+    fn on_type_formatting_trigger_characters_are_omitted_when_malformed() {
+        for provider in [
+            json!(true),
+            json!({}),
+            json!({
+                "firstTriggerCharacter": false,
+                "moreTriggerCharacter": [false, null, 12]
+            }),
+            json!({
+                "firstTriggerCharacter": false,
+                "moreTriggerCharacter": false
+            }),
+        ] {
+            let capabilities = parse_capabilities(&json!({
+                "result": {
+                    "capabilities": {
+                        "documentOnTypeFormattingProvider": provider
+                    }
+                }
+            }))
+            .expect("capabilities");
+
+            assert!(capabilities.on_type_formatting);
+            assert_eq!(capabilities.on_type_formatting_trigger_characters, None);
+            assert!(serde_json::to_value(capabilities)
+                .expect("serialize capabilities")
+                .get("onTypeFormattingTriggerCharacters")
+                .is_none());
+        }
     }
 
     #[test]
