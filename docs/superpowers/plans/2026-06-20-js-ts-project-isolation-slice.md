@@ -6161,3 +6161,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm run check`
 - PASS: `npm test` (64 files, 861 tests)
 - PASS: `git diff --check`
+
+### Commit Status: JavaScript TypeScript Rename Workspace Applier
+
+- Committed and pushed as `762ee135 Persist TypeScript rename workspace edits`.
