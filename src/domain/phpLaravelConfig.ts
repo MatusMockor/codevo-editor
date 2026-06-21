@@ -141,8 +141,11 @@ function phpLaravelConfigUpdateArrayKeyContextAt(
   position: EditorPosition,
 ): PhpLaravelConfigReferenceContext | null {
   const argument = phpStringArrayArgumentKeyContextAt(source, position);
+  const call = argument
+    ? laravelConfigUpdateArrayReferenceCallAt(source, argument)
+    : null;
 
-  if (!argument || !isLaravelConfigUpdateArrayArgument(source, argument)) {
+  if (!argument || !call) {
     return null;
   }
 
@@ -156,7 +159,7 @@ function phpLaravelConfigUpdateArrayKeyContextAt(
   }
 
   return {
-    call: "config",
+    call,
     key,
     position: argument.position,
     prefix: argument.prefix,
@@ -366,11 +369,15 @@ function isFirstArgument(argument: PhpArgumentContext): boolean {
   );
 }
 
-function isLaravelConfigUpdateArrayArgument(
+function laravelConfigUpdateArrayReferenceCallAt(
   source: string,
   argument: PhpStringArrayArgumentKeyContext,
-): boolean {
-  return laravelConfigReferenceCallAt(source, argument) === "config";
+): PhpLaravelConfigReferenceCall | null {
+  const call = laravelConfigReferenceCallAt(source, argument);
+
+  return call === "config" || call === "Config::set" || call === "config()->set"
+    ? call
+    : null;
 }
 
 function isLaravelConfigAttributeKeyArgument(

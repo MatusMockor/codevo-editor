@@ -114,17 +114,32 @@ class Controller {}
 
   it("detects Laravel config update array keys", () => {
     const samples = [
-      ["config(['app.timezone' => 'UTC'])", "app.timezone"],
-      ["config(key: ['app.name' => 'Codevo'])", "app.name"],
+      ["config(['app.timezone' => 'UTC'])", "config", "app.timezone"],
+      ["config(key: ['app.name' => 'Codevo'])", "config", "app.name"],
+      [
+        "Config::set(['app.locale' => 'sk'])",
+        "Config::set",
+        "app.locale",
+      ],
+      [
+        "Config::set(key: ['app.timezone' => 'UTC'])",
+        "Config::set",
+        "app.timezone",
+      ],
+      [
+        "config()->set(['app.name' => 'Codevo'])",
+        "config()->set",
+        "app.name",
+      ],
     ] as const;
 
-    for (const [expression, key] of samples) {
+    for (const [expression, call, key] of samples) {
       const source = `<?php\n\n${expression};\n`;
 
       expect(
         phpLaravelConfigReferenceContextAt(source, positionAfter(source, key)),
       ).toMatchObject({
-        call: "config",
+        call,
         key,
         prefix: key,
       });
@@ -143,6 +158,7 @@ class Controller {}
     const wrongUpdateArrayCall = `<?php\n\ntrans(['app.name' => 'Codevo']);\n`;
     const repositoryArrayArgument = `<?php\n\nConfig::get(['app.name' => 'Codevo']);\n`;
     const repositoryValueArgument = `<?php\n\nConfig::set('app.label', value: 'app.name');\n`;
+    const repositoryValueArrayArgument = `<?php\n\nConfig::set('app.label', ['app.name' => 'Codevo']);\n`;
 
     expect(
       phpLaravelConfigReferenceContextAt(
@@ -208,6 +224,12 @@ class Controller {}
       phpLaravelConfigReferenceContextAt(
         repositoryValueArgument,
         positionAfter(repositoryValueArgument, "app.name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        repositoryValueArrayArgument,
+        positionAfter(repositoryValueArrayArgument, "app.name"),
       ),
     ).toBeNull();
   });
