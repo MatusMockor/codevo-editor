@@ -7256,3 +7256,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `16d65cbe Suppress PHPStan Psalm PHPDoc property diagnostics`.
+
+## Slice: PHPStan Psalm PHPDoc Method Diagnostic Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `acad79e5 Record PHPStan Psalm property diagnostic commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down workbench diagnostic filtering for PHPStan/Psalm-prefixed PHPDoc magic methods.
+
+### Implementation Choice
+
+- Extend the implemented-interface PHPDoc method diagnostic preview regression with `@phpstan-method` and `@psalm-method` instance methods.
+- Extend the static-method diagnostic preview regression with a `@psalm-method static` factory method.
+- Keep production code unchanged because method member parsing already feeds the hierarchy checks.
+
+### Acceptance Criteria
+
+- Prefixed PHPDoc instance methods suppress matching unresolved method diagnostics on inferred receivers.
+- Prefixed PHPDoc static methods suppress matching unresolved static method diagnostics.
+- Instance-only and missing static/method diagnostics remain visible.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "implemented interface PHPDoc method diagnostics|existing static-method diagnostics"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc method diagnostics|existing static-method diagnostics|PHPDoc magic method definitions"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

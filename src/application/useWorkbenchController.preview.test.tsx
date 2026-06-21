@@ -16088,6 +16088,7 @@ class CommentController
     {
         $comment->publish();
         $comment->archive();
+        $comment->restore();
         $comment->missingPublish();
     }
 }
@@ -16162,7 +16163,8 @@ namespace App\\Contracts;
 
 /**
  * @method void publish()
- * @method archive()
+ * @phpstan-method archive()
+ * @psalm-method restore()
  */
 interface PublishesComments
 {
@@ -16185,6 +16187,7 @@ interface PublishesComments
 
     const publishPosition = methodDiagnosticPosition("publish");
     const archivePosition = methodDiagnosticPosition("archive");
+    const restorePosition = methodDiagnosticPosition("restore");
     const missingPosition = methodDiagnosticPosition("missingPublish");
 
     act(() => {
@@ -16201,6 +16204,12 @@ interface PublishesComments
             ...archivePosition,
             message:
               "Method App\\Models\\Comment::archive() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...restorePosition,
+            message: "Method App\\Models\\Comment::restore() does not exist",
             severity: "error",
             source: "phpactor",
           },
@@ -16248,6 +16257,7 @@ class CommentController
     {
         CommentFactory::make();
         CommentFactory::fromNamed('draft');
+        CommentFactory::restoreBySlug('draft');
         CommentFactory::makeInstance();
         CommentFactory::missingStatic();
     }
@@ -16301,6 +16311,7 @@ namespace App\\Factories;
 
 /**
  * @method static object fromNamed(string $name)
+ * @psalm-method static restoreBySlug(string $slug)
  */
 class CommentFactory
 {
@@ -16325,6 +16336,7 @@ class CommentFactory
 
     const makePosition = methodDiagnosticPosition("make");
     const fromNamedPosition = methodDiagnosticPosition("fromNamed");
+    const restoreBySlugPosition = methodDiagnosticPosition("restoreBySlug");
     const makeInstancePosition = methodDiagnosticPosition("makeInstance");
     const missingPosition = methodDiagnosticPosition("missingStatic");
 
@@ -16342,6 +16354,13 @@ class CommentFactory
             ...fromNamedPosition,
             message:
               "Method App\\Factories\\CommentFactory::fromNamed() does not exist",
+            severity: "error",
+            source: "phpactor",
+          },
+          {
+            ...restoreBySlugPosition,
+            message:
+              "Method App\\Factories\\CommentFactory::restoreBySlug() does not exist",
             severity: "error",
             source: "phpactor",
           },
