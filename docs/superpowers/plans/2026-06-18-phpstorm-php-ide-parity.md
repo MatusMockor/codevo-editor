@@ -4847,3 +4847,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `5914c381 Resolve morph map array constant aliases`.
+
+## Slice: Laravel Project Morph Map Completions - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `fa621ce4 Record morph map alias constant commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Let workbench PHP method completions use Laravel morph maps defined in separate project files such as `app/Providers/AppServiceProvider.php`.
+
+### Implementation Choice
+
+- Add a project-level morph-map lookup that searches PHP files for `morphMap`/`enforceMorphMap`, reads matching files, and extracts entries with the existing domain parser.
+- Cache the single unambiguous project morph-map model type alongside other PHP framework caches and clear it with index/workspace cache resets.
+- Use the project morph-map fallback when `morphTo()` relation targets are otherwise unknown in method-return and relation-property inference paths.
+- Keep multi-target morph maps conservative: if more than one model type is found, inference remains ambiguous.
+
+### Acceptance Criteria
+
+- A controller completion for `$comment->mappedOwner()->first()` resolves to `App\Models\User` when `Comment.php` only contains `morphTo()` and `AppServiceProvider.php` registers a single-target morph map.
+- Existing local morph-map, relation, documented morphTo, semantic, and completion behavior remains unchanged.
+- Focused preview regression, full preview file, full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- FAIL then fixed: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "infers Laravel morph map completions from service provider files"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `69430235 Resolve project morph map completions`.
