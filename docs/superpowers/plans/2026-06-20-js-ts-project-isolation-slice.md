@@ -8311,3 +8311,41 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Guard Stale Laravel JSON Translation Discovery
 
 - Committed as `c85d9e16 Guard stale Laravel JSON translation discovery`.
+
+## Next Slice: Laravel Typed Config Repository Calls
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `84a80375 Record Laravel JSON translation discovery guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel's config repository exposes typed accessors such as `Config::string(...)`, `Config::integer(...)`, `Config::boolean(...)`, `Config::array(...)`, and `Config::collection(...)`.
+- The existing config key navigation/completion path handled `config(...)`, `Config::get(...)`, `Config::has(...)`, `config()->get(...)`, and `config()->has(...)`, but typed repository calls still fell through to LSP.
+
+### Implementation Choice
+
+- Replace the ad hoc config repository call checks with one typed method allow-list.
+- Support both facade calls and helper repository calls:
+  - `Config::string(...)`, `Config::integer(...)`, `Config::float(...)`, `Config::boolean(...)`, `Config::array(...)`, `Config::collection(...)`
+  - `config()->string(...)`, `config()->integer(...)`, `config()->float(...)`, `config()->boolean(...)`, `config()->array(...)`, `config()->collection(...)`
+- Add domain coverage for all typed methods.
+- Add preview coverage proving:
+  - `Config::string('app.na')` and `config()->integer('app.mail.from.ad')` suggest local config keys.
+  - `Config::string('app.name')` opens the local config key before LSP fallback.
+
+### Verification: Laravel Typed Config Repository Calls
+
+- `npm test -- src/domain/phpLaravelConfig.test.ts` passed: 6 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "typed config|Laravel config"` passed: 7 passed, 391 skipped.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 398 passed.
+- `npm test` passed: 69 files, 1053 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Typed Config Repository Calls
+
+- Committed as `8fc8ee7e Support Laravel typed config keys`.
