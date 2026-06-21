@@ -4767,3 +4767,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `c2b27554 Cover morph map array constant values`.
+
+## Slice: Laravel Morph Map Constants in Workbench Completions - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `687ec58c Record morph map array constant values commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prove the Laravel morph map constant inference reaches the real workbench PHP method-completion flow, not only the domain semantic resolver.
+
+### Implementation Choice
+
+- Extend the existing preview relation-completion scenario with an untyped `mappedOwner(): MorphTo` relation.
+- Define `Relation::morphMap(self::MORPH_MAP)` in the model source where `MORPH_MAP` contains a class-string constant value (`self::OWNER_MODEL`).
+- Assert `$comment->mappedOwner()->first()` offers `App\Models\User::getName()` completions through `providePhpMethodCompletions`.
+- Keep this as a test-only slice because the current resolver path already carries the type through the workbench.
+
+### Acceptance Criteria
+
+- Workbench method completions resolve `mappedOwner()->first()` to `App\Models\User` through a local morph map array constant and class-string constant value.
+- Existing Laravel relation, relation-property, documented morphTo, collection, and named-argument relation completion behavior remains unchanged.
+- Focused preview test, full preview test file, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "infers Laravel relation model completions from property and relation chains"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `bcc02a6b Cover morph map constants in workbench completions`.
