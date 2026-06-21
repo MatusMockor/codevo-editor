@@ -2532,7 +2532,7 @@ Comment::resolveRelationUsing('legacyComments', function (Comment $comment) {
 
 \\Comment::resolveRelationUsing('owner', fn (Comment $comment) => $comment->belongsTo(Owner::class));
 
-Relation::morphMap([
+Relation::enforceMorphMap([
     'post' => Post::class,
     'video' => Video::class,
 ]);

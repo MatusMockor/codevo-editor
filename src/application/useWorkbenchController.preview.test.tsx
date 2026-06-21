@@ -17254,7 +17254,7 @@ class User
     });
   });
 
-  it("infers Laravel morph map completions from service provider files", async () => {
+  it("infers Laravel enforced morph map completions from service provider files", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const commentPath = "/workspace/app/Models/Comment.php";
     const userPath = "/workspace/app/Models/User.php";
@@ -17297,7 +17297,7 @@ class AppServiceProvider
 {
     public function boot(): void
     {
-        Relation::morphMap([
+        Relation::enforceMorphMap([
             'user' => User::class,
         ]);
     }
@@ -17357,10 +17357,10 @@ class User
         return `<?php\n// ${path}\n`;
       }),
       searchText: vi.fn(async (_root: string, query: string, _limit: number) =>
-        query.includes("morphMap") ? [
+        query === "enforceMorphMap" ? [
           {
             column: 19,
-            lineText: "        Relation::morphMap([",
+            lineText: "        Relation::enforceMorphMap([",
             lineNumber: 10,
             path: providerPath,
             relativePath: "app/Providers/AppServiceProvider.php",

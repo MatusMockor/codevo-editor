@@ -6894,3 +6894,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `8420953b Display multi-entry morphMap dynamic relation targets`.
+
+## Slice: Laravel Enforced MorphMap Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a0b92e2d Record multi-entry morphMap dynamic relation commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down parity between `Relation::morphMap(...)` and `Relation::enforceMorphMap(...)` for Laravel morph-map inference.
+
+### Implementation Choice
+
+- Convert the dynamic relation domain fixture to use `enforceMorphMap`.
+- Convert the workbench service-provider morph-map fixture to use `enforceMorphMap` and require the explicit `enforceMorphMap` text-search query.
+- Keep the slice coverage-only because the parser and collector already support the API.
+
+### Acceptance Criteria
+
+- Dynamic `resolveRelationUsing(... morphTo())` completions work with `enforceMorphMap`.
+- Workbench provider-file morph-map discovery works through the `enforceMorphMap` search query.
+- Existing `morphMap` stale/search coverage remains unchanged.
+- Focused/full domain and preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "dynamic relation targets"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "enforced morph map"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "morph map"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
