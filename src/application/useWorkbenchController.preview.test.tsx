@@ -32500,6 +32500,7 @@ return [
 
 use Illuminate\\Support\\Facades\\DB;
 use Illuminate\\Support\\Facades\\Schema;
+use Illuminate\\Database\\Eloquent\\Model;
 
 class DatabaseController
 {
@@ -32509,6 +32510,11 @@ class DatabaseController
         Schema::connection('sq');
         db()->connection('my');
     }
+}
+
+class User extends Model
+{
+    protected $connection = 'my';
 }
 `;
     const databaseConfigSource = `<?php
@@ -32603,6 +32609,21 @@ return [
         returnType: null,
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "protected $connection = 'my"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/database.php",
+        insertText: "mysql",
+        kind: "config",
+        name: "mysql",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
   });
 
   it("opens Laravel database connection names before LSP fallback", async () => {
@@ -32675,6 +32696,92 @@ return [
     act(() => {
       getWorkbench().updateActiveEditorPosition(
         positionAfter(controllerSource, "DB::connection('mysql"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(databaseConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: databaseConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+  });
+
+  it("opens Laravel Eloquent model connection properties before LSP fallback", async () => {
+    const modelPath = "/workspace/app/Models/User.php";
+    const databaseConfigPath = "/workspace/config/database.php";
+    const modelSource = `<?php
+
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class User extends Model
+{
+    protected $connection = 'mysql';
+}
+`;
+    const databaseConfigSource = `<?php
+
+return [
+    'default' => 'sqlite',
+    'connections' => [
+        'sqlite' => [
+            'driver' => 'sqlite',
+        ],
+        'mysql' => [
+            'driver' => 'mysql',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === modelPath) {
+          return modelSource;
+        }
+
+        if (path === databaseConfigPath) {
+          return databaseConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(modelPath, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(modelSource, "protected $connection = 'mysql"),
       );
     });
 

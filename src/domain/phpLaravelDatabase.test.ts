@@ -18,6 +18,14 @@ describe("phpLaravelDatabase", () => {
       ["db()->connection('mysql')", "db()->connection"],
       ["DB::connection(name: 'mysql')", "DB::connection"],
       ["Schema::connection(connection: 'sqlite')", "Schema::connection"],
+      [
+        "class User extends Model { protected $connection = 'mysql'; }",
+        "Model::$connection",
+      ],
+      [
+        "class User extends \\Illuminate\\Database\\Eloquent\\Model { public ?string $connection = 'sqlite'; }",
+        "Model::$connection",
+      ],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -42,6 +50,9 @@ describe("phpLaravelDatabase", () => {
     const interpolated = `<?php\n\nDB::connection("my$sql");\n`;
     const invalid = `<?php\n\nDB::connection('mysql/read');\n`;
     const wrongCall = `<?php\n\nCache::store('mysql');\n`;
+    const nonModelProperty = `<?php\n\nclass Connector { protected $connection = 'mysql'; }\n`;
+    const privateModelProperty = `<?php\n\nclass User extends Model { private $connection = 'mysql'; }\n`;
+    const localVariable = `<?php\n\nclass User extends Model { public function run() { $connection = 'mysql'; } }\n`;
 
     expect(
       phpLaravelDatabaseConnectionReferenceContextAt(
@@ -65,6 +76,24 @@ describe("phpLaravelDatabase", () => {
       phpLaravelDatabaseConnectionReferenceContextAt(
         wrongCall,
         positionAfter(wrongCall, "mysql"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelDatabaseConnectionReferenceContextAt(
+        nonModelProperty,
+        positionAfter(nonModelProperty, "mysql"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelDatabaseConnectionReferenceContextAt(
+        privateModelProperty,
+        positionAfter(privateModelProperty, "mysql"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelDatabaseConnectionReferenceContextAt(
+        localVariable,
+        positionAfter(localVariable, "mysql"),
       ),
     ).toBeNull();
   });
