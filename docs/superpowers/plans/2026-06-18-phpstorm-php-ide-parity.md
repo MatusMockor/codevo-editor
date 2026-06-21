@@ -3924,3 +3924,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `bd714103 Complete Laravel signed route names`.
+
+## Slice: Laravel Signed Redirect Route Names - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0d41f54c Record Laravel signed route names commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Provide Laravel named-route completions for signed redirect route calls.
+
+### Implementation Choice
+
+- Add `redirect()->signedRoute`, `redirect()->temporarySignedRoute`, `Redirect::signedRoute`, and `Redirect::temporarySignedRoute` to named-route reference detection.
+- Keep the existing route helper, Redirect facade, URL facade, Uri, and `Route::has` first-argument behavior unchanged.
+- Add parser coverage for each signed redirect route variant.
+- Add workbench coverage proving route-name completions work inside `redirect()->temporarySignedRoute('comments.pre', ...)`.
+
+### Acceptance Criteria
+
+- Signed redirect route string literals produce named-route reference contexts.
+- Laravel named-route completions work inside signed redirect route calls.
+- Existing named-route helper, signed URL, and Redirect facade route completions still pass.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "supported first string arguments|signed redirect route strings|signed URL route strings|Redirect facade route strings|suggests Laravel named routes inside route helper strings"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `c5025e55 Complete Laravel signed redirect route names`.
