@@ -1980,6 +1980,63 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale PHP did-close errors after switching project tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const didClose = createDeferred<void>();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 351,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async () => "<?php\nfinal class User {}\n"),
+      runtimeStatus: runningStatus,
+    });
+    vi.mocked(dependencies.documentSyncGateway.didClose).mockImplementationOnce(
+      () => didClose.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().closeDocument(path);
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+        "/workspace-a",
+        path,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      didClose.reject(new Error("stale php did close"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale php did close");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale php did close"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale save errors after switching project tabs", async () => {
     const path = "/workspace-a/src/User.php";
     const save = createDeferred<void>();

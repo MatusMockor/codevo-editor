@@ -4271,3 +4271,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JavaScript TypeScript Hover Definition Tab Switch Coverage
 
 - Committed as `0d613175 Cover JavaScript TypeScript hover definition tab switches`.
+
+## Next Slice: PHP DidClose Active Workspace Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `da182b88 Record JavaScript TypeScript hover definition tab switch commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- A read-only explorer audit found that PHP `didClose` failures still reported through the global language-server error path.
+- If a PHP document close from `/workspace-a` rejected after switching to `/workspace-b`, the stale error could create a `Language Server` notice in the newly active workspace.
+- The sibling JS/TS close path already guards the originating root/session, so PHP should use the same active-workspace contract.
+
+### Implementation Choice
+
+- Capture the PHP runtime session before sending `textDocument/didClose`.
+- Ignore close failures when the captured session is no longer current.
+- Report close failures through `reportLanguageServerErrorForActiveWorkspaceRoot`.
+- Apply the same root/session-aware reporting to the PHP bulk-close path used during workspace cleanup.
+- Add a preview regression for a stale PHP `didClose` rejection after switching project tabs.
+
+### Acceptance Criteria
+
+- Stale PHP `didClose` errors do not surface in another active workspace tab.
+- Same-root PHP didSave stale-error coverage remains green.
+- Existing close/save preview coverage remains green.
+- `npm run check` and `git diff --check` pass.
+
+### Verification: PHP DidClose Active Workspace Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP did-close errors after switching|PHP did-save errors after same-root"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "did-close|didClose|closeDocument|closes synced|did-save|didSave"`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP DidClose Active Workspace Guard
+
+- Pending commit.

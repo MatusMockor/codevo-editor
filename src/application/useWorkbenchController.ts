@@ -2766,6 +2766,15 @@ export function useWorkbenchController(
         return;
       }
 
+      const currentRuntimeStatus = languageServerRuntimeStatusRef.current;
+      const requestedSessionId = isRunningLanguageServerForWorkspace(
+        currentRuntimeStatus,
+        languageServerRuntimeStatusRootRef.current,
+        rootPath,
+      )
+        ? currentRuntimeStatus.sessionId
+        : null;
+
       clearDocumentChangeTimer(syncKey);
       syncedDocumentPathsRef.current.delete(syncKey);
       delete syncedDocumentContentRef.current[syncKey];
@@ -2780,14 +2789,22 @@ export function useWorkbenchController(
           languageServerDocumentSyncGateway.didClose(rootPath, document.path),
         );
       } catch (error) {
-        reportLanguageServerError(error);
+        if (
+          requestedSessionId !== null &&
+          !isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
+        ) {
+          return;
+        }
+
+        reportLanguageServerErrorForActiveWorkspaceRoot(rootPath, error);
       }
     },
     [
       clearDocumentChangeTimer,
       enqueueDocumentSync,
+      isLanguageServerSessionCurrentForRoot,
       languageServerDocumentSyncGateway,
-      reportLanguageServerError,
+      reportLanguageServerErrorForActiveWorkspaceRoot,
     ],
   );
 
@@ -2873,6 +2890,22 @@ export function useWorkbenchController(
         documentSyncGenerationRef.current += 1;
       }
 
+      const currentRuntimeStatus =
+        cachedLanguageServerRuntimeStatusForRoot(
+          languageServerRuntimeStatusByRootRef.current,
+          rootPath,
+        ) ??
+        (workspaceRootKeysEqual(languageServerRuntimeStatusRootRef.current, rootPath)
+          ? languageServerRuntimeStatusRef.current
+          : null);
+      const requestedSessionId = isRunningLanguageServerForWorkspace(
+        currentRuntimeStatus,
+        currentRuntimeStatus?.rootPath ?? languageServerRuntimeStatusRootRef.current,
+        rootPath,
+      )
+        ? currentRuntimeStatus.sessionId
+        : null;
+
       await Promise.all(
         syncedDocuments.map(async ({ key, path }) => {
           clearDocumentChangeTimer(key);
@@ -2889,7 +2922,14 @@ export function useWorkbenchController(
               languageServerDocumentSyncGateway.didClose(rootPath, path),
             );
           } catch (error) {
-            reportLanguageServerError(error);
+            if (
+              requestedSessionId !== null &&
+              !isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
+            ) {
+              return;
+            }
+
+            reportLanguageServerErrorForActiveWorkspaceRoot(rootPath, error);
           }
         }),
       );
@@ -2901,8 +2941,9 @@ export function useWorkbenchController(
     [
       clearDocumentChangeTimer,
       enqueueDocumentSync,
+      isLanguageServerSessionCurrentForRoot,
       languageServerDocumentSyncGateway,
-      reportLanguageServerError,
+      reportLanguageServerErrorForActiveWorkspaceRoot,
       resetLanguageServerDocuments,
     ],
   );
