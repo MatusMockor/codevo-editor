@@ -673,13 +673,12 @@ export function useWorkbenchController(
       return null;
     }
 
-    if (languageServerRuntimeStatus?.kind !== "running") {
-      return null;
-    }
-
     if (
-      languageServerRuntimeStatus.rootPath &&
-      !workspaceRootKeysEqual(languageServerRuntimeStatus.rootPath, workspaceRoot)
+      !isRunningLanguageServerForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
     ) {
       return null;
     }
@@ -716,6 +715,7 @@ export function useWorkbenchController(
     indexProgress.status,
     intelligenceMode,
     languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
     workspaceDescriptor,
     workspaceRoot,
     workspaceTrust,
@@ -999,10 +999,13 @@ export function useWorkbenchController(
         return;
       }
 
-      const currentSessionId =
-        languageServerRuntimeStatus?.kind === "running"
-          ? languageServerRuntimeStatus.sessionId
-          : null;
+      const currentSessionId = isRunningLanguageServerForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        event.rootPath,
+      )
+        ? languageServerRuntimeStatus.sessionId
+        : null;
 
       if (event.sessionId !== currentSessionId) {
         return;
@@ -1073,7 +1076,11 @@ export function useWorkbenchController(
         }
       })().catch(reportLanguageServerError);
     },
-    [languageServerRuntimeStatus, reportLanguageServerError],
+    [
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      reportLanguageServerError,
+    ],
   );
 
   const applyJavaScriptTypeScriptLanguageServerDiagnostics = useCallback(
@@ -1850,7 +1857,13 @@ export function useWorkbenchController(
     async (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
 
-      if (languageServerRuntimeStatus?.kind !== "running") {
+      if (
+        !isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
         return;
       }
 
@@ -1883,6 +1896,7 @@ export function useWorkbenchController(
       enqueueDocumentSync,
       languageServerDocumentSyncGateway,
       languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
       nextDocumentVersion,
       reportLanguageServerError,
     ],
@@ -2020,7 +2034,13 @@ export function useWorkbenchController(
     (document: EditorDocument) => {
       const rootPath = currentWorkspaceRootRef.current;
 
-      if (languageServerRuntimeStatus?.kind !== "running") {
+      if (
+        !isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
         return;
       }
 
@@ -2062,6 +2082,7 @@ export function useWorkbenchController(
       enqueueDocumentSync,
       languageServerDocumentSyncGateway,
       languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
       nextDocumentVersion,
       reportLanguageServerError,
     ],
@@ -10118,7 +10139,13 @@ export function useWorkbenchController(
       return false;
     }
 
-    if (languageServerRuntimeStatus?.kind !== "running") {
+    if (
+      !isRunningLanguageServerForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       return false;
     }
 
@@ -10210,6 +10237,7 @@ export function useWorkbenchController(
     implementationTargetsFromLocations,
     languageServerFeaturesGateway,
     languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
     openImplementationTarget,
     openPathForNavigation,
     recordCurrentNavigationLocation,
@@ -11860,7 +11888,11 @@ export function useWorkbenchController(
         }
 
         return (
-          languageServerRuntimeStatus?.kind === "running" &&
+          isRunningLanguageServerForWorkspace(
+            languageServerRuntimeStatus,
+            languageServerRuntimeStatusRoot,
+            workspaceRoot,
+          ) &&
           canUseLanguageServerFeature(
             languageServerRuntimeStatus.capabilities,
             "implementation",
@@ -13379,7 +13411,13 @@ export function useWorkbenchController(
   ]);
 
   useEffect(() => {
-    if (languageServerRuntimeStatus?.kind !== "running") {
+    if (
+      !isRunningLanguageServerForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        workspaceRoot,
+      )
+    ) {
       return;
     }
 
@@ -13401,8 +13439,10 @@ export function useWorkbenchController(
     activeDocument,
     documents,
     languageServerRuntimeStatus,
+    languageServerRuntimeStatusRoot,
     openDocumentPaths,
     scheduleDocumentChange,
+    workspaceRoot,
   ]);
 
   useEffect(() => {

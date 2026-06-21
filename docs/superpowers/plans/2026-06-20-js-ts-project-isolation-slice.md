@@ -3747,3 +3747,40 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Controller Stop Runtime Response Root Guard
 
 - Committed as `0437289b Guard controller stop runtime roots`.
+
+## Next Slice: PHP Controller Runtime Workspace Gates
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8fd2e20f Record Laravel relation terminal variant commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP runtime direct and subscription handlers now reject rootless or mismatched active statuses before caching them.
+- Several downstream PHP controller gates still checked only `languageServerRuntimeStatus.kind`, relying on upstream correctness instead of the same workspace-aware runtime helper used elsewhere.
+- Keeping document sync, diagnostics, navigation, readiness, and command enablement behind one workspace-aware runtime check reduces the chance that stale or malformed status state can reactivate PHP IDE features for the wrong workspace.
+
+### Implementation Choice
+
+- Replace PHP `kind === "running"` / `kind !== "running"` checks in controller feature gates with `isRunningLanguageServerForWorkspace(...)`.
+- Cover PHP IDE readiness, diagnostics session matching, document `didOpen`, document change scheduling, PHP go-to navigation, and PHP implementation command enablement.
+- Use existing rootless PHP runtime, PHP document sync, and PHP implementation preview regressions to verify behavior because rootless active statuses are already blocked at ingress.
+
+### Acceptance Criteria
+
+- PHP document sync and pending changes require a running status rooted to the active workspace.
+- PHP diagnostics session matching requires a running status rooted to the diagnostic workspace.
+- PHP go-to navigation and implementation command enablement require a running status rooted to the active workspace.
+- Focused PHP preview tests, full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Controller Runtime Workspace Gates
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP runtime status events without an explicit workspace root|waits for PHP didOpen|opens implementation targets from an explicit editor position|asks which implementation"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
