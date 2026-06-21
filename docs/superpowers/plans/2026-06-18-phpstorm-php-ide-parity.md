@@ -7455,4 +7455,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `0334d560 Support PHPStan Psalm PHPDoc var tags`.
