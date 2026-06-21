@@ -4525,4 +4525,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Text Search Result Active Workspace Guard
 
-- Pending commit.
+- Committed as `46059ab1 Guard text search result opens by active workspace`.
