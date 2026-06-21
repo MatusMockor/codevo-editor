@@ -249,6 +249,55 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     });
   });
 
+  it("drops in-flight TypeScript completions when no project tab is active", async () => {
+    const monaco = createMonaco();
+    let activeRoot: string | null = "/project";
+    const completion =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const completionProvider = (
+      monaco.languages.registerCompletionItemProvider as any
+    ).mock.calls[0][1];
+    const completionPromise = completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+    );
+
+    await Promise.resolve();
+    activeRoot = null;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: "function",
+          documentation: null,
+          insertText: "loadUser",
+          kind: 3,
+          label: "loadUser",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    expect(gateway.completion).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+  });
+
   it("drops stale TypeScript provider errors after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";
