@@ -4231,3 +4231,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Signature Help Tab Switch Coverage
 
 - Committed as `a5324db8 Cover PHP signature help tab switches`.
+
+## Next Slice: JavaScript TypeScript Hover Definition Tab Switch Coverage
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0d019687 Record PHPStan Psalm class-string preview commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{0}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- JS/TS Monaco providers already guard active root/session through shared request helpers.
+- Existing stale-result provider tests covered completions, code actions, document links, workspace symbols, selection ranges, lazy resolves, and command edits.
+- Hover and definition are core VS Code navigation surfaces with different return shapes, so explicit tab-switch coverage protects the shared guard against regressions.
+
+### Implementation Choice
+
+- Add coverage-only regressions in `src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`.
+- Start hover and definition requests in `/project`, switch the active workspace root to `/other`, resolve the stale server result, and assert the provider returns `null`.
+- Keep production code unchanged because the shared `isFeatureRequestActive` guard already drops stale results.
+
+### Acceptance Criteria
+
+- In-flight JS/TS hover results are ignored after switching project tabs.
+- In-flight JS/TS definition results are ignored after switching project tabs.
+- Existing completion tab-switch coverage, full JS/TS provider tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: JavaScript TypeScript Hover Definition Tab Switch Coverage
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "TypeScript hovers after switching|TypeScript definitions after switching|TypeScript completions after switching"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: JavaScript TypeScript Hover Definition Tab Switch Coverage
+
+- Pending commit.

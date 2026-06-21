@@ -428,6 +428,87 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.completion).not.toHaveBeenCalled();
   });
 
+  it("drops in-flight TypeScript hovers after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const hover =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["hover"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const hoverProvider = (monaco.languages.registerHoverProvider as any).mock
+      .calls[0][1];
+    const hoverPromise = hoverProvider.provideHover(textModel(), {
+      column: 4,
+      lineNumber: 2,
+    });
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    hover.resolve({
+      contents: "type User = { id: string }",
+    });
+
+    await expect(hoverPromise).resolves.toBeNull();
+    expect(gateway.hover).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+  });
+
+  it("drops in-flight TypeScript definitions after switching project tabs", async () => {
+    const monaco = createMonaco();
+    let activeRoot = "/project";
+    const definition =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.definition).mockImplementationOnce(
+      async () => definition.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const definitionProvider = (
+      monaco.languages.registerDefinitionProvider as any
+    ).mock.calls[0][1];
+    const definitionPromise = definitionProvider.provideDefinition(
+      textModel(),
+      {
+        column: 4,
+        lineNumber: 2,
+      },
+    );
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    definition.resolve([
+      {
+        range: range(0, 6, 0, 20),
+        uri: "file:///project/src/stale.ts",
+      },
+    ]);
+
+    await expect(definitionPromise).resolves.toBeNull();
+    expect(gateway.definition).toHaveBeenCalledWith("/project", {
+      character: 3,
+      line: 1,
+      path: "/project/src/user.ts",
+    });
+  });
+
   it("drops in-flight TypeScript code actions after switching project tabs", async () => {
     const monaco = createMonaco();
     let activeRoot = "/project";
