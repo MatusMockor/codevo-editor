@@ -5536,3 +5536,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `87cf8052 Guard stale contextual PHP method navigation`.
+
+## Slice: Stale Contextual PHP Property Navigation Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `82b8751f Record stale contextual PHP method navigation guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale contextual PHP property navigation targets from opening after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `openDirectPhpPropertyTarget`.
+- Guard before/after class hierarchy source reads, before property target opens, and after hierarchy read failures.
+- Add a preview regression where Go to Definition starts on `$comment->externalId` in `/workspace-a`, switches to `/workspace-b` after the earlier property-existence/method fallback reads, then proves the stale property target read is not started.
+
+### Acceptance Criteria
+
+- Stale contextual PHP property targets are ignored after tab switch.
+- Stale property target reads do not continue after tab switch.
+- Existing contextual PHP property definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "contextual PHP property targets"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `b01045f8 Guard stale contextual PHP property navigation`.
