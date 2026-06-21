@@ -669,6 +669,30 @@ class AlbumController
         $afterFillInsertTerminal = Album::query()
             ->fillAndInsertGetId(['title' => 'Blue'])
             ->first();
+        $afterInsertGetIdTerminal = Album::query()
+            ->insertGetId(['title' => 'Blue'])
+            ->first();
+        $afterInsertOrIgnoreTerminal = Album::query()
+            ->insertOrIgnore(['title' => 'Blue'])
+            ->first();
+        $afterInsertOrIgnoreReturningTerminal = Album::query()
+            ->insertOrIgnoreReturning(['title' => 'Blue'])
+            ->first();
+        $afterInsertUsingTerminal = Album::query()
+            ->insertUsing(['title'], Album::query()->select('title'))
+            ->first();
+        $afterInsertOrIgnoreUsingTerminal = Album::query()
+            ->insertOrIgnoreUsing(['title'], Album::query()->select('title'))
+            ->first();
+        $afterUpdateOrInsertTerminal = Album::query()
+            ->updateOrInsert(['id' => 1], ['title' => 'Blue'])
+            ->first();
+        $afterUpdateFromTerminal = Album::query()
+            ->updateFrom(['title' => 'Blue'])
+            ->first();
+        $afterTruncateTerminal = Album::query()
+            ->truncate()
+            ->first();
 
         $album->tit
         $morphAlbum->tit
@@ -716,6 +740,14 @@ class AlbumController
         $afterQualifyColumnTerminal->tit
         $afterGetRelationTerminal->tit
         $afterFillInsertTerminal->tit
+        $afterInsertGetIdTerminal->tit
+        $afterInsertOrIgnoreTerminal->tit
+        $afterInsertOrIgnoreReturningTerminal->tit
+        $afterInsertUsingTerminal->tit
+        $afterInsertOrIgnoreUsingTerminal->tit
+        $afterUpdateOrInsertTerminal->tit
+        $afterUpdateFromTerminal->tit
+        $afterTruncateTerminal->tit
     }
 }
 `;
@@ -932,6 +964,14 @@ class AlbumController
       "afterExistsOrTerminal",
       "afterDoesntExistOrTerminal",
       "afterImplodeTerminal",
+      "afterInsertGetIdTerminal",
+      "afterInsertOrIgnoreTerminal",
+      "afterInsertOrIgnoreReturningTerminal",
+      "afterInsertUsingTerminal",
+      "afterInsertOrIgnoreUsingTerminal",
+      "afterUpdateOrInsertTerminal",
+      "afterUpdateFromTerminal",
+      "afterTruncateTerminal",
     ]) {
       expect(
         phpVariableTypeInSource(

@@ -3718,3 +3718,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `33ea4548 Treat Laravel scalar aggregates as terminals`.
+
+## Slice: Laravel Mutation Terminal Boundary - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8809de01 Record Laravel scalar terminal commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat additional Laravel query mutation helpers as non-model terminal boundaries.
+
+### Implementation Choice
+
+- Add `insertGetId`, `insertOrIgnore`, `insertOrIgnoreReturning`, `insertUsing`, `insertOrIgnoreUsing`, `updateOrInsert`, `updateFrom`, and `truncate` to Eloquent builder method recognition.
+- Add the same helpers to the non-model terminal boundary set so return-type inference stops instead of preserving `Builder<Model>`.
+- Cover return-type null behavior and semantic model-assignment guards after chains that incorrectly continue with `first()`.
+
+### Acceptance Criteria
+
+- Mutation terminal helpers are recognized as Laravel Eloquent builder method names.
+- Eloquent builder return-type inference returns `null` for these terminal helpers.
+- Model assignments after these terminal helpers do not infer the original model.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "Laravel model assignments"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending implementation commit.
