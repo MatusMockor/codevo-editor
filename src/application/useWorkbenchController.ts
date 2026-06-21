@@ -5225,29 +5225,42 @@ export function useWorkbenchController(
       return;
     }
 
-    const path = joinWorkspacePath(workspaceRoot, relativePath);
+    const requestedRoot = workspaceRoot;
+    const path = joinWorkspacePath(requestedRoot, relativePath);
 
     try {
       await workspaceFiles.createTextFile(path);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       await notifyJavaScriptTypeScriptWatchedFilesChanged([
         {
           changeType: "created",
           path,
         },
       ]);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       const parentPath = getParentPath(path);
       setExpandedDirectories((current) => new Set(current).add(parentPath));
       await refreshDirectory(parentPath);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       await openFile({ kind: "file", name: getFileName(path), path });
     } catch (error) {
-      reportError("Create File", error);
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "Create File", error);
     }
   }, [
     openFile,
     notifyJavaScriptTypeScriptWatchedFilesChanged,
     prompter,
     refreshDirectory,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     workspaceFiles,
     workspaceRoot,
   ]);

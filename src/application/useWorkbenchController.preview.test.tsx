@@ -6197,6 +6197,58 @@ describe("useWorkbenchController preview tabs", () => {
     ]);
   });
 
+  it("ignores stale create file errors after switching project tabs", async () => {
+    const newPath = "/workspace-a/src/NewWidget.php";
+    const creation = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\n`),
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("src/NewWidget.php");
+    vi.mocked(
+      dependencies.workspaceGateways.files.createTextFile,
+    ).mockImplementationOnce(async () => creation.promise);
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.new",
+    );
+    let createPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      createPromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.createTextFile,
+      ).toHaveBeenCalledWith(newPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      creation.reject(new Error("stale create file"));
+      await createPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Create File" &&
+          notice.message.includes("stale create file"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale JavaScript TypeScript watched-file errors after same-root session restart", async () => {
     const newPath = "/workspace/src/NewWidget.ts";
     const watchedFilesChanged = createDeferred<void>();
