@@ -3352,7 +3352,7 @@ namespace App\\Models;
 
 /**
  * @mixin \\Illuminate\\Database\\Eloquent\\Builder<static>
- * @mixin IdeHelperComment
+ * @psalm-mixin IdeHelperComment
  */
 class Comment
 {

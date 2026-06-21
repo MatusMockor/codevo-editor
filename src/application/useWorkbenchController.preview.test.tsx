@@ -14062,7 +14062,7 @@ use App\\Models\\Comment;
 use App\\Support\\RepositoryMixin;
 
 /**
- * @mixin RepositoryMixin<Comment>
+ * @phpstan-mixin RepositoryMixin<Comment>
  */
 class CommentRepository
 {

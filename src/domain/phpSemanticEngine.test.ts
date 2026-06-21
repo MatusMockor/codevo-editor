@@ -3058,7 +3058,8 @@ use App\\Models\\Comment;
 
 /**
  * @mixin IdeHelper<Comment>
- * @mixin \\Illuminate\\Database\\Eloquent\\Builder<Comment>
+ * @phpstan-mixin \\Illuminate\\Database\\Eloquent\\Builder<Comment>
+ * @psalm-mixin CommentIdeHelper<Comment>
  */
 class CommentModel
 {
@@ -3072,6 +3073,10 @@ class CommentModel
       },
       {
         className: "Illuminate\\Database\\Eloquent\\Builder",
+        genericTypes: ["Comment"],
+      },
+      {
+        className: "CommentIdeHelper",
         genericTypes: ["Comment"],
       },
     ]);

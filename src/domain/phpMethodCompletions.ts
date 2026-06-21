@@ -398,7 +398,9 @@ export function phpTraitClassNames(source: string): string[] {
 export function phpMixinClassNames(source: string): string[] {
   const mixins: string[] = [];
 
-  for (const match of source.matchAll(/@mixin\s+([^\r\n*]+)/g)) {
+  for (const match of source.matchAll(
+    /@(?:(?:phpstan|psalm)-)?mixin\s+([^\r\n*]+)/g,
+  )) {
     const typeName = firstPhpDocTypeToken(match[1] ?? "")
       ?.split("<")[0]
       ?.trim()

@@ -7093,3 +7093,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `e332197d Bind JavaScript TypeScript navigation commands in keymap`.
+
+## Slice: PHPStan Psalm PHPDoc Mixin Tags - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `db43f07b Record JavaScript TypeScript navigation keymap commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat `@phpstan-mixin` and `@psalm-mixin` like `@mixin` for PHPDoc mixin member and generic template inference.
+
+### Implementation Choice
+
+- Extend `phpDocGenericMixins` to parse `@phpstan-mixin` and `@psalm-mixin`.
+- Extend `phpMixinClassNames` so non-generic mixin member lookup uses the same prefixed tags.
+- Add domain coverage for prefixed generic and non-generic mixin tags.
+- Convert the generic mixin preview fixture to `@phpstan-mixin` to prove workbench template inference still resolves the concrete model.
+
+### Acceptance Criteria
+
+- Generic mixin template substitution works through `@phpstan-mixin` and `@psalm-mixin`.
+- Plain mixin member discovery works through prefixed mixin tags.
+- Existing unprefixed `@mixin` behavior remains unchanged.
+- Focused/full domain and preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "generic mixin"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "mixin class names"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "generic mixin method returns"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts src/domain/phpMethodCompletions.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc mixin|generic mixin"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
