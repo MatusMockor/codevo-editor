@@ -5734,3 +5734,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `915ab10f Guard stale Laravel named route targets`.
+
+## Slice: Stale Laravel Relation String Owner Resolution Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2387e248 Record stale Laravel named route guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale Laravel relation-string owner resolution from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root in `resolvePhpLaravelRelationPathOwnerType` and stop nested relation owner resolution when the active workspace changes.
+- Capture the requested root in `goToPhpLaravelRelationStringDefinition`.
+- Guard after each async owner/type resolution step, before stale not-found messages, before opening the relation target, and after target open attempts.
+- Add a preview regression where Go to Definition starts on `Comment::with('children.parent')` in `/workspace-a`, the nested owner model read is delayed, the workspace switches to `/workspace-b`, and the delayed read resolves.
+- Assert the stale command does not continue into `/workspace-b` relation target reads, open a relation model, reveal a target, or publish a stale not-found message.
+
+### Acceptance Criteria
+
+- Stale Laravel relation-string owner resolution stops after tab switch.
+- Stale relation target reads are not started in the newly active workspace by an old command.
+- Existing Laravel relation-string definition behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale Laravel relation string owner"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

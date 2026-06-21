@@ -8447,13 +8447,21 @@ export function useWorkbenchController(
       className: string,
       previousRelationNames: readonly string[] = [],
     ): Promise<string | null> => {
-      if (!isLaravelFrameworkActive) {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isLaravelFrameworkActive || !requestedRoot) {
         return null;
       }
 
       let ownerType: string | null = className;
 
       for (const relationName of previousRelationNames) {
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
         ownerType = ownerType
           ? await resolvePhpClassPropertyOrRelationType(
               ownerType,
@@ -8462,6 +8470,10 @@ export function useWorkbenchController(
             )
           : null;
 
+        if (!isRequestedRootActive()) {
+          return null;
+        }
+
         if (!ownerType) {
           return null;
         }
@@ -8469,7 +8481,11 @@ export function useWorkbenchController(
 
       return ownerType;
     },
-    [resolvePhpClassPropertyOrRelationType, isLaravelFrameworkActive],
+    [
+      resolvePhpClassPropertyOrRelationType,
+      isLaravelFrameworkActive,
+      workspaceRoot,
+    ],
   );
 
   const resolvePhpCollectionModelTypeFromClass = useCallback(
@@ -10960,7 +10976,11 @@ export function useWorkbenchController(
     async (
       context: Extract<PhpIdentifierContext, { kind: "laravelRelationString" }>,
     ): Promise<boolean> => {
-      if (!isLaravelFrameworkActive || !activeDocument) {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !isLaravelFrameworkActive || !activeDocument) {
         return false;
       }
 
@@ -10976,6 +10996,11 @@ export function useWorkbenchController(
             context.receiverExpression,
           )
         : null;
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       const receiverType =
         !receiverModelType && context.receiverExpression
           ? await resolvePhpExpressionType(
@@ -10984,6 +11009,11 @@ export function useWorkbenchController(
               context.receiverExpression,
             )
           : null;
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       const relationBaseOwnerType =
         staticClassName ?? receiverModelType ?? receiverType;
       const relationOwnerType = relationBaseOwnerType
@@ -10993,8 +11023,16 @@ export function useWorkbenchController(
           )
         : null;
 
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       if (!relationOwnerType) {
         setMessage(`No typed target found for relation ${context.relationName}.`);
+        return false;
+      }
+
+      if (!isRequestedRootActive()) {
         return false;
       }
 
@@ -11003,8 +11041,16 @@ export function useWorkbenchController(
         context.relationName,
       );
 
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
       if (openedRelation) {
         return true;
+      }
+
+      if (!isRequestedRootActive()) {
+        return false;
       }
 
       setMessage(
@@ -11019,6 +11065,7 @@ export function useWorkbenchController(
       resolvePhpEloquentBuilderModelType,
       resolvePhpExpressionType,
       resolvePhpLaravelRelationPathOwnerType,
+      workspaceRoot,
     ],
   );
 
