@@ -824,6 +824,90 @@ Route::name('admin.')->group(function () {
     ]);
   });
 
+  it("uses Laravel resource route name overrides from named arguments", () => {
+    const source = `<?php
+Route::resource(name: 'photos', controller: PhotoController::class)->names(names: [
+    'create' => 'photos.build',
+    'show' => 'photos.view',
+]);
+Route::apiResource(name: 'api.comments', controller: ApiCommentController::class)
+    ->only(only: ['index', 'show'])
+    ->names(names: [
+        'index' => 'api.comments.feed',
+        'show' => 'api.comments.detail',
+        'destroy' => 'api.comments.remove',
+    ]);
+Route::name(name: 'admin.')->group(function () {
+    Route::singleton(name: 'profile', controller: ProfileController::class)->names(names: [
+        'show' => 'profile.details',
+    ]);
+});
+Route::resource(name: 'ignored', controller: IgnoredController::class)->names(label: [
+    'index' => 'ignored.feed',
+]);
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "photos.index",
+        position: positionOf(source, "photos',"),
+      },
+      {
+        name: "photos.build",
+        position: positionOf(source, "photos.build"),
+      },
+      {
+        name: "photos.store",
+        position: positionOf(source, "photos',"),
+      },
+      {
+        name: "photos.view",
+        position: positionOf(source, "photos.view"),
+      },
+      {
+        name: "photos.edit",
+        position: positionOf(source, "photos',"),
+      },
+      {
+        name: "photos.update",
+        position: positionOf(source, "photos',"),
+      },
+      {
+        name: "photos.destroy",
+        position: positionOf(source, "photos',"),
+      },
+      {
+        name: "api.comments.feed",
+        position: positionOf(source, "api.comments.feed"),
+      },
+      {
+        name: "api.comments.detail",
+        position: positionOf(source, "api.comments.detail"),
+      },
+      {
+        name: "admin.profile.details",
+        position: positionOf(source, "profile.details"),
+      },
+      {
+        name: "admin.profile.edit",
+        position: positionOf(source, "profile',"),
+      },
+      {
+        name: "admin.profile.update",
+        position: positionOf(source, "profile',"),
+      },
+      ...expectedRouteDefinitions(source, "ignored", [
+        "index",
+        "create",
+        "store",
+        "show",
+        "edit",
+        "update",
+        "destroy",
+      ]),
+    ]);
+  });
+
   it("expands Laravel singleton route name modifiers", () => {
     const source = `<?php
 Route::singleton('photos.thumbnail', ThumbnailController::class)->creatable();

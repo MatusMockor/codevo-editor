@@ -370,7 +370,9 @@ function laravelResourceRouteNameOverrides(
       continue;
     }
 
-    for (const entry of laravelRouteStringMapAtOpenParen(source, namesOpenParen)) {
+    for (const entry of laravelRouteStringMapAtOpenParen(source, namesOpenParen, [
+      "names",
+    ])) {
       overrides.set(entry.key.value, entry.value);
     }
   }
@@ -381,6 +383,7 @@ function laravelResourceRouteNameOverrides(
 function laravelRouteStringMapAtOpenParen(
   source: string,
   openParen: number,
+  namedArgumentNames: readonly string[] = [],
 ): Array<{ key: PhpStringLiteral; value: PhpStringLiteral }> {
   const closeParen = matchingBracketOffset(source, openParen, "(", ")");
 
@@ -389,18 +392,29 @@ function laravelRouteStringMapAtOpenParen(
   }
 
   const argumentStart = skipWhitespace(source, openParen + 1);
+  const namedValueStart = namedArgumentValueStartAt(
+    source,
+    argumentStart,
+    namedArgumentNames,
+  );
+  const hasUnsupportedNamedArgument =
+    namedValueStart === null &&
+    /^[A-Za-z_][A-Za-z0-9_]*\s*:(?!:)/.test(
+      source.slice(argumentStart, closeParen),
+    );
+  const valueStart = namedValueStart ?? argumentStart;
 
-  if (source[argumentStart] !== "[") {
+  if (hasUnsupportedNamedArgument || source[valueStart] !== "[") {
     return [];
   }
 
-  const arrayClose = matchingBracketOffset(source, argumentStart, "[", "]");
+  const arrayClose = matchingBracketOffset(source, valueStart, "[", "]");
 
   if (arrayClose === null || arrayClose > closeParen) {
     return [];
   }
 
-  return topLevelArrayStringEntries(source, argumentStart, arrayClose);
+  return topLevelArrayStringEntries(source, valueStart, arrayClose);
 }
 
 function laravelRouteActionNamesAtOpenParen(
