@@ -5070,4 +5070,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Workspace Trust Toggle Continuation Guard
 
-- Pending commit.
+- Committed as `af0c8c71 Guard workspace trust toggle continuations`.
