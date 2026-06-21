@@ -8272,4 +8272,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Guard Stale Laravel JSON Translation Targets
 
-- Pending commit.
+- Committed as `3cb25e7b Guard stale Laravel JSON translation targets`.
