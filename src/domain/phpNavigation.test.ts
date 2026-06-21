@@ -950,6 +950,12 @@ Route::controller(CommentController::class)->group(function () {
 Route::prefix('admin/comments')->controller(CommentController::class)->group(function () {
     Route::get('/preview', 'preview');
 });
+Route::controller(controller: CommentController::class)->group(function () {
+    Route::get('/featured', 'featured');
+});
+Route::prefix('admin/comments')->controller(controller: CommentController::class)->group(function () {
+    Route::get('/archive', 'archive');
+});
 `;
 
     expect(
@@ -972,6 +978,20 @@ Route::prefix('admin/comments')->controller(CommentController::class)->group(fun
       className: "CommentController",
       kind: "laravelRouteActionMethod",
       methodName: "preview",
+    });
+    expect(
+      phpIdentifierContextAt(routeSource, positionAfter(routeSource, "'featured")),
+    ).toEqual({
+      className: "CommentController",
+      kind: "laravelRouteActionMethod",
+      methodName: "featured",
+    });
+    expect(
+      phpIdentifierContextAt(routeSource, positionAfter(routeSource, "'archive")),
+    ).toEqual({
+      className: "CommentController",
+      kind: "laravelRouteActionMethod",
+      methodName: "archive",
     });
   });
 

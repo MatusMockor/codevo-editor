@@ -1014,7 +1014,7 @@ function laravelControllerGroups(
 ): Array<{ bodyEnd: number; bodyStart: number; className: string }> {
   const groups: Array<{ bodyEnd: number; bodyStart: number; className: string }> = [];
   const controllerPattern =
-    /(?:\bRoute\s*::|->\s*)controller\s*\(\s*((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*class\s*\)/g;
+    /(?:\bRoute\s*::|->\s*)controller\s*\(\s*(?:controller\s*:\s*)?((?:\\?[A-Za-z_][A-Za-z0-9_]*)(?:\\[A-Za-z_][A-Za-z0-9_]*)*)\s*::\s*class\s*\)/g;
 
   for (const match of source.matchAll(controllerPattern)) {
     const controllerStart = match.index ?? 0;
