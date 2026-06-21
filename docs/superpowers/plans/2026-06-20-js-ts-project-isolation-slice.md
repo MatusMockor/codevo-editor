@@ -6924,4 +6924,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP File Rename Controller Wiring
 
-- Pending commit after verification.
+- Committed as `dc8b5ecd Wire PHP file rename LSP hooks`.
