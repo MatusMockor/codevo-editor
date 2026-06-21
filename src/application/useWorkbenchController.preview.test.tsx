@@ -31743,6 +31743,84 @@ class AppController
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
   });
 
+  it("stops stale Laravel config file completion reads after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
+    const configRoot = "/workspace-a/config";
+    const appConfigPath = "/workspace-a/config/app.php";
+    const staleConfigRead = createDeferred<string>();
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.na');
+    }
+}
+`;
+    let configReadCount = 0;
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot ? [fileEntry(appConfigPath, "app.php")] : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === appConfigPath) {
+          configReadCount += 1;
+          return staleConfigRead.promise;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    act(() => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "app.na"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(configReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleConfigRead.resolve(`<?php
+
+return [
+    'name' => 'Stale',
+];
+`);
+
+    await expect(completionsPromise!).resolves.toEqual([]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+  });
+
   it("opens Laravel config keys before LSP fallback", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const appConfigPath = "/workspace/config/app.php";

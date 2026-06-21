@@ -7905,3 +7905,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Config Key Navigation And Completion
 
 - Committed as `6982633d Add Laravel config key navigation`.
+
+## Next Slice: Guard Stale Laravel Config File Completion Reads
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `463eaae9 Record Laravel config navigation commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel config completion now performs two async steps: reading the `config/` directory and then reading each matching `config/*.php` file.
+- The previous stale-completion regression covered a delayed directory read, but not a delayed config-file read after the directory result had already arrived.
+- This narrow regression locks in the file-read workspace-tab guard around the new config completion path.
+
+### Implementation Choice
+
+- Add a preview regression where completion starts in `/workspace-a`, receives `config/app.php` from the directory read, then blocks on reading that config file.
+- Switch to `/workspace-b` while the config file read is pending.
+- Resolve the stale config file read and assert that completion returns no suggestions.
+
+### Acceptance Criteria
+
+- Delayed Laravel config file completion reads return no stale suggestions after workspace-tab switch.
+- Existing Laravel config completion/navigation behavior remains unchanged.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Guard Stale Laravel Config File Completion Reads
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel config"` passed: 5 passed, 371 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 376 passed.
+- `npm run check` passed.
+- `npm test` passed: 67 files, 1014 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Guard Stale Laravel Config File Completion Reads
+
+- Pending commit.
