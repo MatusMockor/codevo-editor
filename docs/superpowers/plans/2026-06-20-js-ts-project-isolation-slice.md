@@ -8983,3 +8983,41 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Route Middleware Guard Names
 
 - Committed as `31702fbe Support Laravel route middleware guard navigation`.
+
+## Next Slice: Laravel Redis Connection Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c09b7d3f Record Laravel route middleware guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel Redis connection names are configured in `config/database.php` under `redis`.
+- `Redis::connection('cache')` references those configured Redis connections.
+- This is another config-derived string reference and reuses the same config target collector / finder with stale-root guards.
+
+### Implementation Choice
+
+- Add a focused Redis connection detector for `Redis::connection(...)` and `name:`.
+- Map connection names to direct `database.redis.<connection>` config targets.
+- Exclude top-level Redis configuration keys such as `client`, `options`, `clusters`, and the legacy `cluster` key from connection completions/navigation.
+- Keep non-facade calls, FQCN/alias handling, and cluster-name navigation under `database.redis.clusters.*` out of scope.
+
+### Verification: Laravel Redis Connection Names
+
+- `npm test -- src/domain/phpLaravelRedis.test.ts` passed: 4 passed.
+- `npm test -- src/domain/phpNavigation.test.ts` passed: 27 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Redis"` passed: 2 passed, 420 skipped.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 422 passed.
+- `npm test -- src/domain/phpLaravelRedis.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test` passed: 80 files, 1124 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Redis Connection Names
+
+- Committed as `45bdc37f Add Laravel Redis connection navigation`.
+- Follow-up committed as `57b3b68b Reserve Laravel Redis cluster config key`.
