@@ -6728,4 +6728,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Completion Resolve Capability Advertisement
 
-- Pending commit after full Tauri verification.
+- Committed as `5d560f76 Advertise TypeScript completion resolve command`.
