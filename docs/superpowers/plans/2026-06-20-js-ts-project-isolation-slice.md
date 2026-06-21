@@ -6623,3 +6623,26 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 - JS/TS audit found that the TypeScript initialize payload under-advertises already-supported resolve fields.
 - Smallest follow-up: advertise `textEdits` and `label.command` in `textDocument.inlayHint.resolveSupport.properties`, then cover the initialize payload with Rust tests.
+
+### Completed Slice: JS/TS Resolve Capability Advertisement
+
+- TypeScript initialize now advertises all inlay-hint resolve fields the app already parses and guards:
+  - `tooltip`
+  - `label.tooltip`
+  - `label.location`
+  - `textEdits`
+  - `label.command`
+- PHP initialization was left unchanged.
+
+### Verification: JS/TS Resolve Capability Advertisement
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml javascript_typescript_workspace_builds_typescript_language_server_plan --lib` (1 test)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml inlay_hint --lib` (5 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp::tests:: --lib` (10 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (309 tests)
+- PASS: `rustfmt --check src-tauri/src/lsp.rs`
+- PASS: `git diff --check`
+
+### Commit Status: JS/TS Resolve Capability Advertisement
+
+- Pending commit after broader Tauri verification.

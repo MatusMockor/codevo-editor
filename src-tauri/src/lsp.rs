@@ -509,7 +509,9 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                                 "properties": [
                                     "tooltip",
                                     "label.tooltip",
-                                    "label.location"
+                                    "label.location",
+                                    "textEdits",
+                                    "label.command"
                                 ]
                             }
                         },
@@ -1078,7 +1080,13 @@ mod tests {
         assert_eq!(
             request.params["capabilities"]["textDocument"]["inlayHint"]["resolveSupport"]
                 ["properties"],
-            json!(["tooltip", "label.tooltip", "label.location"])
+            json!([
+                "tooltip",
+                "label.tooltip",
+                "label.location",
+                "textEdits",
+                "label.command"
+            ])
         );
         assert_eq!(
             request.params["capabilities"]["textDocument"]["selectionRange"]["dynamicRegistration"],
