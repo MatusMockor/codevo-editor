@@ -1118,6 +1118,22 @@ class Comment extends Model
             ->whereAll(['title', 'summary'], 'like', '%Laravel%')
             ->whereNone(['slug', 'body'], 'like', '%archived%')
             ->first();
+        $relationMethodJsonFilteredPost = $this->posts()
+            ->whereJsonContains('meta->tags', 'php')
+            ->orWhereJsonContains('meta->tags', 'laravel')
+            ->whereJsonDoesntContain('meta->tags', 'draft')
+            ->orWhereJsonDoesntContain('meta->tags', 'archived')
+            ->whereJsonOverlaps('meta->tags', ['php'])
+            ->orWhereJsonOverlaps('meta->tags', ['laravel'])
+            ->whereJsonDoesntOverlap('meta->tags', ['deprecated'])
+            ->orWhereJsonDoesntOverlap('meta->tags', ['legacy'])
+            ->whereJsonContainsKey('meta->published')
+            ->orWhereJsonContainsKey('meta->featured')
+            ->whereJsonDoesntContainKey('meta->hidden')
+            ->orWhereJsonDoesntContainKey('meta->blocked')
+            ->whereJsonLength('meta->tags', '>', 0)
+            ->orWhereJsonLength('meta->tags', '>', 1)
+            ->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
@@ -1174,6 +1190,7 @@ class Comment extends Model
         $relationMethodRawFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
         $relationMethodLikeFilteredPost->tit
+        $relationMethodJsonFilteredPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
@@ -1430,6 +1447,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodLikeFilteredPost->tit"),
         "relationMethodLikeFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodJsonFilteredPost->tit"),
+        "relationMethodJsonFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
