@@ -5693,4 +5693,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `1d80f537 Guard stale Laravel request method hint targets`.
