@@ -8113,3 +8113,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Guard Stale Laravel Translation Locale Discovery
 
 - Committed as `fe93cd3a Guard stale Laravel translation discovery`.
+
+## Next Slice: Guard Stale Laravel Translation Target Locale Discovery
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5ce3d1ff Record Laravel translation discovery guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Translation Go to Definition now performs the same locale-directory discovery as completion.
+- The previous guard covered stale completion during locale discovery, while target navigation still needed an explicit regression.
+- This locks down the first async `lang/` directory read before any stale target can be opened.
+
+### Implementation Choice
+
+- Add a preview regression where `editor.goToDefinition` starts in `/workspace-a` and blocks on reading `/workspace-a/lang`.
+- Switch to `/workspace-b` before resolving the stale locale directory read.
+- Resolve the stale read and assert that the stale translation file is not opened or revealed.
+
+### Acceptance Criteria
+
+- Delayed Laravel translation target locale discovery does not open stale files after workspace-tab switch.
+- Existing Laravel translation navigation/completion behavior remains unchanged.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Guard Stale Laravel Translation Target Locale Discovery
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel translation"` passed: 7 passed, 382 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 389 passed.
+- `npm run check` passed.
+- `npm test` passed: 69 files, 1040 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Guard Stale Laravel Translation Target Locale Discovery
+
+- Pending commit.
