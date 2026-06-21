@@ -7013,3 +7013,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `553d5d98 Cover Laravel aggregate relation strings`.
+
+## Slice: Laravel MorphTo Display Union Inference Guard Fix - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `32fd1402 Record Laravel aggregate relation string commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Full test run exposed a regression from the earlier MorphTo union display work.
+
+### Goal
+
+- Keep multi-target MorphTo union types as completion display only, without feeding relation method-call return inference.
+
+### Implementation Choice
+
+- Split relation target inference into display-union and singular-inference paths.
+- Allow display unions only when building relation property completion items.
+- Keep relation method calls such as `$this->attachable()->first()` conservative when the documented MorphTo target is ambiguous.
+
+### Acceptance Criteria
+
+- Multi-target MorphTo relation method chains remain ambiguous.
+- Multi-target MorphTo property completion display remains available.
+- Full test suite, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "multi-target Laravel morphTo relation method chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "MorphTo property|relation methods as magic properties|dynamic relation targets"`
+- PASS: `npm run check`
+- PASS: `npm test`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

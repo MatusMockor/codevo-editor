@@ -2129,6 +2129,7 @@ export function phpLaravelRelationPropertyCompletionsFromSource(
       declaringClassName,
       name,
       returnType,
+      true,
     );
 
     if (!relationTargetType && !isLaravelEloquentRelationReturnType(returnType, true)) {
@@ -2204,6 +2205,7 @@ function phpLaravelRelationPropertyTargetTypeByName(
       declaringClassName,
       name,
       returnType,
+      false,
       visited,
     );
   }
@@ -2217,14 +2219,21 @@ function phpLaravelRelationTargetTypeFromMethod(
   declaringClassName: string,
   methodName: string,
   returnType: string | null,
+  allowDisplayUnion: boolean,
   visited = new Set<string>(),
 ): string | null {
   return (
-    phpLaravelRelationDisplayTypeFromReturnType(
-      source,
-      returnType,
-      declaringClassName,
-    ) ??
+    (allowDisplayUnion
+      ? phpLaravelRelationDisplayTypeFromReturnType(
+          source,
+          returnType,
+          declaringClassName,
+        )
+      : phpLaravelRelationTypeForDeclaringClass(
+          phpLaravelRelationModelTypeFromReturnType(returnType),
+          declaringClassName,
+          source,
+        )) ??
     phpMethodReturnExpressions(source, methodName)
       .map((expression) =>
         phpLaravelRelationTypeForDeclaringClass(
