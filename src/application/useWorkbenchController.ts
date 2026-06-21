@@ -2173,6 +2173,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptDiagnosticsByRootRef.current = {};
     lastLanguageServerCrashRef.current = null;
     lastPhpIdeReadinessSignatureRef.current = null;
+    installingManagedPhpactorRootRef.current = null;
     openFileRequestTokenRef.current += 1;
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
@@ -2229,6 +2230,7 @@ export function useWorkbenchController(
     setPaletteOpen(false);
     setFileStructureOpen(false);
     setLanguageServerSetupOpen(false);
+    setInstallingManagedPhpactor(false);
     setSettingsOpen(false);
     setMessage(null);
     setNotices([]);

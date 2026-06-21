@@ -6042,6 +6042,55 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("clears managed PHPactor install loading when the last project tab closes", async () => {
+    const installManagedPhpactor = createDeferred<void>();
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => installManagedPhpactor.promise),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      phpToolGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    let installPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      installPromise = getWorkbench().installManagedPhpactor();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(phpToolGateway.installManagedPhpactor).toHaveBeenCalledOnce();
+      expect(getWorkbench().installingManagedPhpactor).toBe(true);
+    });
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().installingManagedPhpactor).toBe(false);
+
+    await act(async () => {
+      installManagedPhpactor.resolve();
+      await installPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().message).toBeNull();
+    expect(getWorkbench().installingManagedPhpactor).toBe(false);
+  });
+
   it("ignores manual PHP language server start errors after switching project tabs", async () => {
     const languageServerStart = createDeferred<LanguageServerRuntimeStatus>();
     const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
