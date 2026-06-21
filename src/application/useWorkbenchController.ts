@@ -11601,10 +11601,26 @@ export function useWorkbenchController(
 
       setPhpTools(tools);
       await refreshLanguageServerPlan(targetWorkspaceRoot);
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
+        return;
+      }
+
       setLanguageServerSetupOpen(false);
       setMessage("Installed managed PHP IDE engine.");
     } catch (error) {
-      reportLanguageServerError(error);
+      if (
+        workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
+        reportLanguageServerError(error);
+      }
     } finally {
       setInstallingManagedPhpactor(false);
     }

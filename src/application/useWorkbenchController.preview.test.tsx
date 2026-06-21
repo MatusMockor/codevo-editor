@@ -3804,6 +3804,145 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores managed PHPactor install completion after switching project tabs", async () => {
+    const installPlanRefresh = createDeferred<LanguageServerPlan>();
+    const workspaceBPlan: LanguageServerPlan = {
+      ...phpactorLanguageServerPlan(),
+      message: "PHPactor B ready",
+    };
+    let workspaceAPlanRequests = 0;
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          workspaceAPlanRequests += 1;
+
+          if (workspaceAPlanRequests === 1) {
+            return {
+              ...phpactorLanguageServerPlan(),
+              message: "PHPactor A initial",
+            };
+          }
+
+          return installPlanRefresh.promise;
+        }
+
+        return workspaceBPlan;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await vi.waitFor(() => {
+      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+    await flushAsyncTurns();
+
+    let installPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      installPromise = getWorkbench().installManagedPhpactor();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        vi
+          .mocked(languageServerGateway.planPhpLanguageServer)
+          .mock.calls.filter(([rootPath]) => rootPath === "/workspace-a"),
+      ).toHaveLength(2);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace-b",
+      );
+    });
+
+    await act(async () => {
+      installPlanRefresh.resolve({
+        ...phpactorLanguageServerPlan(),
+        message: "PHPactor A installed",
+      });
+      await installPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Installed managed PHP IDE engine.");
+    expect(getWorkbench().languageServerPlan?.message).toBe(
+      "PHPactor B ready",
+    );
+  });
+
+  it("ignores managed PHPactor install errors after switching project tabs", async () => {
+    const installManagedPhpactor = createDeferred<void>();
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => installManagedPhpactor.promise),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      phpToolGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    let installPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      installPromise = getWorkbench().installManagedPhpactor();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(phpToolGateway.installManagedPhpactor).toHaveBeenCalledOnce();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      installManagedPhpactor.reject(new Error("stale managed install"));
+      await installPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale managed install"),
+      ),
+    ).toBe(false);
+  });
+
   it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {
@@ -17758,6 +17897,7 @@ final class InvoiceAdapter
     languageServerDiagnosticsGateway,
     languageServerFeaturesGateway,
     languageServerRuntimeGateway,
+    phpToolGateway,
     projectSymbols = [],
     readDirectory,
     readTextFile = vi.fn(async (path: string) => `<?php\n// ${path}\n`),
@@ -17781,6 +17921,7 @@ final class InvoiceAdapter
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
+    phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
     projectSymbols?: ProjectSymbolSearchResult[];
     readDirectory?: (path: string) => Promise<FileEntry[]>;
     readTextFile?: (path: string) => Promise<string>;
@@ -17814,6 +17955,7 @@ final class InvoiceAdapter
       languageServerDiagnosticsGateway,
       languageServerFeaturesGateway,
       languageServerRuntimeGateway,
+      phpToolGateway,
       projectSymbols,
       readDirectory,
       readTextFile,
@@ -17898,6 +18040,7 @@ function createControllerDependencies({
   languageServerFeaturesGateway,
   languageServerDiagnosticsGateway,
   languageServerRuntimeGateway,
+  phpToolGateway,
   projectSymbols,
   readDirectory,
   readTextFile,
@@ -17921,6 +18064,7 @@ function createControllerDependencies({
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
+  phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
   projectSymbols: ProjectSymbolSearchResult[];
   readDirectory?: (path: string) => Promise<FileEntry[]>;
   readTextFile(path: string): Promise<string>;
@@ -17966,13 +18110,14 @@ function createControllerDependencies({
       renamePath: vi.fn(async () => undefined),
       writeTextFile: vi.fn(async () => undefined),
     },
-    phpTools: {
-      detectPhpTools: vi.fn(async () => ({
-        intelephense: null,
-        phpactor: null,
-      })),
-      installManagedPhpactor: vi.fn(async () => undefined),
-    },
+    phpTools:
+      phpToolGateway ?? {
+        detectPhpTools: vi.fn(async () => ({
+          intelephense: null,
+          phpactor: null,
+        })),
+        installManagedPhpactor: vi.fn(async () => undefined),
+      },
     projectSymbols: {
       searchProjectSymbols: vi.fn(async () => projectSymbols),
     },
