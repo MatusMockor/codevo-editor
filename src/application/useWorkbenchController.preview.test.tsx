@@ -8117,6 +8117,86 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("drops stale JavaScript and TypeScript file structure results after switching project tabs", async () => {
+    const path = "/workspace-a/src/userService.ts";
+    const documentSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        documentSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 33,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+    ).mockImplementationOnce(async () => documentSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(async () => "export class UserService {}"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.fileStructure",
+    );
+
+    await act(async () => {
+      await command?.run();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.documentSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", path);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    documentSymbols.resolve([
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "StaleUserService",
+        range: range(1, 0, 6, 1),
+        selectionRange: range(1, 13, 1, 29),
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().fileStructureOutline).toBeNull();
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript File Structure" &&
+          notice.message.includes("StaleUserService"),
+      ),
+    ).toBe(false);
+  });
+
   it("opens JavaScript and TypeScript call hierarchy from command palette actions", async () => {
     const path = "/workspace/src/userService.ts";
     const callerPath = "/workspace/src/app.ts";
