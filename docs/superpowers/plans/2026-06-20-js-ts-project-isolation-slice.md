@@ -4885,4 +4885,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Rename Success Active Workspace Guard
 
-- Pending commit.
+- Committed as `6905bd76 Guard rename success by active workspace`.
