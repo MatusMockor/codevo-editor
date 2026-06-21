@@ -4223,3 +4223,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `17b2a289 Complete Laravel named resource route overrides`.
+
+## Slice: Laravel Named Group Route Prefixes - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e2670d7e Record Laravel named resource route overrides commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Include PHP 8 named arguments in Laravel `Route::group(...)` route-name prefix extraction.
+
+### Implementation Choice
+
+- Allow `attributes:` when reading array route group attributes.
+- Reuse the existing group `as` prefix extraction after resolving the named argument value.
+- Leave unsupported named group arguments such as `options:` unprefixed while still indexing their inner route names.
+- Add parser coverage for single and nested `Route::group(attributes: ['as' => ...])` prefixes.
+- Add workbench coverage proving route-name completions can be sourced from a named-argument route group prefix.
+
+### Acceptance Criteria
+
+- `Route::group(attributes: ['as' => 'admin.'], ...)` prefixes inner route names.
+- Nested named-argument route groups combine prefixes in order.
+- Unsupported named group arguments do not accidentally apply prefixes or hide inner route definitions.
+- Laravel route-name completions include named-argument group prefixes.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "named-argument Laravel route group name prefixes|array Laravel route group name prefixes|named route group attributes|route helper strings"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `8733e771 Complete Laravel named group route prefixes`.
