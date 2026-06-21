@@ -642,6 +642,68 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale workspace trust toggle errors after switching project tabs", async () => {
+    const workspaceATrustToggle =
+      createDeferred<Awaited<ReturnType<WorkspaceTrustGateway["setTrust"]>>>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({
+        rootPath,
+        trusted: true,
+      })),
+      setTrust: vi.fn(async (rootPath, trusted) => {
+        if (rootPath === "/workspace-a") {
+          return workspaceATrustToggle.promise;
+        }
+
+        return {
+          rootPath,
+          trusted,
+        };
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      workspaceTrustGateway,
+    });
+    await flushAsyncTurns();
+
+    let trustPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      trustPromise = getWorkbench().toggleWorkspaceTrust();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(workspaceTrustGateway.setTrust).toHaveBeenCalledWith(
+        "/workspace-a",
+        false,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      workspaceATrustToggle.reject(new Error("stale trust toggle"));
+      await trustPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Workspace Trust" &&
+          notice.message.includes("stale trust toggle"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale workspace detection errors after switching project tabs", async () => {
     const workspaceADetection =
       createDeferred<

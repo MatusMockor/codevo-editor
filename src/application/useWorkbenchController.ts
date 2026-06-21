@@ -11226,9 +11226,14 @@ export function useWorkbenchController(
     }
 
     const trusted = !workspaceTrust?.trusted;
+    const requestedRoot = workspaceRoot;
 
     try {
-      const trust = await workspaceTrustGateway.setTrust(workspaceRoot, trusted);
+      const trust = await workspaceTrustGateway.setTrust(requestedRoot, trusted);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       setWorkspaceTrust(trust);
       setMessage(
         trust.trusted ? "Workspace trusted." : "Workspace trust revoked.",
@@ -11242,13 +11247,17 @@ export function useWorkbenchController(
         return;
       }
 
-      await refreshLanguageServerPlan(workspaceRoot);
+      await refreshLanguageServerPlan(requestedRoot);
     } catch (error) {
-      reportError("Workspace Trust", error);
+      reportErrorForActiveWorkspaceRoot(
+        requestedRoot,
+        "Workspace Trust",
+        error,
+      );
     }
   }, [
     refreshLanguageServerPlan,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     stopLanguageServerRuntime,
     workspaceDescriptor,
     workspaceRoot,
