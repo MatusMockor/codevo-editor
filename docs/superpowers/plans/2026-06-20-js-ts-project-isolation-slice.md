@@ -4977,4 +4977,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Workspace Directory Open Continuation Guard
 
-- Pending commit.
+- Committed as `91542fe4 Guard workspace directory open continuations`.
