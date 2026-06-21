@@ -263,4 +263,4 @@ This prevents project A diagnostics, completion, or implementation results from 
 
 #### Commit Status
 
-- Pending implementation commit.
+- Committed as `9c276315 Close inactive PHP workspace documents`.
