@@ -5636,3 +5636,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Workspace Notice Reset Guard
 
 - Committed as `b0bceecb Clear notices on workspace reset`.
+
+## Next Slice: PHP Crash Dedupe Workspace Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `599b0245 Record workspace notice reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 851 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP language-server crash notices were deduplicated through a single global `lastLanguageServerCrashRef`.
+- Switching project tabs cleared visible notices, but the crash dedupe ref could still suppress the same crash message in the next workspace.
+- A PHP crash in `/workspace-b` could fail to publish a notice if `/workspace-a` crashed with the same text first.
+
+### Implementation Choice
+
+- Reset the PHP crash dedupe ref when clearing the active workspace.
+- Reset the PHP crash dedupe ref when opening a workspace.
+- Add a regression that publishes the same PHP crash message for `/workspace-a` and `/workspace-b` and expects each active project tab to get its own Language Server notice.
+
+### Acceptance Criteria
+
+- The same PHP crash message is reported once per active project tab.
+- Switching project tabs does not carry the previous workspace's PHP crash dedupe state forward.
+- Existing stale runtime subscription and crash-notice guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Crash Dedupe Workspace Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (318 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 852 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Crash Dedupe Workspace Reset Guard
+
+- Committed as `6a704fb0 Reset PHP crash dedupe on workspace switches`.
