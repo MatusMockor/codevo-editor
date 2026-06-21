@@ -246,12 +246,81 @@ Route::has('comments.destroy');
     });
   });
 
+  it("detects Laravel named-route references in supported named arguments", () => {
+    const source = `<?php
+route(name: 'comments.show', parameters: ['comment' => $comment]);
+to_route(route: 'comments.index');
+URL::signedRoute(name: 'comments.secure', parameters: ['comment' => $comment]);
+redirect()->temporarySignedRoute(route: 'comments.preview', expiration: now()->addHour());
+Route::has(name: 'comments.destroy');
+`;
+
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.show"),
+      ),
+    ).toEqual({
+      call: "route",
+      name: "comments.show",
+      position: positionOf(source, "comments.show"),
+      prefix: "comments.show",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.index"),
+      ),
+    ).toEqual({
+      call: "to_route",
+      name: "comments.index",
+      position: positionOf(source, "comments.index"),
+      prefix: "comments.index",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.secure"),
+      ),
+    ).toEqual({
+      call: "URL::signedRoute",
+      name: "comments.secure",
+      position: positionOf(source, "comments.secure"),
+      prefix: "comments.secure",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.preview"),
+      ),
+    ).toEqual({
+      call: "redirect()->temporarySignedRoute",
+      name: "comments.preview",
+      position: positionOf(source, "comments.preview"),
+      prefix: "comments.preview",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.destroy"),
+      ),
+    ).toEqual({
+      call: "Route::has",
+      name: "comments.destroy",
+      position: positionOf(source, "comments.destroy"),
+      prefix: "comments.destroy",
+    });
+  });
+
   it("ignores non-first arguments and unsupported route-like calls", () => {
     const source = `<?php
 route('comments.show', ['label' => 'not.a.route']);
 $router->route('comments.member');
 Route::get('/comments')->name('comments.definition');
 redirect()->away('comments.away');
+route(label: 'comments.label');
+redirect()->route(name: 'comments.redirect-name');
+URL::route(route: 'comments.url-route');
 `;
 
     expect(
@@ -276,6 +345,24 @@ redirect()->away('comments.away');
       phpLaravelNamedRouteReferenceContextAt(
         source,
         cursorAfter(source, "comments.away"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.label"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.redirect-name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.url-route"),
       ),
     ).toBeNull();
   });

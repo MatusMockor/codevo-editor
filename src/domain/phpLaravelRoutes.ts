@@ -35,6 +35,11 @@ interface PhpLaravelNamedRouteGroup {
   prefix: string;
 }
 
+interface PhpLaravelNamedRouteReferenceArgument {
+  argumentName: string | null;
+  openParen: number;
+}
+
 interface PhpStringLiteral {
   closed: boolean;
   quote: "'" | "\"";
@@ -86,15 +91,18 @@ export function phpLaravelNamedRouteReferenceContextAt(
     return null;
   }
 
-  const openParen = firstArgumentCallOpenParenAt(source, literal);
+  const argument = firstArgumentCallContextAt(source, literal);
 
-  if (openParen === null || !isPhpCodeOffset(source, openParen)) {
+  if (!argument || !isPhpCodeOffset(source, argument.openParen)) {
     return null;
   }
 
-  const call = laravelNamedRouteReferenceCallAt(source, openParen);
+  const call = laravelNamedRouteReferenceCallAt(source, argument.openParen);
 
-  if (!call) {
+  if (
+    !call ||
+    !isSupportedNamedRouteArgumentName(call, argument.argumentName)
+  ) {
     return null;
   }
 
@@ -813,10 +821,10 @@ function laravelNamedRouteReferenceCallAt(
   return functionMatch[1].toLowerCase() === "to_route" ? "to_route" : "route";
 }
 
-function firstArgumentCallOpenParenAt(
+function firstArgumentCallContextAt(
   source: string,
   literal: PhpStringLiteral,
-): number | null {
+): PhpLaravelNamedRouteReferenceArgument | null {
   for (
     let openParen = source.lastIndexOf("(", literal.quoteStart);
     openParen >= 0;
@@ -829,16 +837,61 @@ function firstArgumentCallOpenParenAt(
     }
 
     if (
-      topLevelArgumentIndexAtOffset(source, openParen, literal.quoteStart) !== 0 ||
-      !isTopLevelWhitespaceBetween(source, openParen + 1, literal.quoteStart)
+      topLevelArgumentIndexAtOffset(source, openParen, literal.quoteStart) !== 0
     ) {
       continue;
     }
 
-    return openParen;
+    const argumentName = namedArgumentNameBeforeLiteral(
+      source,
+      openParen + 1,
+      literal.quoteStart,
+    );
+
+    if (argumentName === undefined) {
+      continue;
+    }
+
+    return { argumentName, openParen };
   }
 
   return null;
+}
+
+function namedArgumentNameBeforeLiteral(
+  source: string,
+  startOffset: number,
+  literalStartOffset: number,
+): string | null | undefined {
+  if (isTopLevelWhitespaceBetween(source, startOffset, literalStartOffset)) {
+    return null;
+  }
+
+  const prefix = source.slice(startOffset, literalStartOffset);
+  const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/.exec(prefix);
+
+  return match?.[1] ?? undefined;
+}
+
+function isSupportedNamedRouteArgumentName(
+  call: PhpLaravelNamedRouteReferenceCall,
+  argumentName: string | null,
+): boolean {
+  if (!argumentName) {
+    return true;
+  }
+
+  const normalizedName = argumentName.toLowerCase();
+
+  if (
+    call === "to_route" ||
+    call.startsWith("redirect()->") ||
+    call.startsWith("Redirect::")
+  ) {
+    return normalizedName === "route";
+  }
+
+  return normalizedName === "name";
 }
 
 function firstClosedLiteralArgumentAtOpenParen(
