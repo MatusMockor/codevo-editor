@@ -6107,6 +6107,10 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test` (64 files, 860 tests)
 - PASS: `git diff --check`
 
+### Commit Status: Active Project Close Pending Open Guard
+
+- Committed and pushed as `4d0652ef Cancel pending file opens on active tab close`.
+
 ### Parallel Audit Queue
 
 - JS/TS P0: symbol rename currently returns a Monaco-only workspace edit; closed-file edits from TypeScript rename are not persisted through the controller/filesystem applier.
