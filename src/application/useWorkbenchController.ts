@@ -571,6 +571,7 @@ export function useWorkbenchController(
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const lastPhpIdeReadinessSignatureRef = useRef<string | null>(null);
   const openWorkspaceRequestTokenRef = useRef(0);
+  const openWorkspaceRequestPathRef = useRef<string | null>(null);
   const openFileRequestTokenRef = useRef(0);
   const gitDiffRequestTokenRef = useRef(0);
   const editorGitBaselineRequestTokenRef = useRef(0);
@@ -2167,6 +2168,8 @@ export function useWorkbenchController(
     lastLanguageServerCrashRef.current = null;
     lastPhpIdeReadinessSignatureRef.current = null;
     installingManagedPhpactorRootRef.current = null;
+    openWorkspaceRequestTokenRef.current += 1;
+    openWorkspaceRequestPathRef.current = null;
     openFileRequestTokenRef.current += 1;
     activeEditorPositionRef.current = null;
     setWorkspaceRoot(null);
@@ -3160,8 +3163,10 @@ export function useWorkbenchController(
     async (path: string) => {
       const requestToken = openWorkspaceRequestTokenRef.current + 1;
       openWorkspaceRequestTokenRef.current = requestToken;
+      openWorkspaceRequestPathRef.current = path;
       const isCurrentOpenWorkspaceRequest = () =>
-        openWorkspaceRequestTokenRef.current === requestToken;
+        openWorkspaceRequestTokenRef.current === requestToken &&
+        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path);
       const previousRootPath = currentWorkspaceRootRef.current;
       const cachedWorkspaceState = workspaceStateCacheRef.current[path] ?? null;
       const switchingWorkspace =
@@ -3508,6 +3513,14 @@ export function useWorkbenchController(
 
       if (nextTabs.length === currentTabs.length) {
         return;
+      }
+
+      if (
+        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, tabPath) ||
+        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, targetRootPath)
+      ) {
+        openWorkspaceRequestTokenRef.current += 1;
+        openWorkspaceRequestPathRef.current = null;
       }
 
       if (!closingActiveWorkspace) {

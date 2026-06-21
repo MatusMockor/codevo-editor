@@ -887,6 +887,64 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("does not continue a pending workspace open after closing its project tab", async () => {
+    const workspaceSettingsLoad = createDeferred<
+      ReturnType<typeof defaultWorkspaceSettings>
+    >();
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace",
+      workspaceTabs: ["/workspace"],
+    };
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => appSettings),
+      loadWorkspaceSettings: vi.fn(async (path: string) => {
+        if (path === "/workspace") {
+          return workspaceSettingsLoad.promise;
+        }
+
+        return defaultWorkspaceSettings();
+      }),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] = {
+      detectWorkspace: vi.fn(async (path) => ({
+        javaScriptTypeScript: null,
+        php: null,
+        rootPath: path,
+      })),
+    };
+    const { getWorkbench } = renderController({
+      appSettings,
+      settingsGateway,
+      workspaceDetectionGateway,
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith(
+        "/workspace",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().workspaceTabs).toEqual([]);
+
+    await act(async () => {
+      workspaceSettingsLoad.resolve(defaultWorkspaceSettings());
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(workspaceDetectionGateway.detectWorkspace).not.toHaveBeenCalled();
+  });
+
   it("ignores stale workspace-open settings persistence errors after switching project tabs", async () => {
     const workspaceASettingsSave = createDeferred<void>();
     const appSettings = {
