@@ -6817,3 +6817,41 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `13a4a1ed Support Laravel arrow route group prefixes`.
+
+## Slice: Laravel MorphTo Union Display Chain Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `474086f8 Record Laravel arrow route group prefix commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prevent display-only union relation property types from being collapsed into an unsafe chained class type.
+
+### Implementation Choice
+
+- Keep `MorphTo<Post|Video, self>` displayed as `Post|Video` in property completion.
+- Add a singular model-type resolver for relation-property chaining that rejects top-level union types.
+- Add regression coverage proving single-target `MorphTo` still chains to `App\\Models\\Post`, while multi-target `MorphTo` does not pick the first union member.
+
+### Acceptance Criteria
+
+- Single-target relation property class inference remains available.
+- Multi-target `MorphTo` display unions do not feed chained member completion as a false single model.
+- Focused/full PHP method-completion tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "MorphTo property|relation methods as magic properties"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

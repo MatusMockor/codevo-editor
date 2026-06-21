@@ -21,6 +21,7 @@ import {
   phpLaravelMethodCallReturnTypeFromSource,
   phpLaravelModelAccessorTargetFromSource,
   phpLaravelModelAttributeTargetFromSource,
+  phpLaravelModelPropertyClassTypeFromSource,
   phpLaravelRelationPropertyCompletionsFromSource,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
@@ -1169,6 +1170,14 @@ class Controller
         $request->get
     }
 }
+
+class Post extends Model
+{
+}
+
+class Video extends Model
+{
+}
 `;
 
     expect(
@@ -2118,6 +2127,45 @@ class Comment
         returnType: "Post|Video",
       },
     ]);
+  });
+
+  it("does not collapse multi-target MorphTo property display types into chained class types", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+use Illuminate\\Database\\Eloquent\\Relations\\MorphTo;
+
+class Comment extends Model
+{
+    /** @return MorphTo<Post, self> */
+    public function commentable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+
+    /** @return MorphTo<Post|Video, self> */
+    public function attachable(): MorphTo
+    {
+        return $this->morphTo();
+    }
+}
+`;
+
+    expect(
+      phpLaravelModelPropertyClassTypeFromSource(
+        source,
+        "commentable",
+        "App\\Models\\Comment",
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpLaravelModelPropertyClassTypeFromSource(
+        source,
+        "attachable",
+        "App\\Models\\Comment",
+      ),
+    ).toBeNull();
   });
 
   it("extracts PHPDoc magic methods for framework-style OOP APIs", () => {

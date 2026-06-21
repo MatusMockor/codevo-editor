@@ -2080,7 +2080,7 @@ function phpLaravelRelationPropertyClassTypeFromSource(
         completion.name.toLowerCase() === propertyLookup,
     )?.returnType ?? null;
 
-  return phpLaravelResolvedModelTypeCandidate(source, relationType);
+  return phpLaravelResolvedSingularModelTypeCandidate(source, relationType);
 }
 
 export function phpLaravelRelationPropertyCompletionsFromSource(
@@ -3004,6 +3004,41 @@ function phpLaravelResolvedModelTypeCandidate(
   return resolvedClassName && isLaravelModelType(resolvedClassName)
     ? resolvedClassName
     : null;
+}
+
+function phpLaravelResolvedSingularModelTypeCandidate(
+  source: string,
+  typeName: string | null,
+): string | null {
+  if (phpTypeHasTopLevelUnion(typeName ?? "")) {
+    return null;
+  }
+
+  return phpLaravelResolvedModelTypeCandidate(source, typeName);
+}
+
+function phpTypeHasTopLevelUnion(typeName: string): boolean {
+  let depth = 0;
+
+  for (let index = 0; index < typeName.length; index += 1) {
+    const character = typeName[index] ?? "";
+
+    if (character === "<" || character === "(" || character === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ">" || character === ")" || character === "]") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "|" && depth === 0) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function phpLaravelStaticModelCallReturnType(
