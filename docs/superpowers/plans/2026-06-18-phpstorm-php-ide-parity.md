@@ -4645,3 +4645,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `af693582 Cover stale file structure tab results`.
+
+## Slice: Laravel Morph Map Class-String Constants - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2c0eb1aa Record stale file structure result guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Resolve Laravel `morphTo()` fallback targets when `Relation::morphMap()` values are local class-string constants.
+
+### Implementation Choice
+
+- Reuse the existing PHP class-string constant resolver inside morph map model-class extraction.
+- Resolve the class containing the morph map value expression so `self::POST_MODEL` can be mapped back to `Post::class`.
+- Preserve existing support for direct `Post::class` values and string class names.
+- Add semantic coverage for relation-property and terminal-chain inference through a morph map declared in a service provider class.
+
+### Acceptance Criteria
+
+- `Relation::morphMap(['post' => self::POST_MODEL])` resolves `self::POST_MODEL` to the mapped model class.
+- `$comment->commentable`, `$this->morphTo()->first()`, and `$comment->commentable->...` infer `App\Models\Post` when the morph map has one resolved target.
+- Existing direct morph map and ambiguous multi-target morphTo behavior remains unchanged.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- FAIL then fixed: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morph map targets from local class-string constants"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "morph map targets"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `2262d399 Resolve morph map class-string constants`.
