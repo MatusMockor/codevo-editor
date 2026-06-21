@@ -5381,3 +5381,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JavaScript/TypeScript Outline Reset Guard
 
 - Committed as `d6ebdfc7 Reset JavaScript TypeScript outlines on workspace close`.
+
+## Next Slice: PHP Workspace Clear Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `4dc6a510 Record JavaScript TypeScript outline reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 851 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `openWorkspacePath` reset PHP tree, outline caches, expanded outline paths, and outline loading sets.
+- `clearActiveWorkspace` did not reset that PHP workspace state when closing the last project tab.
+- Closing the final workspace tab could leave PHP tree/outline state hanging around while no workspace was active.
+
+### Implementation Choice
+
+- Reset PHP tree, expanded PHP tree nodes, and PHP tree loading state on active workspace clear.
+- Reset PHP outline caches, inherited outline cache, expanded PHP file paths, outline loading sets, and outline expanded nodes on active workspace clear.
+- Extend the last-tab-close regression by loading a PHP tree first, then asserting the tree is empty and not loading after close.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears PHP tree state immediately.
+- Closing the last project tab clears PHP outline cache/loading state alongside JS/TS outline cache/loading state.
+- Existing runtime disposal and workspace tab close behavior remains green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Workspace Clear Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (317 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 851 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Workspace Clear Reset Guard
+
+- Committed as `5e34f045 Reset PHP workspace state on last tab close`.
