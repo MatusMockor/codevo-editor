@@ -362,6 +362,57 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.completion).not.toHaveBeenCalled();
   });
 
+  it("does not request completion when the PHP runtime status has no explicit workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const source = phpCompletionFixtureSource();
+    const gateway = featuresGateway({
+      completion: {
+        isIncomplete: false,
+        items: [
+          {
+            detail: "class",
+            documentation: "A rootless user",
+            insertText: "User",
+            kind: 7,
+            label: "User",
+          },
+        ],
+      },
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      runtimeStatus: rootlessRunningStatus(),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({ content: source }),
+        position(),
+      ),
+    ).resolves.toEqual({
+      suggestions: [
+        {
+          detail: "local variable",
+          insertText: "$user",
+          kind: 6,
+          label: "$user",
+          range: {
+            endColumn: 5,
+            endLineNumber: 11,
+            startColumn: 1,
+            startLineNumber: 11,
+          },
+          sortText: "0_0000",
+        },
+      ],
+    });
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.completion).not.toHaveBeenCalled();
+  });
+
   it("inserts parentheses and parameter cursor for LSP method completions with parameters", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
