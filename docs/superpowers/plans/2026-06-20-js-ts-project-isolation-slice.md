@@ -7987,4 +7987,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Laravel Env Key Navigation And Completion
 
-- Pending commit.
+- Committed as `b77af6c3 Add Laravel env key navigation`.
