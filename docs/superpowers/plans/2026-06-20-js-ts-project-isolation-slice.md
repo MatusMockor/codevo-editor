@@ -7904,4 +7904,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Laravel Config Key Navigation And Completion
 
-- Pending commit.
+- Committed as `6982633d Add Laravel config key navigation`.
