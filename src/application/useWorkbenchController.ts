@@ -693,6 +693,12 @@ export function useWorkbenchController(
   const [classOpenResults, setClassOpenResults] = useState<
     ProjectSymbolSearchResult[]
   >([]);
+  const [workspaceSymbolsOpen, setWorkspaceSymbolsOpen] = useState(false);
+  const [workspaceSymbolsQuery, setWorkspaceSymbolsQuery] = useState("");
+  const [workspaceSymbolsLoading, setWorkspaceSymbolsLoading] = useState(false);
+  const [workspaceSymbolsResults, setWorkspaceSymbolsResults] = useState<
+    ProjectSymbolSearchResult[]
+  >([]);
   const [textSearchOpen, setTextSearchOpen] = useState(false);
   const [textSearchQuery, setTextSearchQuery] = useState("");
   const [textSearchLoading, setTextSearchLoading] = useState(false);
@@ -2569,6 +2575,10 @@ export function useWorkbenchController(
     setClassOpenQuery("");
     setClassOpenLoading(false);
     setClassOpenResults([]);
+    setWorkspaceSymbolsOpen(false);
+    setWorkspaceSymbolsQuery("");
+    setWorkspaceSymbolsLoading(false);
+    setWorkspaceSymbolsResults([]);
     setQuickOpenOpen(false);
     setQuickOpenQuery("");
     setQuickOpenLoading(false);
@@ -3684,6 +3694,10 @@ export function useWorkbenchController(
       setClassOpenQuery("");
       setClassOpenLoading(false);
       setClassOpenResults([]);
+      setWorkspaceSymbolsOpen(false);
+      setWorkspaceSymbolsQuery("");
+      setWorkspaceSymbolsLoading(false);
+      setWorkspaceSymbolsResults([]);
       setQuickOpenOpen(false);
       setQuickOpenQuery("");
       setQuickOpenLoading(false);
@@ -5353,6 +5367,7 @@ export function useWorkbenchController(
     setPaletteOpen(false);
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
     setTextSearchOpen(false);
     setSettingsOpen(false);
     setCallHierarchyView(null);
@@ -6662,6 +6677,30 @@ export function useWorkbenchController(
       }
 
       setClassOpenOpen(false);
+      setEditorRevealTarget({
+        path: result.path,
+        position: editorPositionFromProjectSymbol(result),
+      });
+      setMessage(
+        `Opened ${result.name} ${result.relativePath}:${result.lineNumber}:${result.column}`,
+      );
+    },
+    [openFile],
+  );
+
+  const openWorkspaceSymbolResult = useCallback(
+    async (result: ProjectSymbolSearchResult) => {
+      const opened = await openFile({
+        kind: "file",
+        name: getFileName(result.path),
+        path: result.path,
+      });
+
+      if (!opened) {
+        return;
+      }
+
+      setWorkspaceSymbolsOpen(false);
       setEditorRevealTarget({
         path: result.path,
         position: editorPositionFromProjectSymbol(result),
@@ -16536,6 +16575,7 @@ export function useWorkbenchController(
     setPaletteOpen(false);
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
     setTextSearchOpen(false);
     setSettingsOpen(false);
     setFileStructureOpen(false);
@@ -16716,6 +16756,7 @@ export function useWorkbenchController(
     setPaletteOpen(false);
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
     setTextSearchOpen(false);
     setSettingsOpen(false);
     setFileStructureOpen(false);
@@ -17653,6 +17694,7 @@ export function useWorkbenchController(
     setPaletteOpen(false);
     setQuickOpenOpen(false);
     setClassOpenOpen(false);
+    setWorkspaceSymbolsOpen(false);
     setTextSearchOpen(false);
     setLanguageServerSetupOpen(false);
     setFileStructureOpen(false);
@@ -17697,6 +17739,11 @@ export function useWorkbenchController(
       return true;
     }
 
+    if (workspaceSymbolsOpen) {
+      setWorkspaceSymbolsOpen(false);
+      return true;
+    }
+
     if (classOpenOpen) {
       setClassOpenOpen(false);
       return true;
@@ -17732,7 +17779,38 @@ export function useWorkbenchController(
     settingsOpen,
     textSearchOpen,
     typeHierarchyView,
+    workspaceSymbolsOpen,
   ]);
+
+  const canSearchClassOpenSymbols = Boolean(
+    shouldIndexWorkspace(intelligenceMode) ||
+      (isRunningLanguageServerForWorkspace(
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        workspaceRoot,
+      ) &&
+        canUseLanguageServerFeature(
+          languageServerRuntimeStatus.capabilities,
+          "workspaceSymbol",
+        )) ||
+      (isRunningLanguageServerForWorkspace(
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+      ) &&
+        canUseLanguageServerFeature(
+          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
+          "workspaceSymbol",
+        )),
+  );
+
+  const openWorkspaceSymbols = useCallback(() => {
+    setPaletteOpen(false);
+    setQuickOpenOpen(false);
+    setClassOpenOpen(false);
+    setTextSearchOpen(false);
+    setWorkspaceSymbolsOpen(true);
+  }, []);
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry();
@@ -17781,6 +17859,7 @@ export function useWorkbenchController(
       isEnabled: (context) => context.hasWorkspace,
       run: () => {
         setClassOpenOpen(false);
+        setWorkspaceSymbolsOpen(false);
         setQuickOpenOpen(true);
       },
     });
@@ -17793,8 +17872,19 @@ export function useWorkbenchController(
       isEnabled: (context) => context.hasWorkspace,
       run: () => {
         setQuickOpenOpen(false);
+        setWorkspaceSymbolsOpen(false);
         setClassOpenOpen(true);
       },
+    });
+
+    registry.register({
+      id: "editor.goToSymbol",
+      title: "Go to Symbol in Workspace",
+      category: "Editor",
+      shortcut: shortcut("editor.goToSymbol"),
+      isEnabled: (context) =>
+        context.hasWorkspace && canSearchClassOpenSymbols,
+      run: openWorkspaceSymbols,
     });
 
     registry.register({
@@ -18312,6 +18402,7 @@ export function useWorkbenchController(
     createFile,
     deleteActiveDocument,
     goToDeclaration,
+    canSearchClassOpenSymbols,
     goToDefinition,
     goToImplementation,
     goToSourceDefinition,
@@ -18323,6 +18414,7 @@ export function useWorkbenchController(
     openFileStructure,
     openTypeHierarchy,
     openSettingsPanel,
+    openWorkspaceSymbols,
     navigationHistory,
     openWorkspace,
     refreshWorkspace,
@@ -18995,6 +19087,7 @@ export function useWorkbenchController(
       if (matches("commands.show")) {
         event.preventDefault();
         setClassOpenOpen(false);
+        setWorkspaceSymbolsOpen(false);
         setPaletteOpen(true);
         return;
       }
@@ -19003,7 +19096,16 @@ export function useWorkbenchController(
         event.preventDefault();
         if (workspaceRoot) {
           setQuickOpenOpen(false);
+          setWorkspaceSymbolsOpen(false);
           setClassOpenOpen(true);
+        }
+        return;
+      }
+
+      if (matches("editor.goToSymbol")) {
+        event.preventDefault();
+        if (workspaceRoot && canSearchClassOpenSymbols) {
+          openWorkspaceSymbols();
         }
         return;
       }
@@ -19012,6 +19114,7 @@ export function useWorkbenchController(
         event.preventDefault();
         if (workspaceRoot) {
           setClassOpenOpen(false);
+          setWorkspaceSymbolsOpen(false);
           setQuickOpenOpen(true);
         }
         return;
@@ -19034,6 +19137,7 @@ export function useWorkbenchController(
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    canSearchClassOpenSymbols,
     closeActiveSurface,
     closeFloatingSurface,
     goToDeclaration,
@@ -19045,6 +19149,7 @@ export function useWorkbenchController(
     navigateForwardInHistory,
     openFileStructure,
     openSettingsPanel,
+    openWorkspaceSymbols,
     quitApplication,
     saveActiveDocument,
     showBottomPanelView,
@@ -19172,27 +19277,6 @@ export function useWorkbenchController(
     };
   }, [fileSearch, quickOpenOpen, quickOpenQuery, reportError, workspaceRoot]);
 
-  const canSearchClassOpenSymbols = Boolean(
-    shouldIndexWorkspace(intelligenceMode) ||
-      (isRunningLanguageServerForWorkspace(
-        languageServerRuntimeStatus,
-        languageServerRuntimeStatusRoot,
-        workspaceRoot,
-      ) &&
-        canUseLanguageServerFeature(
-          languageServerRuntimeStatus.capabilities,
-          "workspaceSymbol",
-        )) ||
-      (isRunningLanguageServerForWorkspace(
-        javaScriptTypeScriptLanguageServerRuntimeStatus,
-        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-        workspaceRoot,
-      ) &&
-        canUseLanguageServerFeature(
-          javaScriptTypeScriptLanguageServerRuntimeStatus.capabilities,
-          "workspaceSymbol",
-        )),
-  );
   const searchClassOpenSymbols = useCallback(
     async (query: string, limit: number): Promise<ProjectSymbolSearchResult[]> => {
       if (!workspaceRoot) {
@@ -19382,6 +19466,61 @@ export function useWorkbenchController(
     reportError,
     searchClassOpenSymbols,
     workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (
+      !workspaceSymbolsOpen ||
+      !workspaceRoot ||
+      !workspaceSymbolsQuery.trim() ||
+      !canSearchClassOpenSymbols
+    ) {
+      setWorkspaceSymbolsResults([]);
+      setWorkspaceSymbolsLoading(false);
+      return;
+    }
+
+    let active = true;
+    setWorkspaceSymbolsLoading(true);
+
+    const timeout = window.setTimeout(() => {
+      searchClassOpenSymbols(workspaceSymbolsQuery, 120)
+        .then((results) => {
+          if (!active) {
+            return;
+          }
+
+          setWorkspaceSymbolsResults(results.slice(0, 80));
+          setMessage(null);
+        })
+        .catch((error) => {
+          if (!active) {
+            return;
+          }
+
+          setWorkspaceSymbolsResults([]);
+          reportError("Go to Symbol in Workspace", error);
+        })
+        .finally(() => {
+          if (!active) {
+            return;
+          }
+
+          setWorkspaceSymbolsLoading(false);
+        });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    canSearchClassOpenSymbols,
+    reportError,
+    searchClassOpenSymbols,
+    workspaceRoot,
+    workspaceSymbolsOpen,
+    workspaceSymbolsQuery,
   ]);
 
   useEffect(() => {
@@ -19985,6 +20124,10 @@ export function useWorkbenchController(
     classOpenOpen,
     classOpenQuery,
     classOpenResults,
+    workspaceSymbolsLoading,
+    workspaceSymbolsOpen,
+    workspaceSymbolsQuery,
+    workspaceSymbolsResults,
     closeImplementationChooser: () => setImplementationChooser(null),
     closeCallHierarchy: () => setCallHierarchyView(null),
     closeTypeHierarchy: () => setTypeHierarchyView(null),
@@ -20046,6 +20189,8 @@ export function useWorkbenchController(
     openProblemNotice,
     openPhpFileOutlineNode,
     openClassSearchResult,
+    openWorkspaceSymbolResult,
+    openWorkspaceSymbols,
     openPinnedFile,
     previewFile,
     previewPath,
@@ -20083,6 +20228,8 @@ export function useWorkbenchController(
     showBottomPanelView,
     setPaletteOpen,
     setClassOpenOpen,
+    setWorkspaceSymbolsOpen,
+    setWorkspaceSymbolsQuery,
     setGitCommitMessage,
     setClassOpenQuery,
     setQuickOpenOpen,

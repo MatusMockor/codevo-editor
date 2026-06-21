@@ -31,6 +31,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
 import { TypeHierarchy } from "./components/TypeHierarchy";
+import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
 import {
   languageServerCapabilityLabels,
   languageServerStatusLabel,
@@ -820,6 +821,16 @@ function App() {
         onOpen={workbench.openClassSearchResult}
         query={workbench.classOpenQuery}
         results={workbench.classOpenResults}
+      />
+
+      <WorkspaceSymbols
+        isLoading={workbench.workspaceSymbolsLoading}
+        isOpen={workbench.workspaceSymbolsOpen}
+        onChangeQuery={workbench.setWorkspaceSymbolsQuery}
+        onClose={() => workbench.setWorkspaceSymbolsOpen(false)}
+        onOpen={workbench.openWorkspaceSymbolResult}
+        query={workbench.workspaceSymbolsQuery}
+        results={workbench.workspaceSymbolsResults}
       />
 
       <TextSearch

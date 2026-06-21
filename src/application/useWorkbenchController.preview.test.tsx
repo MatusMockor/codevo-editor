@@ -18033,6 +18033,316 @@ export abstract class BaseAdapter implements PlatformAdapter {
     ).toBe(false);
   });
 
+  it("opens the workspace symbols modal and closes other modals for Cmd+T", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 41,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: featuresGateway(),
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().setClassOpenOpen(true);
+      getWorkbench().setQuickOpenOpen(true);
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToSymbol",
+    );
+
+    expect(command).toBeDefined();
+    expect(command?.category).toBe("Editor");
+    expect(command?.title).toBe("Go to Symbol in Workspace");
+
+    act(() => {
+      command?.run();
+    });
+
+    expect(getWorkbench().workspaceSymbolsOpen).toBe(true);
+    expect(getWorkbench().classOpenOpen).toBe(false);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+  });
+
+  it("returns every JavaScript and TypeScript workspace symbol kind for Cmd+T", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 42,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockResolvedValue([
+      {
+        containerName: "src/userService",
+        kind: 5,
+        location: {
+          range: range(4, 13, 8, 1),
+          uri: fileUriFromPath("/workspace/src/userService.ts"),
+        },
+        name: "UserService",
+      },
+      {
+        containerName: "UserService",
+        kind: 6,
+        location: {
+          range: range(5, 2, 7, 3),
+          uri: fileUriFromPath("/workspace/src/userService.ts"),
+        },
+        name: "loadUser",
+      },
+      {
+        containerName: null,
+        kind: 12,
+        location: {
+          range: range(9, 0, 11, 1),
+          uri: fileUriFromPath("/workspace/src/createUser.ts"),
+        },
+        name: "createUser",
+      },
+    ]);
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSymbol")
+        ?.run();
+      getWorkbench().setWorkspaceSymbolsQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).not.toHaveBeenCalled();
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).toHaveBeenCalledWith("/workspace", "User");
+    expect(
+      getWorkbench().workspaceSymbolsResults.map((result) => result.kind),
+    ).toEqual(["class", "method", "function"]);
+    expect(
+      getWorkbench().workspaceSymbolsResults.map((result) => result.name),
+    ).toEqual(["UserService", "loadUser", "createUser"]);
+  });
+
+  it("opens the selected workspace symbol at its position and closes the modal", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      sessionId: 43,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockResolvedValue([
+      {
+        containerName: "UserService",
+        kind: 6,
+        location: {
+          range: range(5, 2, 7, 3),
+          uri: fileUriFromPath("/workspace/src/userService.ts"),
+        },
+        name: "loadUser",
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(
+        async () => "export class UserService {\n  loadUser() {}\n}\n",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSymbol")
+        ?.run();
+      getWorkbench().setWorkspaceSymbolsQuery("loadUser");
+    });
+    await waitForClassSearch();
+
+    const result = getWorkbench().workspaceSymbolsResults[0];
+
+    expect(result).toBeDefined();
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceSymbolResult(result);
+    });
+
+    expect(getWorkbench().workspaceSymbolsOpen).toBe(false);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: "/workspace/src/userService.ts",
+      position: {
+        column: 3,
+        lineNumber: 6,
+      },
+    });
+  });
+
+  it("does not expose Cmd+T workspace symbol search without workspace symbol capability", async () => {
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 44,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSymbol")
+        ?.run();
+      getWorkbench().setWorkspaceSymbolsQuery("User");
+    });
+    await waitForClassSearch();
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().workspaceSymbolsResults).toEqual([]);
+  });
+
+  it("drops stale Cmd+T workspace symbol results after switching project tabs", async () => {
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        workspaceSymbol: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 45,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).mockImplementationOnce(async () => workspaceSymbols.promise);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.goToSymbol")
+        ?.run();
+      getWorkbench().setWorkspaceSymbolsQuery("User");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      await Promise.resolve();
+    });
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.workspaceSymbols,
+    ).toHaveBeenCalledWith("/workspace-a", "User");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    workspaceSymbols.resolve([
+      {
+        containerName: "src/staleUser",
+        kind: 5,
+        location: {
+          range: range(1, 13, 2, 1),
+          uri: fileUriFromPath("/workspace-a/src/staleUser.ts"),
+        },
+        name: "StaleUser",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().workspaceSymbolsResults.some(
+        (result) => result.name === "StaleUser",
+      ),
+    ).toBe(false);
+  });
+
   it("uses the project index for go to definition when the language server is unavailable", async () => {
     const controllerPath = "/workspace/src/CommentController.php";
     const agentPath = "/workspace/src/CommentsAgent.php";

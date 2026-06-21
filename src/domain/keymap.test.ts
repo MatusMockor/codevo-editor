@@ -17,6 +17,7 @@ describe("keymap", () => {
       "editor.goToDeclaration": "",
       "editor.goToDefinition": "Cmd+B",
       "editor.goToSourceDefinition": "",
+      "editor.goToSymbol": "Cmd+T",
       "editor.goToTypeDefinition": "",
       "editor.quickFix": "Alt+Enter",
       "file.quickOpen": "Cmd+P",

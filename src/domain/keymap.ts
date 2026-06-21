@@ -49,6 +49,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Cmd+T",
+    id: "editor.goToSymbol",
+    label: "Go to Symbol in Workspace",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Alt+Enter",
     id: "editor.quickFix",
     label: "Context Actions",
