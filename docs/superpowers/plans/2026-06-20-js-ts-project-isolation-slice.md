@@ -4933,3 +4933,48 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Managed PHPactor Install Loading Guard
 
 - Committed as `335f00ae Guard managed PHPactor install loading by workspace`.
+
+## Next Slice: Workspace Directory Open Continuation Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9185c167 Record managed PHPactor install guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 840 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `openWorkspacePath` used its request token before and during early workspace settings/follow-up awaits.
+- A stale workspace open could still continue after `loadDirectory(path)` resolved, even though the user had already switched to another project tab.
+- That stale continuation could start trust/detection/session follow-up work for the inactive workspace.
+
+### Implementation Choice
+
+- Reuse `openWorkspaceRequestTokenRef` after the root directory load.
+- Return before trust/detection/session continuation when a newer workspace-open request has superseded the current one.
+- Add a preview regression where `/workspace-a` directory load resolves after activating `/workspace-b`, and verify `/workspace-a` trust lookup never starts.
+
+### Acceptance Criteria
+
+- Stale workspace root directory completions do not continue the old workspace-open pipeline.
+- Existing stale directory error and workspace settings load guards remain green.
+- Workspace tab/trust/detection lifecycle tests remain green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Workspace Directory Open Continuation Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "directory load|workspace opens|workspace settings load|workspace-open"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace tab|project tab|workspace detection|workspace trust|directory load|workspace opens|workspace settings"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 841 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Workspace Directory Open Continuation Guard
+
+- Pending commit.

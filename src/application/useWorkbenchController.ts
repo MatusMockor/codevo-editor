@@ -3294,6 +3294,10 @@ export function useWorkbenchController(
 
       if (!cachedWorkspaceState?.entriesByDirectory[path]) {
         await loadDirectory(path);
+
+        if (!isCurrentOpenWorkspaceRequest()) {
+          return;
+        }
       }
 
       let descriptor: WorkspaceDescriptor | null = null;

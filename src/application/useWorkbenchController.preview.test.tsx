@@ -921,6 +921,61 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("does not continue stale workspace opens after directory load resolves", async () => {
+    const workspaceADirectory = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace-a") {
+        return workspaceADirectory.promise;
+      }
+
+      return [];
+    });
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({
+        rootPath,
+        trusted: true,
+      })),
+      setTrust: vi.fn(async (rootPath, trusted) => ({
+        rootPath,
+        trusted,
+      })),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory,
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledWith("/workspace-a");
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(workspaceTrustGateway.getTrust).toHaveBeenCalledWith(
+        "/workspace-b",
+      );
+    });
+
+    await act(async () => {
+      workspaceADirectory.resolve([]);
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      vi
+        .mocked(workspaceTrustGateway.getTrust)
+        .mock.calls.some(([rootPath]) => rootPath === "/workspace-a"),
+    ).toBe(false);
+  });
+
   it("treats trailing-separator project tabs as the active workspace", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
