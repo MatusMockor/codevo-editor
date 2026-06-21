@@ -7783,7 +7783,11 @@ export function useWorkbenchController(
 
   const phpTraitHostConstantExists = useCallback(
     async (traitClassName: string, constantName: string): Promise<boolean> => {
-      if (!workspaceRoot) {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
         return false;
       }
 
@@ -7826,13 +7830,22 @@ export function useWorkbenchController(
         visitedClassNames.add(classLookup);
 
         const results = await textSearch.searchText(
-          workspaceRoot,
+          requestedRoot,
           shortPhpName(normalizedClassName),
           200,
         );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         const visitedPaths = new Set<string>();
 
         for (const result of results) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
             continue;
           }
@@ -7841,6 +7854,10 @@ export function useWorkbenchController(
 
           try {
             const content = await readNavigationFileContent(result.path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
 
             if (phpCurrentTypeKind(content) !== "class") {
               continue;
@@ -7871,9 +7888,21 @@ export function useWorkbenchController(
             ) {
               return true;
             }
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
           } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
             continue;
           }
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
         }
 
         return false;
@@ -7898,13 +7927,22 @@ export function useWorkbenchController(
         visitedTraitClassNames.add(traitLookup);
 
         const results = await textSearch.searchText(
-          workspaceRoot,
+          requestedRoot,
           shortPhpName(normalizedTargetTraitClassName),
           200,
         );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         const visitedPaths = new Set<string>();
 
         for (const result of results) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
             continue;
           }
@@ -7913,6 +7951,10 @@ export function useWorkbenchController(
 
           try {
             const content = await readNavigationFileContent(result.path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
 
             if (!sourceUsesTrait(content, normalizedTargetTraitClassName)) {
               continue;
@@ -7935,6 +7977,10 @@ export function useWorkbenchController(
                 return true;
               }
 
+              if (!isRequestedRootActive()) {
+                return false;
+              }
+
               continue;
             }
 
@@ -7955,15 +8001,34 @@ export function useWorkbenchController(
             ) {
               return true;
             }
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
           } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
             continue;
           }
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
         }
 
         return false;
       };
 
-      return traitConcreteUserHierarchyHasConstant(normalizedTraitClassName);
+      const exists =
+        await traitConcreteUserHierarchyHasConstant(normalizedTraitClassName);
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      return exists;
     },
     [
       phpClassHierarchyHasConstant,

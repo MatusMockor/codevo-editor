@@ -18760,6 +18760,128 @@ class HostState
     ).toEqual([]);
   });
 
+  it("stops stale PHP trait host-constant search after switching project tabs", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const hostStatePath = "/workspace-a/app/Support/HostState.php";
+    const resolvesHostStatePath =
+      "/workspace-a/app/Support/ResolvesHostState.php";
+    const resolvesHostStateSource = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): string
+    {
+        return static::HOST_STATE;
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 42,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const staleTraitHostSearch = createDeferred<TextSearchResult[]>();
+    const searchText = vi.fn(async (_root, query) =>
+      query === "ResolvesHostState" ? staleTraitHostSearch.promise : [],
+    );
+    let hostStateReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === resolvesHostStatePath) {
+          return resolvesHostStateSource;
+        }
+
+        if (path === hostStatePath) {
+          hostStateReadCount += 1;
+          return `<?php
+namespace App\\Support;
+
+class HostState
+{
+    use ResolvesHostState;
+
+    private const HOST_STATE = 'ready';
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchText,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 24,
+            line:
+              lineNumberOf(resolvesHostStateSource, "static::HOST_STATE") - 1,
+            message:
+              'Constant "HOST_STATE" does not exist on trait "App\\Support\\ResolvesHostState"',
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(resolvesHostStatePath),
+        version: null,
+      });
+    });
+    await vi.waitFor(() => {
+      expect(searchText).toHaveBeenCalledWith(
+        "/workspace-a",
+        "ResolvesHostState",
+        200,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleTraitHostSearch.resolve([
+      {
+        column: 5,
+        lineNumber: 6,
+        lineText: "    use ResolvesHostState;",
+        path: hostStatePath,
+        relativePath: "app/Support/HostState.php",
+      },
+    ]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(hostStateReadCount).toBe(0);
+  });
+
   it("stops stale PHP constant hierarchy diagnostic traversal after switching project tabs", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)
