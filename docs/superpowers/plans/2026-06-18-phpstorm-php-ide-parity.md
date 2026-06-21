@@ -5857,3 +5857,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `2118c6c9 Guard stale PHP class source resolver fallback`.
+
+## Slice: Stale PHP Method Completion Traversal Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6d4fc323 Record stale PHP class source resolver guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale PHP method completion traversal from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `collectPhpMethodsForClass`.
+- Guard before class source reads, after class member reads, after inherited template resolution, after trait/mixin/supertype recursion, after failed reads, before framework-bound concrete resolution, and before returning method completions.
+- Add a preview regression where method completions start in `/workspace-a`, a service class read is delayed, the workspace switches to `/workspace-b`, and the delayed source extends a base service.
+- Assert the stale completion request returns no suggestions and does not continue into `/workspace-b` base service reads.
+
+### Acceptance Criteria
+
+- Stale PHP method completion traversal stops after tab switch.
+- Stale method completion requests do not start inherited class reads in the newly active workspace.
+- Existing PHP method completion behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale PHP method completion traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

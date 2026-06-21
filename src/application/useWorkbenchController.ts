@@ -6156,7 +6156,12 @@ export function useWorkbenchController(
 
   const collectPhpMethodsForClass = useCallback(
     async (className: string): Promise<PhpMethodCompletion[]> => {
-      if (!workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
         return [];
       }
 
@@ -6192,25 +6197,49 @@ export function useWorkbenchController(
 
         visitedClassNames.add(visitedKey);
 
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
         for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+          if (!isRequestedRootActive()) {
+            return;
+          }
+
           try {
             const { content, members } = await readPhpClassMembersFromPath(
               path,
               normalizedClassName,
             );
+
+            if (!isRequestedRootActive()) {
+              return;
+            }
+
             rememberMethods(members, templateTypes);
 
             for (const traitName of phpTraitClassNames(content)) {
               const resolvedTraitName = resolvePhpClassName(content, traitName);
 
               if (resolvedTraitName) {
-                await collectMethods(
-                  resolvedTraitName,
+                const traitTemplateTypes =
                   await resolvePhpGenericTemplateTypesForInheritedClass(
                     content,
                     resolvedTraitName,
-                  ),
+                  );
+
+                if (!isRequestedRootActive()) {
+                  return;
+                }
+
+                await collectMethods(
+                  resolvedTraitName,
+                  traitTemplateTypes,
                 );
+
+                if (!isRequestedRootActive()) {
+                  return;
+                }
               }
             }
 
@@ -6218,13 +6247,24 @@ export function useWorkbenchController(
               const resolvedMixinName = resolvePhpClassName(content, mixinName);
 
               if (resolvedMixinName) {
-                await collectMethods(
-                  resolvedMixinName,
+                const mixinTemplateTypes =
                   await resolvePhpGenericTemplateTypesForMixinClass(
                     content,
                     resolvedMixinName,
-                  ),
+                  );
+
+                if (!isRequestedRootActive()) {
+                  return;
+                }
+
+                await collectMethods(
+                  resolvedMixinName,
+                  mixinTemplateTypes,
                 );
+
+                if (!isRequestedRootActive()) {
+                  return;
+                }
               }
             }
 
@@ -6235,18 +6275,33 @@ export function useWorkbenchController(
               );
 
               if (resolvedSuperTypeName) {
-                await collectMethods(
-                  resolvedSuperTypeName,
+                const superTypeTemplateTypes =
                   await resolvePhpGenericTemplateTypesForInheritedClass(
                     content,
                     resolvedSuperTypeName,
-                  ),
+                  );
+
+                if (!isRequestedRootActive()) {
+                  return;
+                }
+
+                await collectMethods(
+                  resolvedSuperTypeName,
+                  superTypeTemplateTypes,
                 );
+
+                if (!isRequestedRootActive()) {
+                  return;
+                }
               }
             }
 
             return;
           } catch {
+            if (!isRequestedRootActive()) {
+              return;
+            }
+
             continue;
           }
         }
@@ -6254,11 +6309,23 @@ export function useWorkbenchController(
 
       await collectMethods(className);
 
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
       const boundConcreteClassName =
         await resolvePhpFrameworkBoundConcrete(className);
 
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
       if (boundConcreteClassName) {
         await collectMethods(boundConcreteClassName);
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
       }
 
       return Array.from(completions.values());
