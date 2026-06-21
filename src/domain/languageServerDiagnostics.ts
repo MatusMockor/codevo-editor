@@ -1,3 +1,5 @@
+import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
+
 export type LanguageServerDiagnosticSeverity =
   | "error"
   | "warning"
@@ -77,7 +79,16 @@ export function shouldApplyLanguageServerDiagnostics(
   event: LanguageServerDiagnosticEvent,
   currentSessionId: number | null,
   currentVersion: number | undefined,
+  currentWorkspaceRoot?: string | null,
 ): boolean {
+  if (
+    currentWorkspaceRoot &&
+    normalizedWorkspaceRootKey(event.rootPath) !==
+      normalizedWorkspaceRootKey(currentWorkspaceRoot)
+  ) {
+    return false;
+  }
+
   if (event.sessionId !== currentSessionId) {
     return false;
   }

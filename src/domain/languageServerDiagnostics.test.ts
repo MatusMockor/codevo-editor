@@ -39,6 +39,25 @@ describe("languageServerDiagnostics", () => {
     expect(shouldApplyLanguageServerDiagnostics(event(null), 1, 4)).toBe(true);
     expect(shouldApplyLanguageServerDiagnostics(event(4), 2, 4)).toBe(false);
   });
+
+  it("rejects diagnostics from another workspace root", () => {
+    expect(
+      shouldApplyLanguageServerDiagnostics(
+        event(4, "/workspace-a/"),
+        1,
+        4,
+        "/workspace-a",
+      ),
+    ).toBe(true);
+    expect(
+      shouldApplyLanguageServerDiagnostics(
+        event(4, "/workspace-a"),
+        1,
+        4,
+        "/workspace-b",
+      ),
+    ).toBe(false);
+  });
 });
 
 function diagnostic(): LanguageServerDiagnostic {
@@ -51,10 +70,13 @@ function diagnostic(): LanguageServerDiagnostic {
   };
 }
 
-function event(version: number | null): LanguageServerDiagnosticEvent {
+function event(
+  version: number | null,
+  rootPath = "/tmp",
+): LanguageServerDiagnosticEvent {
   return {
     diagnostics: [diagnostic()],
-    rootPath: "/tmp",
+    rootPath,
     sessionId: 1,
     uri: "file:///tmp/User.php",
     version,

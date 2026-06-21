@@ -145,3 +145,44 @@ This prevents project A diagnostics, completion, or implementation results from 
 5. Route diagnostics and status events by root path.
 6. Per-project runtime policy setting: keep alive, suspend on background, or single active engine.
 7. Full manual QA against PhpStorm behavior.
+
+## Progress Log
+
+### Slice: Root-Aware Language Server Diagnostics Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `177bc51c Record Laravel mutation terminal commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Ensure language-server diagnostic events are rejected by workspace root as well as session and document version.
+
+#### Implementation Choice
+
+- Extend `shouldApplyLanguageServerDiagnostics` with an optional current workspace root.
+- Compare event and current roots through normalized workspace root keys.
+- Pass the active PHP workspace root and JS/TS diagnostic event root through controller call-sites.
+
+#### Acceptance Criteria
+
+- Diagnostics from another workspace root are rejected at the domain guard.
+- Existing PHP active-workspace diagnostics and JS/TS background-tab diagnostics still apply correctly.
+- Focused/full diagnostics/controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/domain/languageServerDiagnostics.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "diagnostics.*workspace|workspace.*diagnostics|ignores PHP diagnostics without an explicit workspace root|caches JavaScript and TypeScript diagnostics for background project tabs|does not sync JavaScript and TypeScript documents with a runtime from another project tab"`
+- PASS: `npm test -- src/domain/languageServerDiagnostics.test.ts src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Pending implementation commit.

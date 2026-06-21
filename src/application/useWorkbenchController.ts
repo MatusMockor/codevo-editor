@@ -1023,6 +1023,7 @@ export function useWorkbenchController(
           event,
           currentSessionId,
           currentVersion,
+          currentWorkspaceRootRef.current,
         )
       ) {
         return;
@@ -1049,6 +1050,7 @@ export function useWorkbenchController(
             event,
             currentSessionId,
             latestVersion,
+            currentWorkspaceRootRef.current,
           )
         ) {
           return;
@@ -1122,6 +1124,7 @@ export function useWorkbenchController(
           event,
           currentSessionId,
           currentVersion,
+          diagnosticsRootPath,
         )
       ) {
         return;
