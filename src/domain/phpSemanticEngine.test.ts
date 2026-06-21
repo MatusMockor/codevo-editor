@@ -1096,6 +1096,17 @@ class Comment extends Model
         $relationMethodDescendingPost = $this->posts()->orderByDesc('created_at')->first();
         $relationMethodReorderedPost = $this->posts()->reorder('created_at')->first();
         $relationMethodLockedPost = $this->posts()->lock()->lockForUpdate()->sharedLock()->first();
+        $relationMethodControlledPost = $this->posts()
+            ->beforeQuery(fn () => null)
+            ->afterQuery(fn ($results) => $results)
+            ->timeout(5)
+            ->forPage(1, 10)
+            ->forPageAfterId(10, 0)
+            ->forPageBeforeId(10, 100)
+            ->reorderDesc('created_at')
+            ->union($this->posts()->select('posts.*'))
+            ->unionAll($this->posts()->select('posts.*'))
+            ->first();
         $relationMethodRawFilteredPost = $this->posts()
             ->selectRaw('posts.*')
             ->whereRaw('published = 1')
@@ -1265,6 +1276,7 @@ class Comment extends Model
         $relationMethodDescendingPost->tit
         $relationMethodReorderedPost->tit
         $relationMethodLockedPost->tit
+        $relationMethodControlledPost->tit
         $relationMethodRawFilteredPost->tit
         $relationMethodExistsFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
@@ -1515,6 +1527,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodLockedPost->tit"),
         "relationMethodLockedPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodControlledPost->tit"),
+        "relationMethodControlledPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");

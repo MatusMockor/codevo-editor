@@ -3474,3 +3474,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `f6156ede Recognize Laravel relative date query helpers`.
+
+## Slice: Laravel Query Control Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `8e498acc Record Laravel relative date helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize Laravel query-control helpers as builder-preserving methods so pagination, callbacks, timeout, reorder, and union operations do not break model-aware inference.
+
+### Implementation Choice
+
+- Add `beforeQuery`, `forPage`, `forPageAfterId`, `forPageBeforeId`, `reorderDesc`, `timeout`, `union`, and `unionAll` to Eloquent static/fluent builder recognition while preserving existing `afterQuery` support.
+- Add `afterQuery`, `beforeQuery`, `forPage`, `forPageAfterId`, `forPageBeforeId`, `reorderDesc`, `timeout`, `union`, and `unionAll` to base query-builder recognition.
+- Cover classifier behavior, Eloquent builder return-type preservation, and relation-method semantic inference through a query-control helper chain ending in `first()`.
+
+### Acceptance Criteria
+
+- Query-control helpers are recognized as Laravel Eloquent builder method names.
+- Base query-builder classifiers recognize the same fluent query-control helpers.
+- Eloquent builder calls through these helpers preserve `Builder<Model>` inference.
+- Relation-method chains through these helpers infer the related model after `first()`.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "raw query builder|local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending implementation commit.
