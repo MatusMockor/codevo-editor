@@ -8235,4 +8235,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Laravel JSON Translation Key Navigation And Completion
 
-- Pending commit.
+- Committed as `45f6bded Add Laravel JSON translation navigation`.
