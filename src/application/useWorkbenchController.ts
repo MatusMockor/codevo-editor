@@ -2614,25 +2614,58 @@ export function useWorkbenchController(
         return;
       }
 
+      if (
+        !isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
+        return;
+      }
+
+      const requestedSessionId = languageServerRuntimeStatus.sessionId;
+      const requestedSyncGeneration = documentSyncGenerationRef.current;
+      const isRequestedSyncCurrent = () =>
+        documentSyncGenerationRef.current === requestedSyncGeneration &&
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
+        isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId);
+
       try {
         await flushPendingDocumentChange(document.path);
-        await enqueueDocumentSync(syncKey, () =>
-          languageServerDocumentSyncGateway.didSave(
+
+        if (!isRequestedSyncCurrent()) {
+          return;
+        }
+
+        await enqueueDocumentSync(syncKey, async () => {
+          if (!isRequestedSyncCurrent()) {
+            return;
+          }
+
+          await languageServerDocumentSyncGateway.didSave(
             rootPath,
             createLanguageServerTextDocument(
               document,
               documentVersionsRef.current[syncKey] || 0,
             ),
-          ),
-        );
+          );
+        });
       } catch (error) {
+        if (!isRequestedSyncCurrent()) {
+          return;
+        }
+
         reportLanguageServerErrorForActiveWorkspaceRoot(rootPath, error);
       }
     },
     [
       enqueueDocumentSync,
       flushPendingDocumentChange,
+      isLanguageServerSessionCurrentForRoot,
       languageServerDocumentSyncGateway,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
       reportLanguageServerErrorForActiveWorkspaceRoot,
     ],
   );
@@ -2668,7 +2701,12 @@ export function useWorkbenchController(
 
       const requestedSessionId =
         javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
+      const requestedSyncGeneration =
+        javaScriptTypeScriptDocumentSyncGenerationRef.current;
       const isRequestedSessionCurrent = () =>
+        javaScriptTypeScriptDocumentSyncGenerationRef.current ===
+          requestedSyncGeneration &&
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
         isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
           rootPath,
           requestedSessionId,
@@ -2681,15 +2719,19 @@ export function useWorkbenchController(
           return;
         }
 
-        await enqueueJavaScriptTypeScriptDocumentSync(syncKey, () =>
-          javaScriptTypeScriptLanguageServerDocumentSyncGateway.didSave(
+        await enqueueJavaScriptTypeScriptDocumentSync(syncKey, async () => {
+          if (!isRequestedSessionCurrent()) {
+            return;
+          }
+
+          await javaScriptTypeScriptLanguageServerDocumentSyncGateway.didSave(
             rootPath,
             createLanguageServerTextDocument(
               document,
               javaScriptTypeScriptDocumentVersionsRef.current[syncKey] || 0,
             ),
-          ),
-        );
+          );
+        });
       } catch (error) {
         if (!isRequestedSessionCurrent()) {
           return;

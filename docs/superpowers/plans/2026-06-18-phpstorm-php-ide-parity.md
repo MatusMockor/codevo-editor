@@ -7617,3 +7617,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `81879590 Guard flush pending LSP edits across workspace switches`.
+
+## Slice: PHP JavaScript TypeScript DidSave Workspace Switch Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `85b3d20a Record flush pending LSP edit guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prevent PHP and JS/TS LSP `didSave` requests from leaking into a previous workspace after a tab switch while `didOpen` is still pending.
+
+### Implementation Choice
+
+- Re-check PHP root, session, and document sync generation after `flushPendingDocumentChange` and again inside the queued PHP `didSave` callback.
+- Re-check JS/TS root, session, and document sync generation after `flushPendingJavaScriptTypeScriptDocumentChange` and again inside the queued JS/TS `didSave` callback.
+- Add real `editor.save` regressions for PHP and JS/TS files with pending `didOpen`, workspace tab switch, and no stale `didChange`/`didSave`.
+
+### Acceptance Criteria
+
+- PHP save sync does not send `didSave` to an old workspace after a tab switch.
+- JS/TS save sync does not send `didSave` to an old workspace after a tab switch.
+- Existing save stale-error and same-root didSave protections remain intact.
+- Focused preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "didSave after switching project tabs"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "didSave|save errors|save completions|first-use PHP edits|first-use JavaScript and TypeScript edits"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

@@ -2019,6 +2019,141 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).not.toBe("Saved User.php");
   });
 
+  it("does not send PHP didSave after switching project tabs while didOpen is pending", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 59,
+    };
+    const path = "/workspace-a/src/User.php";
+    const didOpen = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".php") ? "<?php\nfinal class User {}\n" : "",
+      ),
+      runtimeStatus: runningStatus,
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    vi.mocked(syncGateway.didOpen).mockImplementation(
+      async () => didOpen.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nfinal class UserProfile {}\n");
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.save",
+    );
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let switchPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    act(() => {
+      didOpen.resolve(undefined);
+    });
+    await act(async () => {
+      await Promise.all([savePromise, switchPromise]);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(syncGateway.didChange).not.toHaveBeenCalled();
+    expect(syncGateway.didSave).not.toHaveBeenCalled();
+  });
+
+  it("does not send JavaScript TypeScript didSave after switching project tabs while didOpen is pending", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 60,
+    };
+    const path = "/workspace-a/src/App.ts";
+    const didOpen = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".ts") ? "export const value = 1;\n" : "",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+    vi.mocked(syncGateway.didOpen).mockImplementation(
+      async () => didOpen.promise,
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.save",
+    );
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let switchPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+
+    act(() => {
+      didOpen.resolve(undefined);
+    });
+    await act(async () => {
+      await Promise.all([savePromise, switchPromise]);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(syncGateway.didChange).not.toHaveBeenCalled();
+    expect(syncGateway.didSave).not.toHaveBeenCalled();
+  });
+
   it("ignores stale JavaScript TypeScript did-close errors after same-root session restart", async () => {
     const path = "/workspace/src/App.ts";
     const didClose = createDeferred<void>();
