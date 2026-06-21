@@ -5116,4 +5116,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Diagnostics Subscription Cleanup Guard
 
-- Pending commit.
+- Committed as `f0c1d7de Guard diagnostics subscription errors by workspace`.
