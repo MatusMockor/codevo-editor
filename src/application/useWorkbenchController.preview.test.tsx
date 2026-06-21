@@ -3364,6 +3364,60 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("retries restored PHP IDE service autostart after a rootless running response", async () => {
+    const rootlessRunningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      sessionId: 91,
+    };
+    const rootedRunningStatus: LanguageServerRuntimeStatus = {
+      ...rootlessRunningStatus,
+      rootPath: "/workspace",
+      sessionId: 92,
+    };
+    const start = vi
+      .fn<LanguageServerRuntimeGateway["start"]>(async () => rootedRunningStatus)
+      .mockResolvedValueOnce(rootlessRunningStatus);
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start,
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerPlan: phpactorLanguageServerPlan(),
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(36);
+
+    expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledTimes(
+      2,
+    );
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 92,
+      }),
+    );
+  });
+
   it("auto-starts PHP IDE services while initial runtime status is still unknown", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {

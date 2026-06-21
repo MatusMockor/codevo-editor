@@ -12251,10 +12251,37 @@ export function useWorkbenchController(
       .then((status) => {
         handleLanguageServerRuntimeStatus(status, workspaceRoot);
 
-        if (status.kind === "running") {
+        if (
+          isRunningLanguageServerForWorkspace(
+            status,
+            status.rootPath ?? null,
+            workspaceRoot,
+          )
+        ) {
           delete phpLanguageServerAutostartAttemptsByRootRef.current[
             autostartRootKey
           ];
+          return;
+        }
+
+        if (
+          isLanguageServerActive(status) &&
+          !isLanguageServerActiveForWorkspace(
+            status,
+            status.rootPath ?? null,
+            workspaceRoot,
+          )
+        ) {
+          if (
+            workspaceRootKeysEqual(
+              autoStartedLanguageServerRootRef.current,
+              workspaceRoot,
+            )
+          ) {
+            autoStartedLanguageServerRootRef.current = null;
+          }
+
+          setPhpLanguageServerAutostartRetryVersion((current) => current + 1);
           return;
         }
 

@@ -3828,3 +3828,39 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Workspace Runtime Status Helper Root Fallback
 
 - Committed as `1842d91f Restrict runtime status root fallback`.
+
+## Next Slice: PHP Autostart Direct Status Root Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ae5c7d1d Record runtime status fallback commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Direct runtime responses are now expected to be rooted, and active rootless responses are rejected before being cached.
+- PHP IDE autostart still used the raw `start(workspaceRoot)` response to decide whether startup had completed.
+- A malformed rootless or mismatched `running` start response could leave the PHP autostart root marked as already attempted without caching a usable running status, preventing the retry loop from recovering.
+
+### Implementation Choice
+
+- Treat PHP autostart as complete only when the direct start response is `running` for the requested workspace root.
+- If a direct start response is active but does not belong to the requested root, clear the autostart root marker and bump the existing retry version.
+- Preserve rooted `starting`, rooted `running`, root-scoped crash retry, and non-crash stopped behavior.
+
+### Acceptance Criteria
+
+- Rooted PHP autostart `running` responses still clear retry attempts.
+- Rootless or mismatched active PHP autostart responses do not mark startup complete and trigger another autostart attempt.
+- Focused PHP autostart preview tests, full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Autostart Direct Status Root Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP IDE service autostart"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
