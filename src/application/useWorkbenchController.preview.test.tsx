@@ -4415,6 +4415,109 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("clears language server diagnostics when the last project tab closes", async () => {
+    let publishPhpDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishJavaScriptTypeScriptDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishPhpDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishJavaScriptTypeScriptDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const phpStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const javaScriptTypeScriptStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 72,
+    };
+    const phpPath = "/workspace/app/Models/User.php";
+    const typeScriptPath = "/workspace/resources/js/app.ts";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: javaScriptTypeScriptStatus,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptRuntimeStatus: javaScriptTypeScriptStatus,
+      languageServerDiagnosticsGateway,
+      runtimeStatus: phpStatus,
+      workspaceDescriptor: {
+        ...phpWorkspaceDescriptor(),
+        javaScriptTypeScript:
+          javaScriptTypeScriptWorkspaceDescriptor().javaScriptTypeScript,
+      },
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishPhpDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "PHP diagnostic",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 71,
+        uri: fileUriFromPath(phpPath),
+        version: null,
+      });
+      publishJavaScriptTypeScriptDiagnostics?.({
+        diagnostics: [
+          {
+            character: 1,
+            line: 1,
+            message: "TypeScript diagnostic",
+            severity: "warning",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 72,
+        uri: fileUriFromPath(typeScriptPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[phpPath]).toHaveLength(
+      1,
+    );
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[typeScriptPath],
+    ).toHaveLength(1);
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().languageServerDiagnosticsByPath).toEqual({});
+  });
+
   it("falls back to explicit runtime stops when last project disposal fails", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {

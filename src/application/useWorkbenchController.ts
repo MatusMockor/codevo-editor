@@ -2231,6 +2231,8 @@ export function useWorkbenchController(
     setSettingsOpen(false);
     setMessage(null);
     setNotices([]);
+    clearLanguageServerDiagnostics();
+    clearJavaScriptTypeScriptLanguageServerDiagnostics();
     applyWorkspaceSettings(defaultWorkspaceSettings());
     setIntelligenceMode("basic");
     intelligenceModeRef.current = "basic";
@@ -2238,6 +2240,8 @@ export function useWorkbenchController(
   }, [
     applyWorkspaceSettings,
     clearIndexWorkspaceState,
+    clearJavaScriptTypeScriptLanguageServerDiagnostics,
+    clearLanguageServerDiagnostics,
     stopProjectRuntimes,
   ]);
 
