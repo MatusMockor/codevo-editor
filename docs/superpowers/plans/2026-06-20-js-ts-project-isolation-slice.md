@@ -7689,4 +7689,6 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - `npm test` passed: 65 files, 978 tests.
 - `git diff --check` passed before commit prep.
 
-### Commit Status: Pending
+### Commit Status: PHP LSP Workspace Symbols For Cmd+O
+
+- Committed as `8d5548d7 Use PHP workspace symbols for class open`.
