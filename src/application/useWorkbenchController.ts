@@ -12351,8 +12351,15 @@ export function useWorkbenchController(
 
   const openImplementationTarget = useCallback(
     async (target: ImplementationTarget) => {
-      setImplementationChooser(null);
-      await openNavigationTarget(target.path, target.position, target.label);
+      const opened = await openNavigationTarget(
+        target.path,
+        target.position,
+        target.label,
+      );
+
+      if (opened) {
+        setImplementationChooser(null);
+      }
     },
     [openNavigationTarget],
   );
@@ -13000,7 +13007,6 @@ export function useWorkbenchController(
 
   const openCallHierarchyRow = useCallback(
     async (row: CallHierarchyRow) => {
-      setCallHierarchyView(null);
       const path = pathFromLanguageServerUri(row.item.uri);
 
       if (!path) {
@@ -13008,18 +13014,21 @@ export function useWorkbenchController(
         return;
       }
 
-      await openNavigationTarget(
+      const opened = await openNavigationTarget(
         path,
         toEditorPosition(row.range.start),
         row.label,
       );
+
+      if (opened) {
+        setCallHierarchyView(null);
+      }
     },
     [openNavigationTarget],
   );
 
   const openTypeHierarchyRow = useCallback(
     async (row: TypeHierarchyRow) => {
-      setTypeHierarchyView(null);
       const path = pathFromLanguageServerUri(row.item.uri);
 
       if (!path) {
@@ -13027,11 +13036,15 @@ export function useWorkbenchController(
         return;
       }
 
-      await openNavigationTarget(
+      const opened = await openNavigationTarget(
         path,
         toEditorPosition(row.range.start),
         row.label,
       );
+
+      if (opened) {
+        setTypeHierarchyView(null);
+      }
     },
     [openNavigationTarget],
   );

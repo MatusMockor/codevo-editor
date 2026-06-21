@@ -9940,6 +9940,117 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("keeps JavaScript and TypeScript call hierarchy open for rows from inactive project tabs", async () => {
+    const path = "/workspace-b/src/userService.ts";
+    const callerPath = "/workspace-b/src/app.ts";
+    const staleCallerPath = "/workspace-a/src/app.ts";
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 39,
+    };
+    const item = {
+      data: { symbolId: "loadUser" },
+      detail: "src/userService.ts",
+      kind: 6,
+      name: "loadUser",
+      range: range(1, 9, 3, 3),
+      selectionRange: range(1, 9, 1, 17),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const caller = {
+      data: { symbolId: "render" },
+      detail: "src/app.ts",
+      kind: 12,
+      name: "render",
+      range: range(4, 0, 6, 1),
+      selectionRange: range(4, 9, 4, 15),
+      tags: [],
+      uri: fileUriFromPath(callerPath),
+    };
+    const staleCaller = {
+      ...caller,
+      name: "staleRender",
+      uri: fileUriFromPath(staleCallerPath),
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockResolvedValue([item]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.incomingCalls,
+    ).mockResolvedValue([
+      {
+        from: caller,
+        fromRanges: [range(5, 2, 5, 10)],
+      },
+    ]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.outgoingCalls,
+    ).mockResolvedValue([]);
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => `// ${requestedPath}\n`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 17,
+        lineNumber: 2,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().callHierarchyView?.item.name).toBe("loadUser");
+
+    const [staleRow] = callHierarchyRows({
+      incoming: [
+        {
+          from: staleCaller,
+          fromRanges: [range(5, 2, 5, 10)],
+        },
+      ],
+      item,
+      outgoing: [],
+    });
+
+    await act(async () => {
+      await getWorkbench().openCallHierarchyRow(staleRow);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().callHierarchyView?.item.name).toBe("loadUser");
+    expect(getWorkbench().activePath).toBe(path);
+    expect(readTextFile).not.toHaveBeenCalledWith(staleCallerPath);
+  });
+
   it("drops stale JavaScript and TypeScript call hierarchy errors after switching project tabs", async () => {
     const path = "/workspace-a/src/userService.ts";
     const prepareCallHierarchy =
@@ -10445,6 +10556,107 @@ describe("useWorkbenchController preview tabs", () => {
         lineNumber: 3,
       },
     });
+  });
+
+  it("keeps JavaScript and TypeScript type hierarchy open for rows from inactive project tabs", async () => {
+    const path = "/workspace-b/src/user.ts";
+    const subtypePath = "/workspace-b/src/adminUser.ts";
+    const staleSubtypePath = "/workspace-a/src/adminUser.ts";
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        typeHierarchy: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 40,
+    };
+    const item = {
+      data: { symbolId: "User" },
+      detail: "src/user.ts",
+      kind: 5,
+      name: "User",
+      range: range(0, 0, 4, 1),
+      selectionRange: range(0, 13, 0, 17),
+      tags: [],
+      uri: fileUriFromPath(path),
+    };
+    const subtype = {
+      data: { symbolId: "AdminUser" },
+      detail: "src/adminUser.ts",
+      kind: 5,
+      name: "AdminUser",
+      range: range(2, 0, 5, 1),
+      selectionRange: range(2, 13, 2, 22),
+      tags: [],
+      uri: fileUriFromPath(subtypePath),
+    };
+    const staleSubtype = {
+      ...subtype,
+      name: "StaleAdminUser",
+      uri: fileUriFromPath(staleSubtypePath),
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareTypeHierarchy,
+    ).mockResolvedValue([item]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySupertypes,
+    ).mockResolvedValue([]);
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.typeHierarchySubtypes,
+    ).mockResolvedValue([subtype]);
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => `// ${requestedPath}\n`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "user.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 15,
+        lineNumber: 1,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showTypeHierarchy")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().typeHierarchyView?.item.name).toBe("User");
+
+    const [staleRow] = typeHierarchyRows({
+      item,
+      subtypes: [staleSubtype],
+      supertypes: [],
+    });
+
+    await act(async () => {
+      await getWorkbench().openTypeHierarchyRow(staleRow);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().typeHierarchyView?.item.name).toBe("User");
+    expect(getWorkbench().activePath).toBe(path);
+    expect(readTextFile).not.toHaveBeenCalledWith(staleSubtypePath);
   });
 
   it("drops stale JavaScript and TypeScript type hierarchy errors after switching project tabs", async () => {
