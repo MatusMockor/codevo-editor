@@ -16724,6 +16724,97 @@ class Attachment extends Model
     ).resolves.toEqual([]);
   });
 
+  it("stops stale Laravel relation string completion traversal after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const workspaceACommentPath = "/workspace-a/app/Models/Comment.php";
+    const workspaceBBaseCommentPath = "/workspace-b/app/Models/BaseComment.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\Comment;
+
+class CommentController
+{
+    public function show(): void
+    {
+        Comment::with('par')->first();
+    }
+}
+`;
+    const commentModelSource = `<?php
+namespace App\\Models;
+
+class Comment extends BaseComment
+{
+    public function parent()
+    {
+        return $this->belongsTo(self::class, 'parent_id');
+    }
+}
+`;
+    const staleCommentRead = createDeferred<string>();
+    let workspaceACommentReadCount = 0;
+    let workspaceBBaseCommentReadCount = 0;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === workspaceACommentPath) {
+          workspaceACommentReadCount += 1;
+          return staleCommentRead.promise;
+        }
+
+        if (path === workspaceBBaseCommentPath) {
+          workspaceBBaseCommentReadCount += 1;
+          return "<?php\nnamespace App\\Models;\nclass BaseComment {}\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    let completionsPromise: ReturnType<
+      WorkbenchController["providePhpMethodCompletions"]
+    > = Promise.resolve([]);
+    await act(async () => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Comment::with('par"),
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(workspaceACommentReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleCommentRead.resolve(commentModelSource);
+
+    await expect(completionsPromise).resolves.toEqual([]);
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(workspaceBBaseCommentReadCount).toBe(0);
+  });
+
   it("opens inherited Laravel model methods from repository model assignments", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const repositoryInterfacePath =

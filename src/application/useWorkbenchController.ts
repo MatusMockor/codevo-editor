@@ -6275,7 +6275,16 @@ export function useWorkbenchController(
 
   const collectPhpLaravelRelationCompletionsForClass = useCallback(
     async (className: string): Promise<PhpMethodCompletion[]> => {
-      if (!isLaravelFrameworkActive || !workspaceRoot || !workspaceDescriptor?.php) {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (
+        !isLaravelFrameworkActive ||
+        !requestedRoot ||
+        !requestedDescriptor?.php
+      ) {
         return [];
       }
 
@@ -6305,12 +6314,24 @@ export function useWorkbenchController(
 
         visitedClassNames.add(visitedKey);
 
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
         for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+          if (!isRequestedRootActive()) {
+            return;
+          }
+
           try {
             const { content } = await readPhpClassMembersFromPath(
               path,
               normalizedClassName,
             );
+
+            if (!isRequestedRootActive()) {
+              return;
+            }
 
             rememberRelations(
               phpLaravelRelationPropertyCompletionsFromSource(
@@ -6332,6 +6353,10 @@ export function useWorkbenchController(
 
               if (resolvedTraitName) {
                 await collectRelations(resolvedTraitName);
+
+                if (!isRequestedRootActive()) {
+                  return;
+                }
               }
             }
 
@@ -6340,6 +6365,10 @@ export function useWorkbenchController(
 
               if (resolvedMixinName) {
                 await collectRelations(resolvedMixinName);
+
+                if (!isRequestedRootActive()) {
+                  return;
+                }
               }
             }
 
@@ -6350,16 +6379,28 @@ export function useWorkbenchController(
 
             if (resolvedParentClassName) {
               await collectRelations(resolvedParentClassName);
+
+              if (!isRequestedRootActive()) {
+                return;
+              }
             }
 
             return;
           } catch {
+            if (!isRequestedRootActive()) {
+              return;
+            }
+
             continue;
           }
         }
       };
 
       await collectRelations(className);
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
 
       return Array.from(completions.values());
     },

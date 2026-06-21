@@ -5775,3 +5775,43 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `73d5400a Guard stale Laravel relation string targets`.
+
+## Slice: Stale Laravel Relation String Completion Traversal Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `09924da8 Record stale Laravel relation string guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Stop stale Laravel relation-string completion traversal from continuing after switching project tabs.
+
+### Implementation Choice
+
+- Capture the requested root and descriptor in `collectPhpLaravelRelationCompletionsForClass`.
+- Guard before class source reads, after source reads, after trait/mixin/parent recursion, after failed reads, and before returning relation completions.
+- Add a preview regression where relation completions start for `Comment::with('par')` in `/workspace-a`, the model source read is delayed, the workspace switches to `/workspace-b`, and the delayed read resolves.
+- Assert the stale completion request returns no suggestions and does not continue into `/workspace-b` parent model reads.
+
+### Acceptance Criteria
+
+- Stale Laravel relation-string completion traversal stops after tab switch.
+- Stale completion requests do not start follow-up class reads in the newly active workspace.
+- Existing Laravel relation-string completion behavior remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "stale Laravel relation string completion traversal"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
