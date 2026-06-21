@@ -33134,6 +33134,191 @@ return [
     });
   });
 
+  it("suggests Laravel Log channel names from logging config", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/LogController.php";
+    const configRoot = "/workspace/config";
+    const loggingConfigPath = "/workspace/config/logging.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Log;
+
+class LogController
+{
+    public function report(): void
+    {
+        Log::channel('sl');
+        Log::driver('da');
+    }
+}
+`;
+    const loggingConfigSource = `<?php
+
+return [
+    'default' => 'stack',
+    'channels' => [
+        'daily' => [
+            'driver' => 'daily',
+        ],
+        'slack' => [
+            'driver' => 'slack',
+        ],
+    ],
+];
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot
+          ? [fileEntry(loggingConfigPath, "logging.php")]
+          : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === loggingConfigPath) {
+          return loggingConfigSource;
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "LogController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Log::channel('sl"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/logging.php",
+        insertText: "slack",
+        kind: "config",
+        name: "slack",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Log::driver('da"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/logging.php",
+        insertText: "daily",
+        kind: "config",
+        name: "daily",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
+  it("opens Laravel Log channel names before LSP fallback", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/LogController.php";
+    const loggingConfigPath = "/workspace/config/logging.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Log;
+
+class LogController
+{
+    public function report(): void
+    {
+        Log::channel('slack')->error('Payment failed.');
+    }
+}
+`;
+    const loggingConfigSource = `<?php
+
+return [
+    'default' => 'stack',
+    'channels' => [
+        'daily' => [
+            'driver' => 'daily',
+        ],
+        'slack' => [
+            'driver' => 'slack',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === loggingConfigPath) {
+          return loggingConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "LogController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Log::channel('slack"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(loggingConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: loggingConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 9,
+      },
+    });
+  });
+
   it("suggests Laravel Storage disk names from filesystem config", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/UploadController.php";
     const configRoot = "/workspace/config";
