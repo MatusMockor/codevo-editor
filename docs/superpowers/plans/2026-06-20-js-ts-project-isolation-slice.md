@@ -7329,3 +7329,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Document Symbol Provider
 
 - Committed as `ba5293bd Register PHP document symbol provider`.
+
+## Next Slice: PHP Monaco Document And Range Formatting Providers
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `cfaf2e95 Record PHP document symbol provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support document and range formatting.
+- The PHP Monaco provider did not register formatting providers, so standard editor formatting commands could not route to the PHP language server.
+- Document/range formatting is a lower-risk formatting parity step than on-type formatting because it has no trigger-character metadata or keystroke-time behavior.
+
+### Implementation Choice
+
+- Register optional PHP document and range formatting Monaco providers.
+- Use existing PHP document request context, pending change flush, capability gate, active session guard, stale result dropping, and error reporting.
+- Map Monaco formatting options and LSP text edits through the existing shared helpers.
+
+### Acceptance Criteria
+
+- PHP document formatting routes to `featuresGateway.formatting` with tab settings and maps returned text edits.
+- PHP range formatting routes to `featuresGateway.rangeFormatting` with range/options and maps returned text edits.
+- Disabled capability and stale root/session responses do not call or return stale edits.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Document And Range Formatting Providers
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "formatting|range formatting|Formatting"` (5 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (98 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 941 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Document And Range Formatting Providers
+
+- Pending commit after verification.

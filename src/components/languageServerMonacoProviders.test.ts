@@ -22,7 +22,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, folding range and linked editing range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, folding range, formatting, range formatting and linked editing range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -52,6 +52,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentSymbolLanguage).toBe("php");
     expect(registered.documentLinkLanguage).toBe("php");
     expect(registered.foldingRangeLanguage).toBe("php");
+    expect(registered.documentFormattingLanguage).toBe("php");
+    expect(registered.rangeFormattingLanguage).toBe("php");
     expect(registered.linkedEditingRangeLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
@@ -81,6 +83,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentSymbolDispose).toHaveBeenCalled();
     expect(registered.documentLinkDispose).toHaveBeenCalled();
     expect(registered.foldingRangeDispose).toHaveBeenCalled();
+    expect(registered.documentFormattingDispose).toHaveBeenCalled();
+    expect(registered.rangeFormattingDispose).toHaveBeenCalled();
     expect(registered.linkedEditingRangeDispose).toHaveBeenCalled();
   });
 
@@ -2787,6 +2791,275 @@ describe("registerLanguageServerMonacoProviders", () => {
     await expect(rootPromise).resolves.toBeNull();
   });
 
+  it("maps PHP document formatting edits and options", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      formatting: [
+        {
+          newText: "<?php\nfunction show(): void {}\n",
+          range: range(0, 0, 5, 1),
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.documentFormattingProvider.provideDocumentFormattingEdits(
+        model(),
+        { insertSpaces: false, tabSize: 2 },
+      ),
+    ).resolves.toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 2,
+          endLineNumber: 6,
+          startColumn: 1,
+          startLineNumber: 1,
+        }),
+        text: "<?php\nfunction show(): void {}\n",
+      },
+    ]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.formatting).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      {
+        insertSpaces: false,
+        tabSize: 2,
+      },
+    );
+  });
+
+  it("maps PHP range formatting edits, range and options", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      rangeFormatting: [
+        {
+          newText: "    echo $user;\n",
+          range: range(3, 0, 3, 10),
+        },
+      ],
+    });
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
+        model(),
+        new registered.monaco.Range(4, 1, 4, 11),
+        { insertSpaces: true, tabSize: 4 },
+      ),
+    ).resolves.toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 11,
+          endLineNumber: 4,
+          startColumn: 1,
+          startLineNumber: 4,
+        }),
+        text: "    echo $user;\n",
+      },
+    ]);
+    expect(gateway.rangeFormatting).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      {
+        end: { character: 10, line: 3 },
+        start: { character: 0, line: 3 },
+      },
+      {
+        insertSpaces: true,
+        tabSize: 4,
+      },
+    );
+  });
+
+  it("does not request PHP formatting when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      formatting: [
+        {
+          newText: "<?php\n",
+          range: range(0, 0, 1, 0),
+        },
+      ],
+      rangeFormatting: [
+        {
+          newText: "echo $user;",
+          range: range(3, 0, 3, 10),
+        },
+      ],
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({
+          formatting: false,
+          rangeFormatting: false,
+        }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.documentFormattingProvider.provideDocumentFormattingEdits(
+        model(),
+        { insertSpaces: true, tabSize: 4 },
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      disabledRegistered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
+        model(),
+        new disabledRegistered.monaco.Range(4, 1, 4, 11),
+        { insertSpaces: true, tabSize: 4 },
+      ),
+    ).resolves.toEqual([]);
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.formatting).not.toHaveBeenCalled();
+    expect(disabledGateway.rangeFormatting).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway();
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.documentFormattingProvider.provideDocumentFormattingEdits(
+        model(),
+        { insertSpaces: true, tabSize: 4 },
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      mismatchedRegistered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
+        model(),
+        new mismatchedRegistered.monaco.Range(4, 1, 4, 11),
+        { insertSpaces: true, tabSize: 4 },
+      ),
+    ).resolves.toEqual([]);
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.formatting).not.toHaveBeenCalled();
+    expect(mismatchedGateway.rangeFormatting).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP formatting results after session or root changes", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const documentEdits =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>
+      >();
+    const rangeEdits =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>>
+      >();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.formatting).mockImplementationOnce(
+      async () => documentEdits.promise,
+    );
+    vi.mocked(sessionGateway.rangeFormatting).mockImplementationOnce(
+      async () => rangeEdits.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const documentPromise =
+      sessionRegistered.documentFormattingProvider.provideDocumentFormattingEdits(
+        model(),
+        { insertSpaces: true, tabSize: 4 },
+      );
+    const rangePromise =
+      sessionRegistered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
+        model(),
+        new sessionRegistered.monaco.Range(4, 1, 4, 11),
+        { insertSpaces: true, tabSize: 4 },
+      );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    documentEdits.resolve([{ newText: "<?php\n", range: range(0, 0, 1, 0) }]);
+    rangeEdits.resolve([{ newText: "echo $user;", range: range(3, 0, 3, 10) }]);
+
+    await expect(documentPromise).resolves.toEqual([]);
+    await expect(rangePromise).resolves.toEqual([]);
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootDocumentEdits =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["formatting"]>>
+      >();
+    const rootRangeEdits =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>>
+      >();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.formatting).mockImplementationOnce(
+      async () => rootDocumentEdits.promise,
+    );
+    vi.mocked(rootGateway.rangeFormatting).mockImplementationOnce(
+      async () => rootRangeEdits.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootDocumentPromise =
+      rootRegistered.documentFormattingProvider.provideDocumentFormattingEdits(
+        model(),
+        { insertSpaces: true, tabSize: 4 },
+      );
+    const rootRangePromise =
+      rootRegistered.rangeFormattingProvider.provideDocumentRangeFormattingEdits(
+        model(),
+        new rootRegistered.monaco.Range(4, 1, 4, 11),
+        { insertSpaces: true, tabSize: 4 },
+      );
+
+    await Promise.resolve();
+    activeRoot = null;
+    rootDocumentEdits.resolve([
+      { newText: "<?php\n", range: range(0, 0, 1, 0) },
+    ]);
+    rootRangeEdits.resolve([
+      { newText: "echo $user;", range: range(3, 0, 3, 10) },
+    ]);
+
+    await expect(rootDocumentPromise).resolves.toEqual([]);
+    await expect(rootRangePromise).resolves.toEqual([]);
+  });
+
   it("maps PHP linked editing ranges and wordPattern", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -5059,10 +5332,12 @@ function createRegisteredProviders() {
   const documentHighlightDispose = vi.fn();
   const documentLinkDispose = vi.fn();
   const documentSymbolDispose = vi.fn();
+  const documentFormattingDispose = vi.fn();
   const foldingRangeDispose = vi.fn();
   const hoverDispose = vi.fn();
   const implementationDispose = vi.fn();
   const linkedEditingRangeDispose = vi.fn();
+  const rangeFormattingDispose = vi.fn();
   const referenceDispose = vi.fn();
   const completionDispose = vi.fn();
   const renameDispose = vi.fn();
@@ -5094,6 +5369,9 @@ function createRegisteredProviders() {
     documentSymbolDispose: ReturnType<typeof vi.fn>;
     documentSymbolLanguage: string | null;
     documentSymbolProvider: any;
+    documentFormattingDispose: ReturnType<typeof vi.fn>;
+    documentFormattingLanguage: string | null;
+    documentFormattingProvider: any;
     foldingRangeDispose: ReturnType<typeof vi.fn>;
     foldingRangeLanguage: string | null;
     foldingRangeProvider: any;
@@ -5107,6 +5385,9 @@ function createRegisteredProviders() {
     linkedEditingRangeLanguage: string | null;
     linkedEditingRangeProvider: any;
     monaco: any;
+    rangeFormattingDispose: ReturnType<typeof vi.fn>;
+    rangeFormattingLanguage: string | null;
+    rangeFormattingProvider: any;
     referenceDispose: ReturnType<typeof vi.fn>;
     referenceLanguage: string | null;
     referenceProvider: any;
@@ -5147,6 +5428,9 @@ function createRegisteredProviders() {
     documentSymbolDispose,
     documentSymbolLanguage: null,
     documentSymbolProvider: null,
+    documentFormattingDispose,
+    documentFormattingLanguage: null,
+    documentFormattingProvider: null,
     foldingRangeDispose,
     foldingRangeLanguage: null,
     foldingRangeProvider: null,
@@ -5160,6 +5444,9 @@ function createRegisteredProviders() {
     linkedEditingRangeLanguage: null,
     linkedEditingRangeProvider: null,
     monaco: null,
+    rangeFormattingDispose,
+    rangeFormattingLanguage: null,
+    rangeFormattingProvider: null,
     referenceDispose,
     referenceLanguage: null,
     referenceProvider: null,
@@ -5281,6 +5568,16 @@ function createRegisteredProviders() {
         registered.documentHighlightLanguage = language;
         registered.documentHighlightProvider = provider;
         return { dispose: documentHighlightDispose };
+      }),
+      registerDocumentFormattingEditProvider: vi.fn((language, provider) => {
+        registered.documentFormattingLanguage = language;
+        registered.documentFormattingProvider = provider;
+        return { dispose: documentFormattingDispose };
+      }),
+      registerDocumentRangeFormattingEditProvider: vi.fn((language, provider) => {
+        registered.rangeFormattingLanguage = language;
+        registered.rangeFormattingProvider = provider;
+        return { dispose: rangeFormattingDispose };
       }),
       registerDocumentSymbolProvider: vi.fn((language, provider) => {
         registered.documentSymbolLanguage = language;
@@ -5425,6 +5722,9 @@ function featuresGateway(
     prepareRename: Awaited<
       ReturnType<LanguageServerFeaturesGateway["prepareRename"]>
     >;
+    rangeFormatting: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["rangeFormatting"]>
+    >;
     references: LanguageServerLocation[];
     resolvedCodeAction: Awaited<
       ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>
@@ -5476,7 +5776,7 @@ function featuresGateway(
     prepareCallHierarchy: vi.fn(async () => []),
     prepareRename: vi.fn(async () => responses.prepareRename ?? null),
     prepareTypeHierarchy: vi.fn(async () => []),
-    rangeFormatting: vi.fn(async () => []),
+    rangeFormatting: vi.fn(async () => responses.rangeFormatting ?? []),
     rangeSemanticTokens: vi.fn(async () => null),
     references: vi.fn(async () => responses.references ?? []),
     rename: vi.fn(async () => responses.rename ?? null),

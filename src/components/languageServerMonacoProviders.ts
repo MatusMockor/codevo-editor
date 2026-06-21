@@ -10,6 +10,7 @@ import {
   type LanguageServerDocumentLink,
   type LanguageServerDocumentHighlight,
   type LanguageServerFoldingRange,
+  type LanguageServerFormattingOptions,
   type LanguageServerFeaturesGateway,
   type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
@@ -280,6 +281,24 @@ export function registerLanguageServerMonacoProviders(
           provideFoldingRanges(monaco, context, model),
       })
     : { dispose: () => undefined };
+  const documentFormatting = monaco.languages.registerDocumentFormattingEditProvider
+    ? monaco.languages.registerDocumentFormattingEditProvider("php", {
+        provideDocumentFormattingEdits: (model, options) =>
+          provideDocumentFormattingEdits(monaco, context, model, options),
+      })
+    : { dispose: () => undefined };
+  const rangeFormatting = monaco.languages.registerDocumentRangeFormattingEditProvider
+    ? monaco.languages.registerDocumentRangeFormattingEditProvider("php", {
+        provideDocumentRangeFormattingEdits: (model, range, options) =>
+          provideDocumentRangeFormattingEdits(
+            monaco,
+            context,
+            model,
+            range,
+            options,
+          ),
+      })
+    : { dispose: () => undefined };
   const linkedEditingRange = monaco.languages.registerLinkedEditingRangeProvider
     ? monaco.languages.registerLinkedEditingRangeProvider("php", {
         provideLinkedEditingRanges: (model, position) =>
@@ -306,6 +325,8 @@ export function registerLanguageServerMonacoProviders(
       documentSymbol.dispose();
       documentLink.dispose();
       foldingRange.dispose();
+      documentFormatting.dispose();
+      rangeFormatting.dispose();
       linkedEditingRange.dispose();
     },
   };
@@ -566,6 +587,76 @@ async function provideFoldingRanges(
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
+  }
+}
+
+async function provideDocumentFormattingEdits(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  options: Monaco.languages.FormattingOptions,
+): Promise<Monaco.languages.TextEdit[]> {
+  const request = featureDocumentRequestContext(context, model, "formatting");
+
+  if (!request) {
+    return [];
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return [];
+    }
+
+    const edits = await context.featuresGateway.formatting(
+      request.rootPath,
+      request.path,
+      toLanguageServerFormattingOptions(options),
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return [];
+    }
+
+    return edits.map((edit) => toMonacoTextEdit(monaco, edit));
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return [];
+  }
+}
+
+async function provideDocumentRangeFormattingEdits(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+  options: Monaco.languages.FormattingOptions,
+): Promise<Monaco.languages.TextEdit[]> {
+  const request = featureDocumentRequestContext(context, model, "rangeFormatting");
+
+  if (!request) {
+    return [];
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return [];
+    }
+
+    const edits = await context.featuresGateway.rangeFormatting(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
+      toLanguageServerFormattingOptions(options),
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return [];
+    }
+
+    return edits.map((edit) => toMonacoTextEdit(monaco, edit));
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return [];
   }
 }
 
@@ -1074,6 +1165,15 @@ function toLanguageServerCodeActionContext(
     })),
     only: context.only ? [context.only] : null,
     triggerKind: codeActionTriggerKind(monaco, context.trigger),
+  };
+}
+
+function toLanguageServerFormattingOptions(
+  options: Monaco.languages.FormattingOptions,
+): LanguageServerFormattingOptions {
+  return {
+    insertSpaces: options.insertSpaces,
+    tabSize: options.tabSize,
   };
 }
 
@@ -2462,10 +2562,12 @@ function featureDocumentRequestContext(
     | "documentSymbol"
     | "documentLink"
     | "foldingRange"
+    | "formatting"
     | "hover"
     | "implementation"
     | "linkedEditingRange"
     | "prepareRename"
+    | "rangeFormatting"
     | "references"
     | "rename"
     | "selectionRange"
