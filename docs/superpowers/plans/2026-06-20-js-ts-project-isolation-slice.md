@@ -8602,3 +8602,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Queue Connection Names
 
 - Committed as `41614a79 Add Laravel queue connection navigation`.
+
+## Next Slice: Laravel Mail Mailer Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `325e2e6d Record Laravel queue connection commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel mailer names are configured under `config/mail.php` and commonly referenced through `Mail::mailer(...)` or the compatible `Mail::driver(...)` manager method.
+- This continues the config-derived Laravel string navigation series while keeping generic `->mailer(...)` notification contexts out of scope until they can be receiver-anchored.
+
+### Implementation Choice
+
+- Add a focused Mail mailer string detector for supported Mail facade calls and named arguments.
+- Map a mailer name to `mail.mailers.<mailer>` for target lookup.
+- Suggest mailer names from exact `mail.mailers.*` config targets and navigate to the mailer key in `config/mail.php`.
+
+### Verification: Laravel Mail Mailer Names
+
+- `npm test -- src/domain/phpLaravelMail.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Mail mailer names"` passed: 2 passed, 409 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpLaravelMail.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 411 passed.
+- `npm test` passed: 74 files, 1086 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Mail Mailer Names
+
+- Committed as `e45c753c Add Laravel mailer navigation`.
