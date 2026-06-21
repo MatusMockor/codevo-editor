@@ -1169,6 +1169,10 @@ class Comment extends Model
             ->orWhereColumn('published_at', 'updated_at')
             ->orWhereNotBetween('score', [0, 10])
             ->first();
+        $relationMethodNegatedWherePost = $this->posts()
+            ->whereNot('status', 'archived')
+            ->orWhereNot(fn ($query) => $query->where('hidden', false))
+            ->first();
         $relationMethodBetweenFilteredPost = $this->posts()
             ->whereBetweenColumns('score', ['min_score', 'max_score'])
             ->orWhereBetweenColumns('rating', ['min_rating', 'max_rating'])
@@ -1313,6 +1317,7 @@ class Comment extends Model
         $relationMethodRawFilteredPost->tit
         $relationMethodExistsFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
+        $relationMethodNegatedWherePost->tit
         $relationMethodBetweenFilteredPost->tit
         $relationMethodIntegerRowFilteredPost->tit
         $relationMethodLikeFilteredPost->tit
@@ -1608,6 +1613,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodColumnFilteredPost->tit"),
         "relationMethodColumnFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodNegatedWherePost->tit"),
+        "relationMethodNegatedWherePost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
