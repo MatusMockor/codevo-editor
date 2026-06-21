@@ -4137,3 +4137,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `5eaedc64 Complete Laravel named resource route definitions`.
+
+## Slice: Laravel Named Resource Filters - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6d37fe64 Record Laravel named resource route definitions commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Include PHP 8 named arguments in Laravel resource `only(...)` and `except(...)` route-name filtering.
+
+### Implementation Choice
+
+- Pass the current filter method name into `laravelRouteActionNamesAtOpenParen`.
+- Let resource filters read `only(only: [...])`, `only(only: 'index')`, `except(except: [...])`, and `except(except: 'destroy')`.
+- Keep unsupported named arguments such as `only(label: [...])` ignored instead of treating their strings as route action filters.
+- Reuse the named-argument value helper introduced for literal route arguments.
+- Update workbench resource completion coverage so resource route names can be sourced from `Route::resource(...)->only(only: ['edit'])`.
+
+### Acceptance Criteria
+
+- Named `only:` filters reduce resource route names to the requested actions.
+- Named `except:` filters remove the requested resource route actions.
+- Unsupported named filter arguments do not accidentally filter route names.
+- Existing positional `only(...)` and `except(...)` behavior remains unchanged.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "named only and except arguments|only and except|resource route names from resource-only route files|resource route names from named arguments"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `dca3dbd0 Complete Laravel named resource filters`.
