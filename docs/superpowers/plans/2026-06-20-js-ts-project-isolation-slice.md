@@ -7085,4 +7085,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Go To Declaration And Type Definition Commands
 
-- Pending commit after verification.
+- Committed as `61e10e8a Route PHP declaration type definition commands`.
