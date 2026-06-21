@@ -4562,3 +4562,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `2012fccd Cover stale type hierarchy tab switches`.
+
+## Slice: Stale File Structure Tab Switch Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `9f3dc8ab Record stale type hierarchy tab switch guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down workspace-tab isolation for JavaScript/TypeScript file structure requests when document-symbol loading finishes after a project tab switch.
+
+### Implementation Choice
+
+- Add a preview controller regression for delayed `documentSymbols` failures from an inactive project tab.
+- Start file structure loading in `/workspace-a`, switch to `/workspace-b`, then reject the delayed document-symbol request.
+- Assert the stale error does not set the active user-facing message or create a JavaScript/TypeScript File Structure notice.
+- Keep this as a test-only slice because the controller already guards file structure loading through the requested root/session checks.
+
+### Acceptance Criteria
+
+- A delayed file structure failure from an inactive project tab is ignored.
+- The active workspace remains `/workspace-b`.
+- No stale JavaScript/TypeScript File Structure notice leaks into the active tab.
+- Existing same-root session restart file structure coverage remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "file structure errors after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `c7c7bbd5 Cover stale file structure tab switches`.
