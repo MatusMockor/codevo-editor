@@ -7856,6 +7856,89 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith(parentPath, expect.stringContaining("inherited"));
   });
 
+  it("stops reading stale inherited PHP file structure candidates after switching project tabs", async () => {
+    const childPath = "/workspace-a/app/Child.php";
+    const primaryParentPath = "/workspace-a/app/ParentClass.php";
+    const packageParentPath =
+      "/workspace-a/vendor/shared/package/src/ParentClass.php";
+    const childSource = "<?php\nnamespace App;\nclass Child extends ParentClass {}\n";
+    const primaryParentRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === childPath) {
+        return childSource;
+      }
+
+      if (path === primaryParentPath) {
+        return primaryParentRead.promise;
+      }
+
+      if (path === packageParentPath) {
+        return "<?php\nnamespace App;\nclass ParentClass {}\n";
+      }
+
+      return "<?php\n";
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        packages: [
+          {
+            classmapRoots: [],
+            dev: false,
+            installPath: "../shared/package",
+            name: "shared/package",
+            packageType: "library",
+            psr4Roots: [
+              {
+                dev: false,
+                namespace: "App\\",
+                paths: ["src/"],
+              },
+            ],
+            version: "1.0.0",
+          },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(childPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(primaryParentPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    primaryParentRead.reject(new Error("missing parent"));
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(readTextFile).not.toHaveBeenCalledWith(packageParentPath);
+    expect(
+      dependencies.phpFileOutlineGateway.parsePhpFileOutline,
+    ).not.toHaveBeenCalledWith(
+      packageParentPath,
+      expect.stringContaining("ParentClass"),
+    );
+  });
+
   it("loads JavaScript and TypeScript file structure from the language server", async () => {
     const path = "/workspace/src/userService.ts";
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {

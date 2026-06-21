@@ -4412,18 +4412,29 @@ export function useWorkbenchController(
       }
 
       const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
       setLoadingInheritedPhpFileOutlinePaths((current) =>
         new Set(current).add(path),
       );
 
       try {
         const source = await readPhpFileOutlineSource(path);
+
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
         const parentClassName = phpExtendsClassName(source);
         const resolvedParentClassName = parentClassName
           ? resolvePhpClassName(source, parentClassName)
           : null;
 
         if (!resolvedParentClassName) {
+          if (!isRequestedRootActive()) {
+            return;
+          }
+
           setPhpInheritedFileOutlinesByPath((current) => ({
             ...current,
             [path]: emptyPhpFileOutline(),
@@ -4436,14 +4447,23 @@ export function useWorkbenchController(
           workspaceDescriptor.php,
           resolvedParentClassName,
         )) {
+          if (!isRequestedRootActive()) {
+            return;
+          }
+
           try {
             const parentSource = await readPhpFileOutlineSource(parentPath);
+
+            if (!isRequestedRootActive()) {
+              return;
+            }
+
             const outline = await phpFileOutlineGateway.parsePhpFileOutline(
               parentPath,
               parentSource,
             );
 
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            if (!isRequestedRootActive()) {
               return;
             }
 
@@ -4454,11 +4474,15 @@ export function useWorkbenchController(
             setMessage(null);
             return;
           } catch {
+            if (!isRequestedRootActive()) {
+              return;
+            }
+
             continue;
           }
         }
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedRootActive()) {
           return;
         }
 
@@ -4467,7 +4491,7 @@ export function useWorkbenchController(
           [path]: emptyPhpFileOutline(),
         }));
       } catch (error) {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedRootActive()) {
           return;
         }
 
@@ -4477,7 +4501,7 @@ export function useWorkbenchController(
         }));
         reportError("PHP Inherited Structure", error);
       } finally {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!isRequestedRootActive()) {
           return;
         }
 
