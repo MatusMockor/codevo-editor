@@ -1930,3 +1930,44 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `d31668b6 Guard file opens across workspace tabs`.
+
+### Slice: Indexed Definition Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a71c6bf9 Record file open guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed project-index go-to-definition fallbacks from reporting errors or no-result messages in a different active project tab.
+
+#### Implementation Choice
+
+- Capture `requestedRoot` in `goToIndexedSymbolDefinition`.
+- Use `requestedRoot` for project-symbol searches instead of the closure `workspaceRoot`.
+- Re-check the active workspace root after PHP class fallback and after project-symbol search before setting messages or opening targets.
+- Replace the catch-side global Go to Definition report with `reportErrorForActiveWorkspaceRoot`.
+- Add regressions where `/workspace-a` starts indexed go-to-definition, the user switches to `/workspace-b`, and stale `/workspace-a` errors or misses cannot surface in `/workspace-b`.
+
+#### Acceptance Criteria
+
+- Stale indexed go-to-definition errors do not create Go to Definition notices after switching project tabs.
+- Stale indexed go-to-definition misses do not set no-result messages in the newly active workspace.
+- Existing project-index go-to-definition behavior still opens the target when the root remains active.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "uses the project index for go to definition when the language server is unavailable|drops stale indexed go to definition errors after switching project tabs|drops stale indexed go to definition misses after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `c474f118 Guard indexed definitions by active workspace`.
