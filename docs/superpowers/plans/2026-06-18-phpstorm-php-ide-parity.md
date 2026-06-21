@@ -7178,3 +7178,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `4d7f2b63 Support PHPStan Psalm PHPDoc magic member tags`.
+
+## Slice: PHPStan Psalm PHPDoc Magic Member Preview Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ac00147a Record PHPStan Psalm magic member tag commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down workbench Go to Definition coverage for PHPStan/Psalm-prefixed PHPDoc magic member declarations.
+
+### Implementation Choice
+
+- Extend the existing PHPDoc magic method preview regression with `@phpstan-method` and `@psalm-method` static calls.
+- Extend the existing PHPDoc magic property preview regression with `@phpstan-property-read` and `@psalm-property-write` interface members.
+- Keep production code unchanged because the previous parser slice already enabled the behavior.
+
+### Acceptance Criteria
+
+- Workbench Go to Definition opens prefixed PHPDoc magic method declarations.
+- Workbench Go to Definition opens prefixed PHPDoc magic property declarations inherited through an implemented interface.
+- Focused preview/domain tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc magic method definitions|PHPDoc magic property definitions"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpNavigation.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHPDoc magic|implemented interface PHPDoc|PHPDoc mixin"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

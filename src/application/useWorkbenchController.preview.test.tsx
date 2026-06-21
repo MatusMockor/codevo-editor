@@ -22776,6 +22776,8 @@ class CommentController
         CommentFactory::fromNamed('draft');
         CommentFactory::findForSlug('draft');
         CommentFactory::activeComments();
+        CommentFactory::archiveQuietly('draft');
+        CommentFactory::restoreBySlug('draft');
     }
 }
 `;
@@ -22786,6 +22788,8 @@ namespace App\\Factories;
  * @method static object fromNamed(string $name)
  * @method static findForSlug(string $slug)
  * @method static \\Illuminate\\Support\\Collection<int, Comment> activeComments()
+ * @phpstan-method static bool archiveQuietly(string $slug)
+ * @psalm-method static restoreBySlug(string $slug)
  */
 class CommentFactory
 {
@@ -22890,6 +22894,63 @@ class CommentFactory
       position: {
         column: activeCommentsPosition.column - "activeComments".length,
         lineNumber: activeCommentsPosition.lineNumber,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::archiveQuietly"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const archiveQuietlyPosition = positionAfter(
+      factorySource,
+      "archiveQuietly",
+    );
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: archiveQuietlyPosition.column - "archiveQuietly".length,
+        lineNumber: archiveQuietlyPosition.lineNumber,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "CommentFactory::restoreBySlug"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const restoreBySlugPosition = positionAfter(factorySource, "restoreBySlug");
+    expect(getWorkbench().activePath).toBe(factoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: factoryPath,
+      position: {
+        column: restoreBySlugPosition.column - "restoreBySlug".length,
+        lineNumber: restoreBySlugPosition.lineNumber,
       },
     });
   });
@@ -23018,6 +23079,8 @@ class CommentController
     public function show(Comment $comment): void
     {
         $comment->externalId;
+        $comment->slug;
+        $comment->hidden;
         $comment->missingProperty;
     }
 }
@@ -23036,6 +23099,8 @@ namespace App\\Contracts;
 
 /**
  * @property-read string $externalId
+ * @phpstan-property-read string $slug
+ * @psalm-property-write bool $hidden
  */
 interface HasExternalId
 {
@@ -23091,6 +23156,60 @@ interface HasExternalId
       position: {
         column: 27,
         lineNumber: 5,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->slug"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const slugPosition = positionAfter(interfaceSource, "$slug");
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: {
+        column: slugPosition.column - "slug".length,
+        lineNumber: slugPosition.lineNumber,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "$comment->hidden"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    const hiddenPosition = positionAfter(interfaceSource, "$hidden");
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: {
+        column: hiddenPosition.column - "hidden".length,
+        lineNumber: hiddenPosition.lineNumber,
       },
     });
 
