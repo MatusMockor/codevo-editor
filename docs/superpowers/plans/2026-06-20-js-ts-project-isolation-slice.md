@@ -6401,4 +6401,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Provider Same-Root Session Stale Results
 
-- Pending commit.
+- Committed as `df6412d2 Drop stale PHP provider results after restarts`.
