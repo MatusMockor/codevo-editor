@@ -8427,3 +8427,44 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Guard Stale Laravel Dynamic Where Completion Traversal
 
 - Committed as `bd621b39 Guard Laravel dynamic where completions across workspace switches`.
+
+## Next Slice: Laravel Storage Disk Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ae4fde96 Record Laravel dynamic where guard commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- PhpStorm-style Laravel support should understand configured storage disk names in calls such as `Storage::disk('s3')`, `Storage::fake('local')`, and `Storage::persistentFake(disk: 's3')`.
+- The existing Laravel config parser already extracts `config/filesystems.php` keys, so disk-name completion/navigation can reuse the config target pipeline instead of adding a separate index.
+
+### Implementation Choice
+
+- Add a focused storage disk string detector for supported Storage facade calls.
+- Map a disk name to `filesystems.disks.<disk>` for target lookup.
+- Suggest disk names from exact `filesystems.disks.*` config targets and navigate to the disk key in `config/filesystems.php`.
+
+### Acceptance Criteria
+
+- Completion inside supported Storage disk strings suggests configured disk names.
+- Go to Definition from a Storage disk string opens the disk key in `config/filesystems.php` before LSP fallback.
+- Existing Laravel config behavior and stale guards remain unchanged.
+- Focused domain/preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel Storage Disk Names
+
+- `npm test -- src/domain/phpLaravelStorage.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Storage disk"` passed: 2 passed, 401 skipped.
+- `npm test -- src/domain/phpLaravelStorage.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 403 passed.
+- `npm run check` passed.
+- `npm test` passed: 70 files, 1062 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Storage Disk Names
+
+- Committed as `b21eb550 Add Laravel storage disk navigation`.
