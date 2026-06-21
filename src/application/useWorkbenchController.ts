@@ -550,6 +550,7 @@ export function useWorkbenchController(
   const gitDiffRequestTokenRef = useRef(0);
   const editorGitBaselineRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
+  const pendingIndexRootRef = useRef<string | null>(null);
   const pendingIndexScanRef = useRef(false);
   const autoStartedLanguageServerRootRef = useRef<string | null>(null);
   const phpLanguageServerAutostartAttemptsByRootRef = useRef<
@@ -1457,6 +1458,7 @@ export function useWorkbenchController(
 
       if (!shouldIndexWorkspace(intelligenceModeRef.current)) {
         pendingIndexScanRef.current = false;
+        pendingIndexRootRef.current = null;
         activeIndexRootRef.current = null;
         indexProgressGateway
           .clearWorkspaceIndex(event.rootPath)
@@ -1464,11 +1466,14 @@ export function useWorkbenchController(
         return;
       }
 
-      if (
-        !pendingIndexScanRef.current &&
-        !workspaceRootKeysEqual(activeIndexRootRef.current, event.rootPath)
-      ) {
-        return;
+      if (pendingIndexScanRef.current) {
+        if (!workspaceRootKeysEqual(pendingIndexRootRef.current, event.rootPath)) {
+          return;
+        }
+      } else {
+        if (!workspaceRootKeysEqual(activeIndexRootRef.current, event.rootPath)) {
+          return;
+        }
       }
 
       const message = indexProgressCompletionMessage(event);
@@ -1476,6 +1481,7 @@ export function useWorkbenchController(
       const groupKey = indexProgressNoticeGroup(event.rootPath);
 
       pendingIndexScanRef.current = false;
+      pendingIndexRootRef.current = null;
       activeIndexRootRef.current = event.rootPath;
       phpClassSourcePathCacheRef.current = {};
       phpClassMemberCacheRef.current = {};
@@ -1507,22 +1513,29 @@ export function useWorkbenchController(
       }
 
       pendingIndexScanRef.current = true;
+      pendingIndexRootRef.current = rootPath;
 
       try {
         const started = await indexProgressGateway.startInitialMetadataScan(
           rootPath,
         );
 
-        if (!pendingIndexScanRef.current) {
+        if (
+          !pendingIndexScanRef.current ||
+          !workspaceRootKeysEqual(pendingIndexRootRef.current, rootPath)
+        ) {
           return;
         }
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          pendingIndexScanRef.current = false;
+          pendingIndexRootRef.current = null;
           return;
         }
 
         if (!workspaceRootKeysEqual(started.rootPath, rootPath)) {
           pendingIndexScanRef.current = false;
+          pendingIndexRootRef.current = null;
           return;
         }
 
@@ -1536,7 +1549,17 @@ export function useWorkbenchController(
         );
         setMessage("Indexing workspace.");
       } catch (error) {
+        if (!workspaceRootKeysEqual(pendingIndexRootRef.current, rootPath)) {
+          return;
+        }
+
         pendingIndexScanRef.current = false;
+        pendingIndexRootRef.current = null;
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          return;
+        }
+
         reportError("Index", error);
       }
     },
@@ -1545,6 +1568,7 @@ export function useWorkbenchController(
 
   const clearIndexWorkspaceState = useCallback(() => {
     pendingIndexScanRef.current = false;
+    pendingIndexRootRef.current = null;
     activeIndexRootRef.current = null;
     lastPhpFileOutlineRefreshKeyRef.current = null;
     phpClassSourcePathCacheRef.current = {};
@@ -11587,31 +11611,58 @@ export function useWorkbenchController(
       return;
     }
 
+    const requestedRoot = workspaceRoot;
     pendingIndexScanRef.current = true;
+    pendingIndexRootRef.current = requestedRoot;
 
     try {
       const started = await indexProgressGateway.startReindex(
-        workspaceRoot,
+        requestedRoot,
         mode,
         language,
       );
-      activeIndexRootRef.current = started.rootPath;
 
-      if (!pendingIndexScanRef.current) {
+      if (
+        !pendingIndexScanRef.current ||
+        !workspaceRootKeysEqual(pendingIndexRootRef.current, requestedRoot)
+      ) {
         return;
       }
 
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        pendingIndexScanRef.current = false;
+        pendingIndexRootRef.current = null;
+        return;
+      }
+
+      if (!workspaceRootKeysEqual(started.rootPath, requestedRoot)) {
+        pendingIndexScanRef.current = false;
+        pendingIndexRootRef.current = null;
+        return;
+      }
+
+      activeIndexRootRef.current = started.rootPath;
       setIndexProgress(startIndexProgress(started));
       const message = reindexStartMessage(mode);
       setIndexHealthLogs((current) =>
         prependIndexHealthLog(
           current,
-          createIndexHealthLogEntry("info", workspaceRoot, message),
+          createIndexHealthLogEntry("info", requestedRoot, message),
         ),
       );
       setMessage(message);
     } catch (error) {
+      if (!workspaceRootKeysEqual(pendingIndexRootRef.current, requestedRoot)) {
+        return;
+      }
+
       pendingIndexScanRef.current = false;
+      pendingIndexRootRef.current = null;
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       reportError("Index", error);
     }
   }, [indexProgressGateway, intelligenceMode, reportError, workspaceRoot]);

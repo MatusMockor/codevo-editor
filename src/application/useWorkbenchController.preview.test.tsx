@@ -3448,6 +3448,50 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).not.toBe("Indexing workspace.");
   });
 
+  it("ignores reindex start responses that belong to another workspace root", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns();
+    expect(getWorkbench().indexProgress).toEqual(
+      expect.objectContaining({
+        rootPath: "/workspace",
+        status: "scanning",
+      }),
+    );
+    vi.mocked(dependencies.indexProgressGateway.startReindex).mockResolvedValueOnce({
+      databasePath: "/tmp/index.sqlite",
+      rootPath: "/other",
+      status: "started",
+    });
+
+    await act(async () => {
+      await getWorkbench().startIndexScan();
+    });
+    await flushAsyncTurns();
+
+    expect(dependencies.indexProgressGateway.startReindex).toHaveBeenCalledWith(
+      "/workspace",
+      "soft",
+      undefined,
+    );
+    expect(getWorkbench().indexProgress).toEqual(
+      expect.objectContaining({
+        rootPath: "/workspace",
+        status: "scanning",
+      }),
+    );
+    expect(getWorkbench().message).not.toBe("Soft reindex started.");
+  });
+
   it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {
