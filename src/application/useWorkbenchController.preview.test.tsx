@@ -11748,6 +11748,75 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("clears the active editor position before JavaScript and TypeScript navigation in another project tab", async () => {
+    const workspaceAPath = "/workspace-a/src/main.ts";
+    const workspaceBPath = "/workspace-b/src/main.ts";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      sessionId: 77,
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runtimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runtimeStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === workspaceAPath) {
+          return "export const fromA = 1;\n";
+        }
+
+        if (requestedPath === workspaceBPath) {
+          return "export const fromB = 1;\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(workspaceAPath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 14,
+        lineNumber: 1,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(workspaceBPath, "main.ts"));
+    });
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+    await flushAsyncTurns();
+
+    expect(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.definition,
+    ).not.toHaveBeenCalled();
+  });
+
   it("drops stale JavaScript and TypeScript navigation after switching project tabs during target open", async () => {
     const sourcePath = "/workspace-a/src/main.ts";
     const targetPath = "/workspace-a/src/user.ts";

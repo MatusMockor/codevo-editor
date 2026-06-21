@@ -2168,6 +2168,7 @@ export function useWorkbenchController(
     lastPhpIdeReadinessSignatureRef.current = null;
     installingManagedPhpactorRootRef.current = null;
     openFileRequestTokenRef.current += 1;
+    activeEditorPositionRef.current = null;
     setWorkspaceRoot(null);
     setWorkspaceDescriptor(null);
     setWorkspaceTrust(null);
@@ -3180,6 +3181,7 @@ export function useWorkbenchController(
       workspaceSessionRestoredRef.current = false;
       resetLanguageServerDocuments();
       resetJavaScriptTypeScriptLanguageServerDocuments();
+      activeEditorPositionRef.current = null;
       clearLanguageServerDiagnostics();
       clearJavaScriptTypeScriptLanguageServerDiagnostics();
       let workspaceSettings = defaultWorkspaceSettings();
