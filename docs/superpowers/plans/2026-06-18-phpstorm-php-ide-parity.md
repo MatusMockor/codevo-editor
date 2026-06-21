@@ -4006,3 +4006,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `828a610a Complete Laravel Uri route names`.
+
+## Slice: Laravel Named Route Arguments - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `6038f58c Record Laravel Uri route names commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Provide Laravel named-route completions when PHP 8 named arguments are used for route names.
+
+### Implementation Choice
+
+- Replace the route-name first-argument opener check with a small context object that records an optional top-level named argument.
+- Allow `name:` for `route`, URL, Uri, and `Route::has` route-name APIs.
+- Allow `route:` for `to_route`, redirector, and Redirect facade route-name APIs.
+- Reject unsupported named arguments such as `route(label: ...)`, `redirect()->route(name: ...)`, and `URL::route(route: ...)`.
+- Add parser coverage for supported and unsupported named-argument cases.
+- Add workbench coverage proving route-name completions work inside `route(name: 'comments.sh')`.
+
+### Acceptance Criteria
+
+- Supported PHP named arguments produce named-route reference contexts.
+- Unsupported named arguments remain ignored.
+- Laravel named-route completions work inside a named route helper argument.
+- Existing route-name helper, URL, Uri, signed redirect, and unsupported-call behavior still pass.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "supported named arguments|unsupported route-like calls|named route helper arguments|route helper strings|Uri route strings|signed redirect route strings"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `d799b5e7 Complete Laravel named route arguments`.
