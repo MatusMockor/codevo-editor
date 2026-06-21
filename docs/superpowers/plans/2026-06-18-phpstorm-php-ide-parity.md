@@ -7535,4 +7535,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `e2ec9eaf Guard queued JavaScript TypeScript didChange across workspace switches`.
