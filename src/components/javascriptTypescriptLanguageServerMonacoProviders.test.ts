@@ -885,6 +885,47 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
   });
 
+  it("drops in-flight TypeScript workspace symbols when no project tab is active", async () => {
+    const monaco = createMonaco();
+    let activeRoot: string | null = "/project";
+    const workspaceSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["workspaceSymbols"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.workspaceSymbols).mockImplementationOnce(
+      async () => workspaceSymbols.promise,
+    );
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        featuresGateway: gateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const symbolProvider = (
+      monaco.languages.registerWorkspaceSymbolProvider as any
+    ).mock.calls[0][0];
+    const symbolsPromise = symbolProvider.provideWorkspaceSymbols("User");
+
+    await Promise.resolve();
+    activeRoot = null;
+    workspaceSymbols.resolve([
+      {
+        containerName: "src/user.ts",
+        kind: 5,
+        location: {
+          range: range(0, 6, 0, 20),
+          uri: "file:///project/src/user.ts",
+        },
+        name: "UserController",
+      },
+    ]);
+
+    await expect(symbolsPromise).resolves.toEqual([]);
+    expect(gateway.workspaceSymbols).toHaveBeenCalledWith("/project", "User");
+  });
+
   it("maps TypeScript type definitions through the language server including external targets", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
