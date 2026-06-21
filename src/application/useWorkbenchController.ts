@@ -11102,18 +11102,33 @@ export function useWorkbenchController(
       return;
     }
 
-    const path = joinWorkspacePath(workspaceRoot, relativePath);
+    const requestedRoot = workspaceRoot;
+    const path = joinWorkspacePath(requestedRoot, relativePath);
 
     try {
       await workspaceFiles.createDirectory(path);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       const parentPath = getParentPath(path);
       setExpandedDirectories((current) => new Set(current).add(parentPath));
       await refreshDirectory(parentPath);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       setMessage(`Created ${path}`);
     } catch (error) {
-      reportError("Create Folder", error);
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "Create Folder", error);
     }
-  }, [prompter, refreshDirectory, reportError, workspaceFiles, workspaceRoot]);
+  }, [
+    prompter,
+    refreshDirectory,
+    reportErrorForActiveWorkspaceRoot,
+    workspaceFiles,
+    workspaceRoot,
+  ]);
 
   const renameActiveDocument = useCallback(async () => {
     if (!activeDocument) {

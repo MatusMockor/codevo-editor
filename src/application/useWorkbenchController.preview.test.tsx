@@ -6249,6 +6249,57 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale create folder errors after switching project tabs", async () => {
+    const newPath = "/workspace-a/src/Domain";
+    const creation = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("src/Domain");
+    vi.mocked(
+      dependencies.workspaceGateways.files.createDirectory,
+    ).mockImplementationOnce(async () => creation.promise);
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "folder.new",
+    );
+    let createPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      createPromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.createDirectory,
+      ).toHaveBeenCalledWith(newPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      creation.reject(new Error("stale create folder"));
+      await createPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Create Folder" &&
+          notice.message.includes("stale create folder"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale JavaScript TypeScript watched-file errors after same-root session restart", async () => {
     const newPath = "/workspace/src/NewWidget.ts";
     const watchedFilesChanged = createDeferred<void>();
