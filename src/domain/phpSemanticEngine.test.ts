@@ -1191,6 +1191,26 @@ class Comment extends Model
             ->whereYear('published_at', '>=', 2026)
             ->orWhereYear('published_at', '<=', 2027)
             ->first();
+        $relationMethodRelativeDateFilteredPost = $this->posts()
+            ->wherePast('published_at')
+            ->orWherePast('expires_at')
+            ->whereNowOrPast('published_at')
+            ->orWhereNowOrPast('updated_at')
+            ->whereFuture('expires_at')
+            ->orWhereFuture('reviewed_at')
+            ->whereNowOrFuture('expires_at')
+            ->orWhereNowOrFuture('reviewed_at')
+            ->whereToday('published_at')
+            ->orWhereToday('reviewed_at')
+            ->whereBeforeToday('created_at')
+            ->orWhereBeforeToday('archived_at')
+            ->whereTodayOrBefore('published_at')
+            ->orWhereTodayOrBefore('updated_at')
+            ->whereAfterToday('expires_at')
+            ->orWhereAfterToday('reviewed_at')
+            ->whereTodayOrAfter('expires_at')
+            ->orWhereTodayOrAfter('reviewed_at')
+            ->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
@@ -1254,6 +1274,7 @@ class Comment extends Model
         $relationMethodSearchFilteredPost->tit
         $relationMethodJsonFilteredPost->tit
         $relationMethodDatePartFilteredPost->tit
+        $relationMethodRelativeDateFilteredPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
@@ -1566,6 +1587,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodDatePartFilteredPost->tit"),
         "relationMethodDatePartFilteredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodRelativeDateFilteredPost->tit"),
+        "relationMethodRelativeDateFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
