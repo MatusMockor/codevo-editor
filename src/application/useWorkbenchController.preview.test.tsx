@@ -2626,6 +2626,40 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("falls back to explicit runtime stops when active project disposal fails", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await flushAsyncTurns();
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockRejectedValueOnce(new Error("dispose failed"));
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(dependencies.terminalGateway.stopRoot).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
+  });
+
   it("clears the workbench and stops runtime when the last project tab closes", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
