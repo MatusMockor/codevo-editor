@@ -4266,3 +4266,45 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `8733e771 Complete Laravel named group route prefixes`.
+
+## Slice: Laravel Named Controller Groups - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `4f671de1 Record Laravel named group route prefixes commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Resolve Laravel controller group action strings when `Route::controller(...)` uses PHP 8 named arguments.
+
+### Implementation Choice
+
+- Extend controller group detection to accept `controller(controller: CommentController::class)`.
+- Preserve existing direct `Route::controller(CommentController::class)` and chained `->controller(CommentController::class)` detection.
+- Add domain coverage for direct and chained named controller groups.
+- Update workbench go-to-definition coverage so a chained named controller group action resolves before LSP fallback.
+
+### Acceptance Criteria
+
+- Direct `Route::controller(controller: ...)->group(...)` action strings resolve to controller methods.
+- Chained `Route::prefix(...)->controller(controller: ...)->group(...)` action strings resolve to controller methods.
+- Existing positional controller group behavior remains unchanged.
+- Go to Definition from a named controller group action opens the indexed controller method without LSP fallback.
+- Focused/full navigation and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx -t "Laravel controller group route action strings|resolves Laravel controller group route action strings"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `2140450c Complete Laravel named controller groups`.
