@@ -52,10 +52,13 @@ describe("configureShikiLanguageFeatures", () => {
     }
 
     const calls: Array<[string, TestLanguageConfiguration]> = [];
+    const registrations: string[] = [];
 
     configureShikiLanguageFeatures({
       languages: {
-        register() {},
+        register(language) {
+          registrations.push(language.id);
+        },
         getLanguages: () => [],
         setLanguageConfiguration: (languageId, configuration) => {
           calls.push([languageId, configuration]);
@@ -63,6 +66,7 @@ describe("configureShikiLanguageFeatures", () => {
       },
     });
 
+    expect(registrations).toEqual(["php", "blade"]);
     expect(calls.map(([languageId]) => languageId)).toEqual(["php", "blade"]);
 
     const [, phpConfiguration] = calls[0];
@@ -103,5 +107,21 @@ describe("configureShikiLanguageFeatures", () => {
           rule.action.indentAction === 2,
       ),
     ).toBe(true);
+  });
+
+  it("does not duplicate already registered PHP-like languages", () => {
+    const registrations: string[] = [];
+
+    configureShikiLanguageFeatures({
+      languages: {
+        register(language) {
+          registrations.push(language.id);
+        },
+        getLanguages: () => [{ id: "php" }, { id: "blade" }],
+        setLanguageConfiguration() {},
+      },
+    });
+
+    expect(registrations).toEqual([]);
   });
 });

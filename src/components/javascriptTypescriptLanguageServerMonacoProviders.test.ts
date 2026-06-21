@@ -1397,6 +1397,39 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("limits JavaScript and TypeScript navigation locations to open Monaco models when requested", async () => {
+    const monaco = createMonaco();
+    const gateway = featuresGateway({
+      implementation: [
+        {
+          range: range(2, 0, 8, 1),
+          uri: "file:///project/src/serviceImplementation.ts",
+        },
+      ],
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      limitNavigationResultsToOpenModels: true,
+    });
+    monaco.editor.getModel.mockReturnValue(null);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(monaco as any, context);
+
+    const implementationProvider = (
+      monaco.languages.registerImplementationProvider as any
+    ).mock.calls[0][1];
+
+    await expect(
+      implementationProvider.provideImplementation(textModel(), {
+        column: 4,
+        lineNumber: 2,
+      }),
+    ).resolves.toEqual([]);
+    expect(monaco.editor.getModel).toHaveBeenCalledWith({
+      fsPath: "/project/src/serviceImplementation.ts",
+      path: "/project/src/serviceImplementation.ts",
+    });
+  });
+
   it("maps TypeScript linked editing ranges for paired JSX tags", async () => {
     const monaco = createMonaco();
     const gateway = featuresGateway({
@@ -4560,6 +4593,8 @@ function providerContext(
     getActiveDocument: overrides.getActiveDocument ?? (() => document()),
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runningStatus()),
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
+    limitNavigationResultsToOpenModels:
+      overrides.limitNavigationResultsToOpenModels,
     refreshGateway: overrides.refreshGateway,
     reportError: overrides.reportError ?? vi.fn(),
     workspaceEditGateway: overrides.workspaceEditGateway,
@@ -4862,6 +4897,7 @@ function createMonaco() {
     dispose,
     editor: {
       addCommand: vi.fn(() => disposable()),
+      getModel: vi.fn(() => null),
       getModels: vi.fn((): any[] => []),
     },
     languages: {

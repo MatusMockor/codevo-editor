@@ -326,6 +326,7 @@ export function EditorSurface({
       getActiveDocument: () => activeDocumentRef.current,
       getRuntimeStatus: () => runtimeStatusRef.current,
       getWorkspaceRoot: () => workspaceRoot,
+      limitNavigationResultsToOpenModels: true,
       providePhpMethodCompletions: (source, position) =>
         phpMethodCompletionsRef.current(source, position),
       providePhpMethodSignature: (source, position) =>
@@ -360,6 +361,7 @@ export function EditorSurface({
         getActiveDocument: () => activeDocumentRef.current,
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
         getWorkspaceRoot: () => workspaceRoot,
+        limitNavigationResultsToOpenModels: true,
         refreshGateway: javaScriptTypeScriptLanguageServerRefreshGateway,
         reportError: (error) => errorReporterRef.current(error),
         workspaceEditGateway:
@@ -486,11 +488,6 @@ export function EditorSurface({
         label: "Go to Definition",
         keybindings: keybinding("editor.goToDefinition"),
         run: () => {
-          if (isTypescriptJavascriptDocument(activeDocumentRef.current)) {
-            editorApi.trigger("keyboard", "editor.action.revealDefinition", {});
-            return;
-          }
-
           onGoToDefinition();
         },
       }),
@@ -499,11 +496,6 @@ export function EditorSurface({
         label: "Go to Implementation",
         keybindings: keybinding("editor.goToImplementation"),
         run: () => {
-          if (isTypescriptJavascriptDocument(activeDocumentRef.current)) {
-            editorApi.trigger("keyboard", "editor.action.goToImplementation", {});
-            return;
-          }
-
           const position = editorApi.getPosition();
 
           if (!position) {

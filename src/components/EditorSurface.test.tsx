@@ -1095,7 +1095,7 @@ interface ParserFactory
     );
   });
 
-  it("uses Monaco TypeScript navigation actions for JavaScript and TypeScript files", async () => {
+  it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
     const activeDocument: EditorDocument = {
       content: "export class UserService {}\n",
       language: "typescript",
@@ -1154,14 +1154,17 @@ interface ParserFactory
     actions.find((action) => action.id === "mockor.goToDefinition")?.run();
     actions.find((action) => action.id === "mockor.goToImplementation")?.run();
 
-    expect(onGoToDefinition).not.toHaveBeenCalled();
-    expect(onGoToImplementationAt).not.toHaveBeenCalled();
-    expect(editor.trigger).toHaveBeenCalledWith(
+    expect(onGoToDefinition).toHaveBeenCalledTimes(1);
+    expect(onGoToImplementationAt).toHaveBeenCalledWith({
+      column: 1,
+      lineNumber: 1,
+    });
+    expect(editor.trigger).not.toHaveBeenCalledWith(
       "keyboard",
       "editor.action.revealDefinition",
       {},
     );
-    expect(editor.trigger).toHaveBeenCalledWith(
+    expect(editor.trigger).not.toHaveBeenCalledWith(
       "keyboard",
       "editor.action.goToImplementation",
       {},

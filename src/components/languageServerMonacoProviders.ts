@@ -162,6 +162,7 @@ export interface LanguageServerMonacoProviderContext {
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
+  limitNavigationResultsToOpenModels?: boolean;
   providePhpMethodCompletions?(
     source: string,
     position: MonacoPosition,
@@ -1412,7 +1413,12 @@ async function provideNavigationLocations(
     }
 
     return locations.flatMap((location) =>
-      toMonacoLocation(monaco, request.rootPath, location),
+      toMonacoLocation(
+        monaco,
+        request.rootPath,
+        location,
+        context.limitNavigationResultsToOpenModels === true,
+      ),
     );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
@@ -2150,6 +2156,7 @@ function toMonacoLocation(
   monaco: MonacoApi,
   rootPath: string,
   location: LanguageServerLocation,
+  limitToOpenModels = false,
 ): Monaco.languages.Location[] {
   const path = pathFromLanguageServerUri(location.uri);
 
@@ -2157,10 +2164,16 @@ function toMonacoLocation(
     return [];
   }
 
+  const uri = monaco.Uri.file(path);
+
+  if (limitToOpenModels && !monaco.editor.getModel(uri)) {
+    return [];
+  }
+
   return [
     {
       range: toMonacoRange(monaco, location.range),
-      uri: monaco.Uri.file(path),
+      uri,
     },
   ];
 }

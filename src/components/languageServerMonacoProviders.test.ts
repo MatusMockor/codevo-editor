@@ -5301,6 +5301,32 @@ function show($user): void
     });
   });
 
+  it("limits PHP navigation locations to open Monaco models when requested", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      definition: [
+        {
+          range: range(1, 6, 1, 10),
+          uri: "file:///project/src/Models/User.php",
+        },
+      ],
+    });
+    const context = providerContext({
+      featuresGateway: gateway,
+      limitNavigationResultsToOpenModels: true,
+    });
+    registered.monaco.editor.getModel.mockReturnValue(null);
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.definitionProvider.provideDefinition(model(), position()),
+    ).resolves.toEqual([]);
+    expect(registered.monaco.editor.getModel).toHaveBeenCalledWith({
+      fsPath: "/project/src/Models/User.php",
+      path: "/project/src/Models/User.php",
+    });
+  });
+
   it("maps in-root PHP type definition locations", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -7627,6 +7653,7 @@ function createRegisteredProviders() {
         registered.commandRun = command.run;
         return { dispose: commandDispose };
       }),
+      getModel: vi.fn(() => null),
       getModels: vi.fn(() => []),
     },
     languages: {
@@ -7841,6 +7868,7 @@ function providerContext(
     flushPendingDocumentChange(path: string): Promise<void>;
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+    limitNavigationResultsToOpenModels: boolean;
     providePhpMethodCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodCompletions"]
     >;
@@ -7864,6 +7892,8 @@ function providerContext(
     getActiveDocument: () => activeDocument,
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
+    limitNavigationResultsToOpenModels:
+      overrides.limitNavigationResultsToOpenModels,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
     refreshGateway: overrides.refreshGateway,

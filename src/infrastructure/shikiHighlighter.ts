@@ -288,7 +288,18 @@ const PHP_LIKE_LANGUAGE_CONFIGURATION: MonacoLanguageConfiguration = {
 export function configureShikiLanguageFeatures(
   monaco: MonacoLanguageHost,
 ): void {
+  const registered = new Set(
+    monaco.languages
+      .getLanguages()
+      .map((language: { id: string }) => language.id),
+  );
+
   for (const languageId of ["php", "blade"]) {
+    if (!registered.has(languageId)) {
+      monaco.languages.register({ id: languageId });
+      registered.add(languageId);
+    }
+
     monaco.languages.setLanguageConfiguration?.(
       languageId,
       PHP_LIKE_LANGUAGE_CONFIGURATION,

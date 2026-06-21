@@ -201,6 +201,7 @@ export interface JavaScriptTypeScriptLanguageServerProviderContext {
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
+  limitNavigationResultsToOpenModels?: boolean;
   refreshGateway?: LanguageServerRefreshGateway;
   reportError(error: unknown): void;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -884,7 +885,12 @@ async function provideDefinition(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations);
+    return toMonacoLocations(
+      monaco,
+      locations,
+      undefined,
+      context.limitNavigationResultsToOpenModels === true,
+    );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -917,7 +923,12 @@ async function provideDeclaration(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations);
+    return toMonacoLocations(
+      monaco,
+      locations,
+      undefined,
+      context.limitNavigationResultsToOpenModels === true,
+    );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -955,7 +966,12 @@ async function provideImplementation(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations);
+    return toMonacoLocations(
+      monaco,
+      locations,
+      undefined,
+      context.limitNavigationResultsToOpenModels === true,
+    );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -988,7 +1004,12 @@ async function provideTypeDefinition(
       return null;
     }
 
-    return toMonacoLocations(monaco, locations);
+    return toMonacoLocations(
+      monaco,
+      locations,
+      undefined,
+      context.limitNavigationResultsToOpenModels === true,
+    );
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -2746,6 +2767,7 @@ function toMonacoLocations(
   monaco: MonacoApi,
   locations: LanguageServerLocation[],
   rootPath?: string,
+  limitToOpenModels = false,
 ): Monaco.languages.Location[] {
   return locations.flatMap((location) => {
     const path = pathFromLanguageServerUri(location.uri);
@@ -2758,6 +2780,12 @@ function toMonacoLocations(
       return [];
     }
 
+    const uri = monaco.Uri.file(path);
+
+    if (limitToOpenModels && !monaco.editor.getModel(uri)) {
+      return [];
+    }
+
     return [
       {
         range: new monaco.Range(
@@ -2766,7 +2794,7 @@ function toMonacoLocations(
           location.range.end.line + 1,
           location.range.end.character + 1,
         ),
-        uri: monaco.Uri.file(path),
+        uri,
       },
     ];
   });
