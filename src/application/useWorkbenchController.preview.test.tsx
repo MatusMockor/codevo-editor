@@ -11401,6 +11401,86 @@ class CommentFactory
     ]);
   });
 
+  it("drops stale PHP method completions after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const servicePath = "/workspace-a/app/Services/CommentsService.php";
+    const controllerSource = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Services\\CommentsService;
+
+class CommentController
+{
+    public function __construct(
+        private readonly CommentsService $commentsService,
+    ) {}
+
+    public function store(): void
+    {
+        $this->commentsService->cre
+    }
+}
+`;
+    const serviceRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === servicePath) {
+        return serviceRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    let completionsPromise:
+      | ReturnType<WorkbenchController["providePhpMethodCompletions"]>
+      | null = null;
+    await act(async () => {
+      completionsPromise = getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "$this->commentsService->cre"),
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(servicePath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    serviceRead.resolve(`<?php
+namespace App\\Services;
+
+class CommentsService
+{
+    public function create(): string {}
+}
+`);
+
+    expect(completionsPromise).not.toBeNull();
+    await expect(completionsPromise).resolves.toEqual([]);
+  });
+
   it("keeps late-static fluent return types bound to the receiver class", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const baseCommentPath = "/workspace/app/Models/BaseComment.php";

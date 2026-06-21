@@ -9678,6 +9678,14 @@ export function useWorkbenchController(
       source: string,
       position: EditorPosition,
     ): Promise<PhpMethodCompletion[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return [];
+      }
+
       const namedRouteContext = phpLaravelNamedRouteReferenceContextAt(
         source,
         position,
@@ -9689,6 +9697,10 @@ export function useWorkbenchController(
           source,
           activeDocument.path,
         );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
 
         return routes
           .filter((route) =>
@@ -9724,6 +9736,11 @@ export function useWorkbenchController(
               relationContext.receiverExpression,
             )
           : null;
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         const receiverType =
           !receiverModelType && relationContext.receiverExpression
             ? await resolvePhpExpressionType(
@@ -9732,6 +9749,11 @@ export function useWorkbenchController(
                 relationContext.receiverExpression,
               )
             : null;
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         const relationBaseOwnerType =
           staticClassName ?? receiverModelType ?? receiverType;
         const relationOwnerType = relationBaseOwnerType
@@ -9741,6 +9763,10 @@ export function useWorkbenchController(
             )
           : null;
 
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
         if (!relationOwnerType) {
           return [];
         }
@@ -9748,6 +9774,10 @@ export function useWorkbenchController(
         const normalizedPrefix = relationContext.prefix.toLowerCase();
         const relations =
           await collectPhpLaravelRelationCompletionsForClass(relationOwnerType);
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
 
         return relations
           .filter((relation) =>
@@ -9786,6 +9816,11 @@ export function useWorkbenchController(
               accessContext.receiverExpression,
             )
           : [];
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
       const normalizedPrefix = (
         staticAccessContext?.prefix ??
         accessContext?.prefix ??
@@ -9817,6 +9852,7 @@ export function useWorkbenchController(
       resolvePhpLaravelRelationPathOwnerType,
       resolvePhpReceiverMethodCompletions,
       resolvePhpStaticMethodCompletions,
+      workspaceRoot,
     ],
   );
 
@@ -9825,6 +9861,14 @@ export function useWorkbenchController(
       source: string,
       position: EditorPosition,
     ): Promise<PhpMethodSignature | null> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return null;
+      }
+
       const signatureContext = phpMethodSignatureContextAt(source, position);
 
       if (!signatureContext) {
@@ -9840,6 +9884,11 @@ export function useWorkbenchController(
               signatureContext.receiverExpression,
             )
           : [];
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
       const method = methods.find(
         (candidate) =>
           candidate.name.toLowerCase() ===
@@ -9856,7 +9905,11 @@ export function useWorkbenchController(
         parameters: phpMethodParameters(method.parameters),
       };
     },
-    [resolvePhpReceiverMethodCompletions, resolvePhpStaticMethodCompletions],
+    [
+      resolvePhpReceiverMethodCompletions,
+      resolvePhpStaticMethodCompletions,
+      workspaceRoot,
+    ],
   );
 
   const openPhpClassTarget = useCallback(
