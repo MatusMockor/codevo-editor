@@ -7044,4 +7044,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Definition And Implementation Providers
 
-- Pending commit after verification.
+- Committed as `2f8b8294 Register PHP definition implementation providers`.
