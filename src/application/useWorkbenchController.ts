@@ -2224,6 +2224,9 @@ export function useWorkbenchController(
     setPaletteOpen(false);
     setFileStructureOpen(false);
     setFileStructureScope("current");
+    setImplementationChooser(null);
+    setCallHierarchyView(null);
+    setTypeHierarchyView(null);
     setLanguageServerSetupOpen(false);
     setInstallingManagedPhpactor(false);
     setSettingsOpen(false);
@@ -3275,6 +3278,9 @@ export function useWorkbenchController(
       setTextSearchLoading(false);
       setTextSearchResults([]);
       setFileStructureScope("current");
+      setImplementationChooser(null);
+      setCallHierarchyView(null);
+      setTypeHierarchyView(null);
       setMessage(null);
       setNotices([]);
       lastPhpFileOutlineRefreshKeyRef.current = null;

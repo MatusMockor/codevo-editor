@@ -10542,6 +10542,76 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("clears JavaScript and TypeScript call hierarchy when the last project tab closes", async () => {
+    const path = "/workspace/src/userService.ts";
+    const javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        callHierarchy: true,
+      },
+      kind: "running",
+      sessionId: 13,
+    };
+    const item = {
+      data: { symbolId: "loadUser" },
+      detail: "src/userService.ts",
+      kind: 6,
+      name: "loadUser",
+      range: range(1, 9, 3, 3),
+      selectionRange: range(1, 9, 1, 17),
+      tags: [],
+      uri: "file:///workspace/src/userService.ts",
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.prepareCallHierarchy,
+    ).mockResolvedValue([item]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus:
+        javaScriptTypeScriptRuntimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus,
+      readTextFile: vi.fn(
+        async () => "export function loadUser() {\n  return 'Ada';\n}\n",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "userService.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 17,
+        lineNumber: 2,
+      });
+    });
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.showCallHierarchy")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().callHierarchyView?.item.name).toBe("loadUser");
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBeNull();
+    expect(getWorkbench().callHierarchyView).toBeNull();
+    expect(getWorkbench().typeHierarchyView).toBeNull();
+    expect(getWorkbench().implementationChooser).toBeNull();
+  });
+
   it("keeps JavaScript and TypeScript call hierarchy open for rows from inactive project tabs", async () => {
     const path = "/workspace-b/src/userService.ts";
     const callerPath = "/workspace-b/src/app.ts";
