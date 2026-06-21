@@ -4481,4 +4481,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Autostart Active Workspace Guard
 
-- Pending commit.
+- Committed as `fec5f2cc Guard PHP autostart errors by active workspace`.
