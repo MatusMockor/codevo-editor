@@ -5251,3 +5251,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Navigation History Open Guard
 
 - Committed as `ca122aa8 Guard navigation history after stale opens`.
+
+## Next Slice: Invalid Navigation Target Session Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c9d6c8cc Record navigation history guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 848 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP and JS/TS LSP navigation resolved target URIs before rechecking whether the original session/root was still active.
+- If a stale LSP response arrived after switching project tabs and contained an invalid URI, the inactive request could set `Could not open ... target.` in the active workspace.
+- The stale result was not opening files, but it could still leak user-visible command state.
+
+### Implementation Choice
+
+- Recheck the captured PHP LSP session before converting/reporting the target URI.
+- Recheck the captured JS/TS LSP session before converting/reporting the target URI.
+- Add stale invalid-target regressions for PHP definition and JS/TS declaration after switching from `/workspace-a` to `/workspace-b`.
+- Keep the navigation-history assertions from the previous slice on these stale paths.
+
+### Acceptance Criteria
+
+- Stale invalid PHP LSP targets do not set `Could not open definition target.` after project-tab switches.
+- Stale invalid JS/TS LSP targets do not set `Could not open declaration target.` after project-tab switches.
+- Stale invalid navigation responses do not enable `navigation.back`.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Invalid Navigation Target Session Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (316 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 850 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Invalid Navigation Target Session Guard
+
+- Committed as `be1bcff2 Guard invalid navigation target messages by session`.
