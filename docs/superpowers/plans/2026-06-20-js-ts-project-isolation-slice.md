@@ -5163,3 +5163,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Metadata Subscription Cleanup Guard
 
 - Committed as `403d2b1e Guard metadata subscription errors by workspace`.
+
+## Next Slice: Hierarchy Navigation Panel Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `ca5a338f Record metadata subscription guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 846 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `openNavigationTarget` already returns `false` when a row target belongs to an inactive workspace tab.
+- Call hierarchy, type hierarchy, and implementation chooser callbacks closed their floating UI before checking that result.
+- A stale row/target from another project tab could dismiss the active workspace panel even though the file open was correctly refused.
+
+### Implementation Choice
+
+- Keep the implementation chooser open unless `openNavigationTarget` succeeds.
+- Keep call hierarchy and type hierarchy views open unless their row navigation succeeds.
+- Add preview regressions where the active `/workspace-b` hierarchy panel receives a stale row pointing at `/workspace-a`.
+
+### Acceptance Criteria
+
+- Stale hierarchy row clicks from inactive project tabs do not read stale files.
+- Stale hierarchy row clicks from inactive project tabs do not close the active workspace hierarchy panel.
+- Successful hierarchy row and implementation chooser navigation still closes the relevant floating UI.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Hierarchy Navigation Panel Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (314 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 848 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Hierarchy Navigation Panel Guard
+
+- Committed as `28e6df7f Guard hierarchy navigation panels by workspace`.
