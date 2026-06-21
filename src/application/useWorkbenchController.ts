@@ -1187,11 +1187,15 @@ export function useWorkbenchController(
     async (rootPath: string) => {
       try {
         const plan = await languageServerGateway.planPhpLanguageServer(rootPath);
-        setLanguageServerPlan(plan);
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          setLanguageServerPlan(plan);
+        }
         return plan;
       } catch (error) {
-        setLanguageServerPlan(null);
-        reportError("Language Server", error);
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          setLanguageServerPlan(null);
+          reportError("Language Server", error);
+        }
         return null;
       }
     },

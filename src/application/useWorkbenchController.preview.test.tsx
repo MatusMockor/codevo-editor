@@ -3672,6 +3672,138 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale PHP language server plan results after switching project tabs", async () => {
+    const workspaceAPlan = createDeferred<LanguageServerPlan>();
+    const workspaceBPlan: LanguageServerPlan = {
+      ...phpactorLanguageServerPlan(),
+      message: "PHPactor B ready",
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          return workspaceAPlan.promise;
+        }
+
+        return workspaceBPlan;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await vi.waitFor(() => {
+      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace-b",
+      );
+    });
+
+    await act(async () => {
+      workspaceAPlan.resolve({
+        ...phpactorLanguageServerPlan(),
+        message: "PHPactor A ready",
+      });
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().languageServerPlan?.message).toBe(
+      "PHPactor B ready",
+    );
+  });
+
+  it("ignores stale PHP language server plan errors after switching project tabs", async () => {
+    const workspaceAPlan = createDeferred<LanguageServerPlan>();
+    const workspaceBPlan: LanguageServerPlan = {
+      ...phpactorLanguageServerPlan(),
+      message: "PHPactor B ready",
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          return workspaceAPlan.promise;
+        }
+
+        return workspaceBPlan;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await vi.waitFor(() => {
+      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace-b",
+      );
+    });
+
+    await act(async () => {
+      workspaceAPlan.reject(new Error("stale PHP plan"));
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().languageServerPlan?.message).toBe(
+      "PHPactor B ready",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale PHP plan"),
+      ),
+    ).toBe(false);
+  });
+
   it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {
@@ -17621,6 +17753,7 @@ final class InvoiceAdapter
     javaScriptTypeScriptLanguageServerPlan,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
     javaScriptTypeScriptRuntimeStatus = { kind: "stopped" as const },
+    languageServerGateway,
     languageServerPlan,
     languageServerDiagnosticsGateway,
     languageServerFeaturesGateway,
@@ -17643,6 +17776,7 @@ final class InvoiceAdapter
     javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
     javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     javaScriptTypeScriptRuntimeStatus?: LanguageServerRuntimeStatus;
+    languageServerGateway?: LanguageServerGateway;
     languageServerPlan?: LanguageServerPlan;
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
@@ -17675,6 +17809,7 @@ final class InvoiceAdapter
       javaScriptTypeScriptLanguageServerPlan,
       javaScriptTypeScriptLanguageServerRuntimeGateway,
       javaScriptTypeScriptRuntimeStatus,
+      languageServerGateway,
       languageServerPlan,
       languageServerDiagnosticsGateway,
       languageServerFeaturesGateway,
@@ -17758,6 +17893,7 @@ function createControllerDependencies({
   javaScriptTypeScriptLanguageServerPlan,
   javaScriptTypeScriptLanguageServerRuntimeGateway,
   javaScriptTypeScriptRuntimeStatus,
+  languageServerGateway,
   languageServerPlan,
   languageServerFeaturesGateway,
   languageServerDiagnosticsGateway,
@@ -17780,6 +17916,7 @@ function createControllerDependencies({
   javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
   javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
   javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus;
+  languageServerGateway?: LanguageServerGateway;
   languageServerPlan?: LanguageServerPlan;
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
@@ -17886,29 +18023,31 @@ function createControllerDependencies({
     languageServerDocumentSyncGateway: documentSyncGateway,
     languageServerFeaturesGateway:
       languageServerFeaturesGateway ?? featuresGateway(),
-    languageServerGateway: {
-      planJavaScriptTypeScriptLanguageServer: vi.fn(
-        async () =>
-          javaScriptTypeScriptLanguageServerPlan ??
-          ({
-            command: null,
-            initializeRequest: null,
-            message: "JavaScript/TypeScript language server unavailable in test.",
-            provider: "typeScriptLanguageServer" as const,
-            status: "unavailable" as const,
-          } satisfies LanguageServerPlan),
-      ),
-      planPhpLanguageServer: vi.fn(
-        async () =>
-          languageServerPlan ?? {
-            command: null,
-            initializeRequest: null,
-            message: "Language server unavailable in test.",
-            provider: "phpactor" as const,
-            status: "unavailable" as const,
-          },
-      ),
-    },
+    languageServerGateway:
+      languageServerGateway ?? {
+        planJavaScriptTypeScriptLanguageServer: vi.fn(
+          async () =>
+            javaScriptTypeScriptLanguageServerPlan ??
+            ({
+              command: null,
+              initializeRequest: null,
+              message:
+                "JavaScript/TypeScript language server unavailable in test.",
+              provider: "typeScriptLanguageServer" as const,
+              status: "unavailable" as const,
+            } satisfies LanguageServerPlan),
+        ),
+        planPhpLanguageServer: vi.fn(
+          async () =>
+            languageServerPlan ?? {
+              command: null,
+              initializeRequest: null,
+              message: "Language server unavailable in test.",
+              provider: "phpactor" as const,
+              status: "unavailable" as const,
+            },
+        ),
+      },
     languageServerRuntimeGateway:
       languageServerRuntimeGateway ?? {
         getStatus: vi.fn(async (rootPath) =>
