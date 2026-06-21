@@ -6769,4 +6769,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS On-Type Formatting Trigger Metadata
 
-- Pending commit after verification.
+- Committed as `a08fbe23 Use TypeScript on-type formatting triggers`.
