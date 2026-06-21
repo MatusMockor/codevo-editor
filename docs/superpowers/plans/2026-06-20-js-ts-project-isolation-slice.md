@@ -4356,4 +4356,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JavaScript TypeScript Workspace Symbols Session Guard
 
-- Pending commit.
+- Committed as `821a5733 Guard JavaScript TypeScript workspace symbols by session`.
