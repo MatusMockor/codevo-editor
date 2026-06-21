@@ -6020,3 +6020,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Hierarchy Panels Workspace Reset Guard
 
 - Committed as `5aef0ed3 Reset hierarchy panels on workspace changes`.
+
+## Next Slice: Pending Workspace Open Tab-Close Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5da94d03 Record hierarchy reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 858 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Workspace open requests were token-guarded against newer open requests, but not explicitly tied to the project tab path being opened.
+- Closing a project tab while its workspace open flow was still pending could leave that stale flow current by token.
+- A stale open flow must not continue into trust/detection/session restoration after the tab is gone.
+
+### Implementation Choice
+
+- Track the workspace path associated with the current open request.
+- Treat an open request as current only when both the token and path still match.
+- Invalidate a pending open request when closing the project tab for the same root.
+- Add a regression that closes the only tab during a pending workspace settings load and asserts stale continuation never reaches workspace detection.
+
+### Acceptance Criteria
+
+- Closing a project tab cancels its pending workspace-open request.
+- Resolving the stale settings load after close does not restore the workspace root or tabs.
+- Stale workspace detection does not run after the tab was closed.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Pending Workspace Open Tab-Close Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (325 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 859 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Pending Workspace Open Tab-Close Guard
+
+- Committed as `cd48cca3 Cancel pending workspace opens on tab close`.
