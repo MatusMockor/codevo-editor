@@ -7945,34 +7945,39 @@ export function useWorkbenchController(
         return null;
       }
 
-      const relativePath = ".env";
-      const path = joinWorkspacePath(requestedRoot, relativePath);
-
-      try {
-        const content = await readNavigationFileContent(path);
-
+      for (const relativePath of [".env", ".env.example"]) {
         if (!isRequestedRootActive()) {
           return null;
         }
 
-        const target = phpLaravelEnvTargetFromSource(content, envName);
+        const path = joinWorkspacePath(requestedRoot, relativePath);
 
-        if (!target) {
-          return null;
+        try {
+          const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return null;
+          }
+
+          const target = phpLaravelEnvTargetFromSource(content, envName);
+
+          if (!target) {
+            continue;
+          }
+
+          return {
+            ...target,
+            path,
+            relativePath,
+          };
+        } catch {
+          if (!isRequestedRootActive()) {
+            return null;
+          }
         }
-
-        return {
-          ...target,
-          path,
-          relativePath,
-        };
-      } catch {
-        if (!isRequestedRootActive()) {
-          return null;
-        }
-
-        return null;
       }
+
+      return null;
     },
     [
       isLaravelFrameworkActive,
@@ -7992,28 +7997,33 @@ export function useWorkbenchController(
       return [];
     }
 
-    const relativePath = ".env";
-    const path = joinWorkspacePath(requestedRoot, relativePath);
-
-    try {
-      const content = await readNavigationFileContent(path);
-
+    for (const relativePath of [".env", ".env.example"]) {
       if (!isRequestedRootActive()) {
         return [];
       }
 
-      return phpLaravelEnvEntriesFromSource(content).map((target) => ({
-        ...target,
-        path,
-        relativePath,
-      }));
-    } catch {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
+      const path = joinWorkspacePath(requestedRoot, relativePath);
 
-      return [];
+      try {
+        const content = await readNavigationFileContent(path);
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return phpLaravelEnvEntriesFromSource(content).map((target) => ({
+          ...target,
+          path,
+          relativePath,
+        }));
+      } catch {
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+      }
     }
+
+    return [];
   }, [
     isLaravelFrameworkActive,
     readNavigationFileContent,

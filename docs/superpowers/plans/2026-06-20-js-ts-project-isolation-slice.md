@@ -7988,3 +7988,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Env Key Navigation And Completion
 
 - Committed as `b77af6c3 Add Laravel env key navigation`.
+
+## Next Slice: Laravel Env Example Fallback
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `7d49c83e Record Laravel env navigation commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Many Laravel repositories commit `.env.example` but not `.env`.
+- The new env key navigation/completion should remain useful in those repos by falling back to `.env.example`.
+- The fallback keeps `.env` preferred when it exists, while avoiding generic LSP fallback when only the example file is present.
+
+### Implementation Choice
+
+- Try `.env` first for env key navigation/completion, then `.env.example`.
+- Keep stale workspace-tab guards around each attempted env file read.
+- Add preview coverage for completion and definition fallback when `.env` is missing.
+
+### Acceptance Criteria
+
+- Completion inside `env('APP_NA')` suggests keys from `.env.example` when `.env` cannot be read.
+- Cmd+B on `env('APP_NAME')` opens `.env.example` when `.env` cannot be read.
+- Existing `.env` behavior remains preferred and green.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Laravel Env Example Fallback
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel env"` passed: 6 passed, 376 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 382 passed.
+- `npm run check` passed.
+- `npm test` passed: 68 files, 1026 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Env Example Fallback
+
+- Pending commit.

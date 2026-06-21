@@ -32041,6 +32041,69 @@ class AppController
     ]);
   });
 
+  it("suggests Laravel env example keys when .env is missing", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const envPath = "/workspace/.env";
+    const envExamplePath = "/workspace/.env.example";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return env('APP_NA');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === envPath) {
+          throw new Error("missing .env");
+        }
+
+        if (path === envExamplePath) {
+          return "APP_NAME=Codevo\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "APP_NA"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: ".env.example",
+        insertText: "APP_NAME",
+        kind: "env",
+        name: "APP_NAME",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("stops stale Laravel env completions after switching project tabs", async () => {
     const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
     const envPath = "/workspace-a/.env";
@@ -32176,6 +32239,84 @@ class AppController
     expect(getWorkbench().activePath).toBe(envPath);
     expect(getWorkbench().editorRevealTarget).toEqual({
       path: envPath,
+      position: {
+        column: 1,
+        lineNumber: 1,
+      },
+    });
+  });
+
+  it("opens Laravel env example keys before LSP fallback when .env is missing", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const envPath = "/workspace/.env";
+    const envExamplePath = "/workspace/.env.example";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return env('APP_NAME');
+    }
+}
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === envPath) {
+          throw new Error("missing .env");
+        }
+
+        if (path === envExamplePath) {
+          return "APP_NAME=Codevo\n";
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "APP_NAME"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(envExamplePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: envExamplePath,
       position: {
         column: 1,
         lineNumber: 1,
