@@ -10136,6 +10136,97 @@ export class FacebookAdapterService extends BaseAdapter {
     ).toBe(false);
   });
 
+  it("drops stale indexed go to definition results after switching project tabs", async () => {
+    const controllerPath = "/workspace-a/src/CommentController.php";
+    const agentPath = "/workspace-a/src/CommentsAgent.php";
+    const symbolSearch =
+      createDeferred<
+        Awaited<
+          ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>
+        >
+      >();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return "<?php\n$agent = new CommentsAgent();\n";
+        }
+
+        if (path === agentPath) {
+          return "<?php\nfinal class CommentsAgent {}\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementationOnce(async () => symbolSearch.promise);
+
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 23,
+        lineNumber: 2,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith("/workspace-a", "CommentsAgent", 25);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      symbolSearch.resolve([
+        {
+          column: 13,
+          containerName: null,
+          fullyQualifiedName: "App\\CommentsAgent",
+          kind: "class",
+          lineNumber: 4,
+          name: "CommentsAgent",
+          path: agentPath,
+          relativePath: "src/CommentsAgent.php",
+        },
+      ]);
+      await commandPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(agentPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().message).not.toBe(
+      "Opened definition CommentsAgent.php:4:13",
+    );
+  });
+
   it("drops stale indexed go to definition misses after switching project tabs", async () => {
     const controllerPath = "/workspace-a/src/CommentController.php";
     const symbolSearch =
