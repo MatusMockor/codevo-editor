@@ -8,6 +8,7 @@ import type {
   LanguageServerDocumentSymbol,
   LanguageServerFeaturesGateway,
   LanguageServerHover,
+  LanguageServerInlayHint,
   LanguageServerLinkedEditingRanges,
   LanguageServerLocation,
   LanguageServerRange,
@@ -23,7 +24,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, code lens, folding range, formatting, range formatting, on type formatting and linked editing range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, code lens, inlay hint, folding range, formatting, range formatting, on type formatting and linked editing range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -53,6 +54,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentSymbolLanguage).toBe("php");
     expect(registered.documentLinkLanguage).toBe("php");
     expect(registered.codeLensLanguage).toBe("php");
+    expect(registered.inlayHintsLanguage).toBe("php");
     expect(registered.foldingRangeLanguage).toBe("php");
     expect(registered.documentFormattingLanguage).toBe("php");
     expect(registered.rangeFormattingLanguage).toBe("php");
@@ -89,6 +91,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.documentSymbolDispose).toHaveBeenCalled();
     expect(registered.documentLinkDispose).toHaveBeenCalled();
     expect(registered.codeLensDispose).toHaveBeenCalled();
+    expect(registered.inlayHintsDispose).toHaveBeenCalled();
     expect(registered.foldingRangeDispose).toHaveBeenCalled();
     expect(registered.documentFormattingDispose).toHaveBeenCalled();
     expect(registered.rangeFormattingDispose).toHaveBeenCalled();
@@ -6019,6 +6022,426 @@ describe("registerLanguageServerMonacoProviders", () => {
     await expect(rootResolvePromise).resolves.toBe(rootBackedLens);
   });
 
+  it("provides mapped PHP InlayHint string and part-label hints", async () => {
+    const registered = createRegisteredProviders();
+    const stringHint: LanguageServerInlayHint = {
+      data: { id: "type" },
+      kind: 1,
+      label: ": User",
+      paddingLeft: true,
+      paddingRight: false,
+      position: { character: 10, line: 2 },
+      textEdits: [
+        {
+          newText: ": User",
+          range: range(2, 10, 2, 10),
+        },
+      ],
+      tooltip: "Inferred type",
+    };
+    const partHint: LanguageServerInlayHint = {
+      data: { id: "parameter" },
+      kind: 2,
+      label: [
+        {
+          command: {
+            arguments: [{ name: "user" }],
+            command: "phpactor.importClass",
+            title: "Import User",
+          },
+          label: "user",
+          location: {
+            range: range(4, 2, 4, 6),
+            uri: "file:///project/src/User.php",
+          },
+          tooltip: "User symbol",
+        },
+        {
+          label: "external",
+          location: {
+            range: range(1, 0, 1, 8),
+            uri: "file:///other/src/External.php",
+          },
+        },
+      ],
+      paddingLeft: false,
+      paddingRight: true,
+      position: { character: 4, line: 3 },
+      tooltip: null,
+    };
+    const gateway = featuresGateway({ inlayHints: [stringHint, partHint] });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.inlayHintsProvider.provideInlayHints(
+      model(),
+      new registered.monaco.Range(2, 1, 5, 12),
+    );
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.inlayHints).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      range(1, 0, 4, 11),
+    );
+    expect(result.hints[0]).toMatchObject({
+      kind: registered.monaco.languages.InlayHintKind.Type,
+      label: ": User",
+      paddingLeft: true,
+      paddingRight: false,
+      position: { column: 11, lineNumber: 3 },
+      textEdits: [
+        {
+          range: new registered.monaco.Range(3, 11, 3, 11),
+          text: ": User",
+        },
+      ],
+      tooltip: "Inferred type",
+    });
+    expect(result.hints[1]).toMatchObject({
+      kind: registered.monaco.languages.InlayHintKind.Parameter,
+      paddingLeft: false,
+      paddingRight: true,
+      position: { column: 5, lineNumber: 4 },
+      tooltip: undefined,
+    });
+    expect(result.hints[1].label).toEqual([
+      {
+        command: {
+          arguments: [
+            {
+              command: {
+                arguments: [{ name: "user" }],
+                command: "phpactor.importClass",
+                title: "Import User",
+              },
+              path: "/project/src/User.php",
+              rootPath: "/project",
+              sessionId: 1,
+            },
+          ],
+          id: "mockor.php.executeLanguageServerCommand",
+          title: "Import User",
+        },
+        label: "user",
+        location: {
+          range: new registered.monaco.Range(5, 3, 5, 7),
+          uri: { fsPath: "/project/src/User.php", path: "/project/src/User.php" },
+        },
+        tooltip: "User symbol",
+      },
+      {
+        label: "external",
+      },
+    ]);
+    expect((result.hints[0] as any).__languageServerInlayHint).toBe(stringHint);
+    expect((result.hints[0] as any).__workspaceRoot).toBe("/project");
+    expect((result.hints[0] as any).__sourcePath).toBe("/project/src/User.php");
+    expect((result.hints[0] as any).__languageServerSessionId).toBe(1);
+    expect(Object.keys(result.hints[0])).not.toContain(
+      "__languageServerInlayHint",
+    );
+  });
+
+  it("resolves PHP InlayHint through the stored root and session", async () => {
+    const registered = createRegisteredProviders();
+    const sourceHint: LanguageServerInlayHint = {
+      data: { id: "type" },
+      kind: null,
+      label: ": mixed",
+      paddingLeft: true,
+      paddingRight: false,
+      position: { character: 5, line: 1 },
+      tooltip: null,
+    };
+    const resolvedHint: LanguageServerInlayHint = {
+      ...sourceHint,
+      kind: 1,
+      label: ": User",
+      textEdits: [
+        {
+          newText: ": User",
+          range: range(1, 5, 1, 5),
+        },
+      ],
+      tooltip: "Resolved type",
+    };
+    const gateway = featuresGateway();
+    vi.mocked(gateway.resolveInlayHint).mockResolvedValueOnce(resolvedHint);
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway, flushPendingDocumentChange }),
+    );
+    const backedHint = backedInlayHint(sourceHint);
+
+    const resolved = await registered.inlayHintsProvider.resolveInlayHint(
+      backedHint,
+    );
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.resolveInlayHint).toHaveBeenCalledWith(
+      "/project",
+      sourceHint,
+    );
+    expect(resolved).toMatchObject({
+      kind: registered.monaco.languages.InlayHintKind.Type,
+      label: ": User",
+      position: { column: 6, lineNumber: 2 },
+      textEdits: [
+        {
+          range: new registered.monaco.Range(2, 6, 2, 6),
+          text: ": User",
+        },
+      ],
+      tooltip: "Resolved type",
+    });
+    expect((resolved as any).__languageServerInlayHint).toBe(resolvedHint);
+    expect(backedHint.kind).toBeUndefined();
+  });
+
+  it("does not provide PHP InlayHint when capability is disabled or root is stale", async () => {
+    const registered = createRegisteredProviders();
+    const disabledGateway = featuresGateway();
+    const disabledFlushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlushPendingDocumentChange,
+        runtimeStatus: runningStatus({ inlayHint: false }),
+      }),
+    );
+
+    await expect(
+      registered.inlayHintsProvider.provideInlayHints(
+        model(),
+        new registered.monaco.Range(1, 1, 1, 5),
+      ),
+    ).resolves.toEqual({ dispose: expect.any(Function), hints: [] });
+    expect(disabledFlushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(disabledGateway.inlayHints).not.toHaveBeenCalled();
+
+    const rootRegistered = createRegisteredProviders();
+    const rootGateway = featuresGateway();
+    const rootFlushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        flushPendingDocumentChange: rootFlushPendingDocumentChange,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      rootRegistered.inlayHintsProvider.provideInlayHints(
+        model(),
+        new rootRegistered.monaco.Range(1, 1, 1, 5),
+      ),
+    ).resolves.toEqual({ dispose: expect.any(Function), hints: [] });
+    expect(rootFlushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(rootGateway.inlayHints).not.toHaveBeenCalled();
+  });
+
+  it("drops in-flight PHP InlayHint provide results after session restart", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const inlayHints = createDeferred<LanguageServerInlayHint[]>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.inlayHints).mockImplementationOnce(
+      async () => inlayHints.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const hintsPromise = registered.inlayHintsProvider.provideInlayHints(
+      model(),
+      new registered.monaco.Range(1, 1, 1, 5),
+    );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    inlayHints.resolve([
+      {
+        kind: 1,
+        label: ": User",
+        paddingLeft: true,
+        paddingRight: false,
+        position: { character: 5, line: 1 },
+        tooltip: "Stale",
+      },
+    ]);
+
+    await expect(hintsPromise).resolves.toEqual({
+      dispose: expect.any(Function),
+      hints: [],
+    });
+  });
+
+  it("does not resolve stale or unbacked PHP InlayHint values", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const gateway = featuresGateway();
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+    const sourceHint: LanguageServerInlayHint = {
+      kind: 1,
+      label: ": User",
+      paddingLeft: true,
+      paddingRight: false,
+      position: { character: 5, line: 1 },
+      tooltip: null,
+    };
+    const backedHint = backedInlayHint(sourceHint);
+    const unbackedHint = {
+      label: ": User",
+      paddingLeft: true,
+      paddingRight: false,
+      position: { column: 6, lineNumber: 2 },
+    };
+
+    activeRoot = "/other";
+
+    await expect(
+      registered.inlayHintsProvider.resolveInlayHint(backedHint),
+    ).resolves.toBe(backedHint);
+    await expect(
+      registered.inlayHintsProvider.resolveInlayHint(unbackedHint),
+    ).resolves.toBe(unbackedHint);
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
+
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionGateway = featuresGateway();
+    const sessionFlushPendingDocumentChange = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        flushPendingDocumentChange: sessionFlushPendingDocumentChange,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+    const sessionBackedHint = backedInlayHint(sourceHint);
+
+    activeSessionId = 2;
+
+    await expect(
+      sessionRegistered.inlayHintsProvider.resolveInlayHint(sessionBackedHint),
+    ).resolves.toBe(sessionBackedHint);
+    expect(sessionFlushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(sessionGateway.resolveInlayHint).not.toHaveBeenCalled();
+
+    const flushRegistered = createRegisteredProviders();
+    let flushSessionId = 1;
+    const flushGateway = featuresGateway();
+    const staleAfterFlush = vi.fn(async () => {
+      flushSessionId = 2;
+    });
+    registerLanguageServerMonacoProviders(
+      flushRegistered.monaco,
+      providerContext({
+        featuresGateway: flushGateway,
+        flushPendingDocumentChange: staleAfterFlush,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: flushSessionId,
+        }),
+      }),
+    );
+    const flushBackedHint = backedInlayHint(sourceHint);
+
+    await expect(
+      flushRegistered.inlayHintsProvider.resolveInlayHint(flushBackedHint),
+    ).resolves.toBe(flushBackedHint);
+    expect(staleAfterFlush).toHaveBeenCalledWith("/project/src/User.php");
+    expect(flushGateway.resolveInlayHint).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP InlayHint resolve results after async response", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sourceHint: LanguageServerInlayHint = {
+      data: { id: "type" },
+      kind: null,
+      label: ": mixed",
+      paddingLeft: true,
+      paddingRight: false,
+      position: { character: 5, line: 1 },
+      tooltip: null,
+    };
+    const resolvedInlayHint = createDeferred<LanguageServerInlayHint>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.resolveInlayHint).mockImplementationOnce(
+      async () => resolvedInlayHint.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+    const backedHint = backedInlayHint(sourceHint);
+
+    const resolvePromise = registered.inlayHintsProvider.resolveInlayHint(
+      backedHint,
+    );
+
+    await Promise.resolve();
+    expect(gateway.resolveInlayHint).toHaveBeenCalledWith(
+      "/project",
+      sourceHint,
+    );
+
+    activeSessionId = 2;
+    resolvedInlayHint.resolve({
+      ...sourceHint,
+      kind: 1,
+      label: ": User",
+      tooltip: "Resolved after restart",
+    });
+
+    await expect(resolvePromise).resolves.toBe(backedHint);
+    expect(backedHint.label).toBe(": mixed");
+    expect(backedHint.kind).toBeUndefined();
+  });
+
 });
 
 function createRegisteredProviders() {
@@ -6034,6 +6457,7 @@ function createRegisteredProviders() {
   const foldingRangeDispose = vi.fn();
   const hoverDispose = vi.fn();
   const implementationDispose = vi.fn();
+  const inlayHintsDispose = vi.fn();
   const linkedEditingRangeDispose = vi.fn();
   const onTypeFormattingDispose = vi.fn();
   const rangeFormattingDispose = vi.fn();
@@ -6083,6 +6507,9 @@ function createRegisteredProviders() {
     implementationDispose: ReturnType<typeof vi.fn>;
     implementationLanguage: string | null;
     implementationProvider: any;
+    inlayHintsDispose: ReturnType<typeof vi.fn>;
+    inlayHintsLanguage: string | null;
+    inlayHintsProvider: any;
     linkedEditingRangeDispose: ReturnType<typeof vi.fn>;
     linkedEditingRangeLanguage: string | null;
     linkedEditingRangeProvider: any;
@@ -6148,6 +6575,9 @@ function createRegisteredProviders() {
     implementationDispose,
     implementationLanguage: null,
     implementationProvider: null,
+    inlayHintsDispose,
+    inlayHintsLanguage: null,
+    inlayHintsProvider: null,
     linkedEditingRangeDispose,
     linkedEditingRangeLanguage: null,
     linkedEditingRangeProvider: null,
@@ -6222,6 +6652,10 @@ function createRegisteredProviders() {
       },
       FoldingRangeKind: {
         fromValue: vi.fn((value) => ({ value })),
+      },
+      InlayHintKind: {
+        Parameter: 2,
+        Type: 1,
       },
       SymbolKind: {
         Array: 17,
@@ -6319,6 +6753,11 @@ function createRegisteredProviders() {
         registered.implementationLanguage = language;
         registered.implementationProvider = provider;
         return { dispose: implementationDispose };
+      }),
+      registerInlayHintsProvider: vi.fn((language, provider) => {
+        registered.inlayHintsLanguage = language;
+        registered.inlayHintsProvider = provider;
+        return { dispose: inlayHintsDispose };
       }),
       registerLinkedEditingRangeProvider: vi.fn((language, provider) => {
         registered.linkedEditingRangeLanguage = language;
@@ -6545,6 +6984,38 @@ function backedCodeLens(lens: LanguageServerCodeLens) {
       startLineNumber: lens.range.start.line + 1,
     },
   };
+}
+
+function backedInlayHint(hint: LanguageServerInlayHint) {
+  const backedHint = {
+    label: hint.label,
+    paddingLeft: hint.paddingLeft,
+    paddingRight: hint.paddingRight,
+    position: {
+      column: hint.position.character + 1,
+      lineNumber: hint.position.line + 1,
+    },
+    ...(hint.kind === 1 ? { kind: 1 } : {}),
+    ...(hint.kind === 2 ? { kind: 2 } : {}),
+    tooltip: hint.tooltip ?? undefined,
+  };
+
+  Object.defineProperties(backedHint, {
+    __languageServerInlayHint: {
+      value: hint,
+    },
+    __languageServerSessionId: {
+      value: 1,
+    },
+    __sourcePath: {
+      value: "/project/src/User.php",
+    },
+    __workspaceRoot: {
+      value: "/project",
+    },
+  });
+
+  return backedHint;
 }
 
 function backedCodeAction() {

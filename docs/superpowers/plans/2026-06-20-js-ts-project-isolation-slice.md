@@ -7450,3 +7450,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco CodeLens Provider
 
 - Committed as `ed69dcf1 Register PHP code lens provider`.
+
+## Next Slice: PHP Monaco Inlay Hints Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `adecf839 Record PHP code lens provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support `inlayHint` and inlay-hint resolve.
+- The PHP Monaco provider did not register inlay hints, so PHPactor type/parameter hints could not surface inline in PHP files.
+- Inlay hints include lazy resolve metadata, label-part commands, label-part locations, and text edits, so they are a useful parity and isolation checkpoint after CodeLens.
+
+### Implementation Choice
+
+- Register an optional PHP Monaco inlay hints provider.
+- Reuse PHP document request context, pending change flush, capability gate, active session guard, stale result dropping, and error reporting for provided hints.
+- Store root/session/source path metadata on LSP-backed inlay hints so lazy resolve can safely call `featuresGateway.resolveInlayHint` only while the originating PHP session is active.
+- Map string and part labels, type/parameter kinds, text edits, tooltip, padding, label-part commands, and root-filtered label-part locations into Monaco inlay hints.
+
+### Acceptance Criteria
+
+- PHP inlay hints route to `featuresGateway.inlayHints` and map returned hint metadata correctly.
+- Lazy inlay-hint resolution routes to `featuresGateway.resolveInlayHint` only while the stored root/session are active.
+- Disabled capability and stale root/session responses do not call or return stale results.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Inlay Hints Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "inlay hint|InlayHint"` (7 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (116 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 959 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Pending

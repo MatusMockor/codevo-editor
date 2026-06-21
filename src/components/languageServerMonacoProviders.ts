@@ -13,6 +13,7 @@ import {
   type LanguageServerFoldingRange,
   type LanguageServerFormattingOptions,
   type LanguageServerFeaturesGateway,
+  type LanguageServerInlayHint,
   type LanguageServerLinkedEditingRanges,
   type LanguageServerLocation,
   type LanguageServerRange,
@@ -76,8 +77,16 @@ interface LanguageServerBackedCodeLens extends Monaco.languages.CodeLens {
   __workspaceRoot?: string;
 }
 
+interface LanguageServerBackedInlayHint extends Monaco.languages.InlayHint {
+  __languageServerInlayHint?: LanguageServerInlayHint;
+  __languageServerSessionId?: number;
+  __sourcePath?: string;
+  __workspaceRoot?: string;
+}
+
 interface ExecuteCommandPayload {
   command: LanguageServerCodeActionCommand;
+  path?: string;
   rootPath: string;
   sessionId: number;
 }
@@ -155,6 +164,20 @@ export function registerLanguageServerMonacoProviders(
       }
 
       try {
+        if (payload.path) {
+          await context.flushPendingDocumentChange(payload.path);
+
+          if (
+            !isStoredLanguageServerPayloadActive(
+              context,
+              payload.rootPath,
+              payload.sessionId,
+            )
+          ) {
+            return;
+          }
+        }
+
         const edit = await context.featuresGateway.executeCommand(
           payload.rootPath,
           payload.command,
@@ -290,6 +313,13 @@ export function registerLanguageServerMonacoProviders(
           resolveCodeLens(monaco, context, model, lens),
       })
     : { dispose: () => undefined };
+  const inlayHints = monaco.languages.registerInlayHintsProvider
+    ? monaco.languages.registerInlayHintsProvider("php", {
+        provideInlayHints: (model, range) =>
+          provideInlayHints(monaco, context, model, range),
+        resolveInlayHint: (hint) => resolveInlayHint(monaco, context, hint),
+      })
+    : { dispose: () => undefined };
   const foldingRange = monaco.languages.registerFoldingRangeProvider
     ? monaco.languages.registerFoldingRangeProvider("php", {
         provideFoldingRanges: (model) =>
@@ -355,6 +385,7 @@ export function registerLanguageServerMonacoProviders(
       documentSymbol.dispose();
       documentLink.dispose();
       codeLens.dispose();
+      inlayHints.dispose();
       foldingRange.dispose();
       documentFormatting.dispose();
       rangeFormatting.dispose();
@@ -1037,6 +1068,121 @@ async function resolveCodeLens(
   }
 }
 
+async function provideInlayHints(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+): Promise<Monaco.languages.InlayHintList> {
+  const request = featureDocumentRequestContext(context, model, "inlayHint");
+
+  if (!request) {
+    return inlayHintList();
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return inlayHintList();
+    }
+
+    const hints = await context.featuresGateway.inlayHints(
+      request.rootPath,
+      request.path,
+      toLanguageServerRange(range),
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return inlayHintList();
+    }
+
+    return inlayHintList(
+      hints.map((hint) =>
+        toMonacoInlayHint(
+          monaco,
+          request.rootPath,
+          request.path,
+          request.sessionId,
+          hint,
+        ),
+      ),
+    );
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return inlayHintList();
+  }
+}
+
+async function resolveInlayHint(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  hint: Monaco.languages.InlayHint,
+): Promise<Monaco.languages.InlayHint> {
+  const backedHint = hint as LanguageServerBackedInlayHint;
+
+  if (
+    !backedHint.__languageServerInlayHint ||
+    !backedHint.__sourcePath ||
+    !backedHint.__workspaceRoot ||
+    backedHint.__languageServerSessionId == null ||
+    !isStoredLanguageServerPayloadActive(
+      context,
+      backedHint.__workspaceRoot,
+      backedHint.__languageServerSessionId,
+    )
+  ) {
+    return hint;
+  }
+
+  try {
+    await context.flushPendingDocumentChange(backedHint.__sourcePath);
+
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedHint.__workspaceRoot,
+        backedHint.__languageServerSessionId,
+      )
+    ) {
+      return hint;
+    }
+
+    const resolved = await context.featuresGateway.resolveInlayHint(
+      backedHint.__workspaceRoot,
+      backedHint.__languageServerInlayHint,
+    );
+
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedHint.__workspaceRoot,
+        backedHint.__languageServerSessionId,
+      )
+    ) {
+      return hint;
+    }
+
+    return toMonacoInlayHint(
+      monaco,
+      backedHint.__workspaceRoot,
+      backedHint.__sourcePath,
+      backedHint.__languageServerSessionId,
+      resolved,
+    );
+  } catch (error) {
+    if (
+      isStoredLanguageServerPayloadActive(
+        context,
+        backedHint.__workspaceRoot,
+        backedHint.__languageServerSessionId,
+      )
+    ) {
+      context.reportError(error);
+    }
+
+    return hint;
+  }
+}
+
 async function provideNavigationLocations(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
@@ -1290,6 +1436,15 @@ function codeLensList(
   };
 }
 
+function inlayHintList(
+  hints: Monaco.languages.InlayHint[] = [],
+): Monaco.languages.InlayHintList {
+  return {
+    dispose: () => undefined,
+    hints,
+  };
+}
+
 function isUnexpectedBareIdentifierMarker(
   marker: Monaco.editor.IMarkerData,
 ): boolean {
@@ -1508,11 +1663,13 @@ function toMonacoLanguageServerCommand(
   sessionId: number,
   command: LanguageServerCodeActionCommand,
   fallbackTitle: string,
+  path?: string,
 ): Monaco.languages.Command {
   return {
     arguments: [
       {
         command,
+        ...(path ? { path } : {}),
         rootPath,
         sessionId,
       } satisfies ExecuteCommandPayload,
@@ -1546,6 +1703,107 @@ function toMonacoCodeLens(
       : {}),
     range: toMonacoRange(monaco, lens.range),
   };
+}
+
+function toMonacoInlayHint(
+  monaco: MonacoApi,
+  rootPath: string,
+  sourcePath: string,
+  sessionId: number,
+  hint: LanguageServerInlayHint,
+): LanguageServerBackedInlayHint {
+  const kind = monacoInlayHintKindFromLspKind(monaco, hint.kind);
+  const monacoHint: LanguageServerBackedInlayHint = {
+    label: toMonacoInlayHintLabel(
+      monaco,
+      rootPath,
+      sourcePath,
+      sessionId,
+      hint.label,
+    ),
+    paddingLeft: hint.paddingLeft,
+    paddingRight: hint.paddingRight,
+    position: {
+      column: hint.position.character + 1,
+      lineNumber: hint.position.line + 1,
+    },
+    ...(kind != null ? { kind } : {}),
+    ...(hint.textEdits?.length
+      ? {
+          textEdits: hint.textEdits.map((edit) =>
+            toMonacoTextEdit(monaco, edit),
+          ),
+        }
+      : {}),
+    tooltip: hint.tooltip ?? undefined,
+  };
+
+  Object.defineProperties(monacoHint, {
+    __languageServerInlayHint: {
+      value: hint,
+    },
+    __languageServerSessionId: {
+      value: sessionId,
+    },
+    __sourcePath: {
+      value: sourcePath,
+    },
+    __workspaceRoot: {
+      value: rootPath,
+    },
+  });
+
+  return monacoHint;
+}
+
+function toMonacoInlayHintLabel(
+  monaco: MonacoApi,
+  rootPath: string,
+  sourcePath: string,
+  sessionId: number,
+  label: LanguageServerInlayHint["label"],
+): Monaco.languages.InlayHint["label"] {
+  if (typeof label === "string") {
+    return label;
+  }
+
+  return label.map((part) => {
+    const [location] = part.location
+      ? toMonacoLocation(monaco, rootPath, part.location)
+      : [];
+
+    return {
+      ...(part.command
+        ? {
+            command: toMonacoLanguageServerCommand(
+              rootPath,
+              sessionId,
+              part.command,
+              part.command.title,
+              sourcePath,
+            ),
+          }
+        : {}),
+      label: part.label,
+      ...(location ? { location } : {}),
+      ...(part.tooltip ? { tooltip: part.tooltip } : {}),
+    };
+  });
+}
+
+function monacoInlayHintKindFromLspKind(
+  monaco: MonacoApi,
+  kind: number | null,
+): Monaco.languages.InlayHintKind | undefined {
+  if (kind === 1) {
+    return monaco.languages.InlayHintKind.Type;
+  }
+
+  if (kind === 2) {
+    return monaco.languages.InlayHintKind.Parameter;
+  }
+
+  return undefined;
 }
 
 function toMonacoCodeLensCommand(
@@ -2890,6 +3148,7 @@ function featureDocumentRequestContext(
     | "formatting"
     | "hover"
     | "implementation"
+    | "inlayHint"
     | "linkedEditingRange"
     | "onTypeFormatting"
     | "prepareRename"
