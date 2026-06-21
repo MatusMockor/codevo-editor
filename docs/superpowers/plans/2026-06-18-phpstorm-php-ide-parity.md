@@ -4390,3 +4390,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `43ba25e9 Complete Laravel resource route target search`.
+
+## Slice: Laravel Named Relation Strings - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `552f3241 Record Laravel resource route target search commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Provide Laravel relation-string navigation and completions when PHP 8 named arguments are used.
+
+### Implementation Choice
+
+- Allow first-argument relation strings through named `relation:` and `relations:` arguments.
+- Support both direct string arguments and array relation arguments such as `with(relations: ['children.parent'])`.
+- Tighten positional relation string detection so unsupported named arguments such as `label:` are ignored.
+- Preserve incomplete-string completion such as `$comment->load('chi`.
+- Add domain coverage for navigation contexts, completion contexts, named array relation paths, and unsupported named arguments.
+- Add workbench coverage proving relation completions work inside `load(relations: ...)` and `whereHas(relation: ...)`.
+
+### Acceptance Criteria
+
+- `load(relations: 'children')` resolves and completes relation names.
+- `with(relations: ['children.parent'])` resolves nested relation paths.
+- `whereHas(relation: 'attachments', ...)` resolves and completes relation names.
+- Unsupported named arguments such as `label:` do not produce relation contexts.
+- Focused/full navigation and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts src/application/useWorkbenchController.preview.test.tsx -t "relation strings in named arguments|relation string completion contexts in named arguments|completes Laravel relation strings from the owning model|opens Laravel relation methods from relation-name strings"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `28afa83e Complete Laravel named relation strings`.
