@@ -6538,3 +6538,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `152df127 Support spaced generic PHPDoc method navigation`.
+
+## Slice: Laravel LoadMorph Aggregate Relation Strings - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `26989ce0 Record spaced generic PHPDoc navigation commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Make Laravel relation-string navigation and completion recognize aggregate `loadMorph*` relation methods.
+
+### Implementation Choice
+
+- Extend the existing Laravel relation-string method allowlist with `loadMorphAggregate`, `loadMorphAvg`, `loadMorphMax`, `loadMorphMin`, and `loadMorphSum`.
+- Add domain coverage for first-argument relation detection across all five methods.
+- Add completion-context coverage for an incomplete `loadMorphAvg` first argument while preserving non-relation argument filtering.
+
+### Acceptance Criteria
+
+- Relation strings in aggregate `loadMorph*` calls resolve to Laravel relation-string contexts.
+- Completion context works in the first argument of aggregate `loadMorph*` calls.
+- Existing Laravel relation-string parsing remains unchanged.
+- Focused/full navigation tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpNavigation.test.ts -t "Laravel relation string"`
+- PASS: `npm test -- src/domain/phpNavigation.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

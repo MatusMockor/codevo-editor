@@ -369,6 +369,11 @@ class CommentController
         Comment::query()->orWhereMorphDoesntHaveRelation('orMorphFilteredChildren', [Post::class], 'is_visible', true);
         Comment::query()->whereDoesntHaveMorph('ghostableComments', [Post::class], fn ($query) => $query);
         Comment::query()->orWhereDoesntHaveMorph('archivableComments', [Post::class], fn ($query) => $query);
+        $comment->loadMorphAggregate('aggregateCommentable', [Post::class => ['likes']], 'votes', 'sum');
+        $comment->loadMorphAvg('avgCommentable', [Post::class => ['likes']], 'votes');
+        $comment->loadMorphMax('maxCommentable', [Post::class => ['likes']], 'votes');
+        $comment->loadMorphMin('minCommentable', [Post::class => ['likes']], 'votes');
+        $comment->loadMorphSum('sumCommentable', [Post::class => ['likes']], 'votes');
     }
 }
 `;
@@ -523,6 +528,51 @@ class CommentController
       methodName: "orWhereDoesntHaveMorph",
       receiverExpression: "Comment::query()",
       relationName: "archivableComments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'aggregateCommentable'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "loadMorphAggregate",
+      receiverExpression: "$comment",
+      relationName: "aggregateCommentable",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'avgCommentable'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "loadMorphAvg",
+      receiverExpression: "$comment",
+      relationName: "avgCommentable",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'maxCommentable'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "loadMorphMax",
+      receiverExpression: "$comment",
+      relationName: "maxCommentable",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'minCommentable'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "loadMorphMin",
+      receiverExpression: "$comment",
+      relationName: "minCommentable",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'sumCommentable'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "loadMorphSum",
+      receiverExpression: "$comment",
+      relationName: "sumCommentable",
     });
   });
 
@@ -687,6 +737,7 @@ class CommentController
         Comment::query()->orWhereMorphDoesntHaveRelation('orMorphFilteredChi', [Post::class], 'is_visible', true);
         Comment::query()->whereDoesntHaveMorph('ghostableCom', [Post::class], fn ($query) => $query);
         Comment::query()->orWhereDoesntHaveMorph('archivableCom', [Post::class], fn ($query) => $query);
+        $comment->loadMorphAvg('avgCom', [Post::class => ['likes']], 'votes');
     }
 }
 `;
@@ -882,6 +933,17 @@ class CommentController
       methodName: "orWhereDoesntHaveMorph",
       prefix: "archivableCom",
       receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "loadMorphAvg('avgCom"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "loadMorphAvg",
+      prefix: "avgCom",
+      receiverExpression: "$comment",
     });
   });
 
