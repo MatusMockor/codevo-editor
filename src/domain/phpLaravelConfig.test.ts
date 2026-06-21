@@ -109,13 +109,36 @@ class Controller {}
     });
   });
 
-  it("ignores interpolation, update arrays, and non-config calls", () => {
+  it("detects Laravel config update array keys", () => {
+    const samples = [
+      ["config(['app.timezone' => 'UTC'])", "app.timezone"],
+      ["config(key: ['app.name' => 'Codevo'])", "app.name"],
+    ] as const;
+
+    for (const [expression, key] of samples) {
+      const source = `<?php\n\n${expression};\n`;
+
+      expect(
+        phpLaravelConfigReferenceContextAt(source, positionAfter(source, key)),
+      ).toMatchObject({
+        call: "config",
+        key,
+        prefix: key,
+      });
+    }
+  });
+
+  it("ignores interpolation, unsupported update arrays, and non-config calls", () => {
     const interpolated = `<?php\n\nreturn config("app.$name");\n`;
-    const updateArray = `<?php\n\nconfig(['app.name' => 'Codevo']);\n`;
     const wrongCall = `<?php\n\nreturn trans('app.name');\n`;
     const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Config;\n\n#[Config(default: 'app.name')]\nclass Controller {}\n`;
     const nestedAttributeCall = `<?php\n\n#[Example(Config('app.name'))]\nclass Controller {}\n`;
     const foreignAttribute = `<?php\n\nuse App\\Attributes\\Config;\n\n#[Config('app.name')]\nclass Controller {}\n`;
+    const updateArrayValue = `<?php\n\nconfig(['app.label' => 'app.name']);\n`;
+    const updateArrayElement = `<?php\n\nconfig(['app.name']);\n`;
+    const nestedUpdateArray = `<?php\n\nconfig(['app' => ['name' => 'Codevo']]);\n`;
+    const wrongUpdateArrayCall = `<?php\n\ntrans(['app.name' => 'Codevo']);\n`;
+    const repositoryArrayArgument = `<?php\n\nConfig::get(['app.name' => 'Codevo']);\n`;
 
     expect(
       phpLaravelConfigReferenceContextAt(
@@ -125,12 +148,15 @@ class Controller {}
     ).toBeNull();
     expect(
       phpLaravelConfigReferenceContextAt(
-        updateArray,
-        positionAfter(updateArray, "app.name"),
+        wrongCall,
+        positionAfter(wrongCall, "app.na"),
       ),
     ).toBeNull();
     expect(
-      phpLaravelConfigReferenceContextAt(wrongCall, positionAfter(wrongCall, "app.na")),
+      phpLaravelConfigReferenceContextAt(
+        updateArrayValue,
+        positionAfter(updateArrayValue, "app.name"),
+      ),
     ).toBeNull();
     expect(
       phpLaravelConfigReferenceContextAt(
@@ -148,6 +174,30 @@ class Controller {}
       phpLaravelConfigReferenceContextAt(
         foreignAttribute,
         positionAfter(foreignAttribute, "app.name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        updateArrayElement,
+        positionAfter(updateArrayElement, "app.name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        nestedUpdateArray,
+        positionAfter(nestedUpdateArray, "name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        wrongUpdateArrayCall,
+        positionAfter(wrongUpdateArrayCall, "app.name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        repositoryArrayArgument,
+        positionAfter(repositoryArrayArgument, "app.name"),
       ),
     ).toBeNull();
   });

@@ -1,7 +1,9 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
+  phpStringArrayArgumentKeyContextAt,
   phpStringAttributeArgumentContextAt,
   type PhpStringAttributeArgumentContext,
+  type PhpStringArrayArgumentKeyContext,
 } from "./phpStringArgumentContext";
 
 const laravelConfigRepositoryMethods = [
@@ -75,6 +77,15 @@ export function phpLaravelConfigReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelConfigReferenceContext | null {
+  const updateArrayKeyContext = phpLaravelConfigUpdateArrayKeyContextAt(
+    source,
+    position,
+  );
+
+  if (updateArrayKeyContext) {
+    return updateArrayKeyContext;
+  }
+
   const attributeContext = phpLaravelConfigAttributeReferenceContextAt(
     source,
     position,
@@ -121,6 +132,33 @@ export function phpLaravelConfigReferenceContextAt(
     key,
     position: editorPositionAtOffset(source, literal.quoteStart + 1),
     prefix,
+  };
+}
+
+function phpLaravelConfigUpdateArrayKeyContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelConfigReferenceContext | null {
+  const argument = phpStringArrayArgumentKeyContextAt(source, position);
+
+  if (!argument || !isLaravelConfigUpdateArrayArgument(source, argument)) {
+    return null;
+  }
+
+  const key = argument.closed ? argument.value : argument.prefix;
+
+  if (
+    !isUsableLaravelConfigKeyPrefix(argument.prefix) ||
+    !isUsableLaravelConfigKeyPrefix(key)
+  ) {
+    return null;
+  }
+
+  return {
+    call: "config",
+    key,
+    position: argument.position,
+    prefix: argument.prefix,
   };
 }
 
@@ -325,6 +363,13 @@ function isFirstArgument(argument: PhpArgumentContext): boolean {
     argument.argumentIndex === 0 ||
     argument.argumentName?.toLowerCase() === "key"
   );
+}
+
+function isLaravelConfigUpdateArrayArgument(
+  source: string,
+  argument: PhpStringArrayArgumentKeyContext,
+): boolean {
+  return laravelConfigReferenceCallAt(source, argument) === "config";
 }
 
 function isLaravelConfigAttributeKeyArgument(

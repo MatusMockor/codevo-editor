@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   phpStringArrayArgumentElementContextAt,
+  phpStringArrayArgumentKeyContextAt,
   phpStringArgumentContextAt,
   phpStringAttributeArgumentContextAt,
 } from "./phpStringArgumentContext";
@@ -53,6 +54,22 @@ describe("phpStringArgumentContext", () => {
       arrayElementIndex: 1,
       prefix: "slack",
       value: "slack",
+    });
+  });
+
+  it("detects top-level string keys inside array arguments", () => {
+    const source = `<?php\n\nconfig(['app.name' => 'Codevo']);\n`;
+
+    expect(
+      phpStringArrayArgumentKeyContextAt(
+        source,
+        positionAfter(source, "app.name"),
+      ),
+    ).toMatchObject({
+      argumentIndex: 0,
+      argumentName: null,
+      prefix: "app.name",
+      value: "app.name",
     });
   });
 
@@ -266,6 +283,25 @@ class Controller {}
         direct,
         positionAfter(direct, "single"),
       ),
+    ).toBeNull();
+  });
+
+  it("keeps array keys separate from values, elements, and nested arrays", () => {
+    const value = `<?php\n\nconfig(['app.name' => 'Codevo']);\n`;
+    const element = `<?php\n\nconfig(['app.name']);\n`;
+    const nested = `<?php\n\nconfig(['app' => ['name' => 'Codevo']]);\n`;
+
+    expect(
+      phpStringArrayArgumentKeyContextAt(value, positionAfter(value, "Codevo")),
+    ).toBeNull();
+    expect(
+      phpStringArrayArgumentKeyContextAt(
+        element,
+        positionAfter(element, "app.name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpStringArrayArgumentKeyContextAt(nested, positionAfter(nested, "name")),
     ).toBeNull();
   });
 });

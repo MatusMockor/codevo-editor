@@ -17,6 +17,11 @@ export interface PhpStringArrayArgumentElementContext
   arrayOpen: number;
 }
 
+export interface PhpStringArrayArgumentKeyContext
+  extends PhpStringArgumentContext {
+  arrayOpen: number;
+}
+
 export interface PhpStringAttributeArgumentContext
   extends PhpStringArgumentContext {
   attributeName: string;
@@ -118,6 +123,61 @@ export function phpStringArrayArgumentElementContextAt(
   return {
     ...argument,
     arrayElementIndex,
+    arrayOpen,
+    closed: literal.closed,
+    position: editorPositionAtOffset(source, literal.quoteStart + 1),
+    prefix: source.slice(
+      literal.quoteStart + 1,
+      Math.min(offset, literal.quoteEnd),
+    ),
+    value: literal.value,
+  };
+}
+
+export function phpStringArrayArgumentKeyContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpStringArrayArgumentKeyContext | null {
+  const offset = offsetAtPosition(source, position);
+  const literal = stringLiteralAtOffset(source, offset);
+
+  if (!literal) {
+    return null;
+  }
+
+  const arrayOpen = enclosingShortArrayOpenAt(source, literal);
+
+  if (arrayOpen === null) {
+    return null;
+  }
+
+  const arrayClose = matchingBracketOffset(source, arrayOpen, "[", "]");
+
+  if (arrayClose !== null && literal.quoteStart > arrayClose) {
+    return null;
+  }
+
+  if (!isTopLevelBetween(source, arrayOpen + 1, literal.quoteStart)) {
+    return null;
+  }
+
+  const arrayEnd = arrayClose ?? source.length;
+
+  if (
+    topLevelArrayStringLiteralRole(source, arrayOpen, arrayEnd, literal) !==
+    "key"
+  ) {
+    return null;
+  }
+
+  const argument = arrayArgumentContextAt(source, arrayOpen);
+
+  if (!argument || !isPhpCodeOffset(source, argument.openParen)) {
+    return null;
+  }
+
+  return {
+    ...argument,
     arrayOpen,
     closed: literal.closed,
     position: editorPositionAtOffset(source, literal.quoteStart + 1),
