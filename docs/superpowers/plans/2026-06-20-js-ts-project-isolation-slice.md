@@ -6925,3 +6925,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP File Rename Controller Wiring
 
 - Committed as `dc8b5ecd Wire PHP file rename LSP hooks`.
+
+## Next Slice: PHP Workspace Edit File Operation Reconciliation
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `054a1052 Record PHP file rename controller wiring commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- JS/TS workspace edits already reconcile open tabs and refresh directories when LSP workspace edits include create, rename, or delete file operations.
+- PHP workspace edits currently apply text/file changes but do not reconcile open PHP tabs or refresh affected directories for file operations.
+- PhpStorm-like PHP/Laravel workflows need PHP LSP workspace edits to keep open tabs and the file tree in sync after file operations.
+
+### Implementation Choice
+
+- Reuse the existing workspace edit file-operation reconciliation helpers for PHP edits.
+- Sync/close affected PHP language-server documents before reconciling renamed or deleted tabs.
+- Refresh directories affected by PHP workspace edit file operations with the same active-root guard pattern used by JS/TS.
+
+### Acceptance Criteria
+
+- PHP workspace edit file operations refresh affected directories.
+- PHP open tabs are renamed/deleted consistently after workspace edit file operations.
+- Workspace root filtering and stale workspace guards continue to prevent cross-tab leaks.
+- Focused preview tests, `npm run check`, full relevant suites, and `git diff --check` pass.
+
+### Verification: PHP Workspace Edit File Operation Reconciliation
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP workspace edit file operations|PHP tabs after workspace edit|PHP workspace edits"` (4 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx` (342 tests)
+- PASS: `npm test` (65 files, 903 tests)
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Workspace Edit File Operation Reconciliation
+
+- Pending commit after verification.

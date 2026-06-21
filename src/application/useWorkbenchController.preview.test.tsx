@@ -8531,6 +8531,280 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
   });
 
+  it("filters PHP workspace edit file operations before applying closed files", async () => {
+    const openPath = "/workspace/src/User.php";
+    const closedPath = "/workspace/src/Helper.php";
+    const outsidePath = "/other/src/Outside.php";
+    const filteredEdit = {
+      changes: {
+        [fileUriFromPath(closedPath)]: [
+          {
+            newText: "<?php\nfinal class Helper {}\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+      fileOperations: [
+        {
+          kind: "create" as const,
+          uri: fileUriFromPath("/workspace/src/Created.php"),
+        },
+        {
+          kind: "rename" as const,
+          newUri: fileUriFromPath("/workspace/src/Account.php"),
+          oldUri: fileUriFromPath("/workspace/src/OldName.php"),
+        },
+      ],
+    };
+    const edit = {
+      changes: {
+        ...filteredEdit.changes,
+        [fileUriFromPath(outsidePath)]: [
+          {
+            newText: "<?php\nfinal class Outside {}\n",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+      fileOperations: [
+        ...filteredEdit.fileOperations,
+        {
+          kind: "delete" as const,
+          uri: fileUriFromPath("/other/src/OutsideDelete.php"),
+        },
+      ],
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === openPath) {
+          return "<?php\nclass User {}\n";
+        }
+
+        if (path === outsidePath) {
+          return "<?php\nclass Outside {}\n";
+        }
+
+        return "";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(outsidePath, "Outside.php"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "User.php"));
+    });
+
+    await act(async () => {
+      await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        editedOpenPaths: [openPath],
+        rootPath: "/workspace",
+      });
+    });
+
+    expect(
+      getWorkbench().openDocuments.find((document) => document.path === openPath)
+        ?.content,
+    ).toBe("<?php\nclass User {}\n");
+    expect(
+      getWorkbench().openDocuments.find((document) => document.path === outsidePath)
+        ?.content,
+    ).toBe("<?php\nclass Outside {}\n");
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      filteredEdit,
+      expect.arrayContaining([openPath, outsidePath]),
+    );
+  });
+
+  it("refreshes directories affected by PHP workspace edit file operations", async () => {
+    const filteredEdit = {
+      changes: {},
+      fileOperations: [
+        {
+          kind: "create" as const,
+          uri: fileUriFromPath("/workspace/src/Created.php"),
+        },
+        {
+          kind: "rename" as const,
+          newUri: fileUriFromPath("/workspace/app/Models/Account.php"),
+          oldUri: fileUriFromPath("/workspace/src/User.php"),
+        },
+        {
+          kind: "delete" as const,
+          uri: fileUriFromPath("/workspace/tests/UserTest.php"),
+        },
+      ],
+    };
+    const edit = {
+      changes: {},
+      fileOperations: [
+        ...filteredEdit.fileOperations,
+        {
+          kind: "delete" as const,
+          uri: fileUriFromPath("/other/tests/OutsideTest.php"),
+        },
+      ],
+    };
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace/src") {
+        return [fileEntry("/workspace/src/Created.php", "Created.php")];
+      }
+
+      if (path === "/workspace/app/Models") {
+        return [fileEntry("/workspace/app/Models/Account.php", "Account.php")];
+      }
+
+      if (path === "/workspace/tests") {
+        return [];
+      }
+
+      return [];
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.workspaceGateways.files.readDirectory).mockClear();
+
+    await act(async () => {
+      await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        rootPath: "/workspace",
+      });
+    });
+
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", filteredEdit, []);
+    expect(
+      vi
+        .mocked(dependencies.workspaceGateways.files.readDirectory)
+        .mock.calls.map(([path]) => path),
+    ).toEqual(["/workspace/src", "/workspace/app/Models", "/workspace/tests"]);
+    expect(getWorkbench().entriesByDirectory["/workspace/app/Models"]).toEqual([
+      fileEntry("/workspace/app/Models/Account.php", "Account.php"),
+    ]);
+  });
+
+  it("reconciles open PHP tabs after workspace edit file operations", async () => {
+    const oldPath = "/workspace/src/User.php";
+    const newPath = "/workspace/src/Account.php";
+    const deletedPath = "/workspace/src/DeleteMe.php";
+    const edit = {
+      changes: {
+        [fileUriFromPath(newPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 10, line: 1 },
+              start: { character: 6, line: 1 },
+            },
+          },
+        ],
+      },
+      fileOperations: [
+        {
+          kind: "rename" as const,
+          newUri: fileUriFromPath(newPath),
+          oldUri: fileUriFromPath(oldPath),
+        },
+        {
+          kind: "delete" as const,
+          uri: fileUriFromPath(deletedPath),
+        },
+      ],
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 28,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "<?php\nclass User {}\n";
+        }
+
+        if (path === deletedPath) {
+          return "<?php\nclass DeleteMe {}\n";
+        }
+
+        return "";
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(deletedPath, "DeleteMe.php"));
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await Promise.all([
+        getWorkbench().flushPendingLanguageServerDocument(oldPath),
+        getWorkbench().flushPendingLanguageServerDocument(deletedPath),
+      ]);
+    });
+    vi.mocked(dependencies.documentSyncGateway.didClose).mockClear();
+    vi.mocked(dependencies.documentSyncGateway.didOpen).mockClear();
+
+    await act(async () => {
+      await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        rootPath: "/workspace",
+      });
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      newPath,
+    ]);
+    expect(getWorkbench().activeDocument?.path).toBe(newPath);
+    expect(getWorkbench().activeDocument?.name).toBe("Account.php");
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\nclass Account {}\n",
+    );
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+    );
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      deletedPath,
+    );
+    expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path: newPath,
+        text: "<?php\nclass Account {}\n",
+      }),
+    );
+  });
+
   it("does not apply stale versioned JavaScript TypeScript workspace edits to open documents", async () => {
     const openPath = "/workspace/src/User.ts";
     const uri = fileUriFromPath(openPath);

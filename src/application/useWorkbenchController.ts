@@ -5413,6 +5413,74 @@ export function useWorkbenchController(
       [refreshDirectory],
     );
 
+  const reconcilePhpWorkspaceEditFileOperations = useCallback(
+    async (edit: LanguageServerWorkspaceEdit, rootPath: string) => {
+      const fileOperations = edit.fileOperations ?? [];
+
+      if (fileOperations.length === 0) {
+        return;
+      }
+
+      const documentsToClose = Object.values(documentsRef.current).filter(
+        (document) =>
+          isLanguageServerDocument(document) &&
+          reconciledPathForWorkspaceFileOperations(
+            document.path,
+            fileOperations,
+          ) !== document.path,
+      );
+
+      await Promise.all(
+        documentsToClose.map((document) => syncClosedDocument(document)),
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return;
+      }
+
+      setDocuments((current) =>
+        reconciledDocumentsForWorkspaceEditFileOperations(current, edit),
+      );
+      setOpenPaths((current) =>
+        reconciledEditorPathsForWorkspaceFileOperations(current, fileOperations),
+      );
+      setPreviewPath((current) =>
+        current
+          ? reconciledPathForWorkspaceFileOperations(current, fileOperations)
+          : current,
+      );
+      setActivePath((current) =>
+        current
+          ? reconciledActivePathForWorkspaceFileOperations(
+              current,
+              openPathsRef.current,
+              previewPathRef.current,
+              fileOperations,
+            )
+          : current,
+      );
+    },
+    [syncClosedDocument],
+  );
+
+  const refreshPhpWorkspaceEditFileOperationDirectories = useCallback(
+    async (edit: LanguageServerWorkspaceEdit, rootPath: string) => {
+      const directories =
+        directoryPathsForWorkspaceEditFileOperations(edit).filter((directory) =>
+          isSessionPathInWorkspace(rootPath, directory),
+        );
+
+      for (const directory of directories) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          return;
+        }
+
+        await refreshDirectory(directory);
+      }
+    },
+    [refreshDirectory],
+  );
+
   const applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = useCallback(
     async (
       edit: LanguageServerWorkspaceEdit,
@@ -5498,8 +5566,28 @@ export function useWorkbenchController(
         rootEdit,
         openDocumentPaths,
       );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      await reconcilePhpWorkspaceEditFileOperations(rootEdit, requestedRoot);
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      await refreshPhpWorkspaceEditFileOperationDirectories(
+        rootEdit,
+        requestedRoot,
+      );
     },
-    [applyWorkspaceEditToOpenDocuments, workspaceFiles],
+    [
+      applyWorkspaceEditToOpenDocuments,
+      reconcilePhpWorkspaceEditFileOperations,
+      refreshPhpWorkspaceEditFileOperationDirectories,
+      workspaceFiles,
+    ],
   );
 
   const applyJavaScriptTypeScriptRenameEdits = useCallback(
