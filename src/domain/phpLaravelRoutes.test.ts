@@ -73,6 +73,7 @@ Redirect::temporarySignedRoute('comments.preview-temporary', now()->addHour());
 URL::route('comments.feed');
 URL::signedRoute('comments.unsubscribe');
 URL::temporarySignedRoute('comments.preview-expiring', now()->addHour());
+Uri::route('comments.uri');
 Uri::signedRoute('comments.secure');
 Uri::temporarySignedRoute('comments.secure-expiring', now()->addHour());
 Route::has('comments.destroy');
@@ -198,6 +199,17 @@ Route::has('comments.destroy');
       name: "comments.preview-expiring",
       position: positionOf(source, "comments.preview-expiring"),
       prefix: "comments.preview-expiring",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.uri"),
+      ),
+    ).toEqual({
+      call: "Uri::route",
+      name: "comments.uri",
+      position: positionOf(source, "comments.uri"),
+      prefix: "comments.uri",
     });
     expect(
       phpLaravelNamedRouteReferenceContextAt(
