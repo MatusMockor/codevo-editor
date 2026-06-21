@@ -377,4 +377,4 @@ This prevents project A diagnostics, completion, or implementation results from 
 
 #### Commit Status
 
-- Pending implementation commit.
+- Committed as `82cdcf27 Cover final workspace disposal fallback`.
