@@ -4050,3 +4050,47 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `d799b5e7 Complete Laravel named route arguments`.
+
+## Slice: Laravel Named Route Definitions - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `315daa71 Record Laravel named route arguments commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Include PHP 8 named arguments in Laravel route-name definition extraction.
+
+### Implementation Choice
+
+- Extend the closed-literal route argument helper with optional allowed named argument names.
+- Use `name:` support for chained `->name(...)` route definitions.
+- Use `name:` support for `Route::name(...)->group(...)` and chained route group name prefixes.
+- Keep `as(...)`, resource route parsing, and unsupported `name(label: ...)` cases conservative.
+- Add parser coverage for named route definitions, named group prefixes, and unsupported named route definition arguments.
+- Add workbench coverage proving route-name completions can be sourced from `->name(name: 'comments.show')`.
+
+### Acceptance Criteria
+
+- `->name(name: '...')` route definitions are indexed.
+- `Route::name(name: '...')->group(...)` prefixes are applied.
+- Unsupported named route definition arguments remain ignored.
+- Laravel named-route completions work when route definitions use named arguments.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "named route definition arguments|chained Laravel route definitions|combines group prefixes|route helper strings"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `b0ba1773 Complete Laravel named route definitions`.
