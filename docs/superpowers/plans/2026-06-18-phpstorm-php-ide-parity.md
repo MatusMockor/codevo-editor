@@ -2783,3 +2783,39 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `de1e1a5c Cover Laravel relation method terminal variants`.
+
+## Slice: Laravel Relation Method Finder Variants - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `37751d17 Record editor defaults root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock relation-method semantic inference across common Laravel finder terminals and scalar terminal boundaries.
+
+### Implementation Choice
+
+- Extend the relation-method semantic fixture with `find()`, `findOr()`, `findSole()`, `firstWhere()`, `findMany()`, and `findMany()->first()`.
+- Add a scalar `value()->first()` negative assertion so scalar terminal calls do not leak model inference into invalid follow-up chains.
+- Keep the slice focused on coverage because the existing Laravel semantic resolver already handles these variants.
+
+### Acceptance Criteria
+
+- Relation-method chains ending in `find`, `findOr`, `findSole`, and `firstWhere` infer `App\Models\Post`.
+- `$this->posts()->findMany()` infers `Illuminate\Database\Eloquent\Collection<int, App\Models\Post>`.
+- `$this->posts()->findMany()->first()` infers `App\Models\Post`.
+- `$this->posts()->value('title')->first()` does not infer a related model.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`

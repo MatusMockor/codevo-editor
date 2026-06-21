@@ -1084,6 +1084,13 @@ class Comment extends Model
         $relationMethodPost = $this->posts()->first();
         $relationMethodRequiredPost = $this->posts()->firstOrFail();
         $relationMethodSolePost = $this->posts()->sole();
+        $relationMethodFoundPost = $this->posts()->find(1);
+        $relationMethodFoundOrPost = $this->posts()->findOr(1, fn () => null);
+        $relationMethodFoundSolePost = $this->posts()->findSole(1);
+        $relationMethodFirstWherePost = $this->posts()->firstWhere('published', true);
+        $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
+        $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
+        $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
         $relationMethodPosts = $this->posts()->get();
         $relationMethodCollectionPost = $this->posts()->get()->first();
         $relationMethodLazyPosts = $this->posts()->lazy();
@@ -1121,6 +1128,13 @@ class Comment extends Model
         $relationMethodPost->tit
         $relationMethodRequiredPost->tit
         $relationMethodSolePost->tit
+        $relationMethodFoundPost->tit
+        $relationMethodFoundOrPost->tit
+        $relationMethodFoundSolePost->tit
+        $relationMethodFirstWherePost->tit
+        $relationMethodFoundManyPosts->first()->tit
+        $relationMethodFoundManyPost->tit
+        $relationMethodAfterValueTerminal->tit
         $relationMethodPosts->first()->tit
         $relationMethodCollectionPost->tit
         $relationMethodLazyPosts->first()->tit
@@ -1263,6 +1277,62 @@ class Tag extends Model
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodFoundPost->tit"),
+        "relationMethodFoundPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodFoundOrPost->tit"),
+        "relationMethodFoundOrPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodFoundSolePost->tit"),
+        "relationMethodFoundSolePost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodFirstWherePost->tit"),
+        "relationMethodFirstWherePost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodFoundManyPosts->first()->tit"),
+        "relationMethodFoundManyPosts",
+        laravelOptions,
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Post>");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodFoundManyPost->tit"),
+        "relationMethodFoundManyPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodAfterValueTerminal->tit"),
+        "relationMethodAfterValueTerminal",
+        laravelOptions,
+      ),
+    ).toBeNull();
     expect(
       phpVariableTypeInSource(
         source,
