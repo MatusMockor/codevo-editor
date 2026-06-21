@@ -2674,7 +2674,7 @@ class Controller
       phpFunctionReturnsClassStringArgument(
         `<?php
 /**
- * @template T of object
+ * @psalm-template T of object
  * @psalm-param class-string<T> $className
  * @phpstan-return T
  */

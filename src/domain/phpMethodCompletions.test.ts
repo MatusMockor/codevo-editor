@@ -1906,7 +1906,7 @@ class Comment
 class Container
 {
     /**
-     * @template T of object
+     * @phpstan-template T of object
      * @phpstan-param class-string<T> $className
      * @psalm-return T
      */

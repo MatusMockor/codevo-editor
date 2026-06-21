@@ -8,7 +8,7 @@ export function phpDocClassStringReturnTemplate(
   const templates = new Set<string>();
 
   for (const match of docBlock.matchAll(
-    /@template(?:-[A-Za-z]+)?\s+([A-Za-z_][A-Za-z0-9_]*)\b/g,
+    /@(?:(?:phpstan|psalm)-)?template(?:-[A-Za-z]+)?\s+([A-Za-z_][A-Za-z0-9_]*)\b/g,
   )) {
     const template = match[1];
 

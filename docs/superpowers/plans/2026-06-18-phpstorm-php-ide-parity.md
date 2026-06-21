@@ -7456,3 +7456,41 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `0334d560 Support PHPStan Psalm PHPDoc var tags`.
+
+## Slice: PHPStan Psalm PHPDoc Template Tags - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5a299d3b Record PHPStan Psalm PHPDoc var tag commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat `@phpstan-template` and `@psalm-template` like `@template` for class-string template inference.
+
+### Implementation Choice
+
+- Extend the shared class-string template helper to accept PHPStan/Psalm-prefixed template tags.
+- Convert method and function class-string fixtures to prefixed template tags while keeping prefixed param/return tags.
+
+### Acceptance Criteria
+
+- Method completions still mark class-string template returns with `@phpstan-template`.
+- Generic function class-string detection works with `@psalm-template`.
+- Focused/full domain tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "class-string template"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "generic functions"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
