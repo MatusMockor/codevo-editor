@@ -5934,3 +5934,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Runtime Status No-Workspace Guard
 
 - Committed as `3015bbd0 Guard runtime status after workspace clear`.
+
+## Next Slice: Active Editor Position Workspace Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `27ade8c9 Record runtime no-workspace guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 856 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `activeEditorPositionRef` was not reset when clearing or opening/switching workspaces.
+- A new project tab could run navigation before the editor reported a fresh cursor position and accidentally reuse a cursor position from the previous workspace.
+- JS/TS and PHP provider commands use this ref when no explicit position is supplied.
+
+### Implementation Choice
+
+- Reset `activeEditorPositionRef` when clearing the active workspace.
+- Reset `activeEditorPositionRef` when opening or activating a workspace path.
+- Add a JS/TS navigation regression that seeds a cursor position in `/workspace-a`, switches to `/workspace-b`, opens a file without updating the cursor, and asserts go-to-definition does not call the provider.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears the active editor position ref.
+- Switching/opening a workspace clears the active editor position ref before provider commands run.
+- Existing JS/TS navigation, stale navigation, and provider guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Active Editor Position Workspace Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (323 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 857 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Active Editor Position Workspace Reset Guard
+
+- Committed as `57c21895 Reset editor position on workspace changes`.
