@@ -5551,3 +5551,45 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Editor Reveal Target Reset Guard
 
 - Committed as `ef9af570 Clear editor reveal target on workspace reset`.
+
+## Next Slice: Transient Message Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `5acd89dc Record editor reveal reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 851 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Workspace reset cleared panel/search/reveal state but did not clear the transient status/error message.
+- A message from the previous project tab could remain visible after closing the last tab or opening another workspace.
+
+### Implementation Choice
+
+- Clear `message` when clearing the active workspace.
+- Clear `message` when applying a workspace open reset.
+- Extend the last-tab-close regression by seeding a transient command error message and asserting it clears after close.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears transient messages.
+- Opening another workspace clears transient messages from the previous workspace.
+- Existing stale-message guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Transient Message Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (317 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 851 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Transient Message Reset Guard
+
+- Committed as `48551de2 Clear transient message on workspace reset`.
