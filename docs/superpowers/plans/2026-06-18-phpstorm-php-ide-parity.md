@@ -3677,4 +3677,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending implementation commit.
+- Committed as `64ef5240 Recognize Laravel relationship query helpers`.
