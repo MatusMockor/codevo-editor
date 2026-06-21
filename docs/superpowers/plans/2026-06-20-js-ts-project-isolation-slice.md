@@ -6259,3 +6259,56 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Runtime Diagnostics Background Cache
 
 - Committed as `cf489a7e Cache PHP diagnostics by workspace root`.
+
+## Next Slice: Versioned JavaScript TypeScript Workspace Edits
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `c7c22421 Record PHP diagnostics background cache commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 862 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Planck's JS/TS audit identified a P0 VS Code parity gap: LSP `documentChanges[].textDocument.version` was flattened into plain `changes`.
+- Without the version metadata, stale TypeScript workspace edits could still be pushed into open Monaco models or open controller documents after the document had changed.
+- VS Code-style behavior needs versioned workspace edits to avoid corrupting newer in-memory text.
+
+### Implementation Choice
+
+- Preserve version metadata from backend LSP parsing as `documentVersions`, keyed by document URI.
+- Filter `documentVersions` through the same workspace-root guards used for workspace edit text changes.
+- Carry `documentVersions` through frontend root/path workspace-edit filters.
+- Use version metadata in the JS/TS provider before `pushEditOperations`; stale open-model edits are treated as handled so they do not fall through to the controller/filesystem path.
+- Use the controller's JS/TS LSP document-version map as a second guard before applying workspace edits to open documents.
+
+### Acceptance Criteria
+
+- Versioned documentChanges survive Tauri parsing and frontend workspace edit payloads.
+- Stale versioned TypeScript workspace edits do not mutate open Monaco models.
+- Stale versioned TypeScript workspace edits do not mutate open controller documents.
+- Workspace-root filtering still removes sibling/outside version metadata.
+- Focused provider/controller/Rust tests, full provider tests, full preview controller tests, `npm run check`, full `npm test`, full Tauri lib tests, and `git diff --check` pass.
+
+### Verification: Versioned JavaScript TypeScript Workspace Edits
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "workspace applier|versioned TypeScript workspace edits|rename edits|workspace edits"` (9 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "JavaScript TypeScript workspace edits|versioned JavaScript TypeScript workspace edits|workspace edits before applying closed files"` (3 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml workspace_edit --lib` (10 tests)
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts` (62 tests)
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx` (328 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 864 tests)
+- PASS: `rustfmt --check src-tauri/src/lsp_features.rs src-tauri/src/lsp_session.rs`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (306 tests)
+- PASS: `git diff --check`
+- NOTE: `rustfmt --check src-tauri/src/lsp_features.rs src-tauri/src/lib.rs src-tauri/src/lsp_session.rs` still reports pre-existing unrelated formatting differences in `src-tauri/src/js_ts_file_watcher.rs` and `src-tauri/src/lsp.rs`.
+
+### Commit Status: Versioned JavaScript TypeScript Workspace Edits
+
+- Committed as `8cdefe2d Preserve versioned TypeScript workspace edits`.
