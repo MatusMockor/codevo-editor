@@ -3414,6 +3414,40 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("ignores index start responses that belong to another workspace root", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    vi.mocked(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).mockResolvedValueOnce({
+      databasePath: "/tmp/index.sqlite",
+      rootPath: "/other",
+      status: "started",
+    });
+
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.indexProgressGateway.startInitialMetadataScan,
+    ).toHaveBeenCalledWith("/workspace");
+    expect(getWorkbench().indexProgress).toEqual(
+      expect.objectContaining({
+        rootPath: null,
+        status: "idle",
+      }),
+    );
+    expect(getWorkbench().message).not.toBe("Indexing workspace.");
+  });
+
   it("starts IDE services when a restored PHP workspace is already in IDE mode", async () => {
     const languageServerPlan: LanguageServerPlan = {
       command: {

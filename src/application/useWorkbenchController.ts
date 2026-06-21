@@ -1512,12 +1512,21 @@ export function useWorkbenchController(
         const started = await indexProgressGateway.startInitialMetadataScan(
           rootPath,
         );
-        activeIndexRootRef.current = started.rootPath;
 
         if (!pendingIndexScanRef.current) {
           return;
         }
 
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          return;
+        }
+
+        if (!workspaceRootKeysEqual(started.rootPath, rootPath)) {
+          pendingIndexScanRef.current = false;
+          return;
+        }
+
+        activeIndexRootRef.current = started.rootPath;
         setIndexProgress(startIndexProgress(started));
         setIndexHealthLogs((current) =>
           prependIndexHealthLog(
