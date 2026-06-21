@@ -1108,3 +1108,42 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `fceb1370 Guard metadata index clear errors by active workspace`.
+
+### Slice: PHP Language Server Plan Active Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b76af91c Record metadata index clear guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent delayed PHP language-server plan results or errors from an old project tab from changing the active workspace setup state.
+
+#### Implementation Choice
+
+- Gate `refreshLanguageServerPlan(rootPath)` success and error side effects with `workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)`.
+- Extend the controller test harness so tests can inject a custom `LanguageServerGateway` before initial workspace effects run.
+- Add regressions where `/workspace-a` delays PHP plan resolution, the user switches to `/workspace-b`, and the stale `/workspace-a` success or rejection cannot overwrite `/workspace-b` plan state or surface a Language Server notice.
+
+#### Acceptance Criteria
+
+- Stale PHP language-server plan success responses cannot overwrite the active tab's plan.
+- Stale PHP language-server plan failures cannot create notices after switching project tabs.
+- Existing restored PHP IDE startup behavior still passes.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores stale PHP language server plan results after switching project tabs|ignores stale PHP language server plan errors after switching project tabs|starts IDE services when a restored PHP workspace is already in IDE mode"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `a08db0f7 Guard PHP language server plans by active workspace`.
