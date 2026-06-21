@@ -733,7 +733,6 @@ impl LanguageServerRegistry {
         supervisor.send_request(method, params)
     }
 
-    #[cfg(test)]
     pub fn running_roots(&self) -> Vec<String> {
         let Ok(supervisors) = self.supervisors.lock() else {
             return Vec::new();

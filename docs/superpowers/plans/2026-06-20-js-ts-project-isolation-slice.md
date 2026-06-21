@@ -6165,3 +6165,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: JavaScript TypeScript Rename Workspace Applier
 
 - Committed and pushed as `762ee135 Persist TypeScript rename workspace edits`.
+
+## Next Slice: Managed PHPactor Sibling Cleanup Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `acb02d2e Record TypeScript rename applier commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 861 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Hubble's PHP/Laravel audit identified a P0 workspace-tab isolation bug in managed PHPactor startup.
+- Starting managed PHPactor for `/workspace-b` could call orphan cleanup before the registry start.
+- The cleanup used a broad `pkill -f "{managed phpactor executable} language-server"` pattern that did not include the workspace root.
+- Because all tabs share the same managed PHPactor binary, starting PHPactor in one tab could terminate an already running sibling tab's PHPactor session.
+
+### Implementation Choice
+
+- Make `LanguageServerRegistry::running_roots()` available to runtime code, not just tests.
+- Pass the PHP registry's active roots into managed PHPactor cleanup during PHP runtime start.
+- Allow broad orphan cleanup only for managed PHPactor commands when no active sibling workspace root exists.
+- Preserve cleanup for cold starts where no managed PHPactor root is currently running.
+- Add unit coverage for cold-start cleanup, same-root/trailing-slash cleanup, active sibling suppression, and non-managed command suppression.
+
+### Acceptance Criteria
+
+- Starting managed PHPactor for a new workspace does not run broad orphan cleanup while another workspace tab has an active PHP runtime.
+- Cold-start orphan cleanup still runs for managed PHPactor when there are no active sibling roots.
+- Workspace registry running-root behavior remains unchanged.
+- Targeted managed PHPactor tests, registry isolation tests, full Tauri lib tests, targeted rustfmt check, and `git diff --check` pass.
+
+### Verification: Managed PHPactor Sibling Cleanup Guard
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml managed_phpactor --lib` (4 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml registry_keeps_workspace_sessions_isolated --lib` (1 test)
+- PASS: `rustfmt --check src-tauri/src/managed_phpactor.rs`
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (306 tests)
+- NOTE: broader `rustfmt --check` through `lib.rs` still reports pre-existing unrelated formatting differences in `src-tauri/src/js_ts_file_watcher.rs`, `src-tauri/src/lib.rs`, and `src-tauri/src/lsp.rs`.

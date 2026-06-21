@@ -62,8 +62,12 @@ pub(crate) fn install_managed_phpactor() -> Result<(), String> {
 }
 
 #[cfg(unix)]
-pub(crate) fn cleanup_orphaned_managed_phpactor_processes(command: &LanguageServerCommand) {
-    if !is_managed_phpactor_command(command) {
+pub(crate) fn cleanup_orphaned_managed_phpactor_processes(
+    command: &LanguageServerCommand,
+    root_path: &str,
+    active_root_paths: &[String],
+) {
+    if !should_cleanup_orphaned_managed_phpactor_processes(command, root_path, active_root_paths) {
         return;
     }
 
@@ -79,6 +83,18 @@ pub(crate) fn cleanup_orphaned_managed_phpactor_processes(command: &LanguageServ
             &format!("find {workspace_pattern} -mindepth 1 -newercc .*amp-fs-watch"),
         ])
         .status();
+}
+
+#[cfg(unix)]
+pub(crate) fn should_cleanup_orphaned_managed_phpactor_processes(
+    command: &LanguageServerCommand,
+    root_path: &str,
+    active_root_paths: &[String],
+) -> bool {
+    is_managed_phpactor_command(command)
+        && !active_root_paths
+            .iter()
+            .any(|active_root_path| !workspace_root_keys_equal(active_root_path, root_path))
 }
 
 #[cfg(unix)]
@@ -141,6 +157,23 @@ fn managed_home_dirs() -> Vec<PathBuf> {
     }
 
     homes
+}
+
+#[cfg(unix)]
+fn workspace_root_keys_equal(left: &str, right: &str) -> bool {
+    normalized_workspace_root_key(left) == normalized_workspace_root_key(right)
+}
+
+#[cfg(unix)]
+fn normalized_workspace_root_key(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let trimmed = normalized.trim_end_matches('/');
+
+    if trimmed.is_empty() && normalized.starts_with('/') {
+        return "/".to_string();
+    }
+
+    trimmed.to_string()
 }
 
 fn managed_phpactor_root() -> Result<PathBuf, String> {
@@ -251,4 +284,66 @@ fn run_composer_command(root: &Path, args: &[&str], context: &str) -> Result<(),
         .map_or_else(|| "terminated".to_string(), |code| code.to_string());
 
     Err(format!("{context} failed ({status}): {details}"))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_is_allowed_for_managed_phpactor_without_active_sibling_roots() {
+        let command = managed_command("/workspace-a");
+
+        assert!(should_cleanup_orphaned_managed_phpactor_processes(
+            &command,
+            "/workspace-a",
+            &[],
+        ));
+        assert!(should_cleanup_orphaned_managed_phpactor_processes(
+            &command,
+            "/workspace-a",
+            &["/workspace-a/".to_string()],
+        ));
+    }
+
+    #[test]
+    fn cleanup_is_skipped_for_managed_phpactor_when_another_workspace_is_running() {
+        let command = managed_command("/workspace-b");
+
+        assert!(!should_cleanup_orphaned_managed_phpactor_processes(
+            &command,
+            "/workspace-b",
+            &["/workspace-a".to_string()],
+        ));
+        assert!(!should_cleanup_orphaned_managed_phpactor_processes(
+            &command,
+            "/workspace-b",
+            &["/workspace-a".to_string(), "/workspace-b".to_string()],
+        ));
+    }
+
+    #[test]
+    fn cleanup_is_skipped_for_non_managed_phpactor_commands() {
+        let command = LanguageServerCommand {
+            args: vec!["language-server".to_string()],
+            executable: "/workspace/vendor/bin/phpactor".to_string(),
+            working_directory: "/workspace".to_string(),
+        };
+
+        assert!(!should_cleanup_orphaned_managed_phpactor_processes(
+            &command,
+            "/workspace",
+            &[],
+        ));
+    }
+
+    fn managed_command(workspace: &str) -> LanguageServerCommand {
+        LanguageServerCommand {
+            args: vec!["language-server".to_string()],
+            executable:
+                "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
+                    .to_string(),
+            working_directory: workspace.to_string(),
+        }
+    }
 }

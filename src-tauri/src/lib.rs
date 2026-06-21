@@ -1504,7 +1504,11 @@ fn start_php_language_server(
         registry.status(&root_path),
         LanguageServerRuntimeStatus::Starting { .. } | LanguageServerRuntimeStatus::Running { .. }
     ) {
-        managed_phpactor::cleanup_orphaned_managed_phpactor_processes(&command);
+        managed_phpactor::cleanup_orphaned_managed_phpactor_processes(
+            &command,
+            &root_path,
+            &registry.running_roots(),
+        );
     }
 
     let event_sink = Arc::new(AppHandleEventSink::for_workspace(app, root_path.clone()));
