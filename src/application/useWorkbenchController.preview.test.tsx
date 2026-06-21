@@ -13677,8 +13677,10 @@ class CommentController
         $comment->load('chi');
         $comment->load('children.pa');
         $comment->load('attachments.own');
+        $comment->load(relations: 'child');
         Comment::with('par')->first();
         Comment::query()->whereHas('att', fn ($query) => $query);
+        Comment::query()->whereHas(relation: 'attach', callback: fn ($query) => $query);
         Comment::query()->whereRelation('children', 'is_vis', true);
     }
 }
@@ -13784,6 +13786,20 @@ class Attachment extends Model
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "load(relations: 'child"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        kind: "relation",
+        name: "children",
+        parameters: "",
+        returnType: "App\\Models\\Comment",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "Comment::with('par"),
       ),
     ).resolves.toEqual([
@@ -13813,6 +13829,20 @@ class Attachment extends Model
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
         positionAfter(controllerSource, "whereHas('att"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        kind: "relation",
+        name: "attachments",
+        parameters: "",
+        returnType: "App\\Models\\Attachment",
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "whereHas(relation: 'attach"),
       ),
     ).resolves.toEqual([
       {

@@ -584,6 +584,55 @@ class CommentController
     });
   });
 
+  it("detects Laravel relation strings in named arguments", () => {
+    const source = `<?php
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->load(relations: 'namedChildren');
+        Comment::with(relations: ['namedParent']);
+        Comment::query()->whereHas(relation: 'namedAttachments', callback: fn ($query) => $query);
+        $comment->load(label: 'notRelation');
+    }
+}
+`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'namedChildren'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "load",
+      receiverExpression: "$comment",
+      relationName: "namedChildren",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'namedParent'")),
+    ).toEqual({
+      className: "Comment",
+      kind: "laravelRelationString",
+      methodName: "with",
+      receiverExpression: null,
+      relationName: "namedParent",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'namedAttachments'")),
+    ).toEqual({
+      className: null,
+      kind: "laravelRelationString",
+      methodName: "whereHas",
+      receiverExpression: "Comment::query()",
+      relationName: "namedAttachments",
+    });
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "'notRelation'")),
+    ).toEqual({
+      kind: "classIdentifier",
+      name: "notRelation",
+    });
+  });
+
   it("detects Laravel relation string completion contexts", () => {
     const source = `<?php
 class CommentController
@@ -863,6 +912,62 @@ class CommentController
       phpLaravelRelationStringCompletionContextAt(
         source,
         cursorAfter(source, "whereRelation('visibleChildren', 'is_vis"),
+      ),
+    ).toBeNull();
+  });
+
+  it("detects Laravel relation string completion contexts in named arguments", () => {
+    const source = `<?php
+class CommentController
+{
+    public function show(Comment $comment): void
+    {
+        $comment->load(relations: 'namedChi');
+        Comment::with(relations: ['namedParent.arrayChi']);
+        Comment::query()->whereHas(relation: 'namedAtt', callback: fn ($query) => $query);
+        $comment->load(label: 'notRel');
+    }
+}
+`;
+
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "load(relations: 'namedChi"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "load",
+      prefix: "namedChi",
+      receiverExpression: "$comment",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "with(relations: ['namedParent.arrayChi"),
+      ),
+    ).toEqual({
+      className: "Comment",
+      methodName: "with",
+      prefix: "arrayChi",
+      previousRelationNames: ["namedParent"],
+      receiverExpression: null,
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "whereHas(relation: 'namedAtt"),
+      ),
+    ).toEqual({
+      className: null,
+      methodName: "whereHas",
+      prefix: "namedAtt",
+      receiverExpression: "Comment::query()",
+    });
+    expect(
+      phpLaravelRelationStringCompletionContextAt(
+        source,
+        cursorAfter(source, "load(label: 'notRel"),
       ),
     ).toBeNull();
   });

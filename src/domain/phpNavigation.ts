@@ -715,11 +715,13 @@ function laravelRelationArgumentCallOpenParenAt(
       continue;
     }
 
-    if (isDirectFirstArgumentString(source, openParen, literal.quoteStart)) {
+    if (
+      isDirectFirstArgumentString(source, openParen, closeParen, literal.quoteStart)
+    ) {
       return openParen;
     }
 
-    if (isFirstArgumentArrayRelationString(source, openParen, literal)) {
+    if (isFirstArgumentArrayRelationString(source, openParen, closeParen, literal)) {
       return openParen;
     }
   }
@@ -730,19 +732,33 @@ function laravelRelationArgumentCallOpenParenAt(
 function isDirectFirstArgumentString(
   source: string,
   openParen: number,
+  closeParen: number | null,
   quoteStart: number,
 ): boolean {
+  const argumentName = topLevelCallArgumentNameAtOffset(
+    source,
+    openParen,
+    closeParen,
+    quoteStart,
+  );
+
   return (
     topLevelArgumentIndexAtOffset(source, openParen, quoteStart) === 0 &&
-    isTopLevelBetween(source, openParen + 1, quoteStart)
+    (isTopLevelWhitespaceBetween(source, openParen + 1, quoteStart) ||
+      isLaravelRelationNamedArgument(argumentName))
   );
 }
 
 function isFirstArgumentArrayRelationString(
   source: string,
   openParen: number,
+  closeParen: number | null,
   literal: StringLiteralRange,
 ): boolean {
+  if (closeParen === null) {
+    return false;
+  }
+
   const arrayStart = enclosingBracketStart(source, literal.quoteStart, "[", "]");
 
   if (arrayStart === null || arrayStart < openParen) {
@@ -757,7 +773,10 @@ function isFirstArgumentArrayRelationString(
 
   if (
     topLevelArgumentIndexAtOffset(source, openParen, arrayStart) !== 0 ||
-    !isTopLevelBetween(source, openParen + 1, arrayStart)
+    (!isTopLevelWhitespaceBetween(source, openParen + 1, arrayStart) &&
+      !isLaravelRelationNamedArgument(
+        topLevelCallArgumentNameAtOffset(source, openParen, closeParen, arrayStart),
+      ))
   ) {
     return false;
   }
@@ -767,6 +786,12 @@ function isFirstArgumentArrayRelationString(
   }
 
   return topLevelArrayRelationLiteralRole(source, arrayStart, arrayEnd, literal) !== null;
+}
+
+function isLaravelRelationNamedArgument(argumentName: string | null): boolean {
+  const normalizedName = argumentName?.toLowerCase();
+
+  return normalizedName === "relation" || normalizedName === "relations";
 }
 
 function topLevelArrayRelationLiteralRole(
@@ -1099,13 +1124,14 @@ function topLevelCallArgumentIndexAt(
 function topLevelCallArgumentNameAtOffset(
   source: string,
   openParen: number,
-  closeParen: number,
+  closeParen: number | null,
   targetOffset: number,
 ): string | null {
   let argumentStart = openParen + 1;
   let foundStart: number | null = null;
+  const endOffset = closeParen ?? targetOffset;
 
-  scanTopLevel(source, openParen + 1, closeParen, (index, character) => {
+  scanTopLevel(source, openParen + 1, endOffset, (index, character) => {
     if (foundStart !== null) {
       return;
     }
@@ -1454,6 +1480,22 @@ function isTopLevelBetween(
   });
 
   return topLevel;
+}
+
+function isTopLevelWhitespaceBetween(
+  source: string,
+  startOffset: number,
+  targetOffset: number,
+): boolean {
+  let whitespace = true;
+
+  scanTopLevel(source, startOffset, targetOffset, (_index, character) => {
+    if (!/\s/.test(character)) {
+      whitespace = false;
+    }
+  });
+
+  return whitespace && isTopLevelBetween(source, startOffset, targetOffset);
 }
 
 function scanTopLevel(
