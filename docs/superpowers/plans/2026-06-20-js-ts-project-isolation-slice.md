@@ -5162,4 +5162,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Metadata Subscription Cleanup Guard
 
-- Pending commit.
+- Committed as `403d2b1e Guard metadata subscription errors by workspace`.
