@@ -6658,4 +6658,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `4aaea98a Add JavaScript TypeScript go to declaration command`.
