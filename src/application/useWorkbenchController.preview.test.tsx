@@ -13782,9 +13782,9 @@ use App\\Services\\CommentService;
 use App\\Support\\ServiceLocator;
 
 /**
- * @template T of object
- * @param class-string<T> $className
- * @return T
+ * @phpstan-template T of object
+ * @psalm-param class-string<T> $className
+ * @phpstan-return T
  */
 function service(string $className): object {}
 
@@ -13821,9 +13821,9 @@ namespace App\\Support;
 class ServiceLocator
 {
     /**
-     * @template T of object
-     * @param class-string<T> $className
-     * @return T
+     * @psalm-template T of object
+     * @phpstan-param class-string<T> $className
+     * @psalm-return T
      */
     public static function get(string $className): object {}
 }

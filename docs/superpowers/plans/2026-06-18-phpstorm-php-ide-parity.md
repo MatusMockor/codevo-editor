@@ -7734,3 +7734,45 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `ff46b193 Guard JavaScript TypeScript rename watcher notifications across workspace switches`.
+
+## Slice: PHPStan Psalm Class String Preview Coverage - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `111b265b Record JavaScript TypeScript rename watcher guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 823 tests)
+- Stash snapshot still present:
+  - `stash@{0}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Prove that preview PHP method completions infer `class-string<T>` helpers when generic PHPDoc tags use PHPStan and Psalm prefixes.
+
+### Implementation Choice
+
+- Reuse the existing generic `service()` and `ServiceLocator::get()` preview fixture.
+- Cover a mixed prefixed-docblock path with `@phpstan-template`, `@psalm-param`, `@phpstan-return`, `@psalm-template`, `@phpstan-param`, and `@psalm-return`.
+- Keep production code unchanged because prefix parsing is already handled by the domain PHPDoc template/type extraction layer.
+
+### Acceptance Criteria
+
+- Function-style `service(CommentService::class)` completions still resolve to `CommentService`.
+- Static helper `ServiceLocator::get(CommentService::class)` completions still resolve to `CommentService`.
+- Chained and assigned receiver completions continue to match the expected method list.
+- Focused preview tests, PHP domain tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "generic class-string helpers"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "generic class-string helpers|generic repository returns"`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.
