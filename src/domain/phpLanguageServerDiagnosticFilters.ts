@@ -23,6 +23,11 @@ export interface PhpTraitHostPropertyDiagnosticContext {
   traitName: string;
 }
 
+export interface PhpTraitHostConstantDiagnosticContext {
+  constantName: string;
+  traitName: string;
+}
+
 export interface PhpMemberMethodDiagnosticContext {
   methodName: string;
   receiverExpression: string;
@@ -78,6 +83,7 @@ export function filterPhpLanguageServerDiagnostics(
     contextualExistingMethods?: ReadonlySet<string>;
     contextualMemberMethods?: ReadonlySet<string>;
     contextualMemberProperties?: ReadonlySet<string>;
+    contextualTraitHostConstants?: ReadonlySet<string>;
     contextualTraitHostMethods?: ReadonlySet<string>;
     contextualTraitHostProperties?: ReadonlySet<string>;
     frameworkProviders?: readonly PhpFrameworkProvider[];
@@ -115,6 +121,11 @@ export function filterPhpLanguageServerDiagnostics(
         Boolean(options.allowDependencyTraitFallback),
         options.contextualTraitHostMethods,
         options.path,
+      ) &&
+      !isPhpactorTraitHostConstantDiagnostic(
+        source,
+        diagnostic,
+        options.contextualTraitHostConstants,
       ) &&
       !isPhpactorTraitHostPropertyDiagnostic(
         source,
@@ -331,6 +342,26 @@ function isPhpactorTraitHostPropertyDiagnostic(
   );
 }
 
+function isPhpactorTraitHostConstantDiagnostic(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+  contextualTraitHostConstants: ReadonlySet<string> | undefined,
+): boolean {
+  if (!contextualTraitHostConstants?.size) {
+    return false;
+  }
+
+  const context = phpTraitHostConstantDiagnosticContext(source, diagnostic);
+
+  if (!context) {
+    return false;
+  }
+
+  return contextualTraitHostConstants.has(
+    phpTraitHostConstantDiagnosticKey(context.traitName, context.constantName),
+  );
+}
+
 export function phpTraitHostMethodDiagnosticContext(
   source: string,
   diagnostic: LanguageServerDiagnostic,
@@ -407,6 +438,44 @@ export function phpTraitHostPropertyDiagnosticContext(
   };
 }
 
+export function phpTraitHostConstantDiagnosticContext(
+  source: string,
+  diagnostic: LanguageServerDiagnostic,
+): PhpTraitHostConstantDiagnosticContext | null {
+  if (diagnostic.source?.toLowerCase() !== "phpactor") {
+    return null;
+  }
+
+  const context = traitHostConstantDiagnosticContextFromMessage(
+    diagnostic.message,
+  );
+  const constantName = context?.constantName ?? "";
+  const traitName = context?.traitName ?? "";
+
+  if (!constantName || !traitName) {
+    return null;
+  }
+
+  const line = lineAt(source, diagnostic.line);
+
+  if (
+    !line ||
+    !new RegExp(
+      String.raw`(?:self|static|parent)\s*::\s*${escapeRegExp(
+        constantName,
+      )}\b(?!\s*\()`,
+      "i",
+    ).test(line)
+  ) {
+    return null;
+  }
+
+  return {
+    constantName,
+    traitName,
+  };
+}
+
 function traitHostMethodDiagnosticContextFromMessage(
   message: string,
 ): PhpTraitHostMethodDiagnosticContext | null {
@@ -461,6 +530,34 @@ function traitHostPropertyDiagnosticContextFromMessage(
   const propertyName = traitFirstMatch?.[2]?.trim() ?? "";
 
   return propertyName && traitName ? { propertyName, traitName } : null;
+}
+
+function traitHostConstantDiagnosticContextFromMessage(
+  message: string,
+): PhpTraitHostConstantDiagnosticContext | null {
+  const constantFirstPatterns = [
+    /\b(?:class\s+)?constant\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s+(?:could not find|does not exist|not defined|not found|undefined|unknown|unresolved)\s+on trait\s+["']?([^"']+)["']?/i,
+    /\bundefined\s+(?:class\s+)?constant\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s+on trait\s+["']?([^"']+)["']?/i,
+  ];
+
+  for (const pattern of constantFirstPatterns) {
+    const match = pattern.exec(message);
+    const constantName = match?.[1]?.trim() ?? "";
+    const traitName = match?.[2]?.trim().replace(/^\\+/, "") ?? "";
+
+    if (constantName && traitName) {
+      return { constantName, traitName };
+    }
+  }
+
+  const traitFirstMatch =
+    /\btrait\s+["']?([^"']+)["']?\s+(?:has no|does not have)\s+(?:class\s+)?constant\s+["']?([A-Za-z_][A-Za-z0-9_]*)["']?/i.exec(
+      message,
+    );
+  const traitName = traitFirstMatch?.[1]?.trim().replace(/^\\+/, "") ?? "";
+  const constantName = traitFirstMatch?.[2]?.trim() ?? "";
+
+  return constantName && traitName ? { constantName, traitName } : null;
 }
 
 export function phpUnresolvedMemberMethodDiagnosticContext(
@@ -614,6 +711,15 @@ export function phpTraitHostPropertyDiagnosticKey(
   return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#$${propertyName
     .trim()
     .replace(/^\$+/, "")
+    .toLowerCase()}`;
+}
+
+export function phpTraitHostConstantDiagnosticKey(
+  traitName: string,
+  constantName: string,
+): string {
+  return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#::${constantName
+    .trim()
     .toLowerCase()}`;
 }
 

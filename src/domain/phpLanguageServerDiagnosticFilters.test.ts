@@ -4,6 +4,8 @@ import {
   phpMemberMethodDiagnosticKey,
   phpMemberPropertyDiagnosticKey,
   phpMethodDiagnosticKey,
+  phpTraitHostConstantDiagnosticContext,
+  phpTraitHostConstantDiagnosticKey,
   phpTraitHostMethodDiagnosticKey,
   phpTraitHostPropertyDiagnosticContext,
   phpTraitHostPropertyDiagnosticKey,
@@ -869,6 +871,148 @@ trait SoftDeletes
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
         path: "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
+      }),
+    ).toEqual([unresolved]);
+  });
+
+  it("suppresses trait host-constant diagnostics when host context is confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): string
+    {
+        return static::HOST_STATE;
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 24,
+      line: 7,
+      message:
+        'Constant "HOST_STATE" does not exist on trait "App\\Support\\ResolvesHostState"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostConstants: new Set([
+          phpTraitHostConstantDiagnosticKey(
+            "App\\Support\\ResolvesHostState",
+            "HOST_STATE",
+          ),
+        ]),
+        path: "/workspace/app/Support/ResolvesHostState.php",
+      }),
+    ).toEqual([]);
+  });
+
+  it("recognizes alternate PHPactor trait host-constant diagnostic wording", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): string
+    {
+        return self::HOST_STATE;
+    }
+}
+`;
+
+    expect(
+      phpTraitHostConstantDiagnosticContext(
+        source,
+        diagnostic({
+          character: 21,
+          line: 7,
+          message:
+            'Undefined class constant "HOST_STATE" on trait "App\\Support\\ResolvesHostState"',
+        }),
+      ),
+    ).toEqual({
+      constantName: "HOST_STATE",
+      traitName: "App\\Support\\ResolvesHostState",
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          diagnostic({
+            character: 21,
+            line: 7,
+            message:
+              'Trait "App\\Support\\ResolvesHostState" has no class constant "HOST_STATE"',
+          }),
+        ],
+        {
+          contextualTraitHostConstants: new Set([
+            phpTraitHostConstantDiagnosticKey(
+              "App\\Support\\ResolvesHostState",
+              "HOST_STATE",
+            ),
+          ]),
+          path: "/workspace/app/Support/ResolvesHostState.php",
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps trait host-constant diagnostics when host context is not confirmed", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): string
+    {
+        return static::HOST_STATE;
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 24,
+      line: 7,
+      message:
+        'Constant "HOST_STATE" does not exist on trait "App\\Support\\ResolvesHostState"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        path: "/workspace/app/Support/ResolvesHostState.php",
+      }),
+    ).toEqual([unresolved]);
+  });
+
+  it("keeps trait host-constant diagnostics when the line is actually a method call", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): string
+    {
+        return static::HOST_STATE();
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 24,
+      line: 7,
+      message:
+        'Constant "HOST_STATE" does not exist on trait "App\\Support\\ResolvesHostState"',
+    });
+
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostConstants: new Set([
+          phpTraitHostConstantDiagnosticKey(
+            "App\\Support\\ResolvesHostState",
+            "HOST_STATE",
+          ),
+        ]),
+        path: "/workspace/app/Support/ResolvesHostState.php",
       }),
     ).toEqual([unresolved]);
   });

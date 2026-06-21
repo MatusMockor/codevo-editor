@@ -14744,6 +14744,111 @@ class HostState
     ).toEqual([]);
   });
 
+  it("suppresses trait host-constant diagnostics when the host declares the constant", async () => {
+    let diagnosticsListener:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const hostStatePath = "/workspace/app/Support/HostState.php";
+    const resolvesHostStatePath = "/workspace/app/Support/ResolvesHostState.php";
+    const resolvesHostStateSource = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): string
+    {
+        return static::HOST_STATE;
+    }
+}
+`;
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 26,
+    };
+    const diagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        diagnosticsListener = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway: diagnosticsGateway,
+      languageServerPlan: phpactorLanguageServerPlan(),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === hostStatePath) {
+          return `<?php
+namespace App\\Support;
+
+class HostState
+{
+    use ResolvesHostState;
+
+    private const HOST_STATE = 'ready';
+}
+`;
+        }
+
+        if (path === resolvesHostStatePath) {
+          return resolvesHostStateSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      searchText: vi.fn(async (_root, query) =>
+        query === "ResolvesHostState"
+          ? [
+              {
+                column: 5,
+                lineNumber: 6,
+                lineText: "    use ResolvesHostState;",
+                path: hostStatePath,
+                relativePath: "app/Support/HostState.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    expect(diagnosticsListener).not.toBeNull();
+
+    act(() => {
+      diagnosticsListener?.({
+        diagnostics: [
+          {
+            character: 24,
+            line:
+              lineNumberOf(resolvesHostStateSource, "static::HOST_STATE") - 1,
+            message:
+              'Constant "HOST_STATE" does not exist on trait "App\\Support\\ResolvesHostState"',
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: runningStatus.sessionId,
+        uri: fileUriFromPath(resolvesHostStatePath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[resolvesHostStatePath],
+    ).toEqual([]);
+  });
+
   it("suppresses trait host-method diagnostics through an intermediate trait and parent method", async () => {
     let diagnosticsListener:
       | ((event: LanguageServerDiagnosticEvent) => void)

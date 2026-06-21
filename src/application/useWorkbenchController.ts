@@ -56,6 +56,8 @@ import {
   filterPhpLanguageServerDiagnostics,
   phpMemberMethodDiagnosticKey,
   phpMethodDiagnosticKey,
+  phpTraitHostConstantDiagnosticContext,
+  phpTraitHostConstantDiagnosticKey,
   phpTraitHostMethodDiagnosticContext,
   phpTraitHostMethodDiagnosticKey,
   phpTraitHostPropertyDiagnosticContext,
@@ -6629,6 +6631,110 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpClassHierarchyHasConstant = useCallback(
+    async (
+      className: string,
+      constantName: string,
+      visitedClassNames = new Set<string>(),
+    ): Promise<boolean> => {
+      if (!workspaceRoot || !workspaceDescriptor?.php) {
+        return false;
+      }
+
+      const normalizedClassName = className.trim().replace(/^\\+/, "");
+      const normalizedConstantName = constantName.trim();
+      const visitedKey = normalizedClassName.toLowerCase();
+
+      if (
+        !normalizedClassName ||
+        !normalizedConstantName ||
+        visitedClassNames.has(visitedKey)
+      ) {
+        return false;
+      }
+
+      visitedClassNames.add(visitedKey);
+
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+        try {
+          const { content } = await readPhpClassMembersFromPath(
+            path,
+            normalizedClassName,
+          );
+
+          if (phpClassSourceHasDeclaredConstant(content, normalizedConstantName)) {
+            return true;
+          }
+
+          for (const traitName of phpTraitClassNames(content)) {
+            const resolvedTraitName = resolvePhpClassReference(
+              content,
+              traitName,
+            );
+
+            if (
+              resolvedTraitName &&
+              (await phpClassHierarchyHasConstant(
+                resolvedTraitName,
+                normalizedConstantName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+
+          for (const mixinName of phpMixinClassNames(content)) {
+            const resolvedMixinName = resolvePhpClassReference(
+              content,
+              mixinName,
+            );
+
+            if (
+              resolvedMixinName &&
+              (await phpClassHierarchyHasConstant(
+                resolvedMixinName,
+                normalizedConstantName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+
+          for (const superTypeName of phpSuperTypeReferences(content)) {
+            const resolvedSuperTypeName = resolvePhpClassReference(
+              content,
+              superTypeName,
+            );
+
+            if (
+              resolvedSuperTypeName &&
+              (await phpClassHierarchyHasConstant(
+                resolvedSuperTypeName,
+                normalizedConstantName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      readPhpClassMembersFromPath,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   const phpClassHasLaravelLocalScope = useCallback(
     async (className: string, scopeName: string): Promise<boolean> => {
       if (!isLaravelFrameworkActive) {
@@ -7033,6 +7139,199 @@ export function useWorkbenchController(
     ],
   );
 
+  const phpTraitHostConstantExists = useCallback(
+    async (traitClassName: string, constantName: string): Promise<boolean> => {
+      if (!workspaceRoot) {
+        return false;
+      }
+
+      const normalizedTraitClassName = traitClassName
+        .trim()
+        .replace(/^\\+/, "");
+      const normalizedConstantName = constantName.trim();
+
+      if (!normalizedTraitClassName || !normalizedConstantName) {
+        return false;
+      }
+
+      const sourceUsesTrait = (
+        source: string,
+        targetTraitClassName: string,
+      ): boolean => {
+        const targetLookup = targetTraitClassName.toLowerCase();
+
+        return phpTraitClassNames(source).some((traitName) => {
+          const resolvedTraitName = resolvePhpClassReference(source, traitName);
+
+          return resolvedTraitName?.toLowerCase() === targetLookup;
+        });
+      };
+      const descendantClassHierarchyHasConstant = async (
+        className: string,
+        visitedClassNames = new Set<string>(),
+      ): Promise<boolean> => {
+        const normalizedClassName = className.trim().replace(/^\\+/, "");
+        const classLookup = normalizedClassName.toLowerCase();
+
+        if (
+          !normalizedClassName ||
+          visitedClassNames.has(classLookup) ||
+          visitedClassNames.size >= 200
+        ) {
+          return false;
+        }
+
+        visitedClassNames.add(classLookup);
+
+        const results = await textSearch.searchText(
+          workspaceRoot,
+          shortPhpName(normalizedClassName),
+          200,
+        );
+        const visitedPaths = new Set<string>();
+
+        for (const result of results) {
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+            continue;
+          }
+
+          visitedPaths.add(result.path);
+
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (phpCurrentTypeKind(content) !== "class") {
+              continue;
+            }
+
+            const candidateClassName = phpCurrentClassName(content);
+            const parentClassName = phpExtendsClassName(content);
+            const resolvedParentClassName = parentClassName
+              ? resolvePhpClassReference(content, parentClassName)
+              : null;
+
+            if (
+              !candidateClassName ||
+              resolvedParentClassName?.toLowerCase() !== classLookup
+            ) {
+              continue;
+            }
+
+            if (
+              (await phpClassHierarchyHasConstant(
+                candidateClassName,
+                normalizedConstantName,
+              )) ||
+              (await descendantClassHierarchyHasConstant(
+                candidateClassName,
+                visitedClassNames,
+              ))
+            ) {
+              return true;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return false;
+      };
+      const traitConcreteUserHierarchyHasConstant = async (
+        targetTraitClassName: string,
+        visitedTraitClassNames = new Set<string>(),
+      ): Promise<boolean> => {
+        const normalizedTargetTraitClassName = targetTraitClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const traitLookup = normalizedTargetTraitClassName.toLowerCase();
+
+        if (
+          !normalizedTargetTraitClassName ||
+          visitedTraitClassNames.has(traitLookup) ||
+          visitedTraitClassNames.size >= 200
+        ) {
+          return false;
+        }
+
+        visitedTraitClassNames.add(traitLookup);
+
+        const results = await textSearch.searchText(
+          workspaceRoot,
+          shortPhpName(normalizedTargetTraitClassName),
+          200,
+        );
+        const visitedPaths = new Set<string>();
+
+        for (const result of results) {
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+            continue;
+          }
+
+          visitedPaths.add(result.path);
+
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (!sourceUsesTrait(content, normalizedTargetTraitClassName)) {
+              continue;
+            }
+
+            const userTypeKind = phpCurrentTypeKind(content);
+            const userClassName = phpCurrentClassName(content);
+
+            if (!userTypeKind || !userClassName) {
+              continue;
+            }
+
+            if (userTypeKind === "trait") {
+              if (
+                await traitConcreteUserHierarchyHasConstant(
+                  userClassName,
+                  visitedTraitClassNames,
+                )
+              ) {
+                return true;
+              }
+
+              continue;
+            }
+
+            if (userTypeKind !== "class" && userTypeKind !== "enum") {
+              continue;
+            }
+
+            if (
+              (await phpClassHierarchyHasConstant(
+                userClassName,
+                normalizedConstantName,
+              )) ||
+              (userTypeKind === "class" &&
+                (await descendantClassHierarchyHasConstant(
+                  userClassName,
+                  new Set<string>(),
+                )))
+            ) {
+              return true;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        return false;
+      };
+
+      return traitConcreteUserHierarchyHasConstant(normalizedTraitClassName);
+    },
+    [
+      phpClassHierarchyHasConstant,
+      readNavigationFileContent,
+      resolvePhpClassReference,
+      textSearch,
+      workspaceRoot,
+    ],
+  );
+
   const filterPhpDiagnosticsWithContext = useCallback(
     async (
       path: string,
@@ -7052,6 +7351,7 @@ export function useWorkbenchController(
 
       const contextualTraitHostMethods = new Set<string>();
       const contextualTraitHostProperties = new Set<string>();
+      const contextualTraitHostConstants = new Set<string>();
       const contextualExistingMethods = new Set<string>();
       const contextualMemberMethods = new Set<string>();
       const contextualMemberProperties = new Set<string>();
@@ -7225,6 +7525,44 @@ export function useWorkbenchController(
           }
         }
 
+        const traitConstantContext = phpTraitHostConstantDiagnosticContext(
+          source,
+          diagnostic,
+        );
+
+        if (traitConstantContext) {
+          const normalizedTraitName = traitConstantContext.traitName.replace(
+            /^\\+/,
+            "",
+          );
+          const traitClassName = normalizedTraitName.includes("\\")
+            ? normalizedTraitName
+            : (resolvePhpClassReference(
+                source,
+                traitConstantContext.traitName,
+              ) ?? normalizedTraitName);
+
+          if (
+            await phpTraitHostConstantExists(
+              traitClassName,
+              traitConstantContext.constantName,
+            )
+          ) {
+            contextualTraitHostConstants.add(
+              phpTraitHostConstantDiagnosticKey(
+                traitConstantContext.traitName,
+                traitConstantContext.constantName,
+              ),
+            );
+            contextualTraitHostConstants.add(
+              phpTraitHostConstantDiagnosticKey(
+                traitClassName,
+                traitConstantContext.constantName,
+              ),
+            );
+          }
+        }
+
         const traitPropertyContext = phpTraitHostPropertyDiagnosticContext(
           source,
           diagnostic,
@@ -7268,6 +7606,7 @@ export function useWorkbenchController(
         contextualExistingMethods,
         contextualMemberMethods,
         contextualMemberProperties,
+        contextualTraitHostConstants,
         contextualTraitHostMethods,
         contextualTraitHostProperties,
         frameworkProviders: activePhpFrameworkProviders,
@@ -7282,6 +7621,7 @@ export function useWorkbenchController(
       phpClassHierarchyHasMethod,
       phpClassHierarchyHasStaticMethod,
       phpClassHierarchyHasProperty,
+      phpTraitHostConstantExists,
       phpTraitHostMethodExists,
       phpTraitHostPropertyExists,
       readNavigationFileContent,
@@ -14481,6 +14821,25 @@ function phpClassSourceHasDeclaredProperty(
   return (
     docPropertyPattern.test(source) || declaredPropertyPattern.test(source)
   );
+}
+
+function phpClassSourceHasDeclaredConstant(
+  source: string,
+  constantName: string,
+): boolean {
+  const normalizedConstantName = constantName.trim();
+
+  if (!normalizedConstantName) {
+    return false;
+  }
+
+  const escapedConstantName = escapeRegExp(normalizedConstantName);
+  const declaredConstantPattern = new RegExp(
+    String.raw`(?:^|\n)\s*(?:(?:final|public|protected|private)\s+)*const\b[^\r\n;]*\b${escapedConstantName}\b`,
+    "i",
+  );
+
+  return declaredConstantPattern.test(source);
 }
 
 function escapeRegExp(value: string): string {
