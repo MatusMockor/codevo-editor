@@ -915,3 +915,42 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `0e99c5db Normalize index progress roots for PHP refreshes`.
+
+### Slice: Index Start Response Workspace Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `41008829 Record normalized index root refresh commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent an async index-start response for another workspace root from overwriting the active project's index progress state.
+
+#### Implementation Choice
+
+- Re-check that the requested workspace is still active after `startInitialMetadataScan` resolves.
+- Reject start responses whose returned `rootPath` is not equivalent to the requested workspace root.
+- Add a controller regression where `/workspace` starts indexing but the gateway responds with `/other`; the workbench must keep index progress idle and not show the indexing message.
+
+#### Acceptance Criteria
+
+- Wrong-root index start responses do not set active index progress.
+- Stale index start responses after workspace changes do not write progress for a no-longer-active root.
+- Equivalent root spellings still work through `workspaceRootKeysEqual`.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores index start responses that belong to another workspace root|refreshes the PHP tree for index progress roots that only differ by a trailing slash"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `46311621 Guard index start responses by workspace root`.
