@@ -299,6 +299,21 @@ export function registerLanguageServerMonacoProviders(
           ),
       })
     : { dispose: () => undefined };
+  const onTypeFormatting = monaco.languages.registerOnTypeFormattingEditProvider
+    ? monaco.languages.registerOnTypeFormattingEditProvider("php", {
+        autoFormatTriggerCharacters:
+          onTypeFormattingTriggerCharacters(context),
+        provideOnTypeFormattingEdits: (model, position, ch, options) =>
+          provideOnTypeFormattingEdits(
+            monaco,
+            context,
+            model,
+            position,
+            ch,
+            options,
+          ),
+      })
+    : { dispose: () => undefined };
   const linkedEditingRange = monaco.languages.registerLinkedEditingRangeProvider
     ? monaco.languages.registerLinkedEditingRangeProvider("php", {
         provideLinkedEditingRanges: (model, position) =>
@@ -327,6 +342,7 @@ export function registerLanguageServerMonacoProviders(
       foldingRange.dispose();
       documentFormatting.dispose();
       rangeFormatting.dispose();
+      onTypeFormatting.dispose();
       linkedEditingRange.dispose();
     },
   };
@@ -646,6 +662,48 @@ async function provideDocumentRangeFormattingEdits(
       request.rootPath,
       request.path,
       toLanguageServerRange(range),
+      toLanguageServerFormattingOptions(options),
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return [];
+    }
+
+    return edits.map((edit) => toMonacoTextEdit(monaco, edit));
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return [];
+  }
+}
+
+async function provideOnTypeFormattingEdits(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  ch: string,
+  options: Monaco.languages.FormattingOptions,
+): Promise<Monaco.languages.TextEdit[]> {
+  const request = featureDocumentRequestContext(
+    context,
+    model,
+    "onTypeFormatting",
+  );
+
+  if (!request) {
+    return [];
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return [];
+    }
+
+    const edits = await context.featuresGateway.onTypeFormatting(
+      request.rootPath,
+      request.path,
+      toLanguageServerTextDocumentPosition(request.path, position),
+      ch,
       toLanguageServerFormattingOptions(options),
     );
 
@@ -1175,6 +1233,27 @@ function toLanguageServerFormattingOptions(
     insertSpaces: options.insertSpaces,
     tabSize: options.tabSize,
   };
+}
+
+function onTypeFormattingTriggerCharacters(
+  context: LanguageServerMonacoProviderContext,
+): string[] {
+  const status = context.getRuntimeStatus();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+  const triggers =
+    status?.kind === "running" &&
+    status.rootPath &&
+    rootPath &&
+    workspaceRootKeysEqual(status.rootPath, rootPath) &&
+    isStringArray(status.capabilities.onTypeFormattingTriggerCharacters)
+      ? status.capabilities.onTypeFormattingTriggerCharacters
+      : null;
+
+  return triggers && triggers.length > 0 ? triggers : [];
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function markerCode(marker: Monaco.editor.IMarkerData): string | number | null {
@@ -2566,6 +2645,7 @@ function featureDocumentRequestContext(
     | "hover"
     | "implementation"
     | "linkedEditingRange"
+    | "onTypeFormatting"
     | "prepareRename"
     | "rangeFormatting"
     | "references"

@@ -7369,3 +7369,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Document And Range Formatting Providers
 
 - Committed as `61d73d8e Register PHP formatting providers`.
+
+## Next Slice: PHP Monaco On-Type Formatting Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `3eaeab13 Record PHP formatting provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, runtime capabilities, and trigger-character metadata already support on-type formatting.
+- The PHP Monaco provider did not register an on-type formatting provider, so keystroke-triggered PHP formatting could not route to the language server.
+- Keeping this separate from document/range formatting limits risk and lets trigger-character behavior be tested directly.
+
+### Implementation Choice
+
+- Register an optional PHP on-type formatting Monaco provider.
+- Use runtime-advertised `onTypeFormattingTriggerCharacters` for Monaco trigger metadata.
+- Reuse PHP document request context, pending change flush, capability gate, active session guard, stale result dropping, error reporting, formatting options mapping, and text edit mapping.
+
+### Acceptance Criteria
+
+- PHP on-type formatting advertises runtime trigger characters when available and falls back to an empty trigger list otherwise.
+- Provider calls `featuresGateway.onTypeFormatting` with root, path, zero-based position, typed character, and formatting options.
+- Disabled capability and stale root/session responses do not call or return stale edits.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco On-Type Formatting Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "on-type formatting|on type formatting|OnTypeFormatting"` (7 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (104 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 947 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco On-Type Formatting Provider
+
+- Pending commit after verification.

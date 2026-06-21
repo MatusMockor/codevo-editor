@@ -15,14 +15,14 @@ import type {
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import type {
-  LanguageServerCapabilities,
+  LanguageServerRuntimeCapabilities,
   LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
 import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, folding range, formatting, range formatting and linked editing range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, folding range, formatting, range formatting, on type formatting and linked editing range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -54,6 +54,10 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.foldingRangeLanguage).toBe("php");
     expect(registered.documentFormattingLanguage).toBe("php");
     expect(registered.rangeFormattingLanguage).toBe("php");
+    expect(registered.onTypeFormattingLanguage).toBe("php");
+    expect(registered.onTypeFormattingProvider.autoFormatTriggerCharacters).toEqual(
+      [],
+    );
     expect(registered.linkedEditingRangeLanguage).toBe("php");
     expect(registered.codeActionMetadata).toEqual({
       providedCodeActionKinds: [
@@ -85,6 +89,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.foldingRangeDispose).toHaveBeenCalled();
     expect(registered.documentFormattingDispose).toHaveBeenCalled();
     expect(registered.rangeFormattingDispose).toHaveBeenCalled();
+    expect(registered.onTypeFormattingDispose).toHaveBeenCalled();
     expect(registered.linkedEditingRangeDispose).toHaveBeenCalled();
   });
 
@@ -2881,6 +2886,244 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("uses advertised PHP on-type formatting trigger characters", () => {
+    const registered = createRegisteredProviders();
+    const context = providerContext({
+      runtimeStatus: runningStatus({
+        onTypeFormattingTriggerCharacters: [";", "}"],
+      }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    expect(registered.onTypeFormattingLanguage).toBe("php");
+    expect(
+      registered.onTypeFormattingProvider.autoFormatTriggerCharacters,
+    ).toEqual([";", "}"]);
+  });
+
+  it("falls back to empty PHP on-type formatting trigger characters", () => {
+    const registered = createRegisteredProviders();
+    const context = providerContext({
+      runtimeStatus: runningStatus({
+        onTypeFormattingTriggerCharacters: [],
+      }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    expect(
+      registered.onTypeFormattingProvider.autoFormatTriggerCharacters,
+    ).toEqual([]);
+  });
+
+  it("ignores PHP on-type formatting trigger characters from a mismatched runtime root", () => {
+    const registered = createRegisteredProviders();
+    const context = providerContext({
+      getWorkspaceRoot: () => "/project",
+      runtimeStatus: {
+        ...runningStatus({
+          onTypeFormattingTriggerCharacters: [";"],
+        }),
+        rootPath: "/other",
+      },
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    expect(
+      registered.onTypeFormattingProvider.autoFormatTriggerCharacters,
+    ).toEqual([]);
+  });
+
+  it("maps PHP on-type formatting edits, position, character and options", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      onTypeFormatting: [
+        {
+          newText: "    }\n",
+          range: range(4, 0, 4, 1),
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
+        model(),
+        { column: 6, lineNumber: 5 },
+        "}",
+        { insertSpaces: true, tabSize: 4 },
+      ),
+    ).resolves.toEqual([
+      {
+        range: expect.objectContaining({
+          endColumn: 2,
+          endLineNumber: 5,
+          startColumn: 1,
+          startLineNumber: 5,
+        }),
+        text: "    }\n",
+      },
+    ]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.onTypeFormatting).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      {
+        character: 5,
+        line: 4,
+        path: "/project/src/User.php",
+      },
+      "}",
+      {
+        insertSpaces: true,
+        tabSize: 4,
+      },
+    );
+  });
+
+  it("does not request PHP on-type formatting when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      onTypeFormatting: [
+        {
+          newText: "    }\n",
+          range: range(4, 0, 4, 1),
+        },
+      ],
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({
+          onTypeFormatting: false,
+        }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
+        model(),
+        { column: 6, lineNumber: 5 },
+        "}",
+        { insertSpaces: true, tabSize: 4 },
+      ),
+    ).resolves.toEqual([]);
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.onTypeFormatting).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway({
+      onTypeFormatting: [
+        {
+          newText: "    ;\n",
+          range: range(3, 0, 3, 1),
+        },
+      ],
+    });
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
+        model(),
+        { column: 6, lineNumber: 5 },
+        ";",
+        { insertSpaces: false, tabSize: 2 },
+      ),
+    ).resolves.toEqual([]);
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.onTypeFormatting).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP on-type formatting results after session or root changes", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionEdits =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>>
+      >();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.onTypeFormatting).mockImplementationOnce(
+      async () => sessionEdits.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const sessionPromise =
+      sessionRegistered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
+        model(),
+        { column: 6, lineNumber: 5 },
+        "}",
+        { insertSpaces: true, tabSize: 4 },
+      );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    sessionEdits.resolve([{ newText: "    }\n", range: range(4, 0, 4, 1) }]);
+
+    await expect(sessionPromise).resolves.toEqual([]);
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootEdits =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>>
+      >();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.onTypeFormatting).mockImplementationOnce(
+      async () => rootEdits.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootPromise =
+      rootRegistered.onTypeFormattingProvider.provideOnTypeFormattingEdits(
+        model(),
+        { column: 6, lineNumber: 5 },
+        ";",
+        { insertSpaces: false, tabSize: 2 },
+      );
+
+    await Promise.resolve();
+    activeRoot = null;
+    rootEdits.resolve([{ newText: "    ;\n", range: range(3, 0, 3, 1) }]);
+
+    await expect(rootPromise).resolves.toEqual([]);
+  });
+
   it("does not request PHP formatting when capability is disabled or runtime root mismatches", async () => {
     const disabledRegistered = createRegisteredProviders();
     const disabledGateway = featuresGateway({
@@ -5337,6 +5580,7 @@ function createRegisteredProviders() {
   const hoverDispose = vi.fn();
   const implementationDispose = vi.fn();
   const linkedEditingRangeDispose = vi.fn();
+  const onTypeFormattingDispose = vi.fn();
   const rangeFormattingDispose = vi.fn();
   const referenceDispose = vi.fn();
   const completionDispose = vi.fn();
@@ -5385,6 +5629,9 @@ function createRegisteredProviders() {
     linkedEditingRangeLanguage: string | null;
     linkedEditingRangeProvider: any;
     monaco: any;
+    onTypeFormattingDispose: ReturnType<typeof vi.fn>;
+    onTypeFormattingLanguage: string | null;
+    onTypeFormattingProvider: any;
     rangeFormattingDispose: ReturnType<typeof vi.fn>;
     rangeFormattingLanguage: string | null;
     rangeFormattingProvider: any;
@@ -5444,6 +5691,9 @@ function createRegisteredProviders() {
     linkedEditingRangeLanguage: null,
     linkedEditingRangeProvider: null,
     monaco: null,
+    onTypeFormattingDispose,
+    onTypeFormattingLanguage: null,
+    onTypeFormattingProvider: null,
     rangeFormattingDispose,
     rangeFormattingLanguage: null,
     rangeFormattingProvider: null,
@@ -5609,6 +5859,11 @@ function createRegisteredProviders() {
         registered.linkedEditingRangeProvider = provider;
         return { dispose: linkedEditingRangeDispose };
       }),
+      registerOnTypeFormattingEditProvider: vi.fn((language, provider) => {
+        registered.onTypeFormattingLanguage = language;
+        registered.onTypeFormattingProvider = provider;
+        return { dispose: onTypeFormattingDispose };
+      }),
       registerReferenceProvider: vi.fn((language, provider) => {
         registered.referenceLanguage = language;
         registered.referenceProvider = provider;
@@ -5719,6 +5974,9 @@ function featuresGateway(
     linkedEditingRanges: Awaited<
       ReturnType<LanguageServerFeaturesGateway["linkedEditingRanges"]>
     >;
+    onTypeFormatting: Awaited<
+      ReturnType<LanguageServerFeaturesGateway["onTypeFormatting"]>
+    >;
     prepareRename: Awaited<
       ReturnType<LanguageServerFeaturesGateway["prepareRename"]>
     >;
@@ -5771,7 +6029,7 @@ function featuresGateway(
     inlayHints: vi.fn(async () => responses.inlayHints ?? []),
     resolveInlayHint: vi.fn(async (_rootPath, hint) => hint),
     linkedEditingRanges: vi.fn(async () => responses.linkedEditingRanges ?? null),
-    onTypeFormatting: vi.fn(async () => []),
+    onTypeFormatting: vi.fn(async () => responses.onTypeFormatting ?? []),
     outgoingCalls: vi.fn(async () => []),
     prepareCallHierarchy: vi.fn(async () => []),
     prepareRename: vi.fn(async () => responses.prepareRename ?? null),
@@ -5835,7 +6093,7 @@ function phpCommandPayload(rootPath = "/project", sessionId = 1) {
 }
 
 function runningStatus(
-  capabilities: Partial<LanguageServerCapabilities> = {},
+  capabilities: Partial<LanguageServerRuntimeCapabilities> = {},
 ): LanguageServerRuntimeStatus {
   return {
     capabilities: {
