@@ -11166,7 +11166,7 @@ export function useWorkbenchController(
       await refreshDirectory(parentPath);
       setMessage(`Renamed ${activeDocument.name}`);
     } catch (error) {
-      reportError("Rename File", error);
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "Rename File", error);
     }
   }, [
     activeDocument,
@@ -11174,7 +11174,7 @@ export function useWorkbenchController(
     notifyJavaScriptTypeScriptFileRenamed,
     prompter,
     refreshDirectory,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
     workspaceFiles,

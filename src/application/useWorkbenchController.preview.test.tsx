@@ -5355,6 +5355,63 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", oldPath, newPath);
   });
 
+  it("ignores stale rename errors after switching project tabs", async () => {
+    const oldPath = "/workspace-a/src/User.php";
+    const newPath = "/workspace-a/src/Account.php";
+    const rename = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (path: string) => `<?php\n// ${path}\n`),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.php");
+    vi.mocked(dependencies.workspaceGateways.files.renamePath).mockImplementationOnce(
+      async () => rename.promise,
+    );
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    let renamePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      renamePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+        oldPath,
+        newPath,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      rename.reject(new Error("stale rename"));
+      await renamePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Rename File" &&
+          notice.message.includes("stale rename"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale JavaScript TypeScript did-rename errors after same-root session restart", async () => {
     const oldPath = "/workspace/src/User.ts";
     const newPath = "/workspace/src/Account.ts";
