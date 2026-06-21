@@ -6617,7 +6617,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: PHP Monaco Rename Provider
 
-- Pending commit after full frontend verification.
+- Committed as `b4f666b1 Register PHP rename provider`.
 
 ## Next Candidate Slice: JS/TS Resolve Capability Advertisement
 
