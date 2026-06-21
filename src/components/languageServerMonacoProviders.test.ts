@@ -1988,6 +1988,33 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.selectionRanges).not.toHaveBeenCalled();
   });
 
+  it("does not request selection ranges when the PHP runtime status has no explicit workspace root", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      selectionRanges: [
+        {
+          parent: null,
+          range: range(3, 8, 3, 20),
+        },
+      ],
+    });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+      runtimeStatus: rootlessRunningStatus(),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.selectionRangeProvider.provideSelectionRanges(model(), [
+        { column: 12, lineNumber: 4 },
+      ]),
+    ).resolves.toBeNull();
+    expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+    expect(gateway.selectionRanges).not.toHaveBeenCalled();
+  });
+
   it("drops in-flight PHP selection ranges after switching project tabs", async () => {
     const registered = createRegisteredProviders();
     let activeRoot = "/project";
