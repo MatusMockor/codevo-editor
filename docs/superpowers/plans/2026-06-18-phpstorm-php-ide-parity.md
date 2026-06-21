@@ -5091,3 +5091,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `fd395830 Cover stale hierarchy follow-up tab results`.
+
+## Slice: Stale Workspace Symbol Result Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a2b0a255 Record stale hierarchy follow-up guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down JavaScript/TypeScript workspace-symbol isolation when Cmd+O class search results arrive after switching project tabs.
+
+### Implementation Choice
+
+- Add a preview controller regression for a delayed successful `workspaceSymbols` response from `/workspace-a`.
+- Start `class.quickOpen` in Basic mode, query `User`, switch to `/workspace-b`, then resolve the stale workspace-symbol request with `StaleUser`.
+- Assert the active workspace remains `/workspace-b` and the stale symbol does not populate class-open results.
+- Keep this as a test-only slice because `searchClassOpenSymbols` already checks the requested root after all symbol searches settle.
+
+### Acceptance Criteria
+
+- Delayed workspace-symbol results from an inactive project tab are ignored.
+- The active workspace remains `/workspace-b`.
+- Stale workspace symbols do not populate class-open results in the active tab.
+- Existing stale workspace-symbol error coverage remains unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "workspace symbol .* switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `adbdf6de Cover stale workspace symbol tab results`.
