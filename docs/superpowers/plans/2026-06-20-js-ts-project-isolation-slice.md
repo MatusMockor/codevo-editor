@@ -3904,3 +3904,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
 - PASS: `npm run check`
 - PASS: `git diff --check`
+
+### Commit Status: JS/TS Autostart Direct Status Root Guard
+
+- Committed as `bfac47aa Guard JS TS autostart direct roots`.
