@@ -6973,4 +6973,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `76adcc70 Cover Laravel withWhereHas relation strings`.
