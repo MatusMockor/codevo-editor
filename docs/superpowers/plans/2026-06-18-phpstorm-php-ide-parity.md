@@ -4351,3 +4351,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `4ddfcdbe Complete Laravel named controller route actions`.
+
+## Slice: Laravel Resource Route Target Search - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `2be9e9c6 Record Laravel named controller route actions commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Make Laravel named-route completions discover resource-style route files beyond `Route::resource` and `Route::apiResource`.
+
+### Implementation Choice
+
+- Expand named-route target search queries to include `Route::singleton`, `Route::apiSingleton`, `Route::resources`, `Route::apiResources`, and `Route::softDeletableResources`.
+- Preserve existing `->name(`, `Route::resource`, and `Route::apiResource` discovery.
+- Add workbench coverage proving route-name completions can be sourced from a singleton-only route file.
+
+### Acceptance Criteria
+
+- Singleton-only route files can contribute named-route completions.
+- Existing resource-only route file completions still work.
+- Existing resource override completions still work.
+- Full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "resource route names from resource-only route files|singleton route names from singleton-only route files|resource route name overrides from named arguments"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `43ba25e9 Complete Laravel resource route target search`.
