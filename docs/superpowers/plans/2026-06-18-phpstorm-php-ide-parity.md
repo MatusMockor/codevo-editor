@@ -7378,3 +7378,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `df40649f Support PHPStan Psalm PHPDoc return tags`.
+
+## Slice: PHPStan Psalm PHPDoc Param Tags - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `234165d9 Record PHPStan Psalm PHPDoc return tag commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Treat `@phpstan-param` and `@psalm-param` like `@param` for PHPDoc parameter and class-string template inference.
+
+### Implementation Choice
+
+- Extend class-string template parameter detection to accept PHPStan/Psalm-prefixed `@param` tags.
+- Extend PHP method parameter enrichment to accept prefixed `@param` tags.
+- Convert focused fixtures to prefixed param tags while preserving expected behavior.
+
+### Acceptance Criteria
+
+- Untyped PHP method parameters can be enriched from `@phpstan-param` and `@psalm-param`.
+- Class-string template return inference can pair prefixed param tags with prefixed return tags.
+- Focused/full domain tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "PHPDoc parameter|class-string template"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "generic functions"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

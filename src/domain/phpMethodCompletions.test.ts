@@ -1907,7 +1907,7 @@ class Container
 {
     /**
      * @template T of object
-     * @param class-string<T> $className
+     * @phpstan-param class-string<T> $className
      * @psalm-return T
      */
     public function get(string $className): object {}
@@ -2254,8 +2254,8 @@ trait InteractsWithInput
     /**
      * Retrieve an input item from the request.
      *
-     * @param  string|null  $key
-     * @param  mixed  $default
+     * @phpstan-param  string|null  $key
+     * @psalm-param  mixed  $default
      * @return mixed
      */
     public function input($key = null, $default = null) {}

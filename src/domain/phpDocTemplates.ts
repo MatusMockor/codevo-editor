@@ -28,7 +28,7 @@ export function phpDocClassStringReturnTemplate(
   }
 
   const classStringParamPattern =
-    /@param\s+class-string\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>/g;
+    /@(?:(?:phpstan|psalm)-)?param\s+class-string\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>/g;
 
   for (const match of docBlock.matchAll(classStringParamPattern)) {
     const template = match[1];

@@ -525,7 +525,7 @@ function phpDocParameterTypes(docBlock: string): Map<string, string> {
   const types = new Map<string, string>();
 
   for (const match of docBlock.matchAll(
-    /@param\s+([^\s*]+)\s+(?:&\s*)?(?:\.\.\.)?\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
+    /@(?:(?:phpstan|psalm)-)?param\s+([^\s*]+)\s+(?:&\s*)?(?:\.\.\.)?\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
   )) {
     const type = normalizeReturnType(match[1] ?? "");
     const name = match[2]?.toLowerCase();
