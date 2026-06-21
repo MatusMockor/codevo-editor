@@ -4521,3 +4521,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `74fdef20 Reconcile trait host constant diagnostics`.
+
+## Slice: Stale Type Hierarchy Tab Switch Guard - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `681f5815 Record trait host constant diagnostics commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down workspace-tab isolation for JavaScript/TypeScript type hierarchy requests when a project tab switch happens while the LSP request is in flight.
+
+### Implementation Choice
+
+- Add a preview controller regression mirroring the existing call hierarchy stale-tab-switch guard.
+- Start a type hierarchy request in `/workspace-a`, switch to `/workspace-b`, then reject the delayed request.
+- Assert the stale error does not set the user-facing message or create a Type Hierarchy notice.
+- Keep this as a test-only slice because the controller already uses the root/session active guard for type hierarchy.
+
+### Acceptance Criteria
+
+- A delayed type hierarchy failure from an inactive project tab is ignored.
+- The active workspace remains `/workspace-b`.
+- No stale Type Hierarchy notice leaks into the active tab.
+- The existing same-root session restart guard remains covered.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "type hierarchy errors after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `2012fccd Cover stale type hierarchy tab switches`.
