@@ -840,3 +840,40 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `ab341f6d Cover TypeScript lazy resolve errors by session`.
+
+### Slice: TypeScript Workspace Symbol Rootless Active Guard Coverage - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e8a124a0 Record TypeScript lazy resolve error guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prove in-flight TypeScript workspace symbol results are dropped when the last project tab closes before the LSP response returns.
+
+#### Implementation Choice
+
+- Add a workspace symbol regression that starts a query under `/project`, clears the active workspace root before the delayed response, and verifies the symbol picker receives an empty list.
+- Keep the gateway assertion pinned to `/project`, proving request capture remains stable while response delivery is blocked after active-root loss.
+
+#### Acceptance Criteria
+
+- In-flight TypeScript workspace symbols return no symbols after `getWorkspaceRoot()` becomes `null`.
+- Existing project-switch workspace symbol guard still passes.
+- Full JS/TS provider tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts -t "drops in-flight TypeScript workspace symbols when no project tab is active|drops in-flight TypeScript workspace symbols after switching project tabs"`
+- PASS: `npm test -- src/components/javascriptTypescriptLanguageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `b3c28189 Cover TypeScript workspace symbols without active workspace`.
