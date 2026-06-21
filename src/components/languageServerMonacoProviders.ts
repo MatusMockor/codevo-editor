@@ -38,6 +38,7 @@ type WorkspaceEditContext = {
 
 interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
   __languageServerAction?: LanguageServerCodeAction;
+  __languageServerSessionId?: number;
   __workspaceEditContext?: WorkspaceEditContext;
   __workspaceRoot?: string;
 }
@@ -45,6 +46,7 @@ interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
 interface ExecuteCommandPayload {
   command: LanguageServerCodeActionCommand;
   rootPath: string;
+  sessionId: number;
 }
 
 const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
@@ -78,7 +80,14 @@ export function registerLanguageServerMonacoProviders(
         return;
       }
 
-      if (!isRuntimeActiveForRoot(context, payload.rootPath)) {
+      if (
+        payload.sessionId == null ||
+        !isStoredLanguageServerPayloadActive(
+          context,
+          payload.rootPath,
+          payload.sessionId,
+        )
+      ) {
         return;
       }
 
@@ -88,7 +97,13 @@ export function registerLanguageServerMonacoProviders(
           payload.command,
         );
 
-        if (!isRuntimeActiveForRoot(context, payload.rootPath)) {
+        if (
+          !isStoredLanguageServerPayloadActive(
+            context,
+            payload.rootPath,
+            payload.sessionId,
+          )
+        ) {
           return;
         }
 
@@ -96,7 +111,13 @@ export function registerLanguageServerMonacoProviders(
           applyWorkspaceEditToOpenModels(monaco, edit, payload.rootPath);
         }
       } catch (error) {
-        if (isRuntimeActiveForRoot(context, payload.rootPath)) {
+        if (
+          isStoredLanguageServerPayloadActive(
+            context,
+            payload.rootPath,
+            payload.sessionId,
+          )
+        ) {
           context.reportError(error);
         }
       }
@@ -171,9 +192,7 @@ async function provideCodeActions(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
-
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
       return codeActionList(localActions);
     }
 
@@ -184,7 +203,7 @@ async function provideCodeActions(
       toLanguageServerCodeActionContext(monaco, actionContext),
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return codeActionList(localActions);
     }
 
@@ -194,6 +213,7 @@ async function provideCodeActions(
           monaco,
           workspaceEditContext(model),
           request.rootPath,
+          request.sessionId,
           action,
           actionContext,
         ),
@@ -201,9 +221,7 @@ async function provideCodeActions(
       ...localActions,
     ]);
   } catch (error) {
-    if (isStoredWorkspaceRootActive(context, request.rootPath)) {
-      context.reportError(error);
-    }
+    reportErrorForActiveRequest(context, request, error);
 
     return codeActionList(localActions);
   }
@@ -219,7 +237,12 @@ async function resolveCodeAction(
   if (
     !backedAction.__languageServerAction ||
     !backedAction.__workspaceRoot ||
-    !isRuntimeActiveForRoot(context, backedAction.__workspaceRoot)
+    backedAction.__languageServerSessionId == null ||
+    !isStoredLanguageServerPayloadActive(
+      context,
+      backedAction.__workspaceRoot,
+      backedAction.__languageServerSessionId,
+    )
   ) {
     return action;
   }
@@ -230,7 +253,13 @@ async function resolveCodeAction(
       backedAction.__languageServerAction,
     );
 
-    if (!isRuntimeActiveForRoot(context, backedAction.__workspaceRoot)) {
+    if (
+      !isStoredLanguageServerPayloadActive(
+        context,
+        backedAction.__workspaceRoot,
+        backedAction.__languageServerSessionId,
+      )
+    ) {
       return action;
     }
 
@@ -241,6 +270,7 @@ async function resolveCodeAction(
         versionId: undefined,
       },
       backedAction.__workspaceRoot,
+      backedAction.__languageServerSessionId,
       resolved,
       {
         markers: action.diagnostics ?? [],
@@ -251,7 +281,13 @@ async function resolveCodeAction(
 
     return mapped ? { ...action, ...mapped } : action;
   } catch (error) {
-    if (isRuntimeActiveForRoot(context, backedAction.__workspaceRoot)) {
+    if (
+      isStoredLanguageServerPayloadActive(
+        context,
+        backedAction.__workspaceRoot,
+        backedAction.__languageServerSessionId,
+      )
+    ) {
       context.reportError(error);
     }
 
@@ -442,6 +478,7 @@ function toMonacoCodeAction(
   monaco: MonacoApi,
   editContext: WorkspaceEditContext,
   rootPath: string,
+  sessionId: number,
   action: LanguageServerCodeAction,
   context: Monaco.languages.CodeActionContext,
 ): Monaco.languages.CodeAction[] {
@@ -451,6 +488,7 @@ function toMonacoCodeAction(
 
   const codeAction: LanguageServerBackedCodeAction = {
     __languageServerAction: action,
+    __languageServerSessionId: sessionId,
     __workspaceEditContext: editContext,
     __workspaceRoot: rootPath,
     diagnostics: context.markers,
@@ -458,6 +496,7 @@ function toMonacoCodeAction(
       ? {
           command: toMonacoLanguageServerCommand(
             rootPath,
+            sessionId,
             action.command,
             action.title,
           ),
@@ -488,6 +527,7 @@ function toMonacoCodeAction(
 
 function toMonacoLanguageServerCommand(
   rootPath: string,
+  sessionId: number,
   command: LanguageServerCodeActionCommand,
   fallbackTitle: string,
 ): Monaco.languages.Command {
@@ -496,6 +536,7 @@ function toMonacoLanguageServerCommand(
       {
         command,
         rootPath,
+        sessionId,
       } satisfies ExecuteCommandPayload,
     ],
     id: EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID,
@@ -619,9 +660,7 @@ async function provideHover(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
-
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
       return null;
     }
 
@@ -630,7 +669,7 @@ async function provideHover(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -642,9 +681,7 @@ async function provideHover(
       contents: [{ value: hover.contents }],
     };
   } catch (error) {
-    if (isStoredWorkspaceRootActive(context, request.rootPath)) {
-      context.reportError(error);
-    }
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -670,10 +707,10 @@ async function provideCompletionItems(
     source,
     position,
     range,
-    documentContext.rootPath,
+    documentContext,
   );
 
-  if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+  if (!isPhpDocumentContextActive(context, documentContext)) {
     return { suggestions: [] };
   }
 
@@ -715,9 +752,7 @@ async function provideCompletionItems(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
-
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
       return { suggestions: [] };
     }
 
@@ -726,7 +761,7 @@ async function provideCompletionItems(
       request.position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return { suggestions: [] };
     }
 
@@ -769,7 +804,7 @@ async function provideCompletionItems(
       ]),
     };
   } catch (error) {
-    if (isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (isFeatureRequestActive(context, request)) {
       context.reportError(error);
       return { suggestions };
     }
@@ -784,7 +819,7 @@ async function phpMethodSuggestions(
   source: string,
   position: MonacoPosition,
   range: ReturnType<typeof completionRange>,
-  rootPath: string,
+  request: { rootPath: string; sessionId: number | null },
 ): Promise<Monaco.languages.CompletionItem[]> {
   if (!context.providePhpMethodCompletions) {
     return [];
@@ -793,7 +828,7 @@ async function phpMethodSuggestions(
   try {
     const methods = await context.providePhpMethodCompletions(source, position);
 
-    if (!isStoredWorkspaceRootActive(context, rootPath)) {
+    if (!isPhpDocumentContextActive(context, request)) {
       return [];
     }
 
@@ -819,7 +854,7 @@ async function phpMethodSuggestions(
       sortText: `0_${String(index).padStart(4, "0")}`,
     }));
   } catch (error) {
-    if (isStoredWorkspaceRootActive(context, rootPath)) {
+    if (isPhpDocumentContextActive(context, request)) {
       context.reportError(error);
     }
     return [];
@@ -902,7 +937,7 @@ async function provideSignatureHelp(
       position,
     );
 
-    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+    if (!isPhpDocumentContextActive(context, documentContext)) {
       return null;
     }
 
@@ -930,7 +965,7 @@ async function provideSignatureHelp(
       },
     };
   } catch (error) {
-    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+    if (isPhpDocumentContextActive(context, documentContext)) {
       context.reportError(error);
     }
     return null;
@@ -950,9 +985,7 @@ async function provideSelectionRanges(
   }
 
   try {
-    await context.flushPendingDocumentChange(request.path);
-
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
       return null;
     }
 
@@ -965,7 +998,7 @@ async function provideSelectionRanges(
       })),
     );
 
-    if (!isStoredWorkspaceRootActive(context, request.rootPath)) {
+    if (!isFeatureRequestActive(context, request)) {
       return null;
     }
 
@@ -973,9 +1006,7 @@ async function provideSelectionRanges(
       flattenSelectionRange(monaco, selectionRange),
     );
   } catch (error) {
-    if (isStoredWorkspaceRootActive(context, request.rootPath)) {
-      context.reportError(error);
-    }
+    reportErrorForActiveRequest(context, request, error);
     return null;
   }
 }
@@ -1307,6 +1338,7 @@ function activePhpDocumentContext(
     activeDocument,
     path,
     rootPath,
+    sessionId: runningRuntimeSessionIdForRoot(context, rootPath),
   };
 }
 
@@ -1490,43 +1522,94 @@ function featureDocumentRequestContext(
     return null;
   }
 
-  if (!canUseRuntimeFeatureForRoot(context, rootPath, feature)) {
+  const status = runningRuntimeStatusForRoot(context, rootPath);
+
+  if (!status || !canUseLanguageServerFeature(status.capabilities, feature)) {
     return null;
   }
 
-  return { path, rootPath };
+  return { path, rootPath, sessionId: status.sessionId };
 }
 
-function canUseRuntimeFeatureForRoot(
+async function flushPendingDocumentChangeForActiveRequest(
+  context: LanguageServerMonacoProviderContext,
+  request: { path: string; rootPath: string; sessionId: number },
+): Promise<boolean> {
+  await context.flushPendingDocumentChange(request.path);
+
+  return isFeatureRequestActive(context, request);
+}
+
+function runningRuntimeSessionIdForRoot(
   context: LanguageServerMonacoProviderContext,
   rootPath: string,
-  feature: "codeAction" | "completion" | "hover" | "selectionRange",
-): boolean {
+): number | null {
+  return runningRuntimeStatusForRoot(context, rootPath)?.sessionId ?? null;
+}
+
+function runningRuntimeStatusForRoot(
+  context: LanguageServerMonacoProviderContext,
+  rootPath: string,
+): Extract<LanguageServerRuntimeStatus, { kind: "running" }> | null {
   const status = context.getRuntimeStatus();
 
-  return (
+  if (
     status?.kind === "running" &&
     Boolean(status.rootPath) &&
-    workspaceRootKeysEqual(status.rootPath, rootPath) &&
-    canUseLanguageServerFeature(status.capabilities, feature)
+    workspaceRootKeysEqual(status.rootPath, rootPath)
+  ) {
+    return status;
+  }
+
+  return null;
+}
+
+function isFeatureRequestActive(
+  context: LanguageServerMonacoProviderContext,
+  request: { rootPath: string; sessionId: number },
+): boolean {
+  return isStoredLanguageServerPayloadActive(
+    context,
+    request.rootPath,
+    request.sessionId,
   );
 }
 
-function isRuntimeActiveForRoot(
+function isPhpDocumentContextActive(
+  context: LanguageServerMonacoProviderContext,
+  request: { rootPath: string; sessionId: number | null },
+): boolean {
+  return request.sessionId == null
+    ? isStoredWorkspaceRootActive(context, request.rootPath)
+    : isStoredLanguageServerPayloadActive(
+        context,
+        request.rootPath,
+        request.sessionId,
+      );
+}
+
+function isStoredLanguageServerPayloadActive(
   context: LanguageServerMonacoProviderContext,
   rootPath: string,
+  sessionId: number,
 ): boolean {
   if (!isStoredWorkspaceRootActive(context, rootPath)) {
     return false;
   }
 
-  const status = context.getRuntimeStatus();
+  return runningRuntimeSessionIdForRoot(context, rootPath) === sessionId;
+}
 
-  return (
-    status?.kind === "running" &&
-    Boolean(status.rootPath) &&
-    workspaceRootKeysEqual(status.rootPath, rootPath)
-  );
+function reportErrorForActiveRequest(
+  context: LanguageServerMonacoProviderContext,
+  request: { rootPath: string; sessionId: number },
+  error: unknown,
+): void {
+  if (!isFeatureRequestActive(context, request)) {
+    return;
+  }
+
+  context.reportError(error);
 }
 
 function isStoredWorkspaceRootActive(

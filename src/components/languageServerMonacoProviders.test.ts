@@ -183,6 +183,41 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight PHP hover after same-root session restart", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const hover = createDeferred<LanguageServerHover | null>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.hover).mockImplementationOnce(async () => hover.promise);
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const hoverPromise = registered.hoverProvider.provideHover(
+      model(),
+      position(),
+    );
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    hover.resolve({ contents: "**Stale user**" });
+
+    await expect(hoverPromise).resolves.toBeNull();
+    expect(gateway.hover).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 4,
+        line: 10,
+        path: "/project/src/User.php",
+      },
+    );
+  });
+
   it("maps completion responses to Monaco suggestions", async () => {
     const registered = createRegisteredProviders();
     const source = phpCompletionFixtureSource();
@@ -279,6 +314,63 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(gateway.completion).toHaveBeenCalledTimes(1);
 
     activeRoot = null;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: "class",
+          documentation: "A stale user",
+          insertText: "User",
+          kind: 7,
+          label: "User",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    expect(gateway.completion).toHaveBeenCalledWith(
+      "/project",
+      {
+        character: 4,
+        line: 10,
+        path: "/project/src/User.php",
+      },
+    );
+  });
+
+  it("drops in-flight PHP completions after same-root session restart", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const completion = createDeferred<LanguageServerCompletionList>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: phpCompletionFixtureSource() }),
+        position(),
+      );
+
+    for (
+      let tick = 0;
+      tick < 5 && vi.mocked(gateway.completion).mock.calls.length === 0;
+      tick += 1
+    ) {
+      await Promise.resolve();
+    }
+    expect(gateway.completion).toHaveBeenCalledTimes(1);
+
+    activeSessionId = 2;
     completion.resolve({
       isIncomplete: false,
       items: [
@@ -1749,6 +1841,7 @@ describe("registerLanguageServerMonacoProviders", () => {
             {
               command: commandAction.command,
               rootPath: "/project",
+              sessionId: 1,
             },
           ],
           id: "mockor.php.executeLanguageServerCommand",
@@ -1792,6 +1885,66 @@ describe("registerLanguageServerMonacoProviders", () => {
 
     await Promise.resolve();
     activeRoot = null;
+    codeActions.resolve([
+      {
+        command: null,
+        data: { id: "stale-import" },
+        edit: null,
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Import User",
+      },
+    ]);
+
+    await expect(codeActionsPromise).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+    expect(gateway.codeActions).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+      range(2, 4, 2, 8),
+      {
+        diagnostics: [],
+        only: ["quickfix"],
+        triggerKind: 1,
+      },
+    );
+  });
+
+  it("drops in-flight PHP LSP code actions after same-root session restart", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const codeActions =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["codeActions"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.codeActions).mockImplementationOnce(
+      async () => codeActions.promise,
+    );
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const codeActionsPromise =
+      registered.codeActionProvider.provideCodeActions(
+        model(),
+        new registered.monaco.Range(3, 5, 3, 9),
+        {
+          markers: [],
+          only: "quickfix",
+          trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+        },
+      );
+
+    await Promise.resolve();
+    activeSessionId = 2;
     codeActions.resolve([
       {
         command: null,
@@ -2217,6 +2370,51 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops in-flight PHP code-action resolves after same-root session restart", async () => {
+    const registered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const resolvedCodeAction =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["resolveCodeAction"]>>
+      >();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.resolveCodeAction).mockImplementationOnce(
+      async () => resolvedCodeAction.promise,
+    );
+    const context = providerContext({
+      featuresGateway: gateway,
+      getRuntimeStatus: () => ({
+        ...runningStatus(),
+        sessionId: activeSessionId,
+      }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+    const backedAction = backedCodeAction();
+
+    const resolvePromise =
+      registered.codeActionProvider.resolveCodeAction(backedAction);
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    resolvedCodeAction.resolve({
+      command: null,
+      data: null,
+      edit: workspaceEdit(
+        "file:///project/src/User.php",
+        "use App\\Models\\User;\n",
+      ),
+      isPreferred: true,
+      kind: "quickfix",
+      title: "Import User",
+    });
+
+    await expect(resolvePromise).resolves.toBe(backedAction);
+    expect(gateway.resolveCodeAction).toHaveBeenCalledWith(
+      "/project",
+      backedAction.__languageServerAction,
+    );
+  });
+
   it("does not resolve or execute PHP code-action commands when the runtime status belongs to another workspace root", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -2543,12 +2741,14 @@ function providerContext(
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
     getWorkspaceRoot(): string | null;
+    getRuntimeStatus(): LanguageServerRuntimeStatus | null;
     providePhpMethodCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodCompletions"]
     >;
     providePhpMethodSignature: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodSignature"]
     >;
+    reportError(error: unknown): void;
     runtimeStatus: LanguageServerRuntimeStatus | null;
   }> = {},
 ) {
@@ -2560,11 +2760,11 @@ function providerContext(
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getActiveDocument: () => activeDocument,
-    getRuntimeStatus: () => runtimeStatus,
+    getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
-    reportError: vi.fn(),
+    reportError: overrides.reportError ?? vi.fn(),
   };
 }
 
@@ -2665,6 +2865,7 @@ function backedCodeAction() {
       path: "/project/src/User.php",
       versionId: 42,
     },
+    __languageServerSessionId: 1,
     __workspaceRoot: "/project",
     diagnostics: [],
     kind: "quickfix",
@@ -2672,7 +2873,7 @@ function backedCodeAction() {
   };
 }
 
-function phpCommandPayload(rootPath = "/project") {
+function phpCommandPayload(rootPath = "/project", sessionId = 1) {
   return {
     command: {
       arguments: [],
@@ -2680,6 +2881,7 @@ function phpCommandPayload(rootPath = "/project") {
       title: "Fix all",
     },
     rootPath,
+    sessionId,
   };
 }
 

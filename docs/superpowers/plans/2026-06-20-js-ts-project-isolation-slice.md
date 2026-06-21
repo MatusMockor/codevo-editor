@@ -6358,3 +6358,47 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP LSP Output Workspace Boundary Filter
 
 - Committed as `d1409ba3 Filter PHP LSP outputs by workspace root`.
+
+## Next Slice: PHP Monaco Provider Same-Root Session Stale Results
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `52d009ae Record PHP LSP output filter commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Hubble's PHP/Laravel audit identified a P1 stale-result gap in the PHP Monaco provider.
+- Existing PHP provider guards rejected results after workspace-tab switches, but they only checked the active root.
+- If PHPactor restarted for the same root while a hover/completion/code-action request was in flight, the old session could still populate Monaco UI or report errors into the new session.
+
+### Implementation Choice
+
+- Stamp PHP LSP feature requests with the active PHP runtime `sessionId`, matching the JS/TS provider pattern.
+- Re-check `{rootPath, sessionId}` after document flushes, after awaited LSP responses, and before reporting provider errors.
+- Stamp PHP-backed code actions and command payloads with the runtime session so lazy resolves and execute-command edits cannot cross same-root restarts.
+- Keep local PHP source completions available when no LSP runtime is usable, while guarding async local PHP method/signature helpers with a best-effort session stamp when a running runtime exists.
+
+### Acceptance Criteria
+
+- Same-root PHPactor restarts drop stale hover responses.
+- Same-root PHPactor restarts drop stale completion responses.
+- Same-root PHPactor restarts drop stale code-action responses and lazy resolves.
+- Existing root-switch guards, disabled-capability behavior, local PHP completions, and command execution behavior remain unchanged.
+- Focused PHP provider tests, full PHP provider tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Provider Same-Root Session Stale Results
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "same-root session restart|PHP hover|PHP completions|LSP code actions|code-action resolves|code-action commands"` (13 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (49 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 868 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Provider Same-Root Session Stale Results
+
+- Pending commit.
