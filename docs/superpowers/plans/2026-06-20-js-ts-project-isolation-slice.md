@@ -8534,3 +8534,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Cache Store Names
 
 - Committed as `62c80266 Add Laravel cache store navigation`.
+
+## Next Slice: Laravel Database Connection Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1e4570b6 Record Laravel cache store commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel database connection names are configured under `config/database.php` and commonly referenced through `DB::connection(...)`, `DB::reconnect(...)`, `Schema::connection(...)`, and `db()->connection(...)`.
+- This extends the same config-derived string navigation pattern used for Cache stores and Storage disks without adding a separate config parser.
+
+### Implementation Choice
+
+- Add a focused database connection string detector for supported DB facade, Schema facade, and `db()->connection(...)` helper calls.
+- Map a connection name to `database.connections.<connection>` for target lookup.
+- Suggest connection names from exact `database.connections.*` config targets and navigate to the connection key in `config/database.php`.
+
+### Verification: Laravel Database Connection Names
+
+- `npm test -- src/domain/phpLaravelDatabase.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "database connection names"` passed: 2 passed, 405 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpLaravelDatabase.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 407 passed.
+- `npm test` passed: 72 files, 1074 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Database Connection Names
+
+- Committed as `2034f55a Add Laravel database connection navigation`.
