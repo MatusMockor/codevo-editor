@@ -1129,6 +1129,15 @@ class Comment extends Model
             ->straightJoinWhere('comments as straight_where_comments', 'straight_where_comments.post_id', '=', 'posts.id')
             ->straightJoinSub($this->posts()->select('id'), 'straight_posts', 'straight_posts.id', '=', 'posts.id')
             ->first();
+        $relationMethodVectorOrderedPost = $this->posts()
+            ->selectVectorDistance('embedding', [0.1, 0.2, 0.3], 'distance')
+            ->whereVectorSimilarTo('embedding', [0.1, 0.2, 0.3], 0.7)
+            ->whereVectorDistanceLessThan('embedding', [0.1, 0.2, 0.3], 0.5)
+            ->orWhereVectorDistanceLessThan('embedding', [0.3, 0.2, 0.1], 0.6)
+            ->orderByVectorDistance('embedding', [0.1, 0.2, 0.3])
+            ->inOrderOf('id', [1, 2, 3])
+            ->groupLimit(1, 'user_id')
+            ->first();
         $relationMethodRawFilteredPost = $this->posts()
             ->selectRaw('posts.*')
             ->whereRaw('published = 1')
@@ -1300,6 +1309,7 @@ class Comment extends Model
         $relationMethodLockedPost->tit
         $relationMethodControlledPost->tit
         $relationMethodJoinedPost->tit
+        $relationMethodVectorOrderedPost->tit
         $relationMethodRawFilteredPost->tit
         $relationMethodExistsFilteredPost->tit
         $relationMethodColumnFilteredPost->tit
@@ -1566,6 +1576,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodJoinedPost->tit"),
         "relationMethodJoinedPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodVectorOrderedPost->tit"),
+        "relationMethodVectorOrderedPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
