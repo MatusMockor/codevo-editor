@@ -14611,6 +14611,10 @@ export function useWorkbenchController(
           autoStartedLanguageServerRootRef.current = null;
         }
 
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+          return;
+        }
+
         reportLanguageServerError(error);
         setPhpLanguageServerAutostartRetryVersion((current) => current + 1);
       });

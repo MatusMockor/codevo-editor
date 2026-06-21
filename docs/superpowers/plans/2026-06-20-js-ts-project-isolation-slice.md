@@ -4442,3 +4442,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Runtime Subscription Active Workspace Guard
 
 - Committed as `c33f2b7c Guard runtime subscription errors by active workspace`.
+
+## Next Slice: PHP Autostart Active Workspace Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b5912b6b Record runtime subscription guard commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- A read-only explorer audit found that PHP IDE autostart rejections reported through the global language-server error path.
+- If `/workspace-a` was auto-starting PHPactor and rejected after switching to `/workspace-b`, the stale failure could show a `Language Server` notice in the new workspace and schedule a stale retry tick.
+- Manual PHP language-server start already had an active-root guard; autostart needed the same contract.
+
+### Implementation Choice
+
+- Keep the autostart root cleanup first so the old workspace is not left stuck as auto-starting.
+- After cleanup, ignore rejection handling unless the original workspace root is still active.
+- Add a preview regression where `/workspace-a` autostart rejects after switching to `/workspace-b`.
+
+### Acceptance Criteria
+
+- Stale PHP IDE autostart errors do not create notices or messages after switching workspace tabs.
+- Existing autostart retry and crash retry behavior remains green while staying on the same workspace.
+- Focused/broader preview tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Autostart Active Workspace Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "PHP IDE service autostart"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "autostart|manual PHP language server start|runtime subscription errors|runtime status"`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Autostart Active Workspace Guard
+
+- Pending commit.

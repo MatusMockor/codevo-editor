@@ -5461,6 +5461,70 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("ignores stale PHP IDE service autostart errors after switching project tabs", async () => {
+    const workspaceAStart = createDeferred<LanguageServerRuntimeStatus>();
+    const workspaceBStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        completion: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-b",
+      sessionId: 91,
+    };
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) =>
+        rootPath === "/workspace-a" ? workspaceAStart.promise : workspaceBStatus,
+      ),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerPlan: phpactorLanguageServerPlan(),
+      languageServerRuntimeGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.languageServerRuntimeGateway.start).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      workspaceAStart.reject(new Error("stale PHP autostart"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Error: stale PHP autostart");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale PHP autostart"),
+      ),
+    ).toBe(false);
+  });
+
   it("retries restored PHP IDE service autostart when startup crashes once", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: {
