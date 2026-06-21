@@ -5367,6 +5367,63 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("ignores stale metadata scan subscription errors after switching project tabs", async () => {
+    const subscription = createDeferred<() => void>();
+    const indexProgressGateway: IndexProgressGateway = {
+      clearWorkspaceIndex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "cleared" as const,
+      })),
+      startInitialMetadataScan: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "started" as const,
+      })),
+      startReindex: vi.fn(async (rootPath) => ({
+        databasePath: "/tmp/index.sqlite",
+        rootPath,
+        status: "started" as const,
+      })),
+      subscribeMetadataScanCompletion: vi
+        .fn()
+        .mockImplementationOnce(async () => subscription.promise)
+        .mockImplementation(async () => () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      indexProgressGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      subscription.reject(new Error("stale metadata subscription"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe(
+      "Error: stale metadata subscription",
+    );
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Index" &&
+          notice.message.includes("stale metadata subscription"),
+      ),
+    ).toBe(false);
+  });
+
   it("ignores stale PHP language server plan results after switching project tabs", async () => {
     const workspaceAPlan = createDeferred<LanguageServerPlan>();
     const workspaceBPlan: LanguageServerPlan = {

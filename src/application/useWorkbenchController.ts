@@ -15932,6 +15932,7 @@ export function useWorkbenchController(
 
   useEffect(() => {
     let active = true;
+    const subscriptionRoot = workspaceRoot;
     let unsubscribe: IndexProgressUnsubscribeFn | null = null;
 
     indexProgressGateway
@@ -15950,13 +15951,23 @@ export function useWorkbenchController(
 
         unsubscribe = dispose;
       })
-      .catch((error) => reportError("Index", error));
+      .catch((error) => {
+        if (
+          !active ||
+          !subscriptionRoot ||
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, subscriptionRoot)
+        ) {
+          return;
+        }
+
+        reportError("Index", error);
+      });
 
     return () => {
       active = false;
       unsubscribe?.();
     };
-  }, [handleMetadataScanCompletion, indexProgressGateway, reportError]);
+  }, [handleMetadataScanCompletion, indexProgressGateway, reportError, workspaceRoot]);
 
   useEffect(() => {
     let active = true;

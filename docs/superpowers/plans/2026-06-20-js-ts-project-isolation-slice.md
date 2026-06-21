@@ -5117,3 +5117,49 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Diagnostics Subscription Cleanup Guard
 
 - Committed as `f0c1d7de Guard diagnostics subscription errors by workspace`.
+
+## Next Slice: Metadata Subscription Cleanup Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0489345e Record diagnostics subscription guard commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 845 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Index metadata scan completion subscription used an active flag for events and dispose registration.
+- Its rejection handler reported `Index` errors without checking cleanup or active workspace root.
+- A stale metadata subscription rejection could surface an `Index` notice after switching project tabs.
+
+### Implementation Choice
+
+- Capture the workspace root for the metadata subscription effect.
+- Guard metadata subscription rejections by cleanup state and captured root.
+- Add `workspaceRoot` to the effect dependencies.
+- Add a preview regression where a pending metadata subscription rejects after switching from `/workspace-a` to `/workspace-b`.
+
+### Acceptance Criteria
+
+- Stale metadata subscription failures do not set active-workspace messages or `Index` notices after project-tab switches.
+- Existing metadata clear and index clear stale guards remain green.
+- Index/smart-mode/workspace lifecycle tests remain green.
+- Focused/broader/full preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Metadata Subscription Cleanup Guard
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "metadata scan|metadata subscription|index clear|Index"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Index|index|metadata|smart mode|workspace tab|project tab"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm test` (64 files, 846 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Metadata Subscription Cleanup Guard
+
+- Pending commit.
