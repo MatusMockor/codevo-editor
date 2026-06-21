@@ -3784,3 +3784,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
 - PASS: `npm run check`
 - PASS: `git diff --check`
+
+### Commit Status: PHP Controller Runtime Workspace Gates
+
+- Committed as `4fbadc07 Gate PHP runtime features by workspace`.
