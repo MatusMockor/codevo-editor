@@ -4180,3 +4180,46 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `dca3dbd0 Complete Laravel named resource filters`.
+
+## Slice: Laravel Named Resource Route Overrides - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `64edecd6 Record Laravel named resource filters commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Include PHP 8 named arguments in Laravel resource `names(...)` route-name override maps.
+
+### Implementation Choice
+
+- Extend the route string-map helper with optional allowed named argument names.
+- Use `names:` only for resource and singleton route override maps, leaving group array prefix parsing unchanged.
+- Keep unsupported named arguments such as `names(label: [...])` ignored.
+- Add parser coverage for named resource overrides, filtered API resource overrides, singleton overrides inside named groups, and unsupported named override arguments.
+- Add workbench coverage proving route-name completions can be sourced from `Route::resource(...)->names(names: ['edit' => 'comments.modify'])`.
+
+### Acceptance Criteria
+
+- `->names(names: [...])` overrides resource route names.
+- Named override maps work after named `only:` filters.
+- Singleton route override maps support `names:`.
+- Unsupported named override arguments do not accidentally override route names.
+- Focused/full route parser and preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts src/application/useWorkbenchController.preview.test.tsx -t "route name overrides from named arguments|literal Laravel resource route name overrides|resource route names from resource-only route files"`
+- PASS: `npm test -- src/domain/phpLaravelRoutes.test.ts`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `17b2a289 Complete Laravel named resource route overrides`.
