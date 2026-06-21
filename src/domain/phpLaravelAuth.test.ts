@@ -20,6 +20,10 @@ describe("phpLaravelAuth", () => {
       ["auth(guard: 'admin')", "auth"],
       ["auth()->guard('admin')", "auth()->guard"],
       ["auth()->guard(name: 'admin')", "auth()->guard"],
+      ["$request->user('admin')", "request()->user"],
+      ["$request->user(guard: 'admin')", "request()->user"],
+      ["request()->user('admin')", "request()->user"],
+      ["request()->user(guard: 'admin')", "request()->user"],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -48,6 +52,8 @@ describe("phpLaravelAuth", () => {
     const invalid = `<?php\n\nAuth::guard('admin/web');\n`;
     const wrongFacade = `<?php\n\nCache::store('admin');\n`;
     const wrongHelperMember = `<?php\n\n$manager->auth('admin');\n`;
+    const genericUserMember = `<?php\n\n$userRepository->user('admin');\n`;
+    const wrongRequestUserArgument = `<?php\n\n$request->user(name: 'admin');\n`;
 
     expect(
       phpLaravelAuthGuardReferenceContextAt(
@@ -101,6 +107,18 @@ describe("phpLaravelAuth", () => {
       phpLaravelAuthGuardReferenceContextAt(
         wrongHelperMember,
         positionAfter(wrongHelperMember, "admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        genericUserMember,
+        positionAfter(genericUserMember, "admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        wrongRequestUserArgument,
+        positionAfter(wrongRequestUserArgument, "admin"),
       ),
     ).toBeNull();
   });

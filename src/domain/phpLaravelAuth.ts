@@ -14,13 +14,18 @@ const authGuardHelperCallMethods = {
   auth: "auth",
   guard: "auth()->guard",
 } as const;
+const authGuardRequestCallMethods = {
+  user: "request()->user",
+} as const;
 
 type AuthGuardStaticMethodName = keyof typeof authGuardStaticCallMethods;
 type AuthGuardHelperMethodName = keyof typeof authGuardHelperCallMethods;
+type AuthGuardRequestMethodName = keyof typeof authGuardRequestCallMethods;
 
 export type PhpLaravelAuthGuardReferenceCall =
   | (typeof authGuardStaticCallMethods)[AuthGuardStaticMethodName]
-  | (typeof authGuardHelperCallMethods)[AuthGuardHelperMethodName];
+  | (typeof authGuardHelperCallMethods)[AuthGuardHelperMethodName]
+  | (typeof authGuardRequestCallMethods)[AuthGuardRequestMethodName];
 
 export interface PhpLaravelAuthGuardReferenceContext {
   call: PhpLaravelAuthGuardReferenceCall;
@@ -128,6 +133,16 @@ function laravelAuthGuardReferenceCallAt(
     return authGuardHelperCallMethods.auth;
   }
 
+  const requestUserMatch =
+    /(?:^|[^A-Za-z0-9_$>:\\])(?:\$request|request\s*\(\s*\))\s*(?:->|\?->)\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/.exec(
+      beforeCall,
+    );
+  const requestUserMethod = requestUserMatch?.[1]?.toLowerCase() ?? null;
+
+  if (requestUserMethod && isAuthGuardRequestMethodName(requestUserMethod)) {
+    return authGuardRequestCallMethods[requestUserMethod];
+  }
+
   return null;
 }
 
@@ -143,6 +158,12 @@ function isAuthGuardHelperMethodName(
   return methodName in authGuardHelperCallMethods;
 }
 
+function isAuthGuardRequestMethodName(
+  methodName: string,
+): methodName is AuthGuardRequestMethodName {
+  return methodName in authGuardRequestCallMethods;
+}
+
 function isAuthGuardArgument(
   argument: PhpStringArgumentContext,
   call: PhpLaravelAuthGuardReferenceCall,
@@ -150,6 +171,12 @@ function isAuthGuardArgument(
   const argumentName = argument.argumentName?.toLowerCase();
 
   if (call === "auth") {
+    return argumentName
+      ? argumentName === "guard"
+      : argument.argumentIndex === 0;
+  }
+
+  if (call === "request()->user") {
     return argumentName
       ? argumentName === "guard"
       : argument.argumentIndex === 0;

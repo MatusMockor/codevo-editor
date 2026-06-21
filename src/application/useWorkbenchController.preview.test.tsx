@@ -33846,6 +33846,7 @@ class AuthController
         Auth::setDefaultDriver(name: 'ad');
         auth('we');
         auth()->guard(name: 'ad');
+        request()->user('ad');
     }
 }
 `;
@@ -33971,6 +33972,21 @@ return [
         returnType: null,
       },
     ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "request()->user('ad"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/auth.php",
+        insertText: "admin",
+        kind: "config",
+        name: "admin",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
   });
 
   it("opens Laravel Auth guard names before LSP fallback", async () => {
@@ -33984,7 +34000,7 @@ class AuthController
 {
     public function login(): void
     {
-        Auth::guard('admin')->attempt([]);
+        request()->user('admin');
     }
 }
 `;
@@ -34043,7 +34059,7 @@ return [
     });
     act(() => {
       getWorkbench().updateActiveEditorPosition(
-        positionAfter(controllerSource, "Auth::guard('admin"),
+        positionAfter(controllerSource, "request()->user('admin"),
       );
     });
 
