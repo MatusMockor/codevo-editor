@@ -10,6 +10,7 @@ const laravelCacheStoreConfigPrefix = "cache.stores.";
 const laravelCacheAttributeClass = "Illuminate\\Container\\Attributes\\Cache";
 const cacheStoreStaticCallMethods = {
   driver: "Cache::driver",
+  memo: "Cache::memo",
   store: "Cache::store",
 } as const;
 const cacheStoreHelperCallMethods = {
@@ -52,18 +53,14 @@ export function phpLaravelCacheStoreReferenceContextAt(
   }
 
   const storeName = argument.closed ? argument.value : argument.prefix;
+  const call = laravelCacheStoreReferenceCallAt(source, argument);
 
   if (
-    !isCacheStoreArgument(argument) ||
+    !call ||
+    !isCacheStoreArgument(argument, call) ||
     !isUsableLaravelCacheStoreName(argument.prefix) ||
     !isUsableLaravelCacheStoreName(storeName)
   ) {
-    return null;
-  }
-
-  const call = laravelCacheStoreReferenceCallAt(source, argument);
-
-  if (!call) {
     return null;
   }
 
@@ -178,18 +175,29 @@ function isCacheStoreHelperMethodName(
   return methodName in cacheStoreHelperCallMethods;
 }
 
-function isCacheStoreArgument(argument: PhpStringArgumentContext): boolean {
-  if (argument.argumentIndex === 0) {
-    return true;
-  }
-
+function isCacheStoreArgument(
+  argument: PhpStringArgumentContext,
+  call: PhpLaravelCacheStoreReferenceCall,
+): boolean {
   const argumentName = argument.argumentName?.toLowerCase();
 
-  return (
-    argumentName === "driver" ||
-    argumentName === "name" ||
-    argumentName === "store"
-  );
+  if (!argumentName) {
+    return argument.argumentIndex === 0;
+  }
+
+  if (
+    call === "Cache::driver" ||
+    call === "cache()->driver" ||
+    call === "Cache::memo"
+  ) {
+    return argumentName === "driver";
+  }
+
+  if (call === "Cache::store" || call === "cache()->store") {
+    return argumentName === "name";
+  }
+
+  return false;
 }
 
 function isCacheAttributeStoreArgument(

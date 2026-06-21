@@ -32746,6 +32746,7 @@ class CacheController
     public function store(): void
     {
         Cache::store('red');
+        Cache::memo('red');
         cache()->store('dat');
     }
 }
@@ -32816,6 +32817,21 @@ return [
     await expect(
       getWorkbench().providePhpMethodCompletions(
         controllerSource,
+        positionAfter(controllerSource, "Cache::memo('red"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/cache.php",
+        insertText: "redis",
+        kind: "config",
+        name: "redis",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
         positionAfter(controllerSource, "cache()->store('dat"),
       ),
     ).resolves.toEqual([
@@ -32841,7 +32857,7 @@ class CacheController
 {
     public function store(): mixed
     {
-        return Cache::store('redis')->get('profile');
+        return Cache::memo('redis')->get('profile');
     }
 }
 `;
@@ -32898,7 +32914,7 @@ return [
     });
     act(() => {
       getWorkbench().updateActiveEditorPosition(
-        positionAfter(controllerSource, "Cache::store('redis"),
+        positionAfter(controllerSource, "Cache::memo('redis"),
       );
     });
 

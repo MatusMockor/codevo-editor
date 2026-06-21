@@ -12,10 +12,12 @@ describe("phpLaravelCache", () => {
     const samples = [
       ["Cache::store('redis')", "Cache::store"],
       ["Cache::driver('redis')", "Cache::driver"],
+      ["Cache::memo('redis')", "Cache::memo"],
       ["cache()->store('redis')", "cache()->store"],
       ["cache()->driver('redis')", "cache()->driver"],
       ["Cache::store(name: 'redis')", "Cache::store"],
       ["Cache::driver(driver: 'redis')", "Cache::driver"],
+      ["Cache::memo(driver: 'redis')", "Cache::memo"],
       ["#[Cache('redis')]\nclass RepositoryConsumer {}", "#[Cache]"],
       [
         "#[\\Illuminate\\Container\\Attributes\\Cache(store: 'redis')]\nclass RepositoryConsumer {}",
@@ -66,6 +68,8 @@ class RepositoryConsumer {}
     const interpolated = `<?php\n\nCache::store("red$is");\n`;
     const invalid = `<?php\n\nCache::store('redis/main');\n`;
     const wrongCall = `<?php\n\nStorage::disk('redis');\n`;
+    const wrongStoreArgumentName = `<?php\n\nCache::store(driver: 'redis');\n`;
+    const wrongMemoArgumentName = `<?php\n\nCache::memo(name: 'redis');\n`;
     const wrongAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Cache;\n\n#[Cache(name: 'redis')]\nclass RepositoryConsumer {}\n`;
     const memoAttributeArgument = `<?php\n\nuse Illuminate\\Container\\Attributes\\Cache;\n\n#[Cache(memo: 'redis')]\nclass RepositoryConsumer {}\n`;
     const foreignAttribute = `<?php\n\nuse App\\Attributes\\Cache;\n\n#[Cache('redis')]\nclass RepositoryConsumer {}\n`;
@@ -87,6 +91,18 @@ class RepositoryConsumer {}
     ).toBeNull();
     expect(
       phpLaravelCacheStoreReferenceContextAt(wrongCall, positionAfter(wrongCall, "redis")),
+    ).toBeNull();
+    expect(
+      phpLaravelCacheStoreReferenceContextAt(
+        wrongStoreArgumentName,
+        positionAfter(wrongStoreArgumentName, "redis"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelCacheStoreReferenceContextAt(
+        wrongMemoArgumentName,
+        positionAfter(wrongMemoArgumentName, "redis"),
+      ),
     ).toBeNull();
     expect(
       phpLaravelCacheStoreReferenceContextAt(
