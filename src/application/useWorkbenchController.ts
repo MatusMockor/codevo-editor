@@ -2229,6 +2229,7 @@ export function useWorkbenchController(
     setTextSearchResults([]);
     setPaletteOpen(false);
     setFileStructureOpen(false);
+    setFileStructureScope("current");
     setLanguageServerSetupOpen(false);
     setInstallingManagedPhpactor(false);
     setSettingsOpen(false);

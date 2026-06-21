@@ -4373,6 +4373,8 @@ describe("useWorkbenchController preview tabs", () => {
       getWorkbench().setTextSearchOpen(true);
       getWorkbench().setTextSearchQuery("needle");
       getWorkbench().showBottomPanelView("terminal");
+      getWorkbench().setFileStructureOpen(true);
+      getWorkbench().setFileStructureScopeMode("inherited");
     });
     await act(async () => {
       await getWorkbench().openPhpFileOutlineNode({
@@ -4405,6 +4407,8 @@ describe("useWorkbenchController preview tabs", () => {
         notice.message.includes("workspace a transient"),
       ),
     ).toBe(true);
+    expect(getWorkbench().fileStructureOpen).toBe(true);
+    expect(getWorkbench().fileStructureScope).toBe("inherited");
     act(() => {
       publishMetadataScanCompletion?.({
         databasePath: "/tmp/index.sqlite",
@@ -4466,6 +4470,8 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().textSearchOpen).toBe(false);
     expect(getWorkbench().textSearchQuery).toBe("");
     expect(getWorkbench().textSearchLoading).toBe(false);
+    expect(getWorkbench().fileStructureOpen).toBe(false);
+    expect(getWorkbench().fileStructureScope).toBe("current");
     expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
       expect.objectContaining({
         recentWorkspacePath: null,
