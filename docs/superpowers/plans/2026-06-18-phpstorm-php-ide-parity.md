@@ -2745,3 +2745,37 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `2b2745ea Cover Laravel relation method collection chains`.
+
+## Slice: Laravel Relation Method Terminal Variants - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `404ae6a6 Record controller stop runtime root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock relation-method semantic inference across additional Laravel terminal and collection-producing variants.
+
+### Implementation Choice
+
+- Extend the relation-method semantic fixture with `firstOrFail()`, `sole()`, `lazy()`, `lazy()->first()`, and `cursor()->first()`.
+- Keep the slice focused on coverage because the existing Laravel semantic resolver already handles these variants.
+
+### Acceptance Criteria
+
+- `$this->posts()->firstOrFail()` and `$this->posts()->sole()` infer `App\Models\Post`.
+- `$this->posts()->lazy()` infers `Illuminate\Support\LazyCollection<int, App\Models\Post>`.
+- `$this->posts()->lazy()->first()` and `$this->posts()->cursor()->first()` infer `App\Models\Post`.
+- Focused/full semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`

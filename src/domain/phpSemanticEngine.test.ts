@@ -1082,8 +1082,13 @@ class Comment extends Model
         $selfComment = $relation->first();
         $constantPost = $this->hasMany(self::POST_MODEL)->firstOrFail();
         $relationMethodPost = $this->posts()->first();
+        $relationMethodRequiredPost = $this->posts()->firstOrFail();
+        $relationMethodSolePost = $this->posts()->sole();
         $relationMethodPosts = $this->posts()->get();
         $relationMethodCollectionPost = $this->posts()->get()->first();
+        $relationMethodLazyPosts = $this->posts()->lazy();
+        $relationMethodLazyPost = $this->posts()->lazy()->first();
+        $relationMethodCursorPost = $this->posts()->cursor()->first();
         $throughTrack = $this->hasManyThrough(self::TRACK_MODEL, Playlist::class)
             ->whereNull('archived_at')
             ->first();
@@ -1114,8 +1119,13 @@ class Comment extends Model
         $selfComment->bod
         $constantPost->tit
         $relationMethodPost->tit
+        $relationMethodRequiredPost->tit
+        $relationMethodSolePost->tit
         $relationMethodPosts->first()->tit
         $relationMethodCollectionPost->tit
+        $relationMethodLazyPosts->first()->tit
+        $relationMethodLazyPost->tit
+        $relationMethodCursorPost->tit
         $throughTrack->dur
         $documentedThroughTrack->dur
         $namedThroughTrack->dur
@@ -1240,6 +1250,22 @@ class Tag extends Model
     expect(
       phpVariableTypeInSource(
         source,
+        positionAfter(source, "$relationMethodRequiredPost->tit"),
+        "relationMethodRequiredPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodSolePost->tit"),
+        "relationMethodSolePost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
         positionAfter(source, "$relationMethodPosts->first()->tit"),
         "relationMethodPosts",
         laravelOptions,
@@ -1252,6 +1278,30 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodCollectionPost->tit"),
         "relationMethodCollectionPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodLazyPosts->first()->tit"),
+        "relationMethodLazyPosts",
+        laravelOptions,
+      ),
+    ).toBe("Illuminate\\Support\\LazyCollection<int, App\\Models\\Post>");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodLazyPost->tit"),
+        "relationMethodLazyPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodCursorPost->tit"),
+        "relationMethodCursorPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
