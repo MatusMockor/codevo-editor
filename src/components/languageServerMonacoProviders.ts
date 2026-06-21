@@ -6,6 +6,7 @@ import {
   type LanguageServerCodeAction,
   type LanguageServerCodeActionCommand,
   type LanguageServerCodeActionContext,
+  type LanguageServerDocumentSymbol,
   type LanguageServerDocumentLink,
   type LanguageServerDocumentHighlight,
   type LanguageServerFoldingRange,
@@ -261,6 +262,12 @@ export function registerLanguageServerMonacoProviders(
           provideDocumentHighlights(monaco, context, model, position),
       })
     : { dispose: () => undefined };
+  const documentSymbol = monaco.languages.registerDocumentSymbolProvider
+    ? monaco.languages.registerDocumentSymbolProvider("php", {
+        provideDocumentSymbols: (model) =>
+          provideDocumentSymbols(monaco, context, model),
+      })
+    : { dispose: () => undefined };
   const documentLink = monaco.languages.registerLinkProvider
     ? monaco.languages.registerLinkProvider("php", {
         provideLinks: (model) => provideDocumentLinks(monaco, context, model),
@@ -296,6 +303,7 @@ export function registerLanguageServerMonacoProviders(
       implementation.dispose();
       typeDefinition.dispose();
       documentHighlight.dispose();
+      documentSymbol.dispose();
       documentLink.dispose();
       foldingRange.dispose();
       linkedEditingRange.dispose();
@@ -555,6 +563,38 @@ async function provideFoldingRanges(
     }
 
     return ranges.map((range) => toMonacoFoldingRange(monaco, range));
+  } catch (error) {
+    reportErrorForActiveRequest(context, request, error);
+    return null;
+  }
+}
+
+async function provideDocumentSymbols(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+): Promise<Monaco.languages.DocumentSymbol[] | null> {
+  const request = featureDocumentRequestContext(context, model, "documentSymbol");
+
+  if (!request) {
+    return null;
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return null;
+    }
+
+    const symbols = await context.featuresGateway.documentSymbols(
+      request.rootPath,
+      request.path,
+    );
+
+    if (!isFeatureRequestActive(context, request)) {
+      return null;
+    }
+
+    return symbols.map((symbol) => toMonacoDocumentSymbol(monaco, symbol));
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
     return null;
@@ -1220,6 +1260,24 @@ function toMonacoDocumentHighlight(
   };
 }
 
+function toMonacoDocumentSymbol(
+  monaco: MonacoApi,
+  symbol: LanguageServerDocumentSymbol,
+): Monaco.languages.DocumentSymbol {
+  return {
+    children: symbol.children.map((child) =>
+      toMonacoDocumentSymbol(monaco, child),
+    ),
+    containerName: symbol.containerName ?? undefined,
+    detail: symbol.detail ?? "",
+    kind: monacoSymbolKindFromLspKind(monaco, symbol.kind),
+    name: symbol.name,
+    range: toMonacoRange(monaco, symbol.range),
+    selectionRange: toMonacoRange(monaco, symbol.selectionRange),
+    tags: monacoSymbolTagsFromLspTags(monaco, symbol.tags),
+  };
+}
+
 function toMonacoDocumentLink(
   monaco: MonacoApi,
   rootPath: string,
@@ -1250,6 +1308,75 @@ function monacoDocumentHighlightKindFromLspKind(
     default:
       return monaco.languages.DocumentHighlightKind.Text;
   }
+}
+
+function monacoSymbolKindFromLspKind(
+  monaco: MonacoApi,
+  kind: number,
+): Monaco.languages.SymbolKind {
+  switch (kind) {
+    case 1:
+      return monaco.languages.SymbolKind.File;
+    case 2:
+      return monaco.languages.SymbolKind.Module;
+    case 3:
+      return monaco.languages.SymbolKind.Namespace;
+    case 4:
+      return monaco.languages.SymbolKind.Package;
+    case 5:
+      return monaco.languages.SymbolKind.Class;
+    case 6:
+      return monaco.languages.SymbolKind.Method;
+    case 7:
+      return monaco.languages.SymbolKind.Property;
+    case 8:
+      return monaco.languages.SymbolKind.Field;
+    case 9:
+      return monaco.languages.SymbolKind.Constructor;
+    case 10:
+      return monaco.languages.SymbolKind.Enum;
+    case 11:
+      return monaco.languages.SymbolKind.Interface;
+    case 12:
+      return monaco.languages.SymbolKind.Function;
+    case 13:
+      return monaco.languages.SymbolKind.Variable;
+    case 14:
+      return monaco.languages.SymbolKind.Constant;
+    case 15:
+      return monaco.languages.SymbolKind.String;
+    case 16:
+      return monaco.languages.SymbolKind.Number;
+    case 17:
+      return monaco.languages.SymbolKind.Boolean;
+    case 18:
+      return monaco.languages.SymbolKind.Array;
+    case 19:
+      return monaco.languages.SymbolKind.Object;
+    case 20:
+      return monaco.languages.SymbolKind.Key;
+    case 21:
+      return monaco.languages.SymbolKind.Null;
+    case 22:
+      return monaco.languages.SymbolKind.EnumMember;
+    case 23:
+      return monaco.languages.SymbolKind.Struct;
+    case 24:
+      return monaco.languages.SymbolKind.Event;
+    case 25:
+      return monaco.languages.SymbolKind.Operator;
+    case 26:
+      return monaco.languages.SymbolKind.TypeParameter;
+    default:
+      return monaco.languages.SymbolKind.Variable;
+  }
+}
+
+function monacoSymbolTagsFromLspTags(
+  monaco: MonacoApi,
+  tags: number[] | undefined,
+): Monaco.languages.SymbolTag[] {
+  return tags?.includes(1) ? [monaco.languages.SymbolTag.Deprecated] : [];
 }
 
 function toMonacoFoldingRange(
@@ -2332,6 +2459,7 @@ function featureDocumentRequestContext(
     | "declaration"
     | "definition"
     | "documentHighlight"
+    | "documentSymbol"
     | "documentLink"
     | "foldingRange"
     | "hover"

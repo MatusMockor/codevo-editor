@@ -7289,3 +7289,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Monaco Linked Editing Range Provider
 
 - Committed as `389f0124 Register PHP linked editing provider`.
+
+## Next Slice: PHP Monaco Document Symbol Provider
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `af8147b6 Record PHP linked editing provider commit`
+- Worktree was clean before the delegated worker started.
+
+### Why This Slice
+
+- PHP backend commands, gateway methods, and runtime capabilities already support `documentSymbol`.
+- The PHP Monaco provider did not register document symbols, so Monaco-level outline/breadcrumb symbol metadata was unavailable for PHP files.
+- This is a small document-level provider parity step with no lazy resolve or workspace edit side effects.
+
+### Implementation Choice
+
+- Register an optional PHP document symbol Monaco provider.
+- Use the existing PHP document request context, pending change flush, capability gate, active session guard, stale result dropping, and error reporting.
+- Recursively map LSP document symbols to Monaco symbols, including symbol kinds, ranges, details, children, container names, and deprecated tags.
+
+### Acceptance Criteria
+
+- PHP document symbols route to `featuresGateway.documentSymbols` and map nested symbols correctly.
+- Untagged symbols map to `tags: []`; LSP tag `1` maps to Monaco deprecated symbols.
+- Disabled capability and stale root/session responses do not call or return stale results.
+- Focused provider tests, full provider suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: PHP Monaco Document Symbol Provider
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "document symbol|DocumentSymbol"` (4 tests)
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts` (94 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (65 files, 937 tests)
+- PASS: `git diff --check`
+
+### Commit Status: PHP Monaco Document Symbol Provider
+
+- Pending commit after verification.

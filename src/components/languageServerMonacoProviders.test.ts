@@ -4,6 +4,7 @@ import type {
   LanguageServerCompletionList,
   LanguageServerDocumentHighlight,
   LanguageServerDocumentLink,
+  LanguageServerDocumentSymbol,
   LanguageServerFeaturesGateway,
   LanguageServerHover,
   LanguageServerLinkedEditingRanges,
@@ -21,7 +22,7 @@ import type { PhpMethodSignature } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 
 describe("registerLanguageServerMonacoProviders", () => {
-  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document link, folding range and linked editing range providers and disposes them", () => {
+  it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, document link, folding range and linked editing range providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const context = providerContext();
     const disposable = registerLanguageServerMonacoProviders(
@@ -48,6 +49,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.implementationLanguage).toBe("php");
     expect(registered.typeDefinitionLanguage).toBe("php");
     expect(registered.documentHighlightLanguage).toBe("php");
+    expect(registered.documentSymbolLanguage).toBe("php");
     expect(registered.documentLinkLanguage).toBe("php");
     expect(registered.foldingRangeLanguage).toBe("php");
     expect(registered.linkedEditingRangeLanguage).toBe("php");
@@ -76,6 +78,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.implementationDispose).toHaveBeenCalled();
     expect(registered.typeDefinitionDispose).toHaveBeenCalled();
     expect(registered.documentHighlightDispose).toHaveBeenCalled();
+    expect(registered.documentSymbolDispose).toHaveBeenCalled();
     expect(registered.documentLinkDispose).toHaveBeenCalled();
     expect(registered.foldingRangeDispose).toHaveBeenCalled();
     expect(registered.linkedEditingRangeDispose).toHaveBeenCalled();
@@ -2325,6 +2328,255 @@ describe("registerLanguageServerMonacoProviders", () => {
       "/project/src/User.php",
       [{ character: 11, line: 3 }],
     );
+  });
+
+  it("maps nested PHP DocumentSymbol responses with deprecated tags", async () => {
+    const registered = createRegisteredProviders();
+    const symbols: LanguageServerDocumentSymbol[] = [
+      {
+        children: [
+          {
+            children: [],
+            containerName: null,
+            detail: null,
+            kind: 6,
+            name: "fullName",
+            range: range(8, 4, 10, 5),
+            selectionRange: range(8, 13, 8, 21),
+          },
+          {
+            children: [],
+            containerName: "User",
+            detail: "string",
+            kind: 7,
+            name: "$name",
+            range: range(4, 4, 4, 24),
+            selectionRange: range(4, 11, 4, 16),
+            tags: [1, 99],
+          },
+        ],
+        containerName: "App\\Models",
+        detail: null,
+        kind: 5,
+        name: "User",
+        range: range(2, 0, 12, 1),
+        selectionRange: range(2, 6, 2, 10),
+        tags: [99],
+      },
+    ];
+    const gateway = featuresGateway({ documentSymbols: symbols });
+    const flushPendingDocumentChange = vi.fn(async () => undefined);
+    const context = providerContext({
+      featuresGateway: gateway,
+      flushPendingDocumentChange,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.documentSymbolProvider.provideDocumentSymbols(model()),
+    ).resolves.toEqual([
+      {
+        children: [
+          {
+            children: [],
+            containerName: undefined,
+            detail: "",
+            kind: registered.monaco.languages.SymbolKind.Method,
+            name: "fullName",
+            range: {
+              endColumn: 6,
+              endLineNumber: 11,
+              startColumn: 5,
+              startLineNumber: 9,
+            },
+            selectionRange: {
+              endColumn: 22,
+              endLineNumber: 9,
+              startColumn: 14,
+              startLineNumber: 9,
+            },
+            tags: [],
+          },
+          {
+            children: [],
+            containerName: "User",
+            detail: "string",
+            kind: registered.monaco.languages.SymbolKind.Property,
+            name: "$name",
+            range: {
+              endColumn: 25,
+              endLineNumber: 5,
+              startColumn: 5,
+              startLineNumber: 5,
+            },
+            selectionRange: {
+              endColumn: 17,
+              endLineNumber: 5,
+              startColumn: 12,
+              startLineNumber: 5,
+            },
+            tags: [registered.monaco.languages.SymbolTag.Deprecated],
+          },
+        ],
+        containerName: "App\\Models",
+        detail: "",
+        kind: registered.monaco.languages.SymbolKind.Class,
+        name: "User",
+        range: {
+          endColumn: 2,
+          endLineNumber: 13,
+          startColumn: 1,
+          startLineNumber: 3,
+        },
+        selectionRange: {
+          endColumn: 11,
+          endLineNumber: 3,
+          startColumn: 7,
+          startLineNumber: 3,
+        },
+        tags: [],
+      },
+    ]);
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.documentSymbols).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+    );
+  });
+
+  it("does not request PHP DocumentSymbol when capability is disabled or runtime root mismatches", async () => {
+    const disabledRegistered = createRegisteredProviders();
+    const disabledGateway = featuresGateway({
+      documentSymbols: [
+        {
+          children: [],
+          containerName: null,
+          detail: null,
+          kind: 5,
+          name: "User",
+          range: range(2, 0, 12, 1),
+          selectionRange: range(2, 6, 2, 10),
+        },
+      ],
+    });
+    const disabledFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      disabledRegistered.monaco,
+      providerContext({
+        featuresGateway: disabledGateway,
+        flushPendingDocumentChange: disabledFlush,
+        runtimeStatus: runningStatus({ documentSymbol: false }),
+      }),
+    );
+
+    await expect(
+      disabledRegistered.documentSymbolProvider.provideDocumentSymbols(model()),
+    ).resolves.toBeNull();
+    expect(disabledFlush).not.toHaveBeenCalled();
+    expect(disabledGateway.documentSymbols).not.toHaveBeenCalled();
+
+    const mismatchedRegistered = createRegisteredProviders();
+    const mismatchedGateway = featuresGateway();
+    const mismatchedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      mismatchedRegistered.monaco,
+      providerContext({
+        featuresGateway: mismatchedGateway,
+        flushPendingDocumentChange: mismatchedFlush,
+        getWorkspaceRoot: () => "/project",
+        runtimeStatus: {
+          ...runningStatus(),
+          rootPath: "/other",
+        },
+      }),
+    );
+
+    await expect(
+      mismatchedRegistered.documentSymbolProvider.provideDocumentSymbols(model()),
+    ).resolves.toBeNull();
+    expect(mismatchedFlush).not.toHaveBeenCalled();
+    expect(mismatchedGateway.documentSymbols).not.toHaveBeenCalled();
+  });
+
+  it("drops stale PHP DocumentSymbol results after session or root changes", async () => {
+    const sessionRegistered = createRegisteredProviders();
+    let activeSessionId = 1;
+    const sessionSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>
+      >();
+    const sessionGateway = featuresGateway();
+    vi.mocked(sessionGateway.documentSymbols).mockImplementationOnce(
+      async () => sessionSymbols.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      sessionRegistered.monaco,
+      providerContext({
+        featuresGateway: sessionGateway,
+        getRuntimeStatus: () => ({
+          ...runningStatus(),
+          sessionId: activeSessionId,
+        }),
+      }),
+    );
+
+    const sessionPromise =
+      sessionRegistered.documentSymbolProvider.provideDocumentSymbols(model());
+
+    await Promise.resolve();
+    activeSessionId = 2;
+    sessionSymbols.resolve([
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "StaleUser",
+        range: range(2, 0, 12, 1),
+        selectionRange: range(2, 6, 2, 15),
+      },
+    ]);
+
+    await expect(sessionPromise).resolves.toBeNull();
+
+    const rootRegistered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const rootSymbols =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>>
+      >();
+    const rootGateway = featuresGateway();
+    vi.mocked(rootGateway.documentSymbols).mockImplementationOnce(
+      async () => rootSymbols.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      rootRegistered.monaco,
+      providerContext({
+        featuresGateway: rootGateway,
+        getWorkspaceRoot: () => activeRoot,
+      }),
+    );
+
+    const rootPromise =
+      rootRegistered.documentSymbolProvider.provideDocumentSymbols(model());
+
+    await Promise.resolve();
+    activeRoot = "/other";
+    rootSymbols.resolve([
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 12,
+        name: "stale",
+        range: range(1, 0, 1, 12),
+        selectionRange: range(1, 9, 1, 14),
+      },
+    ]);
+
+    await expect(rootPromise).resolves.toBeNull();
   });
 
   it("maps PHP FoldingRange responses with a kind", async () => {
@@ -4806,6 +5058,7 @@ function createRegisteredProviders() {
   const definitionDispose = vi.fn();
   const documentHighlightDispose = vi.fn();
   const documentLinkDispose = vi.fn();
+  const documentSymbolDispose = vi.fn();
   const foldingRangeDispose = vi.fn();
   const hoverDispose = vi.fn();
   const implementationDispose = vi.fn();
@@ -4838,6 +5091,9 @@ function createRegisteredProviders() {
     documentLinkDispose: ReturnType<typeof vi.fn>;
     documentLinkLanguage: string | null;
     documentLinkProvider: any;
+    documentSymbolDispose: ReturnType<typeof vi.fn>;
+    documentSymbolLanguage: string | null;
+    documentSymbolProvider: any;
     foldingRangeDispose: ReturnType<typeof vi.fn>;
     foldingRangeLanguage: string | null;
     foldingRangeProvider: any;
@@ -4888,6 +5144,9 @@ function createRegisteredProviders() {
     documentLinkDispose,
     documentLinkLanguage: null,
     documentLinkProvider: null,
+    documentSymbolDispose,
+    documentSymbolLanguage: null,
+    documentSymbolProvider: null,
     foldingRangeDispose,
     foldingRangeLanguage: null,
     foldingRangeProvider: null,
@@ -4966,6 +5225,37 @@ function createRegisteredProviders() {
       FoldingRangeKind: {
         fromValue: vi.fn((value) => ({ value })),
       },
+      SymbolKind: {
+        Array: 17,
+        Boolean: 16,
+        Class: 4,
+        Constant: 13,
+        Constructor: 8,
+        Enum: 9,
+        EnumMember: 21,
+        Event: 23,
+        Field: 7,
+        File: 0,
+        Function: 11,
+        Interface: 10,
+        Key: 19,
+        Method: 5,
+        Module: 1,
+        Namespace: 2,
+        Null: 20,
+        Number: 15,
+        Object: 18,
+        Operator: 24,
+        Package: 3,
+        Property: 6,
+        String: 14,
+        Struct: 22,
+        TypeParameter: 25,
+        Variable: 12,
+      },
+      SymbolTag: {
+        Deprecated: 1,
+      },
       registerCodeActionProvider: vi.fn((language, provider, metadata) => {
         registered.codeActionLanguage = language;
         registered.codeActionProvider = provider;
@@ -4991,6 +5281,11 @@ function createRegisteredProviders() {
         registered.documentHighlightLanguage = language;
         registered.documentHighlightProvider = provider;
         return { dispose: documentHighlightDispose };
+      }),
+      registerDocumentSymbolProvider: vi.fn((language, provider) => {
+        registered.documentSymbolLanguage = language;
+        registered.documentSymbolProvider = provider;
+        return { dispose: documentSymbolDispose };
       }),
       registerLinkProvider: vi.fn((language, provider) => {
         registered.documentLinkLanguage = language;
