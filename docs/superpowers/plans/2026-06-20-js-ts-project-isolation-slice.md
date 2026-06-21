@@ -5593,3 +5593,46 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Transient Message Reset Guard
 
 - Committed as `48551de2 Clear transient message on workspace reset`.
+
+## Next Slice: Workspace Notice Reset Guard
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `25546c01 Record transient message reset commit`
+- Full suite checkpoint before this slice:
+  - PASS: `npm test` (64 files, 851 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- `reportError` writes both `message` and a persistent notice.
+- The previous transient-message reset cleared `message`, but workspace reset still left old notices visible.
+- A notice from a previous project tab could remain after closing the last workspace or opening another workspace.
+
+### Implementation Choice
+
+- Clear `notices` when clearing the active workspace.
+- Clear `notices` when applying a workspace open reset.
+- Extend the last-tab-close regression to seed an error notice and assert notices are empty after close.
+
+### Acceptance Criteria
+
+- Closing the last project tab clears stale notices.
+- Opening another workspace clears notices from the previous workspace.
+- Existing stale error/notice guards remain green.
+- Focused preview tests, `npm run check`, full `npm test`, and `git diff --check` pass.
+
+### Verification: Workspace Notice Reset Guard
+
+- PASS: `npm test -- useWorkbenchController.preview.test.tsx` (317 tests)
+- PASS: `npm run check`
+- PASS: `npm test` (64 files, 851 tests)
+- PASS: `git diff --check`
+
+### Commit Status: Workspace Notice Reset Guard
+
+- Committed as `b0bceecb Clear notices on workspace reset`.
