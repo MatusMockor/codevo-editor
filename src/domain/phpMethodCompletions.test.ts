@@ -2115,7 +2115,7 @@ class Comment
         kind: "property",
         name: "attachable",
         parameters: "",
-        returnType: "mixed",
+        returnType: "Post|Video",
       },
     ]);
   });

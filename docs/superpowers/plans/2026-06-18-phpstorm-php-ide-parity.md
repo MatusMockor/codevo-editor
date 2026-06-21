@@ -6698,3 +6698,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `8905cbae Add JavaScript TypeScript go to type definition command`.
+
+## Slice: Laravel Multi-Target MorphTo Property Display - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `1deff939 Record JavaScript TypeScript type definition command commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Surface documented multi-target `MorphTo` inverse relations as useful magic property completion display types instead of falling back to `mixed`.
+
+### Implementation Choice
+
+- Keep relation chaining conservative when a `MorphTo` target is ambiguous.
+- Add a display-only return-type path for documented `MorphTo<Post|Video, self>` annotations.
+- Limit the behavior to `MorphTo` so existing ambiguous through-relation behavior remains unchanged.
+
+### Acceptance Criteria
+
+- `MorphTo<Post|Video, self>` relation properties display `Post|Video`.
+- Single-target relation display remains unchanged.
+- Ambiguous non-`MorphTo` relation displays remain conservative.
+- Focused/full PHP method-completion tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "relation methods as magic properties"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

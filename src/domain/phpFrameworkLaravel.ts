@@ -2208,10 +2208,10 @@ function phpLaravelRelationTargetTypeFromMethod(
   visited = new Set<string>(),
 ): string | null {
   return (
-    phpLaravelRelationTypeForDeclaringClass(
-      phpLaravelRelationModelTypeFromReturnType(returnType),
-      declaringClassName,
+    phpLaravelRelationDisplayTypeFromReturnType(
       source,
+      returnType,
+      declaringClassName,
     ) ??
     phpMethodReturnExpressions(source, methodName)
       .map((expression) =>
@@ -2250,6 +2250,42 @@ function phpLaravelRelationTargetTypeFromMethod(
       .find((target): target is string => Boolean(target)) ??
     null
   );
+}
+
+function phpLaravelRelationDisplayTypeFromReturnType(
+  source: string,
+  returnType: string | null,
+  declaringClassName: string,
+): string | null {
+  const singleTargetType = phpLaravelRelationTypeForDeclaringClass(
+    phpLaravelRelationModelTypeFromReturnType(returnType),
+    declaringClassName,
+    source,
+  );
+
+  if (singleTargetType) {
+    return singleTargetType;
+  }
+
+  if (!isLaravelMorphToReturnType(returnType)) {
+    return null;
+  }
+
+  const targetTypes = Array.from(
+    new Set(
+      phpLaravelRelationModelTypesFromReturnType(returnType)
+        .map((targetType) =>
+          phpLaravelRelationTypeForDeclaringClass(
+            targetType,
+            declaringClassName,
+            source,
+          ),
+        )
+        .filter((targetType): targetType is string => Boolean(targetType)),
+    ),
+  );
+
+  return targetTypes.length > 1 ? targetTypes.join("|") : null;
 }
 
 function phpLaravelFluentThroughRelationTargetClassNameFromExpression(
