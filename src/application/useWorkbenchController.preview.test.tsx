@@ -6379,6 +6379,60 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("ignores stale delete errors after switching project tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const deletion = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    vi.mocked(dependencies.workspaceGateways.files.deletePath).mockImplementationOnce(
+      async () => deletion.promise,
+    );
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    let deletePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      deletePromise = command?.run() ?? Promise.resolve();
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(
+        path,
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      deletion.reject(new Error("stale delete"));
+      await deletePromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Delete File" &&
+          notice.message.includes("stale delete"),
+      ),
+    ).toBe(false);
+  });
+
   it("does not start JavaScript and TypeScript language service when disabled", async () => {
     const javaScriptTypeScriptLanguageServerPlan: LanguageServerPlan = {
       command: {

@@ -11186,6 +11186,11 @@ export function useWorkbenchController(
       return;
     }
 
+    const requestedRoot = workspaceRoot;
+    if (!requestedRoot) {
+      return;
+    }
+
     if (!prompter.confirm(`Delete ${activeDocument.name}?`)) {
       return;
     }
@@ -11194,6 +11199,10 @@ export function useWorkbenchController(
 
     try {
       await workspaceFiles.deletePath(activeDocument.path);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       if (isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
         await syncClosedJavaScriptTypeScriptDocument(activeDocument);
       }
@@ -11203,11 +11212,19 @@ export function useWorkbenchController(
           path: activeDocument.path,
         },
       ]);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       closeDocument(activeDocument.path);
       await refreshDirectory(parentPath);
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
       setMessage(`Deleted ${activeDocument.name}`);
     } catch (error) {
-      reportError("Delete File", error);
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "Delete File", error);
     }
   }, [
     activeDocument,
@@ -11216,9 +11233,10 @@ export function useWorkbenchController(
     notifyJavaScriptTypeScriptWatchedFilesChanged,
     prompter,
     refreshDirectory,
-    reportError,
+    reportErrorForActiveWorkspaceRoot,
     syncClosedJavaScriptTypeScriptDocument,
     workspaceFiles,
+    workspaceRoot,
   ]);
 
   const toggleSmartMode = useCallback(async () => {
