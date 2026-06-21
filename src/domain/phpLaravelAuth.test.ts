@@ -32,6 +32,11 @@ describe("phpLaravelAuth", () => {
       ],
       ["Route::middleware(['auth:admin'])", "Route::middleware(auth)"],
       ["Route::middleware(['auth:web,admin'])", "Route::middleware(auth)"],
+      ["#[Auth('admin')]\nclass Controller {}", "#[Auth]"],
+      [
+        "#[\\Illuminate\\Container\\Attributes\\Auth(guard: 'admin')]\nclass Controller {}",
+        "#[Auth]",
+      ],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -64,6 +69,8 @@ describe("phpLaravelAuth", () => {
     const wrongHelperMember = `<?php\n\n$manager->auth('admin');\n`;
     const genericUserMember = `<?php\n\n$userRepository->user('admin');\n`;
     const wrongRequestUserArgument = `<?php\n\n$request->user(name: 'admin');\n`;
+    const wrongAttributeArgument = `<?php\n\n#[Auth(name: 'admin')]\nclass Controller {}\n`;
+    const nestedAttributeCall = `<?php\n\n#[Example(Auth('admin'))]\nclass Controller {}\n`;
 
     expect(
       phpLaravelAuthGuardReferenceContextAt(
@@ -141,6 +148,18 @@ describe("phpLaravelAuth", () => {
       phpLaravelAuthGuardReferenceContextAt(
         wrongRequestUserArgument,
         positionAfter(wrongRequestUserArgument, "admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        wrongAttributeArgument,
+        positionAfter(wrongAttributeArgument, "admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelAuthGuardReferenceContextAt(
+        nestedAttributeCall,
+        positionAfter(nestedAttributeCall, "admin"),
       ),
     ).toBeNull();
   });

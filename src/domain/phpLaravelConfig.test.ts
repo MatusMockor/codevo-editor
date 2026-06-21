@@ -61,10 +61,41 @@ return config('app.name');
     }
   });
 
+  it("detects Laravel Config contextual attribute strings", () => {
+    const samples = [
+      ["#[Config('app.timezone')]", "#[Config]", "app.timezone"],
+      [
+        "#[\\Illuminate\\Container\\Attributes\\Config(key: 'app.name')]",
+        "#[Config]",
+        "app.name",
+      ],
+    ] as const;
+
+    for (const [attribute, call, key] of samples) {
+      const source = `<?php
+
+use Illuminate\\Container\\Attributes\\Config;
+
+${attribute}
+class Controller {}
+`;
+
+      expect(
+        phpLaravelConfigReferenceContextAt(source, positionAfter(source, key)),
+      ).toMatchObject({
+        call,
+        key,
+        prefix: key,
+      });
+    }
+  });
+
   it("ignores interpolation, update arrays, and non-config calls", () => {
     const interpolated = `<?php\n\nreturn config("app.$name");\n`;
     const updateArray = `<?php\n\nconfig(['app.name' => 'Codevo']);\n`;
     const wrongCall = `<?php\n\nreturn trans('app.name');\n`;
+    const wrongAttributeArgument = `<?php\n\n#[Config(default: 'app.name')]\nclass Controller {}\n`;
+    const nestedAttributeCall = `<?php\n\n#[Example(Config('app.name'))]\nclass Controller {}\n`;
 
     expect(
       phpLaravelConfigReferenceContextAt(
@@ -80,6 +111,18 @@ return config('app.name');
     ).toBeNull();
     expect(
       phpLaravelConfigReferenceContextAt(wrongCall, positionAfter(wrongCall, "app.na")),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        wrongAttributeArgument,
+        positionAfter(wrongAttributeArgument, "app.name"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelConfigReferenceContextAt(
+        nestedAttributeCall,
+        positionAfter(nestedAttributeCall, "app.name"),
+      ),
     ).toBeNull();
   });
 

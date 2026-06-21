@@ -31921,6 +31921,137 @@ return [
     ]);
   });
 
+  it("uses Laravel contextual attributes for config completions and guard definitions", async () => {
+    const controllerPath =
+      "/workspace/app/Http/Controllers/AttributeController.php";
+    const configRoot = "/workspace/config";
+    const appConfigPath = "/workspace/config/app.php";
+    const authConfigPath = "/workspace/config/auth.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Container\\Attributes\\Auth;
+use Illuminate\\Container\\Attributes\\Config;
+
+class AttributeController
+{
+    public function __construct(
+        #[Config('app.na')] private string $name,
+        #[Auth('admin')] private mixed $guard,
+    ) {
+    }
+}
+`;
+    const appConfigSource = `<?php
+
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+];
+`;
+    const authConfigSource = `<?php
+
+return [
+    'defaults' => [
+        'guard' => 'web',
+    ],
+    'guards' => [
+        'web' => [
+            'driver' => 'session',
+        ],
+        'admin' => [
+            'driver' => 'session',
+        ],
+    ],
+];
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readDirectory: vi.fn(async (path: string) =>
+        path === configRoot
+          ? [
+              fileEntry(appConfigPath, "app.php"),
+              fileEntry(authConfigPath, "auth.php"),
+            ]
+          : [],
+      ),
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === appConfigPath) {
+          return appConfigSource;
+        }
+
+        if (path === authConfigPath) {
+          return authConfigSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AttributeController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "Config('app.na"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/app.php",
+        insertText: "name",
+        kind: "config",
+        name: "app.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Auth('admin"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(authConfigPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: authConfigPath,
+      position: {
+        column: 10,
+        lineNumber: 11,
+      },
+    });
+  });
+
   it("stops stale Laravel config completions after switching project tabs", async () => {
     const controllerPath = "/workspace-a/app/Http/Controllers/AppController.php";
     const configRoot = "/workspace-a/config";

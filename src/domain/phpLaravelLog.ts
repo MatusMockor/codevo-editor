@@ -1,8 +1,10 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
   phpStringArrayArgumentElementContextAt,
+  phpStringAttributeArgumentContextAt,
   phpStringArgumentContextAt,
   type PhpStringArrayArgumentElementContext,
+  type PhpStringAttributeArgumentContext,
   type PhpStringArgumentContext,
 } from "./phpStringArgumentContext";
 
@@ -16,6 +18,7 @@ const logStackCall = "Log::stack";
 type LogChannelStaticMethodName = keyof typeof logChannelStaticCallMethods;
 
 export type PhpLaravelLogChannelReferenceCall =
+  | "#[Log]"
   | (typeof logChannelStaticCallMethods)[LogChannelStaticMethodName]
   | typeof logStackCall;
 
@@ -30,6 +33,15 @@ export function phpLaravelLogChannelReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelLogChannelReferenceContext | null {
+  const attributeContext = phpLaravelLogAttributeChannelReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (attributeContext) {
+    return attributeContext;
+  }
+
   const arrayArgument = phpStringArrayArgumentElementContextAt(source, position);
 
   if (arrayArgument) {
@@ -76,6 +88,36 @@ export function phpLaravelLogChannelReferenceContextAt(
 
   return {
     call,
+    channelName,
+    position: argument.position,
+    prefix: argument.prefix,
+  };
+}
+
+function phpLaravelLogAttributeChannelReferenceContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelLogChannelReferenceContext | null {
+  const argument = phpStringAttributeArgumentContextAt(source, position, [
+    "Log",
+  ]);
+
+  if (!argument) {
+    return null;
+  }
+
+  const channelName = argument.closed ? argument.value : argument.prefix;
+
+  if (
+    !isLogAttributeChannelArgument(argument) ||
+    !isUsableLaravelLogChannelName(argument.prefix) ||
+    !isUsableLaravelLogChannelName(channelName)
+  ) {
+    return null;
+  }
+
+  return {
+    call: "#[Log]",
     channelName,
     position: argument.position,
     prefix: argument.prefix,
@@ -164,6 +206,14 @@ function isLogChannelArgument(argument: PhpStringArgumentContext): boolean {
     argumentName === "driver" ||
     argumentName === "name"
   );
+}
+
+function isLogAttributeChannelArgument(
+  argument: PhpStringAttributeArgumentContext,
+): boolean {
+  return argument.argumentName
+    ? argument.argumentName.toLowerCase() === "channel"
+    : argument.argumentIndex === 0;
 }
 
 function isLogStackChannelsArgument(

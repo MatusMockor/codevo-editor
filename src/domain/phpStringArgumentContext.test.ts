@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  phpStringArgumentContextAt,
   phpStringArrayArgumentElementContextAt,
+  phpStringArgumentContextAt,
+  phpStringAttributeArgumentContextAt,
 } from "./phpStringArgumentContext";
 
 describe("phpStringArgumentContext", () => {
@@ -70,6 +71,111 @@ describe("phpStringArgumentContext", () => {
       prefix: "single",
       value: "single",
     });
+  });
+
+  it("detects string arguments inside PHP attribute constructors", () => {
+    const source = `<?php
+
+use Illuminate\\Container\\Attributes\\Auth;
+
+#[Example, Auth(guard: 'admin')]
+class Controller {}
+`;
+
+    expect(
+      phpStringAttributeArgumentContextAt(source, positionAfter(source, "admin"), [
+        "Auth",
+      ]),
+    ).toMatchObject({
+      argumentIndex: 0,
+      argumentName: "guard",
+      attributeName: "Auth",
+      attributeShortName: "Auth",
+      prefix: "admin",
+      value: "admin",
+    });
+  });
+
+  it("matches qualified PHP attribute names and ignores nested calls", () => {
+    const qualified = `<?php
+
+#[\\Illuminate\\Container\\Attributes\\Auth('web')]
+class Controller {}
+`;
+    const directCall = `<?php\n\nAuth('web');\n`;
+    const newCall = `<?php\n\nnew Auth('web');\n`;
+    const nestedExpression = `<?php
+
+#[Example(Auth('web'))]
+class Controller {}
+`;
+    const comment = `<?php\n\n// #[Auth('web')]\n`;
+    const blockComment = `<?php\n\n/* #[Auth('web')] */\n`;
+    const hashComment = `<?php\n\n# #[Auth('web')]\n`;
+    const newAttributeExpression = `<?php
+
+#[new Auth('web')]
+class Controller {}
+`;
+
+    expect(
+      phpStringAttributeArgumentContextAt(
+        qualified,
+        positionAfter(qualified, "web"),
+        ["Auth"],
+      ),
+    ).toMatchObject({
+      attributeName: "\\Illuminate\\Container\\Attributes\\Auth",
+      attributeShortName: "Auth",
+      prefix: "web",
+    });
+    expect(
+      phpStringAttributeArgumentContextAt(
+        directCall,
+        positionAfter(directCall, "web"),
+        ["Auth"],
+      ),
+    ).toBeNull();
+    expect(
+      phpStringAttributeArgumentContextAt(newCall, positionAfter(newCall, "web"), [
+        "Auth",
+      ]),
+    ).toBeNull();
+    expect(
+      phpStringAttributeArgumentContextAt(
+        nestedExpression,
+        positionAfter(nestedExpression, "web"),
+        ["Auth"],
+      ),
+    ).toBeNull();
+    expect(
+      phpStringAttributeArgumentContextAt(
+        comment,
+        positionAfter(comment, "web"),
+        ["Auth"],
+      ),
+    ).toBeNull();
+    expect(
+      phpStringAttributeArgumentContextAt(
+        blockComment,
+        positionAfter(blockComment, "web"),
+        ["Auth"],
+      ),
+    ).toBeNull();
+    expect(
+      phpStringAttributeArgumentContextAt(
+        hashComment,
+        positionAfter(hashComment, "web"),
+        ["Auth"],
+      ),
+    ).toBeNull();
+    expect(
+      phpStringAttributeArgumentContextAt(
+        newAttributeExpression,
+        positionAfter(newAttributeExpression, "web"),
+        ["Auth"],
+      ),
+    ).toBeNull();
   });
 
   it("ignores array keys, nested arrays, interpolation, and non-array strings", () => {

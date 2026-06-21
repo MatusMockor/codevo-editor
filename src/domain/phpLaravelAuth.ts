@@ -1,8 +1,10 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
   phpStringArrayArgumentElementContextAt,
+  phpStringAttributeArgumentContextAt,
   phpStringArgumentContextAt,
   type PhpStringArrayArgumentElementContext,
+  type PhpStringAttributeArgumentContext,
   type PhpStringArgumentContext,
 } from "./phpStringArgumentContext";
 
@@ -30,6 +32,7 @@ type AuthGuardRequestMethodName = keyof typeof authGuardRequestCallMethods;
 type AuthGuardMiddlewareName = keyof typeof authGuardMiddlewareCallMethods;
 
 export type PhpLaravelAuthGuardReferenceCall =
+  | "#[Auth]"
   | (typeof authGuardStaticCallMethods)[AuthGuardStaticMethodName]
   | (typeof authGuardHelperCallMethods)[AuthGuardHelperMethodName]
   | (typeof authGuardRequestCallMethods)[AuthGuardRequestMethodName]
@@ -46,6 +49,15 @@ export function phpLaravelAuthGuardReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelAuthGuardReferenceContext | null {
+  const attributeContext = phpLaravelAuthAttributeGuardReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (attributeContext) {
+    return attributeContext;
+  }
+
   const arrayArgument = phpStringArrayArgumentElementContextAt(source, position);
 
   if (arrayArgument) {
@@ -88,6 +100,36 @@ export function phpLaravelAuthGuardReferenceContextAt(
 
   return {
     call,
+    guardName,
+    position: argument.position,
+    prefix: argument.prefix,
+  };
+}
+
+function phpLaravelAuthAttributeGuardReferenceContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelAuthGuardReferenceContext | null {
+  const argument = phpStringAttributeArgumentContextAt(source, position, [
+    "Auth",
+  ]);
+
+  if (!argument) {
+    return null;
+  }
+
+  const guardName = argument.closed ? argument.value : argument.prefix;
+
+  if (
+    !isAuthAttributeGuardArgument(argument) ||
+    !isUsableLaravelAuthGuardName(argument.prefix) ||
+    !isUsableLaravelAuthGuardName(guardName)
+  ) {
+    return null;
+  }
+
+  return {
+    call: "#[Auth]",
     guardName,
     position: argument.position,
     prefix: argument.prefix,
@@ -246,6 +288,14 @@ function isAuthGuardArgument(
   }
 
   return argument.argumentIndex === 0;
+}
+
+function isAuthAttributeGuardArgument(
+  argument: PhpStringAttributeArgumentContext,
+): boolean {
+  return argument.argumentName
+    ? argument.argumentName.toLowerCase() === "guard"
+    : argument.argumentIndex === 0;
 }
 
 function isRouteMiddlewareArgument(

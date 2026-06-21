@@ -18,6 +18,12 @@ describe("phpLaravelDatabase", () => {
       ["db()->connection('mysql')", "db()->connection"],
       ["DB::connection(name: 'mysql')", "DB::connection"],
       ["Schema::connection(connection: 'sqlite')", "Schema::connection"],
+      ["#[DB('mysql')]\nclass RepositoryConsumer {}", "#[DB]"],
+      ["#[Database(connection: 'mysql')]\nclass RepositoryConsumer {}", "#[Database]"],
+      [
+        "#[\\Illuminate\\Container\\Attributes\\DB('mysql')]\nclass RepositoryConsumer {}",
+        "#[DB]",
+      ],
       [
         "class User extends \\Illuminate\\Database\\Eloquent\\Model { public ?string $connection = 'sqlite'; }",
         "Model::$connection",
@@ -114,6 +120,8 @@ class User extends \\Illuminate\\Database\\Eloquent\\Model
     const localVariable = `<?php\n\nuse Illuminate\\Database\\Eloquent\\Model;\nclass User extends Model { public function run() { public $connection = 'mysql'; } }\n`;
     const globalAfterModel = `<?php\n\nuse Illuminate\\Database\\Eloquent\\Model;\nclass User extends Model {}\nprotected $connection = 'mysql';\n`;
     const fakeClassInComment = `<?php\n\nuse Illuminate\\Database\\Eloquent\\Model;\n// class User extends Model {\nprotected $connection = 'mysql';\n`;
+    const wrongAttributeArgument = `<?php\n\n#[DB(name: 'mysql')]\nclass RepositoryConsumer {}\n`;
+    const nestedAttributeCall = `<?php\n\n#[Example(DB('mysql'))]\nclass RepositoryConsumer {}\n`;
 
     expect(
       phpLaravelDatabaseConnectionReferenceContextAt(
@@ -191,6 +199,18 @@ class User extends \\Illuminate\\Database\\Eloquent\\Model
       phpLaravelDatabaseConnectionReferenceContextAt(
         fakeClassInComment,
         positionAfter(fakeClassInComment, "mysql"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelDatabaseConnectionReferenceContextAt(
+        wrongAttributeArgument,
+        positionAfter(wrongAttributeArgument, "mysql"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelDatabaseConnectionReferenceContextAt(
+        nestedAttributeCall,
+        positionAfter(nestedAttributeCall, "mysql"),
       ),
     ).toBeNull();
   });

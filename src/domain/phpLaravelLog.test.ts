@@ -14,6 +14,11 @@ describe("phpLaravelLog", () => {
       ["Log::driver('slack')", "Log::driver"],
       ["Log::channel(name: 'slack')", "Log::channel"],
       ["Log::driver(driver: 'slack')", "Log::driver"],
+      ["#[Log('slack')]\nclass LoggerConsumer {}", "#[Log]"],
+      [
+        "#[\\Illuminate\\Container\\Attributes\\Log(channel: 'slack')]\nclass LoggerConsumer {}",
+        "#[Log]",
+      ],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -80,6 +85,8 @@ Log::stack(channels: ['daily']);
     const stackNamedChannel = `<?php\n\nLog::stack(['single'], channel: 'slack');\n`;
     const stackKey = `<?php\n\nLog::stack(['slack' => true]);\n`;
     const stackWrongNamedArg = `<?php\n\nLog::stack(name: ['slack']);\n`;
+    const wrongAttributeArgument = `<?php\n\n#[Log(name: 'slack')]\nclass LoggerConsumer {}\n`;
+    const nestedAttributeCall = `<?php\n\n#[Example(Log('slack'))]\nclass LoggerConsumer {}\n`;
 
     expect(
       phpLaravelLogChannelReferenceContextAt(
@@ -127,6 +134,18 @@ Log::stack(channels: ['daily']);
       phpLaravelLogChannelReferenceContextAt(
         stackWrongNamedArg,
         positionAfter(stackWrongNamedArg, "slack"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        wrongAttributeArgument,
+        positionAfter(wrongAttributeArgument, "slack"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelLogChannelReferenceContextAt(
+        nestedAttributeCall,
+        positionAfter(nestedAttributeCall, "slack"),
       ),
     ).toBeNull();
   });

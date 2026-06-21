@@ -1,6 +1,8 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
+  phpStringAttributeArgumentContextAt,
   phpStringArgumentContextAt,
+  type PhpStringAttributeArgumentContext,
   type PhpStringArgumentContext,
 } from "./phpStringArgumentContext";
 
@@ -29,6 +31,8 @@ type DatabaseHelperMethodName = keyof typeof databaseHelperCallMethods;
 type DatabaseModelPropertyName = keyof typeof databaseModelPropertyCalls;
 
 export type PhpLaravelDatabaseConnectionReferenceCall =
+  | "#[DB]"
+  | "#[Database]"
   | (typeof databaseConnectionStaticCallMethods)[
       DatabaseConnectionStaticMethodName
     ]
@@ -47,6 +51,13 @@ export function phpLaravelDatabaseConnectionReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelDatabaseConnectionReferenceContext | null {
+  const attributeContext =
+    phpLaravelDatabaseAttributeConnectionReferenceContextAt(source, position);
+
+  if (attributeContext) {
+    return attributeContext;
+  }
+
   const modelProperty = phpLaravelModelConnectionPropertyContextAt(
     source,
     position,
@@ -80,6 +91,40 @@ export function phpLaravelDatabaseConnectionReferenceContextAt(
 
   return {
     call,
+    connectionName,
+    position: argument.position,
+    prefix: argument.prefix,
+  };
+}
+
+function phpLaravelDatabaseAttributeConnectionReferenceContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelDatabaseConnectionReferenceContext | null {
+  const argument = phpStringAttributeArgumentContextAt(source, position, [
+    "DB",
+    "Database",
+  ]);
+
+  if (!argument) {
+    return null;
+  }
+
+  const connectionName = argument.closed ? argument.value : argument.prefix;
+
+  if (
+    !isDatabaseAttributeConnectionArgument(argument) ||
+    !isUsableLaravelDatabaseConnectionName(argument.prefix) ||
+    !isUsableLaravelDatabaseConnectionName(connectionName)
+  ) {
+    return null;
+  }
+
+  return {
+    call:
+      argument.attributeShortName.toLowerCase() === "db"
+        ? "#[DB]"
+        : "#[Database]",
     connectionName,
     position: argument.position,
     prefix: argument.prefix,
@@ -218,6 +263,14 @@ function isDatabaseConnectionArgument(
   const argumentName = argument.argumentName?.toLowerCase();
 
   return argumentName === "connection" || argumentName === "name";
+}
+
+function isDatabaseAttributeConnectionArgument(
+  argument: PhpStringAttributeArgumentContext,
+): boolean {
+  return argument.argumentName
+    ? argument.argumentName.toLowerCase() === "connection"
+    : argument.argumentIndex === 0;
 }
 
 interface PhpStringLiteralContext {

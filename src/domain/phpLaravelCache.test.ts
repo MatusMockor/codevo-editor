@@ -16,6 +16,11 @@ describe("phpLaravelCache", () => {
       ["cache()->driver('redis')", "cache()->driver"],
       ["Cache::store(name: 'redis')", "Cache::store"],
       ["Cache::driver(driver: 'redis')", "Cache::driver"],
+      ["#[Cache('redis')]\nclass RepositoryConsumer {}", "#[Cache]"],
+      [
+        "#[\\Illuminate\\Container\\Attributes\\Cache(store: 'redis')]\nclass RepositoryConsumer {}",
+        "#[Cache]",
+      ],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -39,6 +44,8 @@ describe("phpLaravelCache", () => {
     const interpolated = `<?php\n\nCache::store("red$is");\n`;
     const invalid = `<?php\n\nCache::store('redis/main');\n`;
     const wrongCall = `<?php\n\nStorage::disk('redis');\n`;
+    const wrongAttributeArgument = `<?php\n\n#[Cache(name: 'redis')]\nclass RepositoryConsumer {}\n`;
+    const memoAttributeArgument = `<?php\n\n#[Cache(memo: 'redis')]\nclass RepositoryConsumer {}\n`;
 
     expect(
       phpLaravelCacheStoreReferenceContextAt(
@@ -57,6 +64,18 @@ describe("phpLaravelCache", () => {
     ).toBeNull();
     expect(
       phpLaravelCacheStoreReferenceContextAt(wrongCall, positionAfter(wrongCall, "redis")),
+    ).toBeNull();
+    expect(
+      phpLaravelCacheStoreReferenceContextAt(
+        wrongAttributeArgument,
+        positionAfter(wrongAttributeArgument, "redis"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelCacheStoreReferenceContextAt(
+        memoAttributeArgument,
+        positionAfter(memoAttributeArgument, "redis"),
+      ),
     ).toBeNull();
   });
 

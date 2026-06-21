@@ -1,6 +1,8 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
+  phpStringAttributeArgumentContextAt,
   phpStringArgumentContextAt,
+  type PhpStringAttributeArgumentContext,
   type PhpStringArgumentContext,
 } from "./phpStringArgumentContext";
 
@@ -18,6 +20,7 @@ type CacheStoreStaticMethodName = keyof typeof cacheStoreStaticCallMethods;
 type CacheStoreHelperMethodName = keyof typeof cacheStoreHelperCallMethods;
 
 export type PhpLaravelCacheStoreReferenceCall =
+  | "#[Cache]"
   | (typeof cacheStoreStaticCallMethods)[CacheStoreStaticMethodName]
   | (typeof cacheStoreHelperCallMethods)[CacheStoreHelperMethodName];
 
@@ -32,6 +35,15 @@ export function phpLaravelCacheStoreReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelCacheStoreReferenceContext | null {
+  const attributeContext = phpLaravelCacheAttributeStoreReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (attributeContext) {
+    return attributeContext;
+  }
+
   const argument = phpStringArgumentContextAt(source, position);
 
   if (!argument) {
@@ -56,6 +68,36 @@ export function phpLaravelCacheStoreReferenceContextAt(
 
   return {
     call,
+    position: argument.position,
+    prefix: argument.prefix,
+    storeName,
+  };
+}
+
+function phpLaravelCacheAttributeStoreReferenceContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelCacheStoreReferenceContext | null {
+  const argument = phpStringAttributeArgumentContextAt(source, position, [
+    "Cache",
+  ]);
+
+  if (!argument) {
+    return null;
+  }
+
+  const storeName = argument.closed ? argument.value : argument.prefix;
+
+  if (
+    !isCacheAttributeStoreArgument(argument) ||
+    !isUsableLaravelCacheStoreName(argument.prefix) ||
+    !isUsableLaravelCacheStoreName(storeName)
+  ) {
+    return null;
+  }
+
+  return {
+    call: "#[Cache]",
     position: argument.position,
     prefix: argument.prefix,
     storeName,
@@ -147,4 +189,12 @@ function isCacheStoreArgument(argument: PhpStringArgumentContext): boolean {
     argumentName === "name" ||
     argumentName === "store"
   );
+}
+
+function isCacheAttributeStoreArgument(
+  argument: PhpStringAttributeArgumentContext,
+): boolean {
+  return argument.argumentName
+    ? argument.argumentName.toLowerCase() === "store"
+    : argument.argumentIndex === 0;
 }

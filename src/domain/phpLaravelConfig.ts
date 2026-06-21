@@ -1,4 +1,8 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import {
+  phpStringAttributeArgumentContextAt,
+  type PhpStringAttributeArgumentContext,
+} from "./phpStringArgumentContext";
 
 const laravelConfigRepositoryMethods = [
   "get",
@@ -16,6 +20,7 @@ type LaravelConfigRepositoryMethod =
 
 export type PhpLaravelConfigReferenceCall =
   | "config"
+  | "#[Config]"
   | `Config::${LaravelConfigRepositoryMethod}`
   | `config()->${LaravelConfigRepositoryMethod}`;
 
@@ -69,6 +74,15 @@ export function phpLaravelConfigReferenceContextAt(
   source: string,
   position: EditorPosition,
 ): PhpLaravelConfigReferenceContext | null {
+  const attributeContext = phpLaravelConfigAttributeReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (attributeContext) {
+    return attributeContext;
+  }
+
   const offset = offsetAtPosition(source, position);
   const literal = stringLiteralAtOffset(source, offset);
 
@@ -106,6 +120,35 @@ export function phpLaravelConfigReferenceContextAt(
     key,
     position: editorPositionAtOffset(source, literal.quoteStart + 1),
     prefix,
+  };
+}
+
+function phpLaravelConfigAttributeReferenceContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelConfigReferenceContext | null {
+  const argument = phpStringAttributeArgumentContextAt(source, position, [
+    "Config",
+  ]);
+
+  if (!argument || !isLaravelConfigAttributeKeyArgument(argument)) {
+    return null;
+  }
+
+  const key = argument.closed ? argument.value : argument.prefix;
+
+  if (
+    !isUsableLaravelConfigKeyPrefix(argument.prefix) ||
+    !isUsableLaravelConfigKeyPrefix(key)
+  ) {
+    return null;
+  }
+
+  return {
+    call: "#[Config]",
+    key,
+    position: argument.position,
+    prefix: argument.prefix,
   };
 }
 
@@ -281,6 +324,14 @@ function isFirstArgument(argument: PhpArgumentContext): boolean {
     argument.argumentIndex === 0 ||
     argument.argumentName?.toLowerCase() === "key"
   );
+}
+
+function isLaravelConfigAttributeKeyArgument(
+  argument: PhpStringAttributeArgumentContext,
+): boolean {
+  return argument.argumentName
+    ? argument.argumentName.toLowerCase() === "key"
+    : argument.argumentIndex === 0;
 }
 
 function returnArrayOpenAt(source: string): PhpArrayOpen | null {

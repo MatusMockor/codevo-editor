@@ -16,6 +16,11 @@ describe("phpLaravelStorage", () => {
       ["Storage::persistentFake('s3')", "Storage::persistentFake"],
       ["Storage::disk(name: 's3')", "Storage::disk"],
       ["Storage::persistentFake(disk: 's3')", "Storage::persistentFake"],
+      ["#[Storage('s3')]\nclass FilesystemConsumer {}", "#[Storage]"],
+      [
+        "#[\\Illuminate\\Container\\Attributes\\Storage(disk: 's3')]\nclass FilesystemConsumer {}",
+        "#[Storage]",
+      ],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -39,6 +44,8 @@ describe("phpLaravelStorage", () => {
     const interpolated = `<?php\n\nStorage::disk("s$name");\n`;
     const invalid = `<?php\n\nStorage::disk('s3/backup');\n`;
     const wrongCall = `<?php\n\nConfig::get('s3');\n`;
+    const wrongAttributeArgument = `<?php\n\n#[Storage(name: 's3')]\nclass FilesystemConsumer {}\n`;
+    const nestedAttributeCall = `<?php\n\n#[Example(Storage('s3'))]\nclass FilesystemConsumer {}\n`;
 
     expect(
       phpLaravelStorageDiskReferenceContextAt(
@@ -57,6 +64,18 @@ describe("phpLaravelStorage", () => {
     ).toBeNull();
     expect(
       phpLaravelStorageDiskReferenceContextAt(wrongCall, positionAfter(wrongCall, "s3")),
+    ).toBeNull();
+    expect(
+      phpLaravelStorageDiskReferenceContextAt(
+        wrongAttributeArgument,
+        positionAfter(wrongAttributeArgument, "s3"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelStorageDiskReferenceContextAt(
+        nestedAttributeCall,
+        positionAfter(nestedAttributeCall, "s3"),
+      ),
     ).toBeNull();
   });
 

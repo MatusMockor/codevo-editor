@@ -16,6 +16,12 @@ export interface PhpStringArrayArgumentElementContext
   arrayOpen: number;
 }
 
+export interface PhpStringAttributeArgumentContext
+  extends PhpStringArgumentContext {
+  attributeName: string;
+  attributeShortName: string;
+}
+
 interface PhpStringLiteral {
   closed: boolean;
   quote: "'" | "\"";
@@ -121,6 +127,39 @@ export function phpStringArrayArgumentElementContextAt(
   };
 }
 
+export function phpStringAttributeArgumentContextAt(
+  source: string,
+  position: EditorPosition,
+  attributeNames?: readonly string[],
+): PhpStringAttributeArgumentContext | null {
+  const argument = phpStringArgumentContextAt(source, position);
+
+  if (!argument) {
+    return null;
+  }
+
+  const attributeName = phpAttributeConstructorNameAt(
+    source,
+    argument.openParen,
+  );
+
+  if (
+    !attributeName ||
+    (attributeNames?.length &&
+      !attributeNames.some((expectedName) =>
+        phpAttributeNameMatches(attributeName, expectedName),
+      ))
+  ) {
+    return null;
+  }
+
+  return {
+    ...argument,
+    attributeName,
+    attributeShortName: phpShortAttributeName(attributeName),
+  };
+}
+
 export function isPhpCodeOffset(source: string, offset: number): boolean {
   let quote: "'" | "\"" | null = null;
   let lineComment = false;
@@ -166,7 +205,7 @@ export function isPhpCodeOffset(source: string, offset: number): boolean {
       continue;
     }
 
-    if (character === "#") {
+    if (character === "#" && next !== "[") {
       lineComment = true;
       continue;
     }
@@ -183,6 +222,119 @@ export function isPhpCodeOffset(source: string, offset: number): boolean {
   }
 
   return !quote && !lineComment && !blockComment;
+}
+
+function phpAttributeConstructorNameAt(
+  source: string,
+  openParen: number,
+): string | null {
+  const beforeOpenParen = source.slice(0, openParen);
+  const match =
+    /\\?[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*\s*$/.exec(
+      beforeOpenParen,
+    );
+
+  if (!match?.[0]) {
+    return null;
+  }
+
+  const attributeName = match[0].trim();
+  const attributeNameStart = openParen - match[0].length;
+  const attributeOpen = enclosingPhpAttributeOpenAt(
+    source,
+    attributeNameStart,
+    openParen,
+  );
+
+  if (attributeOpen === null) {
+    return null;
+  }
+
+  return attributeName;
+}
+
+function enclosingPhpAttributeOpenAt(
+  source: string,
+  attributeNameStart: number,
+  openParen: number,
+): number | null {
+  for (
+    let attributeOpen = source.lastIndexOf("[", attributeNameStart);
+    attributeOpen >= 0;
+    attributeOpen = source.lastIndexOf("[", attributeOpen - 1)
+  ) {
+    if (source[attributeOpen - 1] !== "#") {
+      continue;
+    }
+
+    const attributeClose = matchingBracketOffset(
+      source,
+      attributeOpen,
+      "[",
+      "]",
+    );
+
+    if (attributeClose !== null && openParen > attributeClose) {
+      continue;
+    }
+
+    if (!isPhpCodeOffset(source, attributeOpen - 1)) {
+      continue;
+    }
+
+    if (
+      topLevelArgumentIndexAtOffset(source, attributeOpen, openParen) === null ||
+      !isTopLevelAttributeItemNameStart(
+        source,
+        attributeOpen,
+        attributeNameStart,
+      )
+    ) {
+      continue;
+    }
+
+    return attributeOpen;
+  }
+
+  return null;
+}
+
+function isTopLevelAttributeItemNameStart(
+  source: string,
+  attributeOpen: number,
+  attributeNameStart: number,
+): boolean {
+  let itemStart = attributeOpen + 1;
+
+  scanTopLevel(source, attributeOpen + 1, attributeNameStart, (index, character) => {
+    if (character === ",") {
+      itemStart = index + 1;
+    }
+  });
+
+  return /^\s*$/.test(source.slice(itemStart, attributeNameStart));
+}
+
+function phpAttributeNameMatches(
+  attributeName: string,
+  expectedName: string,
+): boolean {
+  const normalizedAttributeName = normalizePhpAttributeName(attributeName);
+  const normalizedExpectedName = normalizePhpAttributeName(expectedName);
+
+  return (
+    normalizedAttributeName === normalizedExpectedName ||
+    phpShortAttributeName(normalizedAttributeName) ===
+      phpShortAttributeName(normalizedExpectedName)
+  );
+}
+
+function normalizePhpAttributeName(attributeName: string): string {
+  return attributeName.replace(/^\\+/, "").toLowerCase();
+}
+
+function phpShortAttributeName(attributeName: string): string {
+  return attributeName.replace(/^\\+/, "").split("\\").pop() ?? attributeName;
 }
 
 function argumentContextAt(
