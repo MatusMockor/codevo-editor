@@ -65,7 +65,11 @@ describe("phpLaravelRoutes", () => {
 route('comments.show', ['comment' => $comment]);
 to_route("comments.index");
 redirect()->route('comments.edit');
+redirect()->signedRoute('comments.edit-signed');
+redirect()->temporarySignedRoute('comments.edit-expiring', now()->addHour());
 Redirect::route('comments.preview');
+Redirect::signedRoute('comments.preview-signed');
+Redirect::temporarySignedRoute('comments.preview-temporary', now()->addHour());
 URL::route('comments.feed');
 URL::signedRoute('comments.unsubscribe');
 URL::temporarySignedRoute('comments.preview-expiring', now()->addHour());
@@ -110,6 +114,28 @@ Route::has('comments.destroy');
     expect(
       phpLaravelNamedRouteReferenceContextAt(
         source,
+        cursorAfter(source, "comments.edit-signed"),
+      ),
+    ).toEqual({
+      call: "redirect()->signedRoute",
+      name: "comments.edit-signed",
+      position: positionOf(source, "comments.edit-signed"),
+      prefix: "comments.edit-signed",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.edit-expiring"),
+      ),
+    ).toEqual({
+      call: "redirect()->temporarySignedRoute",
+      name: "comments.edit-expiring",
+      position: positionOf(source, "comments.edit-expiring"),
+      prefix: "comments.edit-expiring",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
         cursorAfter(source, "comments.preview"),
       ),
     ).toEqual({
@@ -117,6 +143,28 @@ Route::has('comments.destroy');
       name: "comments.preview",
       position: positionOf(source, "comments.preview"),
       prefix: "comments.preview",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.preview-signed"),
+      ),
+    ).toEqual({
+      call: "Redirect::signedRoute",
+      name: "comments.preview-signed",
+      position: positionOf(source, "comments.preview-signed"),
+      prefix: "comments.preview-signed",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.preview-temporary"),
+      ),
+    ).toEqual({
+      call: "Redirect::temporarySignedRoute",
+      name: "comments.preview-temporary",
+      position: positionOf(source, "comments.preview-temporary"),
+      prefix: "comments.preview-temporary",
     });
     expect(
       phpLaravelNamedRouteReferenceContextAt(

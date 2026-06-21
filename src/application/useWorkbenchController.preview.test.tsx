@@ -18694,6 +18694,80 @@ Route::get('/comments/unsubscribe', [CommentController::class, 'unsubscribe'])
     ]);
   });
 
+  it("suggests Laravel named routes inside signed redirect route strings", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const routesPath = "/workspace/routes/web.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function expiringPreview(): mixed
+    {
+        return redirect()->temporarySignedRoute('comments.pre', now()->addHour());
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === routesPath) {
+          return `<?php
+Route::get('/comments/preview', [CommentController::class, 'expiringPreview'])
+    ->name('comments.preview');
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "->name("
+          ? [
+              {
+                column: 5,
+                lineNumber: 3,
+                lineText: "    ->name('comments.preview');",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.pre"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "routes/web.php",
+        insertText: "preview",
+        kind: "route",
+        name: "comments.preview",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("suggests Laravel resource route names from resource-only route files", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace/routes/web.php";
