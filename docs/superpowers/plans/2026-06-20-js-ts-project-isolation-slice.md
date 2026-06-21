@@ -8388,3 +8388,42 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel View Factory Preview Coverage
 
 - Committed as `ddcc57c7 Cover Laravel view factory navigation`.
+
+## Next Slice: Guard Stale Laravel Dynamic Where Completion Traversal
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `0c86c6f6 Record Laravel view factory coverage commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- `collectPhpLaravelDynamicWhereMethodsForClass` reads candidate model files asynchronously while building PhpStorm-like dynamic `where...` completions and type inference.
+- Neighboring Laravel collectors already re-check the active workspace root after delayed reads, but this collector could continue traversing stale model/package candidates after a workspace-tab switch.
+
+### Implementation Choice
+
+- Capture the requested workspace root inside `collectPhpLaravelDynamicWhereMethodsForClass`.
+- Re-check root freshness after class path resolution, before and after each model file read, inside completion traversal, on catches, and before returning collected results.
+- Add a preview regression where completion type inference starts from `Comment::whereContent()->first()`, blocks on the model read, switches to another workspace tab, then resolves the stale read and returns no stale completions.
+
+### Acceptance Criteria
+
+- Delayed Laravel dynamic-where completion/type traversal returns no stale completions after a workspace-tab switch.
+- Stale traversal does not continue into package fallback candidates after the switch.
+- Existing dynamic-where completion, navigation, diagnostics, and plain Composer behavior remain unchanged.
+- Focused preview tests, full preview suite, `npm run check`, `npm test`, and `git diff --check` pass.
+
+### Verification: Guard Stale Laravel Dynamic Where Completion Traversal
+
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "dynamic where"` passed: 4 passed, 397 skipped.
+- `npm run check` passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 401 passed.
+- `npm test` passed: 69 files, 1056 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Guard Stale Laravel Dynamic Where Completion Traversal
+
+- Committed as `bd621b39 Guard Laravel dynamic where completions across workspace switches`.
