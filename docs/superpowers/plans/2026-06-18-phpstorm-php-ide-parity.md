@@ -5050,3 +5050,44 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `e2cba685 Cover stale call hierarchy tab results`.
+
+## Slice: Stale Hierarchy Follow-up Result Guards - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `dc6717c4 Record stale call hierarchy result guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Lock down JavaScript/TypeScript hierarchy isolation when the initial hierarchy preparation succeeds before a project tab switch, but the follow-up hierarchy requests finish after the switch.
+
+### Implementation Choice
+
+- Add a call hierarchy regression where `prepareCallHierarchy` returns in `/workspace-a`, `incomingCalls`/`outgoingCalls` remain in flight, the user switches to `/workspace-b`, and the delayed calls resolve afterward.
+- Add a type hierarchy regression where `prepareTypeHierarchy` returns in `/workspace-a`, `typeHierarchySupertypes`/`typeHierarchySubtypes` remain in flight, the user switches to `/workspace-b`, and the delayed calls resolve afterward.
+- Assert both commands resolve without populating stale hierarchy views in the active workspace.
+- Keep this as a test-only slice because the controller already checks the requested root/session after the follow-up requests.
+
+### Acceptance Criteria
+
+- Delayed call hierarchy follow-up results from an inactive project tab are ignored.
+- Delayed type hierarchy follow-up results from an inactive project tab are ignored.
+- The active workspace remains `/workspace-b` and no stale hierarchy view is populated.
+- Existing prepare-result, stale-error, and same-root restart hierarchy guards remain unchanged.
+- Focused/full preview controller tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "hierarchy .* switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Committed as `fd395830 Cover stale hierarchy follow-up tab results`.
