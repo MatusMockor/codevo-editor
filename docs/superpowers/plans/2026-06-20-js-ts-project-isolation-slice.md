@@ -9286,3 +9286,38 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Config Set Array Keys
 
 - Committed as `0c132c24 Support Laravel config set array keys`.
+
+## Next Slice: Laravel Authenticated Attribute Guard Targets
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `d14ffd02 Record Laravel config set array commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel 13 exposes `Authenticated` and `CurrentUser` contextual attributes with a `guard` constructor argument.
+- Those guard strings reference the same `auth.guards.*` config targets as `Auth::guard(...)` and `#[Auth(...)]`.
+- This adds another documented contextual attribute callsite without new target plumbing.
+
+### Implementation Choice
+
+- Extend the auth guard detector to accept exact FQCN-resolved `Illuminate\Container\Attributes\Authenticated` and `Illuminate\Container\Attributes\CurrentUser` attributes.
+- Reuse the existing contextual attribute parser and auth guard config target mapping.
+- Keep no-argument attributes out of scope because there is no string to complete or navigate.
+- Add alias, FQCN, and foreign-attribute negative coverage.
+
+### Verification: Laravel Authenticated Attribute Guard Targets
+
+- `npm test -- src/domain/phpLaravelAuth.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel Auth"` passed: 3 passed, 424 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 427 passed.
+- `npm test` passed: 80 files, 1140 tests.
+- `npm run check` passed.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Authenticated Attribute Guard Targets
+
+- Committed as `e4d211cd Support Laravel authenticated guard attributes`.
