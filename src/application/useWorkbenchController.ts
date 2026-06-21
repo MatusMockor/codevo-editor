@@ -3436,8 +3436,18 @@ export function useWorkbenchController(
     async (entry: FileEntry, options: OpenFileOptions = {}) => {
       const requestToken = openFileRequestTokenRef.current + 1;
       openFileRequestTokenRef.current = requestToken;
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
       const shouldRecordNavigation = options.recordNavigation !== false;
       const shouldPin = options.pin === true;
+      const belongsToInactiveWorkspaceTab = appSettingsRef.current.workspaceTabs.some(
+        (tabPath) =>
+          !workspaceRootKeysEqual(tabPath, requestedRoot) &&
+          workspacePathBelongsToRoot(entry.path, tabPath),
+      );
+
+      if (belongsToInactiveWorkspaceTab) {
+        return false;
+      }
 
       if (documents[entry.path]) {
         if (shouldRecordNavigation && activePath !== entry.path) {
@@ -3468,7 +3478,11 @@ export function useWorkbenchController(
         const replacedPath = replacement?.path ?? null;
         const content = await workspaceFiles.readTextFile(entry.path);
 
-        if (openFileRequestTokenRef.current !== requestToken) {
+        if (
+          openFileRequestTokenRef.current !== requestToken ||
+          (requestedRoot !== null &&
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
+        ) {
           return false;
         }
 
@@ -3522,11 +3536,19 @@ export function useWorkbenchController(
         setMessage(null);
         return true;
       } catch (error) {
-        if (openFileRequestTokenRef.current !== requestToken) {
+        if (
+          openFileRequestTokenRef.current !== requestToken ||
+          (requestedRoot !== null &&
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
+        ) {
           return false;
         }
 
-        reportError("Open File", error);
+        if (requestedRoot) {
+          reportErrorForActiveWorkspaceRoot(requestedRoot, "Open File", error);
+        } else {
+          reportError("Open File", error);
+        }
         return false;
       }
     },
@@ -3538,9 +3560,11 @@ export function useWorkbenchController(
       previewPath,
       recordCurrentNavigationLocation,
       reportError,
+      reportErrorForActiveWorkspaceRoot,
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
       workspaceFiles,
+      workspaceRoot,
     ],
   );
 

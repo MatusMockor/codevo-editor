@@ -859,6 +859,88 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
   });
 
+  it("does not activate cached files from inactive project tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+      ),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    expect(getWorkbench().activePath).toBe(path);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    let opened = true;
+    await act(async () => {
+      opened = await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns();
+
+    expect(opened).toBe(false);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(path);
+  });
+
+  it("ignores stale open file errors after switching project tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const openFile = createDeferred<string>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
+      ),
+    });
+    await flushAsyncTurns();
+
+    let openPromise: Promise<boolean> = Promise.resolve(false);
+    await act(async () => {
+      openPromise = getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.readTextFile,
+      ).toHaveBeenCalledWith(path);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      openFile.reject(new Error("stale open"));
+      await openPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Open File" &&
+          notice.message.includes("stale open"),
+      ),
+    ).toBe(false);
+  });
+
   it("restores cached JavaScript and TypeScript runtime status when activating a kept-alive project tab", async () => {
     let publishRuntimeStatus:
       | ((status: LanguageServerRuntimeStatus) => void)
