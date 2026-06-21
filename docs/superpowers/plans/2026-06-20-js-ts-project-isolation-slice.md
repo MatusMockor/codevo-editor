@@ -7128,4 +7128,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JS/TS Document Symbol Deprecation Tags
 
-- Pending commit after verification.
+- Committed as `c413e09e Preserve JS TS document symbol tags`.
