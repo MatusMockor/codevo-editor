@@ -7733,4 +7733,4 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 
 ### Commit Status
 
-- Pending commit.
+- Committed as `ff46b193 Guard JavaScript TypeScript rename watcher notifications across workspace switches`.
