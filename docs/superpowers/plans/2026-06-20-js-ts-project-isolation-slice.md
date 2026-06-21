@@ -4567,4 +4567,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: Quick Open Result Active Workspace Guard
 
-- Pending commit.
+- Committed as `b586f283 Guard Quick Open result opens by active workspace`.
