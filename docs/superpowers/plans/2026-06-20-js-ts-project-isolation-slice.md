@@ -9092,3 +9092,48 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Config-Derived Scoped Completions
 
 - Committed as `603304b7 Scope Laravel config-derived completions in Monaco`.
+
+## Next Slice: Laravel Contextual Attribute Config Targets
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `faf58e89 Record Laravel scoped completion commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel 13 documents contextual attributes for constructor injection, including `Auth`, `Cache`, `Config`, `DB` / `Database`, `Log`, and `Storage`.
+- Those attributes contain the same config-derived target strings already supported elsewhere:
+  - `#[Auth('web')]` -> `auth.guards.web`
+  - `#[Cache('redis')]` -> `cache.stores.redis`
+  - `#[Config('app.timezone')]` -> `app.timezone`
+  - `#[DB('mysql')]` / `#[Database('mysql')]` -> `database.connections.mysql`
+  - `#[Log('daily')]` -> `logging.channels.daily`
+  - `#[Storage('s3')]` -> `filesystems.disks.s3`
+- This expands Laravel IDE behavior through a new callsite shape without adding new workbench target models.
+
+### Implementation Choice
+
+- Add a shared PHP attribute string-argument helper on top of the existing PHP string argument parser.
+- Treat `#[` as attribute syntax instead of a line comment while preserving normal `#` comments.
+- Require the matched attribute name to start a top-level `#[...]` item, rejecting nested calls and expressions such as `#[Example(Auth('web'))]` and `#[new Auth('web')]`.
+- Add each Laravel contextual attribute to its existing config-derived detector, using documented constructor parameter names only.
+- Keep alias-aware import resolution out of scope for this slice; short names and FQCN attribute names are supported consistently with the existing lightweight detectors.
+- Add one workbench integration test proving `#[Config(...)]` completions and `#[Auth(...)]` Go to Definition reuse the existing config target plumbing.
+
+### Verification: Laravel Contextual Attribute Config Targets
+
+- `npm test -- src/domain/phpStringArgumentContext.test.ts src/domain/phpLaravelConfig.test.ts src/domain/phpLaravelAuth.test.ts src/domain/phpLaravelCache.test.ts src/domain/phpLaravelDatabase.test.ts src/domain/phpLaravelLog.test.ts src/domain/phpLaravelStorage.test.ts` passed: 7 files, 36 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Laravel contextual attributes"` passed: 1 passed, 423 skipped.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 424 passed.
+- `npm test -- src/components/EditorSurface.test.tsx -t "Laravel scoped strings"` passed: 1 passed, 18 skipped.
+- `npm test -- src/components/languageServerMonacoProviders.test.ts -t "Laravel scoped strings"` passed: 1 passed, 133 skipped.
+- `npm run check` passed.
+- `npm test` passed: 80 files, 1132 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Contextual Attribute Config Targets
+
+- Committed as `13a54801 Support Laravel contextual attribute config targets`.
