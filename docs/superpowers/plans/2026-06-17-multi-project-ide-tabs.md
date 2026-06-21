@@ -954,3 +954,44 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `46311621 Guard index start responses by workspace root`.
+
+### Slice: Pending Index Root Lifecycle Guard - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `b931ccd5 Record index start root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prevent pending index lifecycle state from accepting completion, start, reindex, or error results for a different workspace root.
+
+#### Implementation Choice
+
+- Track the pending index root explicitly with `pendingIndexRootRef`.
+- Require metadata completion events to match either the pending index root or the active index root.
+- Re-check pending root, active workspace root, and response root before accepting initial index and reindex start responses.
+- Suppress stale index start/reindex errors after the pending root changes or the active workspace changes.
+- Add a reindex regression where `/workspace` soft reindex receives a `/other` start response and keeps the existing `/workspace` index progress.
+
+#### Acceptance Criteria
+
+- Pending index completion events cannot cross from one project tab into another.
+- Wrong-root reindex start responses do not overwrite active index progress.
+- Stale index errors are not surfaced after root changes.
+- Focused/full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores index start responses that belong to another workspace root|ignores reindex start responses that belong to another workspace root|refreshes the PHP tree for index progress roots that only differ by a trailing slash"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `8e87cade Track pending index roots across lifecycle`.
