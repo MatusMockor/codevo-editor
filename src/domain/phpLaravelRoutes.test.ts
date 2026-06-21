@@ -65,6 +65,7 @@ describe("phpLaravelRoutes", () => {
 route('comments.show', ['comment' => $comment]);
 to_route("comments.index");
 redirect()->route('comments.edit');
+Redirect::route('comments.preview');
 URL::route('comments.feed');
 Route::has('comments.destroy');
 `;
@@ -101,6 +102,17 @@ Route::has('comments.destroy');
       name: "comments.edit",
       position: positionOf(source, "comments.edit"),
       prefix: "comments.edit",
+    });
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "comments.preview"),
+      ),
+    ).toEqual({
+      call: "Redirect::route",
+      name: "comments.preview",
+      position: positionOf(source, "comments.preview"),
+      prefix: "comments.preview",
     });
     expect(
       phpLaravelNamedRouteReferenceContextAt(

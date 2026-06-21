@@ -4,6 +4,7 @@ export type PhpLaravelNamedRouteReferenceCall =
   | "route"
   | "to_route"
   | "redirect()->route"
+  | "Redirect::route"
   | "URL::route"
   | "Route::has";
 
@@ -736,6 +737,10 @@ function laravelNamedRouteReferenceCallAt(
 
   if (/\bredirect\s*\(\s*\)\s*->\s*route\s*$/i.test(beforeCall)) {
     return "redirect()->route";
+  }
+
+  if (/\bRedirect\s*::\s*route\s*$/i.test(beforeCall)) {
+    return "Redirect::route";
   }
 
   if (/\bURL\s*::\s*route\s*$/i.test(beforeCall)) {
