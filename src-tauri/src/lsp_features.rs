@@ -117,6 +117,8 @@ struct LanguageServerCompletionEditRange {
 #[serde(rename_all = "camelCase")]
 pub struct LanguageServerWorkspaceEdit {
     pub changes: BTreeMap<String, Vec<LanguageServerTextEdit>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub document_versions: BTreeMap<String, Option<i64>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub file_operations: Vec<LanguageServerWorkspaceFileOperation>,
 }
@@ -2022,6 +2024,7 @@ fn slice_by_char_offsets(value: &str, start: usize, end: usize) -> Option<String
 
 fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, String> {
     let mut changes = BTreeMap::new();
+    let mut document_versions = BTreeMap::new();
     let mut file_operations = Vec::new();
 
     if let Some(change_map) = value.get("changes").and_then(Value::as_object) {
@@ -2043,6 +2046,17 @@ fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, St
                 let Some(items) = document_change.get("edits").and_then(Value::as_array) else {
                     continue;
                 };
+                if let Some(version_value) = text_document.get("version") {
+                    let version = if version_value.is_null() {
+                        None
+                    } else {
+                        Some(version_value.as_i64().ok_or_else(|| {
+                            "Language server returned a malformed workspace document version."
+                                .to_string()
+                        })?)
+                    };
+                    document_versions.insert(uri.to_string(), version);
+                }
 
                 append_workspace_text_edits(
                     &mut changes,
@@ -2069,6 +2083,7 @@ fn parse_workspace_edit(value: &Value) -> Result<LanguageServerWorkspaceEdit, St
 
     Ok(LanguageServerWorkspaceEdit {
         changes,
+        document_versions,
         file_operations,
     })
 }
@@ -3341,7 +3356,7 @@ mod tests {
             },
             "documentChanges": [
                 {
-                    "textDocument": { "uri": "file:///tmp/Other.ts" },
+                    "textDocument": { "uri": "file:///tmp/Other.ts", "version": 7 },
                     "edits": [
                         {
                             "range": {
@@ -3387,6 +3402,7 @@ mod tests {
             edit.changes["file:///tmp/Other.ts"][0].new_text,
             "import { Account } from './account';\n"
         );
+        assert_eq!(edit.document_versions["file:///tmp/Other.ts"], Some(7));
         assert_eq!(edit.file_operations.len(), 3);
         assert_eq!(
             edit.file_operations[0],

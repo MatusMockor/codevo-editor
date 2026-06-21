@@ -3231,6 +3231,7 @@ mod tests {
                 LanguageServerWorkspaceEditEvent {
                     edit: LanguageServerWorkspaceEdit {
                         changes: Default::default(),
+                        document_versions: Default::default(),
                         file_operations: Vec::new(),
                     },
                     label: Some("Apply edit".to_string()),

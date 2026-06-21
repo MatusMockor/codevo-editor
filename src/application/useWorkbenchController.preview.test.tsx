@@ -8030,6 +8030,54 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
   });
 
+  it("does not apply stale versioned JavaScript TypeScript workspace edits to open documents", async () => {
+    const openPath = "/workspace/src/User.ts";
+    const uri = fileUriFromPath(openPath);
+    const edit = {
+      changes: {
+        [uri]: [
+          {
+            newText: "let",
+            range: {
+              end: { character: 5, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+      documentVersions: {
+        [uri]: 0,
+      },
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "User.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().applyJavaScriptTypeScriptLanguageServerWorkspaceEdit(
+        edit,
+        {
+          rootPath: "/workspace",
+        },
+      );
+    });
+
+    expect(getWorkbench().activeDocument?.content).toBe("const value = 1;\n");
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, [openPath]);
+  });
+
   it("filters JavaScript TypeScript workspace edits before applying closed files", async () => {
     const openPath = "/workspace/src/User.ts";
     const closedPath = "/workspace/src/Helper.ts";

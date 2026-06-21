@@ -2755,7 +2755,13 @@ function toMonacoWorkspaceEdit(
     }
 
     const resource = monaco.Uri.file(path);
-    const versionId = context.path === path ? context.versionId : undefined;
+    const editVersionId = workspaceEditVersionId(edit, uri);
+    const versionId =
+      typeof editVersionId === "number"
+        ? editVersionId
+        : context.path === path
+          ? context.versionId
+          : undefined;
 
     return edits.map((textEdit) => ({
       resource,
@@ -3218,6 +3224,11 @@ function applyWorkspaceEditToOpenModels(
       return;
     }
 
+    if (!isWorkspaceEditVersionCurrentForModel(edit, uri, model)) {
+      editedOpenPaths.push(path);
+      return;
+    }
+
     model.pushEditOperations(
       [],
       edits.map((textEdit) => ({
@@ -3384,14 +3395,49 @@ function workspaceEditForRoot(
       return path ? isPathInWorkspaceRoot(rootPath, path) : false;
     }),
   );
+  const documentVersions = Object.fromEntries(
+    Object.entries(edit.documentVersions ?? {}).filter(([uri]) => {
+      const path = pathFromLanguageServerUri(uri);
+
+      return path ? isPathInWorkspaceRoot(rootPath, path) : false;
+    }),
+  );
   const fileOperations = (edit.fileOperations ?? []).filter((operation) =>
     isFileOperationInWorkspaceRoot(operation, rootPath),
   );
 
   return {
     ...(fileOperations.length > 0 ? { fileOperations } : {}),
+    ...(Object.keys(documentVersions).length > 0
+      ? { documentVersions }
+      : {}),
     changes,
   };
+}
+
+function workspaceEditVersionId(
+  edit: LanguageServerWorkspaceEdit,
+  uri: string,
+): number | null | undefined {
+  return edit.documentVersions?.[uri];
+}
+
+function isWorkspaceEditVersionCurrentForModel(
+  edit: LanguageServerWorkspaceEdit,
+  uri: string,
+  model: MonacoModel,
+): boolean {
+  const versionId = workspaceEditVersionId(edit, uri);
+
+  if (typeof versionId !== "number") {
+    return true;
+  }
+
+  if (typeof model.getVersionId !== "function") {
+    return false;
+  }
+
+  return model.getVersionId() === versionId;
 }
 
 function isFileOperationInWorkspaceRoot(

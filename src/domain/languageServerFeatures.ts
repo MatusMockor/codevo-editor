@@ -216,6 +216,7 @@ export interface LanguageServerSignatureHelpContext {
 
 export interface LanguageServerWorkspaceEdit {
   changes: Record<string, LanguageServerTextEdit[]>;
+  documentVersions?: Record<string, number | null>;
   fileOperations?: LanguageServerWorkspaceFileOperation[];
 }
 

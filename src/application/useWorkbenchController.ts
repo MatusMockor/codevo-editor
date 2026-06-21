@@ -5122,11 +5122,16 @@ export function useWorkbenchController(
   );
 
   const applyWorkspaceEditToOpenDocuments = useCallback(
-    (edit: LanguageServerWorkspaceEdit, rootPath: string): string[] => {
+    (
+      edit: LanguageServerWorkspaceEdit,
+      rootPath: string,
+      documentVersionsByUri: Record<string, number> = {},
+    ): string[] => {
       const editedPaths = changedOpenDocumentPathsForWorkspaceEdit(
         edit,
         documentsRef.current,
         rootPath,
+        documentVersionsByUri,
       );
 
       setDocuments((current) => {
@@ -5141,6 +5146,17 @@ export function useWorkbenchController(
           }
 
           if (!isSessionPathInWorkspace(rootPath, path)) {
+            continue;
+          }
+
+          if (
+            !isWorkspaceEditDocumentVersionCurrent(
+              edit,
+              rootPath,
+              uri,
+              documentVersionsByUri,
+            )
+          ) {
             continue;
           }
 
@@ -5265,7 +5281,11 @@ export function useWorkbenchController(
         context.editedOpenPaths ?? [],
       );
       const openDocumentPaths = Object.keys(documentsRef.current);
-      applyWorkspaceEditToOpenDocuments(controllerEdit, requestedRoot);
+      applyWorkspaceEditToOpenDocuments(
+        controllerEdit,
+        requestedRoot,
+        javaScriptTypeScriptDocumentVersionsByUriRef.current,
+      );
       await workspaceFiles.applyWorkspaceEdit(
         requestedRoot,
         rootEdit,
@@ -5345,6 +5365,7 @@ export function useWorkbenchController(
         const editedOpenPaths = applyWorkspaceEditToOpenDocuments(
           rootEdit,
           requestedRoot,
+          javaScriptTypeScriptDocumentVersionsByUriRef.current,
         );
         const changedClosedFiles = await workspaceFiles.applyWorkspaceEdit(
           requestedRoot,
@@ -17373,6 +17394,7 @@ function changedOpenDocumentPathsForWorkspaceEdit(
   edit: LanguageServerWorkspaceEdit,
   documents: Record<string, EditorDocument>,
   rootPath: string,
+  documentVersionsByUri: Record<string, number> = {},
 ): string[] {
   return Object.entries(edit.changes).flatMap(([uri, textEdits]) => {
     const path = pathFromLanguageServerUri(uri);
@@ -17382,6 +17404,17 @@ function changedOpenDocumentPathsForWorkspaceEdit(
     }
 
     if (!isSessionPathInWorkspace(rootPath, path)) {
+      return [];
+    }
+
+    if (
+      !isWorkspaceEditDocumentVersionCurrent(
+        edit,
+        rootPath,
+        uri,
+        documentVersionsByUri,
+      )
+    ) {
       return [];
     }
 
@@ -17398,12 +17431,36 @@ function changedOpenDocumentPathsForWorkspaceEdit(
   });
 }
 
+function isWorkspaceEditDocumentVersionCurrent(
+  edit: LanguageServerWorkspaceEdit,
+  rootPath: string,
+  uri: string,
+  documentVersionsByUri: Record<string, number>,
+): boolean {
+  const editVersion = edit.documentVersions?.[uri];
+
+  if (typeof editVersion !== "number") {
+    return true;
+  }
+
+  return (
+    documentVersionsByUri[languageServerUriSyncKey(rootPath, uri)] === editVersion
+  );
+}
+
 function workspaceEditForRoot(
   edit: LanguageServerWorkspaceEdit,
   rootPath: string,
 ): LanguageServerWorkspaceEdit {
   const changes = Object.fromEntries(
     Object.entries(edit.changes).filter(([uri]) => {
+      const path = pathFromLanguageServerUri(uri);
+
+      return path ? isSessionPathInWorkspace(rootPath, path) : false;
+    }),
+  );
+  const documentVersions = Object.fromEntries(
+    Object.entries(edit.documentVersions ?? {}).filter(([uri]) => {
       const path = pathFromLanguageServerUri(uri);
 
       return path ? isSessionPathInWorkspace(rootPath, path) : false;
@@ -17424,6 +17481,9 @@ function workspaceEditForRoot(
 
   return {
     ...(fileOperations.length > 0 ? { fileOperations } : {}),
+    ...(Object.keys(documentVersions).length > 0
+      ? { documentVersions }
+      : {}),
     changes,
   };
 }
@@ -17437,10 +17497,20 @@ function workspaceEditWithoutPaths(
   }
 
   const skippedPaths = new Set(paths.map(normalizedSessionPath));
+  const documentVersions = Object.fromEntries(
+    Object.entries(edit.documentVersions ?? {}).filter(([uri]) => {
+      const path = pathFromLanguageServerUri(uri);
+
+      return !path || !skippedPaths.has(normalizedSessionPath(path));
+    }),
+  );
 
   return {
     ...(edit.fileOperations && edit.fileOperations.length > 0
       ? { fileOperations: edit.fileOperations }
+      : {}),
+    ...(Object.keys(documentVersions).length > 0
+      ? { documentVersions }
       : {}),
     changes: Object.fromEntries(
       Object.entries(edit.changes).filter(([uri]) => {

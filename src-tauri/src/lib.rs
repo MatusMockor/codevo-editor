@@ -503,6 +503,10 @@ fn ensure_lsp_workspace_edit_paths_in_workspace(
         ensure_lsp_workspace_edit_uri_in_workspace(root_path, uri)?;
     }
 
+    for uri in edit.document_versions.keys() {
+        ensure_lsp_workspace_edit_uri_in_workspace(root_path, uri)?;
+    }
+
     for operation in &edit.file_operations {
         for uri in workspace_file_operation_uris(operation) {
             ensure_lsp_workspace_edit_uri_in_workspace(root_path, uri)?;
@@ -804,6 +808,11 @@ fn filter_lsp_workspace_edit_to_workspace(
         .into_iter()
         .filter(|(uri, _)| is_lsp_file_uri_in_workspace(root_path, uri))
         .collect::<BTreeMap<_, _>>();
+    let document_versions = edit
+        .document_versions
+        .into_iter()
+        .filter(|(uri, _)| is_lsp_file_uri_in_workspace(root_path, uri))
+        .collect::<BTreeMap<_, _>>();
     let file_operations = edit
         .file_operations
         .into_iter()
@@ -820,6 +829,7 @@ fn filter_lsp_workspace_edit_to_workspace(
 
     Ok(Some(LanguageServerWorkspaceEdit {
         changes,
+        document_versions,
         file_operations,
     }))
 }
@@ -3571,8 +3581,7 @@ mod tests {
         LanguageServerCompletionList, LanguageServerDocumentLink, LanguageServerIncomingCall,
         LanguageServerInlayHint, LanguageServerInlayHintLabel, LanguageServerLocation,
         LanguageServerOutgoingCall, LanguageServerPosition, LanguageServerRange,
-        LanguageServerTextEdit,
-        LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
+        LanguageServerTextEdit, LanguageServerTypeHierarchyItem, LanguageServerWorkspaceEdit,
         LanguageServerWorkspaceFileOperation, LanguageServerWorkspaceFileOperationOptions,
         LanguageServerWorkspaceSymbol, TextDocumentPosition,
     };
@@ -3739,6 +3748,7 @@ mod tests {
             &path_string(&root),
             &LanguageServerWorkspaceEdit {
                 changes: inside_changes,
+                document_versions: BTreeMap::new(),
                 file_operations: inside_operations,
             }
         )
@@ -3747,6 +3757,7 @@ mod tests {
             &path_string(&root),
             &LanguageServerWorkspaceEdit {
                 changes: outside_changes,
+                document_versions: BTreeMap::new(),
                 file_operations: Vec::new(),
             }
         )
@@ -3755,6 +3766,7 @@ mod tests {
             &path_string(&root),
             &LanguageServerWorkspaceEdit {
                 changes: BTreeMap::new(),
+                document_versions: BTreeMap::new(),
                 file_operations: outside_operations,
             }
         )
@@ -3763,6 +3775,7 @@ mod tests {
             &path_string(&root),
             &LanguageServerWorkspaceEdit {
                 changes: non_file_changes,
+                document_versions: BTreeMap::new(),
                 file_operations: Vec::new(),
             }
         )
@@ -3771,6 +3784,7 @@ mod tests {
             &path_string(&root),
             &LanguageServerWorkspaceEdit {
                 changes: BTreeMap::new(),
+                document_versions: BTreeMap::new(),
                 file_operations: non_file_operations,
             }
         )
@@ -3794,11 +3808,16 @@ mod tests {
         changes.insert(inside_uri.clone(), vec![text_edit("inside")]);
         changes.insert(sibling_uri.clone(), vec![text_edit("sibling")]);
         changes.insert(outside_uri.clone(), vec![text_edit("outside")]);
+        let mut document_versions = BTreeMap::new();
+        document_versions.insert(inside_uri.clone(), Some(7));
+        document_versions.insert(sibling_uri.clone(), Some(8));
+        document_versions.insert(outside_uri.clone(), Some(9));
 
         let filtered = filter_lsp_workspace_edit_to_workspace(
             &path_string(&root),
             LanguageServerWorkspaceEdit {
                 changes,
+                document_versions,
                 file_operations: vec![
                     LanguageServerWorkspaceFileOperation::Create {
                         uri: inside_created_uri.clone(),
@@ -3826,6 +3845,8 @@ mod tests {
 
         assert_eq!(filtered.changes.len(), 1);
         assert_eq!(filtered.changes[&inside_uri][0].new_text, "inside");
+        assert_eq!(filtered.document_versions.len(), 1);
+        assert_eq!(filtered.document_versions[&inside_uri], Some(7));
         assert_eq!(
             filtered.file_operations,
             vec![
@@ -4497,6 +4518,7 @@ mod tests {
 
         let edits = workspace_text_edits_from_language_server(LanguageServerWorkspaceEdit {
             changes,
+            document_versions: BTreeMap::new(),
             file_operations: Vec::new(),
         })
         .expect("workspace edits");
@@ -4541,6 +4563,7 @@ mod tests {
             path_string(&root),
             LanguageServerWorkspaceEdit {
                 changes,
+                document_versions: BTreeMap::new(),
                 file_operations: vec![
                     LanguageServerWorkspaceFileOperation::Create {
                         uri: file_uri(&created_path),

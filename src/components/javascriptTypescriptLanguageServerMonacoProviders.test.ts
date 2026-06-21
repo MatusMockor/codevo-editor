@@ -3588,6 +3588,56 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("skips stale versioned TypeScript workspace edits for open models", async () => {
+    const monaco = createMonaco();
+    const model = textModel();
+    const openUri = "file:///project/src/user.ts";
+    const closedUri = "file:///project/src/helper.ts";
+    const commandEdit = {
+      changes: {
+        ...workspaceEdit(openUri, "StaleOpenEdit").changes,
+        ...workspaceEdit(closedUri, "ClosedEdit").changes,
+      },
+      documentVersions: {
+        [closedUri]: 3,
+        [openUri]: 6,
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const gateway = featuresGateway({
+      executeCommandEdit: commandEdit,
+    });
+    monaco.editor.getModels.mockReturnValue([model]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: gateway,
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    await commandDescriptor.run(null, {
+      command: {
+        arguments: [{ scope: "file" }],
+        command: "_typescript.organizeImports",
+        title: "Organize Imports",
+      },
+      path: "/project/src/user.ts",
+      rootPath: "/project",
+      sessionId: 1,
+    });
+
+    expect(model.pushEditOperations).not.toHaveBeenCalled();
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      commandEdit,
+      {
+        editedOpenPaths: ["/project/src/user.ts"],
+        rootPath: "/project",
+      },
+    );
+  });
+
   it("persists TypeScript rename edits through the workspace applier while keeping open models current", async () => {
     const monaco = createMonaco();
     const model = textModel();
