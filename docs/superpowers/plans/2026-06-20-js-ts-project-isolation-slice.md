@@ -8568,3 +8568,37 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Laravel Database Connection Names
 
 - Committed as `2034f55a Add Laravel database connection navigation`.
+
+## Next Slice: Laravel Queue Connection Names
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `e40903b4 Record Laravel database connection commit`
+- Worktree was clean before this slice started.
+
+### Why This Slice
+
+- Laravel queue connection names are configured under `config/queue.php` and commonly referenced through `Queue::connection(...)`, `Queue::connected(...)`, `Queue::route(..., connection: ...)`, dispatch `onConnection(...)`, and Bus batch/chain `allOnConnection(...)`.
+- This is another bounded config-derived string navigation slice and keeps queue names such as `onQueue(...)` separate from queue connection keys.
+
+### Implementation Choice
+
+- Add a focused Queue connection string detector for supported Queue facade calls, Queue route connection arguments, and queueable member calls.
+- Map a connection name to `queue.connections.<connection>` for target lookup.
+- Suggest connection names from exact `queue.connections.*` config targets and navigate to the connection key in `config/queue.php`.
+
+### Verification: Laravel Queue Connection Names
+
+- `npm test -- src/domain/phpLaravelQueue.test.ts` passed: 4 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "Queue connection names"` passed: 2 passed, 407 skipped.
+- `npm run check` passed.
+- `npm test -- src/domain/phpLaravelQueue.test.ts src/domain/phpNavigation.test.ts` passed: 31 passed.
+- `npm test -- src/application/useWorkbenchController.preview.test.tsx` passed: 409 passed.
+- `npm test` passed: 73 files, 1080 tests.
+- `git diff --check` passed before commit prep.
+
+### Commit Status: Laravel Queue Connection Names
+
+- Committed as `41614a79 Add Laravel queue connection navigation`.
