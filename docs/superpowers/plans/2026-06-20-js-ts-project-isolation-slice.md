@@ -4612,4 +4612,4 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 
 ### Commit Status: JavaScript TypeScript Autostart Cleanup Guard
 
-- Pending commit.
+- Committed as `d3d1dc01 Clear stale JavaScript TypeScript autostart state`.
