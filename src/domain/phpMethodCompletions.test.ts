@@ -9,6 +9,7 @@ import {
   phpTraitClassNames,
 } from "./phpMethodCompletions";
 import {
+  isLaravelDatabaseQueryBuilderFluentMethod,
   isLaravelDynamicWhereMethodForSource,
   isLaravelEloquentBuilderMethodName,
   isLaravelEloquentBuilderFluentMethod,
@@ -144,6 +145,8 @@ describe("phpMethodCompletions", () => {
       "getOffset",
       "getQuery",
       "getRelation",
+      "groupByRaw",
+      "havingRaw",
       "hasGlobalMacro",
       "hasMacro",
       "hasNamedScope",
@@ -154,14 +157,18 @@ describe("phpMethodCompletions", () => {
       "onDelete",
       "orderByDesc",
       "orderedChunkById",
+      "orderByRaw",
+      "orHavingRaw",
       "orWhereAttachedTo",
       "orWhereDoesntHaveRelation",
       "orWhereMorphDoesntHaveRelation",
+      "orWhereRaw",
       "paginateUsingCursor",
       "qualifyColumn",
       "qualifyColumns",
       "reorder",
       "scopes",
+      "selectRaw",
       "setEagerLoads",
       "setQuery",
       "toBase",
@@ -177,6 +184,7 @@ describe("phpMethodCompletions", () => {
       "whereAttachedTo",
       "whereDoesntHaveRelation",
       "whereMorphDoesntHaveRelation",
+      "whereRaw",
       "withoutEagerLoad",
       "withoutEagerLoads",
       "withoutGlobalScope",
@@ -197,6 +205,20 @@ describe("phpMethodCompletions", () => {
       expect(isLaravelEloquentStaticBuilderMethod(aggregateMethod)).toBe(true);
       expect(isLaravelEloquentBuilderFluentMethod(aggregateMethod)).toBe(true);
       expect(isLaravelEloquentBuilderMethodName(aggregateMethod)).toBe(true);
+    }
+  });
+
+  it("recognizes common Laravel raw query builder fluent methods", () => {
+    for (const methodName of [
+      "groupByRaw",
+      "havingRaw",
+      "orHavingRaw",
+      "orderByRaw",
+      "orWhereRaw",
+      "selectRaw",
+      "whereRaw",
+    ]) {
+      expect(isLaravelDatabaseQueryBuilderFluentMethod(methodName)).toBe(true);
     }
   });
 
@@ -431,9 +453,14 @@ class Album extends Model
       "applyScopes",
       "clone",
       "except",
+      "groupByRaw",
+      "havingRaw",
       "onClone",
       "orderByDesc",
+      "orderByRaw",
+      "orHavingRaw",
       "scopes",
+      "selectRaw",
       "setEagerLoads",
       "setQuery",
       "whereHasMorph",
@@ -449,6 +476,8 @@ class Album extends Model
       "whereAttachedTo",
       "orWhereAttachedTo",
       "reorder",
+      "orWhereRaw",
+      "whereRaw",
       "doesntHaveMorph",
       "withAttributes",
       "withCasts",

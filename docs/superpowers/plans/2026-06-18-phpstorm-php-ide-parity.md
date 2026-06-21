@@ -2942,3 +2942,40 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `e2db0586 Recognize Laravel ordering builder helpers`.
+
+## Slice: Laravel Raw Query Builder Helper Recognition - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `bd1b2fb3 Record Laravel ordering helper commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Recognize common Laravel raw query helpers as builder-preserving methods so raw SQL fragments do not break model-aware inference.
+
+### Implementation Choice
+
+- Add `selectRaw`, `whereRaw`, `orWhereRaw`, `groupByRaw`, `havingRaw`, `orHavingRaw`, and `orderByRaw` to Eloquent static/fluent builder recognition.
+- Add the same missing raw helpers to base query-builder fluent recognition.
+- Cover classifier behavior, Eloquent builder return-type preservation, and relation-method semantic inference through a raw helper chain ending in `first()`.
+
+### Acceptance Criteria
+
+- Common raw helpers are recognized as Laravel Eloquent builder method names.
+- Base query-builder raw helper classifiers recognize the same fluent helpers.
+- Eloquent builder calls through raw helpers preserve `Builder<Model>` inference.
+- Relation-method chains through raw helpers infer the related model after `first()`.
+- Focused/full method-completion and semantic tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "raw query builder|local scopes|infers Laravel builder return types without global local-scope leakage"`
+- PASS: `npm test -- src/domain/phpSemanticEngine.test.ts -t "relation factory chains"`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts src/domain/phpSemanticEngine.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`

@@ -1095,6 +1095,15 @@ class Comment extends Model
         $relationMethodRandomPost = $this->posts()->inRandomOrder()->first();
         $relationMethodDescendingPost = $this->posts()->orderByDesc('created_at')->first();
         $relationMethodReorderedPost = $this->posts()->reorder('created_at')->first();
+        $relationMethodRawFilteredPost = $this->posts()
+            ->selectRaw('posts.*')
+            ->whereRaw('published = 1')
+            ->orWhereRaw('featured = 1')
+            ->groupByRaw('posts.id')
+            ->havingRaw('count(*) > 0')
+            ->orHavingRaw('sum(score) > 10')
+            ->orderByRaw('created_at desc')
+            ->first();
         $relationMethodFoundManyPosts = $this->posts()->findMany([1, 2]);
         $relationMethodFoundManyPost = $this->posts()->findMany([1, 2])->first();
         $relationMethodAfterValueTerminal = $this->posts()->value('title')->first();
@@ -1148,6 +1157,7 @@ class Comment extends Model
         $relationMethodRandomPost->tit
         $relationMethodDescendingPost->tit
         $relationMethodReorderedPost->tit
+        $relationMethodRawFilteredPost->tit
         $relationMethodFoundManyPosts->first()->tit
         $relationMethodFoundManyPost->tit
         $relationMethodAfterValueTerminal->tit
@@ -1380,6 +1390,14 @@ class Tag extends Model
         source,
         positionAfter(source, "$relationMethodReorderedPost->tit"),
         "relationMethodReorderedPost",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\Post");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$relationMethodRawFilteredPost->tit"),
+        "relationMethodRawFilteredPost",
         laravelOptions,
       ),
     ).toBe("App\\Models\\Post");
