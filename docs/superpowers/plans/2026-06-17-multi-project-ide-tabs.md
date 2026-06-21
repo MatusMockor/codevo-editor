@@ -1034,3 +1034,39 @@ This prevents project A diagnostics, completion, or implementation results from 
 #### Commit Status
 
 - Committed as `1b414242 Guard index clear results by active workspace`.
+
+### Slice: Index Clear Success Message Guard Coverage - 2026-06-21
+
+#### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `a889c047 Record index clear active root guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+#### Goal
+
+- Prove delayed successful index-clear responses from a previous project tab cannot overwrite the active workspace message.
+
+#### Implementation Choice
+
+- Add a controller regression where `/workspace-a` disables IDE indexing, the clear request is still pending, the user switches to `/workspace-b`, and the stale successful clear response does not apply the old mode-change message.
+
+#### Acceptance Criteria
+
+- Stale index-clear success messages do not appear after switching project tabs.
+- Existing stale index-clear error guard still passes.
+- Full controller preview tests, `npm run check`, and `git diff --check` pass.
+
+#### Verification
+
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx -t "ignores index clear success messages after switching project tabs|ignores index clear errors after switching project tabs"`
+- PASS: `npm test -- src/application/useWorkbenchController.preview.test.tsx`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+#### Commit Status
+
+- Committed as `e92249e0 Cover stale index clear success messages`.
