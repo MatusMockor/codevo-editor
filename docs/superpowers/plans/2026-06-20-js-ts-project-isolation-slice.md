@@ -6312,3 +6312,49 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: Versioned JavaScript TypeScript Workspace Edits
 
 - Committed as `8cdefe2d Preserve versioned TypeScript workspace edits`.
+
+## Next Slice: PHP LSP Output Workspace Boundary Filter
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `31d07b86 Record versioned TypeScript workspace edit commit`
+- Full suite checkpoint before this slice:
+  - PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (306 tests)
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- Hubble's PHP/Laravel audit identified a P0 workspace-boundary gap: PHP LSP command outputs were not filtered at the Tauri boundary like JS/TS outputs.
+- UI providers often guard active roots, but backend commands must not return locations, workspace edits, command payloads, code actions, code lenses, inlay hints, document links, hierarchy items, or workspace symbols outside the requested workspace root.
+- Without this, a PHPactor response from one workspace tab could carry paths from a sibling or outside project into frontend workflows.
+
+### Implementation Choice
+
+- Reuse the existing JS/TS-safe filter helpers for PHP command outputs.
+- Filter PHP completion items and resolved completion payloads.
+- Filter PHP definition/declaration/implementation/type-definition/reference locations.
+- Filter PHP rename and execute-command workspace edits.
+- Filter PHP code actions, code action resolve, code lenses, code lens resolve, inlay hints, inlay hint resolve, document links, document link resolve, call hierarchy, type hierarchy, and workspace symbols.
+- Add the same code-action context and inlay-hint resolve input guards already used by JS/TS.
+
+### Acceptance Criteria
+
+- PHP LSP command outputs do not expose sibling/outside file URIs or payload paths at the Tauri boundary.
+- Existing JS/TS filtering semantics remain unchanged.
+- Existing LSP response filter regressions pass.
+- Full Tauri lib tests and `git diff --check` pass.
+
+### Verification: PHP LSP Output Workspace Boundary Filter
+
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml lsp_response --lib` (10 tests)
+- PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (306 tests)
+- PASS: `git diff --check`
+- NOTE: `rustfmt --check src-tauri/src/lib.rs` still reports pre-existing unrelated formatting differences in `src-tauri/src/js_ts_file_watcher.rs` and `src-tauri/src/lsp.rs`.
+
+### Commit Status: PHP LSP Output Workspace Boundary Filter
+
+- Committed as `d1409ba3 Filter PHP LSP outputs by workspace root`.
