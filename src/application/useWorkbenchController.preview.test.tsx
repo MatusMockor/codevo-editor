@@ -18620,6 +18620,82 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
     ]);
   });
 
+  it("suggests Laravel named routes from named route group attributes", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const routesPath = "/workspace/routes/web.php";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function dashboard(): string
+    {
+        return route('admin.dash');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === routesPath) {
+          return `<?php
+Route::group(attributes: ['as' => 'admin.'], routes: function () {
+    Route::get('/dashboard', [CommentController::class, 'dashboard'])
+        ->name('dashboard');
+});
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      searchText: vi.fn(async (_root, query) =>
+        query === "->name("
+          ? [
+              {
+                column: 9,
+                lineNumber: 4,
+                lineText: "        ->name('dashboard');",
+                path: routesPath,
+                relativePath: "routes/web.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "admin.dash"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "routes/web.php",
+        insertText: "dashboard",
+        kind: "route",
+        name: "admin.dashboard",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+  });
+
   it("suggests Laravel named routes from named route definition arguments", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const routesPath = "/workspace/routes/web.php";

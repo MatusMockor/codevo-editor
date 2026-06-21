@@ -1072,4 +1072,35 @@ Route::group(['as' => 'outer.'], function () {
       },
     ]);
   });
+
+  it("combines named-argument Laravel route group name prefixes", () => {
+    const source = `<?php
+Route::group(attributes: ['as' => 'admin.'], routes: function () {
+    Route::get('/dashboard', DashboardController::class)->name('dashboard');
+});
+Route::group(attributes: ['as' => 'outer.'], routes: function () {
+    Route::group(attributes: ['as' => 'inner.'], routes: function () {
+        Route::resource(name: 'reports', controller: ReportController::class)->only(only: ['index']);
+    });
+});
+Route::group(options: ['as' => 'ignored.'], routes: function () {
+    Route::get('/ignored', IgnoredController::class)->name('ignored');
+});
+`;
+
+    expect(phpLaravelNamedRouteDefinitions(source)).toEqual([
+      {
+        name: "admin.dashboard",
+        position: positionOf(source, "dashboard');"),
+      },
+      {
+        name: "outer.inner.reports.index",
+        position: positionOf(source, "reports"),
+      },
+      {
+        name: "ignored",
+        position: positionOf(source, "ignored');"),
+      },
+    ]);
+  });
 });

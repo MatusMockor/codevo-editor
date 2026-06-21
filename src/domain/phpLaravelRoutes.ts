@@ -746,7 +746,7 @@ function laravelRouteGroupArrayPrefixLiterals(
   source: string,
   groupOpenParen: number,
 ): PhpStringLiteral[] {
-  return laravelRouteStringMapAtOpenParen(source, groupOpenParen)
+  return laravelRouteStringMapAtOpenParen(source, groupOpenParen, ["attributes"])
     .filter((entry) => entry.key.value.toLowerCase() === "as")
     .map((entry) => entry.value);
 }
