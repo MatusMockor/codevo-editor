@@ -4151,3 +4151,43 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 ### Commit Status: PHP Provider Completion Rootless Runtime Coverage
 
 - Committed as `cd7d6431 Cover PHP completion rootless runtime`.
+
+## Next Slice: PHP Provider Selection Range Rootless Runtime Coverage
+
+### Checkpoint Before Slice
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `660d0270 Record PHP completion rootless runtime commit`
+- Worktree was clean at slice start.
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+
+### Why This Slice
+
+- PHP selection ranges already had direct coverage for mismatched runtime roots and stale in-flight results after project-tab switches.
+- Rootless PHP runtime status should also be rejected before flushing the active document or asking the PHP LSP for selection ranges.
+- The production path uses the shared provider request gate, so this locks the same root contract for selection ranges explicitly.
+
+### Implementation Choice
+
+- Add a rootless PHP selection range regression next to the existing mismatched-root selection range test.
+- Assert the provider returns `null` without flushing pending document changes and without calling `selectionRanges`.
+- Keep the slice coverage-only because the shared provider guard already enforces the runtime root contract.
+
+### Acceptance Criteria
+
+- Rootless PHP runtime status does not trigger LSP selection range requests.
+- Rootless PHP runtime status does not flush pending PHP document changes for selection ranges.
+- Existing selection range mapping, stale in-flight selection guards, full provider tests, `npm run check`, and `git diff --check` pass.
+
+### Verification: PHP Provider Selection Range Rootless Runtime Coverage
+
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts -t "does not request selection ranges when the PHP runtime status"`
+- PASS: `npm test -- src/components/languageServerMonacoProviders.test.ts`
+- PASS: `npm run check`
+- PASS: `git diff --check`
+
+### Commit Status: PHP Provider Selection Range Rootless Runtime Coverage
+
+- Committed as `a2b82227 Cover PHP selection range rootless runtime`.
