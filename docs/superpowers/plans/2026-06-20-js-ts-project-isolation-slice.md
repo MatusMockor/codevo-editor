@@ -6208,3 +6208,7 @@ Harden one remaining JS/TS Basic-mode workspace-isolation gap with regression co
 - PASS: `rustfmt --check src-tauri/src/managed_phpactor.rs`
 - PASS: `cargo test --manifest-path src-tauri/Cargo.toml --lib` (306 tests)
 - NOTE: broader `rustfmt --check` through `lib.rs` still reports pre-existing unrelated formatting differences in `src-tauri/src/js_ts_file_watcher.rs`, `src-tauri/src/lib.rs`, and `src-tauri/src/lsp.rs`.
+
+### Commit Status: Managed PHPactor Sibling Cleanup Guard
+
+- Committed and pushed as `4431ea11 Guard managed PHPactor cleanup by active roots`.
