@@ -2501,6 +2501,7 @@ class Comment
         `<?php
 use App\\Models\\Attachment;
 use App\\Models\\Post;
+use App\\Models\\Video;
 use Illuminate\\Database\\Eloquent\\Model;
 use Illuminate\\Database\\Eloquent\\Relations\\Relation;
 
@@ -2533,6 +2534,7 @@ Comment::resolveRelationUsing('legacyComments', function (Comment $comment) {
 
 Relation::morphMap([
     'post' => Post::class,
+    'video' => Video::class,
 ]);
 
 Comment::resolveRelationUsing('commentable', fn (Comment $comment) => $comment->morphTo());
@@ -2578,7 +2580,7 @@ Comment::resolveRelationUsing('notRelation', fn () => 'not a relation');
         kind: "property",
         name: "commentable",
         parameters: "",
-        returnType: "App\\Models\\Post",
+        returnType: "App\\Models\\Post|App\\Models\\Video",
       },
     ]);
   });

@@ -6855,3 +6855,42 @@ IDE Mode should make PHP and Laravel projects feel meaningfully smarter than Bas
 ### Commit Status
 
 - Committed as `68fa4959 Guard multi-target MorphTo relation chains`.
+
+## Slice: Laravel Multi-Entry MorphMap Dynamic Relation Display - 2026-06-21
+
+### Checkpoint
+
+- Branch: `main...origin/main`
+- Latest pushed commit observed:
+  - `910154ac Record MorphTo relation chain guard commit`
+- Stash snapshot still present:
+  - `stash@{Tue Jun 16 15:29:26 2026}: On main: wip macOS release CI`
+- Worktree was clean at slice start.
+
+### Goal
+
+- Surface multi-entry Laravel morph maps in dynamic `resolveRelationUsing(... morphTo())` relation property completions.
+
+### Implementation Choice
+
+- Keep the existing single-target morphMap path for precise relation target inference.
+- Add a display-only morphMap union path when multiple map entries exist.
+- Rely on the singular chain guard so `App\\Models\\Post|App\\Models\\Video` display unions do not become unsafe chained class targets.
+
+### Acceptance Criteria
+
+- Dynamic `morphTo()` relations backed by multi-entry morph maps display all mapped model targets.
+- Single-entry morphMap behavior remains unchanged.
+- Chained class inference remains conservative for display unions.
+- Focused/full PHP method-completion tests, `npm run check`, and `git diff --check` pass.
+
+### Verification
+
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts -t "dynamic relation targets"`
+- PASS: `npm run check`
+- PASS: `npm test -- src/domain/phpMethodCompletions.test.ts`
+- PASS: `git diff --check`
+
+### Commit Status
+
+- Pending commit.

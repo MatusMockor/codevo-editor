@@ -1589,6 +1589,18 @@ function phpLaravelMorphMapModelTypeFromSource(source: string): string | null {
   return modelTypes.size === 1 ? Array.from(modelTypes)[0] ?? null : null;
 }
 
+function phpLaravelMorphMapModelDisplayTypeFromSource(source: string): string | null {
+  const modelTypes = Array.from(
+    new Set(
+      phpLaravelMorphMapEntriesFromSource(source).map((entry) =>
+        entry.modelClassName.replace(/^\\+/, ""),
+      ),
+    ),
+  );
+
+  return modelTypes.length > 1 ? modelTypes.join("|") : null;
+}
+
 function phpLaravelRelationClassReference(
   source: string,
   className: string,
@@ -2522,7 +2534,9 @@ function phpLaravelDynamicRelationPropertyCompletionsFromSource(
       targetClassName,
       declaringClassName,
       declaringClassSource,
-    );
+    ) ?? (phpLaravelRelationClassNameFromExpression(callbackExpression) === "MorphTo"
+      ? phpLaravelMorphMapModelDisplayTypeFromSource(source)
+      : null);
 
     members.push({
       declaringClassName,
