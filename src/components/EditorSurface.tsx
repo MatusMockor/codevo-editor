@@ -77,6 +77,7 @@ interface ChangePreviewState {
 
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  isOpeningFile?: boolean;
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
     context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
@@ -133,6 +134,7 @@ interface EditorSurfaceProps {
 
 export function EditorSurface({
   activeDocument,
+  isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
   applyPhpLanguageServerWorkspaceEdit = async () => undefined,
   changeHunks,
@@ -982,6 +984,14 @@ export function EditorSurface({
   ]);
 
   if (!activeDocument) {
+    if (isOpeningFile) {
+      return (
+        <div className="empty-editor" data-testid="editor-opening">
+          <p>Opening file…</p>
+        </div>
+      );
+    }
+
     return (
       <div className="empty-editor">
         <p>Open a file to start editing.</p>

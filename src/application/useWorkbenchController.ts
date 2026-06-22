@@ -713,6 +713,7 @@ export function useWorkbenchController(
   );
   const [openPaths, setOpenPaths] = useState<string[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
+  const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
@@ -776,6 +777,7 @@ export function useWorkbenchController(
   const openWorkspaceRequestTokenRef = useRef(0);
   const openWorkspaceRequestPathRef = useRef<string | null>(null);
   const openFileRequestTokenRef = useRef(0);
+  const openingFileFlagOwnerTokenRef = useRef<number | null>(null);
   const gitDiffRequestTokenRef = useRef(0);
   const editorGitBaselineRequestTokenRef = useRef(0);
   const activeIndexRootRef = useRef<string | null>(null);
@@ -4446,6 +4448,15 @@ export function useWorkbenchController(
         return true;
       }
 
+      const clearOpeningFileForRequest = () => {
+        if (openingFileFlagOwnerTokenRef.current !== requestToken) {
+          return;
+        }
+
+        openingFileFlagOwnerTokenRef.current = null;
+        setIsOpeningFile(false);
+      };
+
       try {
         const replacement = cleanReplacementDocument(
           activeDocument,
@@ -4454,6 +4465,8 @@ export function useWorkbenchController(
           previewPath,
         );
         const replacedPath = replacement?.path ?? null;
+        openingFileFlagOwnerTokenRef.current = requestToken;
+        setIsOpeningFile(true);
         const content = await workspaceFiles.readTextFile(entry.path);
 
         if (
@@ -4461,6 +4474,7 @@ export function useWorkbenchController(
           (requestedRoot !== null &&
             !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
         ) {
+          clearOpeningFileForRequest();
           return false;
         }
 
@@ -4513,6 +4527,7 @@ export function useWorkbenchController(
         setGitDiffPreview(null);
         setActivePath(entry.path);
         setMessage(null);
+        clearOpeningFileForRequest();
         return true;
       } catch (error) {
         if (
@@ -4520,8 +4535,11 @@ export function useWorkbenchController(
           (requestedRoot !== null &&
             !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
         ) {
+          clearOpeningFileForRequest();
           return false;
         }
+
+        clearOpeningFileForRequest();
 
         if (requestedRoot) {
           reportErrorForActiveWorkspaceRoot(requestedRoot, "Open File", error);
@@ -20775,6 +20793,7 @@ export function useWorkbenchController(
       ? editorGitBaselinesByPath[activeDocument.path] ?? null
       : null,
     activePath,
+    isOpeningFile,
     appSettings,
     applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
     applyPhpLanguageServerWorkspaceEdit,

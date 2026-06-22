@@ -712,6 +712,7 @@ function App() {
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}
+            isOpeningFile={workbench.isOpeningFile}
             applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
               workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
             }

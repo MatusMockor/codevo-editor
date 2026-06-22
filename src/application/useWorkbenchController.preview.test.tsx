@@ -1545,6 +1545,218 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("clears the in-flight open flag when a stale open errors after switching tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const openFile = createDeferred<string>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
+      ),
+    });
+    await flushAsyncTurns();
+
+    let openPromise: Promise<boolean> = Promise.resolve(false);
+    await act(async () => {
+      openPromise = getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.readTextFile,
+      ).toHaveBeenCalledWith(path);
+    });
+
+    expect(getWorkbench().isOpeningFile).toBe(true);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      openFile.reject(new Error("stale open"));
+      await openPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().isOpeningFile).toBe(false);
+  });
+
+  it("clears the in-flight open flag when a stale open resolves after switching tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const openFile = createDeferred<string>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? openFile.promise : `<?php\n// ${requestedPath}\n`,
+      ),
+    });
+    await flushAsyncTurns();
+
+    let openPromise: Promise<boolean> = Promise.resolve(false);
+    await act(async () => {
+      openPromise = getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.readTextFile,
+      ).toHaveBeenCalledWith(path);
+    });
+
+    expect(getWorkbench().isOpeningFile).toBe(true);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    let opened = true;
+    await act(async () => {
+      openFile.resolve("<?php\nclass User {}\n");
+      opened = await openPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(opened).toBe(false);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(path);
+    expect(getWorkbench().isOpeningFile).toBe(false);
+  });
+
+  it("shows the opened document as soon as its content is read", async () => {
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 71,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const read = createDeferred<string>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => read.promise),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    let openPromise: Promise<boolean> = Promise.resolve(false);
+    await act(async () => {
+      openPromise = getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().activeDocument).toBeNull();
+    expect(dependencies.documentSyncGateway.didOpen).not.toHaveBeenCalled();
+
+    let opened = false;
+    await act(async () => {
+      read.resolve("<?php\nclass User {}\n");
+      opened = await openPromise;
+    });
+
+    expect(opened).toBe(true);
+    expect(getWorkbench().activeDocument?.content).toBe("<?php\nclass User {}\n");
+
+    await flushAsyncTurns(24);
+
+    expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+  });
+
+  it("reports an in-flight open while reading the file and clears it once visible", async () => {
+    const path = "/workspace/app/Models/User.php";
+    const read = createDeferred<string>();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => read.promise),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    let openPromise: Promise<boolean> = Promise.resolve(false);
+    await act(async () => {
+      openPromise = getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().isOpeningFile).toBe(true);
+    expect(getWorkbench().activeDocument).toBeNull();
+
+    await act(async () => {
+      read.resolve("<?php\nclass User {}\n");
+      await openPromise;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().isOpeningFile).toBe(false);
+    expect(getWorkbench().activeDocument?.content).toBe("<?php\nclass User {}\n");
+  });
+
+  it("keeps the latest opened file when a slower read resolves after a faster one", async () => {
+    const slowPath = "/workspace/app/Models/User.php";
+    const fastPath = "/workspace/app/Models/Account.php";
+    const slowRead = createDeferred<string>();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === slowPath
+          ? slowRead.promise
+          : `<?php\n// ${requestedPath}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    let slowOpen: Promise<boolean> = Promise.resolve(false);
+    await act(async () => {
+      slowOpen = getWorkbench().openPinnedFile(fileEntry(slowPath, "User.php"));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(fastPath, "Account.php"));
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.path).toBe(fastPath);
+    expect(getWorkbench().isOpeningFile).toBe(false);
+
+    await act(async () => {
+      slowRead.resolve("<?php\nclass User {}\n");
+      await slowOpen;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.path).toBe(fastPath);
+    expect(getWorkbench().activeDocument?.content).toBe(
+      `<?php\n// ${fastPath}\n`,
+    );
+    expect(getWorkbench().isOpeningFile).toBe(false);
+  });
+
   it("cancels pending file opens while closing the active project tab", async () => {
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
