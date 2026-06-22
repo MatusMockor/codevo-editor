@@ -20,11 +20,20 @@ import type {
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import {
+  breadcrumbPathFromCursorAndSymbols,
+} from "../domain/breadcrumbs";
+import {
   parseShortcut,
   shortcutForCommand,
   type KeymapCommandId,
   type KeymapSettings,
 } from "../domain/keymap";
+import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
+import {
+  isJavaScriptTypeScriptLanguageServerDocument,
+  isLanguageServerDocument,
+} from "../domain/languageServerDocumentSync";
+import { Breadcrumbs } from "./Breadcrumbs";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { phpImplementationGutterTargets } from "../domain/phpImplementationGutterTargets";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
@@ -192,6 +201,12 @@ export function EditorSurface({
   const [changePreview, setChangePreview] = useState<ChangePreviewState | null>(
     null,
   );
+  const [cursorPosition, setCursorPosition] = useState<EditorPosition | null>(
+    null,
+  );
+  const [breadcrumbSymbolsByPath, setBreadcrumbSymbolsByPath] = useState<
+    Record<string, LanguageServerDocumentSymbol[]>
+  >({});
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
@@ -392,15 +407,69 @@ export function EditorSurface({
 
     const disposable = editorApi.onDidChangeCursorPosition((event) => {
       onCursorPositionChange(event.position);
+      setCursorPosition({
+        column: event.position.column,
+        lineNumber: event.position.lineNumber,
+      });
     });
     const position = editorApi.getPosition();
 
     if (position) {
       onCursorPositionChange(position);
+      setCursorPosition({
+        column: position.column,
+        lineNumber: position.lineNumber,
+      });
     }
 
     return () => disposable.dispose();
   }, [editorApi, onCursorPositionChange]);
+
+  useEffect(() => {
+    if (!activeDocument || !workspaceRoot) {
+      return;
+    }
+
+    const breadcrumbGateway = breadcrumbFeaturesGateway(activeDocument, {
+      javaScriptTypeScript: javaScriptTypeScriptLanguageServerFeaturesGateway,
+      php: languageServerFeaturesGateway,
+    });
+
+    if (!breadcrumbGateway) {
+      return;
+    }
+
+    const requestedPath = activeDocument.path;
+    let active = true;
+
+    const loadBreadcrumbSymbols = () => {
+      breadcrumbGateway
+        .documentSymbols(workspaceRoot, requestedPath)
+        .then((symbols) => {
+          if (!active) {
+            return;
+          }
+
+          setBreadcrumbSymbolsByPath((current) => ({
+            ...current,
+            [requestedPath]: symbols,
+          }));
+        })
+        .catch((error) => errorReporterRef.current(error));
+    };
+
+    const timeout = window.setTimeout(loadBreadcrumbSymbols, 160);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    activeDocument,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    languageServerFeaturesGateway,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -919,6 +988,26 @@ export function EditorSurface({
     );
   }
 
+  const breadcrumbSymbols = breadcrumbSymbolsByPath[activeDocument.path] ?? [];
+  const breadcrumbPath = cursorPosition
+    ? breadcrumbPathFromCursorAndSymbols(cursorPosition, breadcrumbSymbols)
+    : [];
+
+  const navigateToBreadcrumbSymbol = (symbol: LanguageServerDocumentSymbol) => {
+    if (!editorApi) {
+      return;
+    }
+
+    const position: EditorPosition = {
+      lineNumber: symbol.selectionRange.start.line + 1,
+      column: symbol.selectionRange.start.character + 1,
+    };
+
+    editorApi.setPosition(position);
+    editorApi.revealPositionInCenter(position);
+    editorApi.focus();
+  };
+
   const changePreviewStyle =
     changePreview && editorApi
       ? editorChangePopoverStyle(
@@ -937,6 +1026,11 @@ export function EditorSurface({
       onMouseDown={onEditorFocused}
       role="tabpanel"
     >
+      <Breadcrumbs
+        fileName={activeDocument.name}
+        onNavigate={navigateToBreadcrumbSymbol}
+        path={breadcrumbPath}
+      />
       <Editor
         beforeMount={(monaco) => beforeMonacoMount(monaco, monacoTheme)}
         height="100%"
@@ -1619,6 +1713,24 @@ function modelPath(model: Monaco.editor.ITextModel): string | null {
 
   if (model.uri.path) {
     return decodeURIComponent(model.uri.path);
+  }
+
+  return null;
+}
+
+function breadcrumbFeaturesGateway(
+  document: EditorDocument,
+  gateways: {
+    javaScriptTypeScript: LanguageServerFeaturesGateway;
+    php: LanguageServerFeaturesGateway;
+  },
+): LanguageServerFeaturesGateway | null {
+  if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
+    return gateways.javaScriptTypeScript;
+  }
+
+  if (isLanguageServerDocument(document)) {
+    return gateways.php;
   }
 
   return null;

@@ -1329,8 +1329,57 @@ button {
 
 .editor-panel {
   position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-panel > section {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.breadcrumbs {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  min-height: 26px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-tabs);
+  padding: 0 10px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.breadcrumb-segment {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.breadcrumb-symbol {
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.breadcrumb-symbol:hover {
+  color: var(--color-text-strong);
+  background: var(--color-control);
+}
+
+.breadcrumb-separator {
+  flex: 0 0 auto;
+  color: var(--color-text-subtle);
+  opacity: 0.6;
 }
 
 .monaco-editor .editor-change-glyph {

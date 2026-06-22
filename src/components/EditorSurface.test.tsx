@@ -3,7 +3,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EditorPosition } from "../domain/languageServerFeatures";
+import type {
+  EditorPosition,
+  LanguageServerDocumentSymbol,
+} from "../domain/languageServerFeatures";
 import {
   emptyLanguageServerCapabilities,
   type LanguageServerRuntimeStatus,
@@ -2023,6 +2026,127 @@ interface ParserFactory
     const popover = queryRequired<HTMLElement>(host, ".editor-change-popover");
     expect(popover.style.left).toBe("92px");
     expect(popover.style.top).toBe("76px");
+  });
+
+  it("renders a breadcrumb bar from the active document symbols at the cursor", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class MyComponent {\n  render() {}\n}\n",
+      language: "typescript",
+      name: "App.tsx",
+      path: "/workspace/src/App.tsx",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const gateway = languageServerFeaturesGateway();
+    const documentSymbols: LanguageServerDocumentSymbol[] = [
+      {
+        children: [
+          {
+            children: [],
+            containerName: null,
+            detail: null,
+            kind: 6,
+            name: "render",
+            range: {
+              start: { line: 1, character: 2 },
+              end: { line: 1, character: 12 },
+            },
+            selectionRange: {
+              start: { line: 1, character: 2 },
+              end: { line: 1, character: 8 },
+            },
+          },
+        ],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "MyComponent",
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 2, character: 1 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 13 },
+          end: { line: 0, character: 24 },
+        },
+      },
+    ];
+    const documentSymbolsMock = vi.fn(async () => documentSymbols);
+    gateway.documentSymbols =
+      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          javaScriptTypeScriptLanguageServerFeaturesGateway={gateway}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    expect(documentSymbolsMock).toHaveBeenCalledWith(
+      "/workspace",
+      activeDocument.path,
+    );
+
+    const labels = Array.from(
+      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
+    expect(labels).toEqual(["App.tsx", "MyComponent"]);
+
+    const symbolSegment = queryRequired<HTMLButtonElement>(
+      host,
+      ".breadcrumb-symbol",
+    );
+
+    act(() => {
+      symbolSegment.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(editorSurfaceMocks.editor?.setPosition).toHaveBeenCalledWith({
+      lineNumber: 1,
+      column: 14,
+    });
+    expect(
+      editorSurfaceMocks.editor?.revealPositionInCenter,
+    ).toHaveBeenCalled();
   });
 });
 
