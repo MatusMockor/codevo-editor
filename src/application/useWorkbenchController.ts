@@ -226,6 +226,10 @@ import {
   type PhpLaravelGateAbilityDefinition,
 } from "../domain/phpLaravelAuthorization";
 import {
+  phpLaravelMiddlewareAliasDefinitions,
+  type PhpLaravelMiddlewareAliasDefinition,
+} from "../domain/phpLaravelMiddleware";
+import {
   phpLaravelBroadcastConnectionCompletionInsertText,
   phpLaravelBroadcastConnectionConfigKey,
   phpLaravelBroadcastConnectionNameFromConfigKey,
@@ -453,6 +457,12 @@ interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
 }
 
 interface PhpLaravelGateAbilityTarget extends PhpLaravelGateAbilityDefinition {
+  path: string;
+  relativePath: string | null;
+}
+
+interface PhpLaravelMiddlewareAliasTarget
+  extends PhpLaravelMiddlewareAliasDefinition {
   path: string;
   relativePath: string | null;
 }
@@ -8164,6 +8174,110 @@ export function useWorkbenchController(
     ],
   );
 
+  const collectPhpLaravelMiddlewareAliasTargets = useCallback(
+    async (
+      currentSource: string,
+      currentPath: string,
+    ): Promise<PhpLaravelMiddlewareAliasTarget[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isLaravelFrameworkActive || !requestedRoot) {
+        return [];
+      }
+
+      const targets = new Map<string, PhpLaravelMiddlewareAliasTarget>();
+      const addDefinitions = (
+        path: string,
+        relativePath: string | null,
+        source: string,
+      ) => {
+        for (const definition of phpLaravelMiddlewareAliasDefinitions(source)) {
+          const key = `${path}:${definition.position.lineNumber}:${definition.position.column}:${definition.name.toLowerCase()}`;
+
+          if (targets.has(key)) {
+            continue;
+          }
+
+          targets.set(key, {
+            ...definition,
+            path,
+            relativePath,
+          });
+        }
+      };
+
+      addDefinitions(
+        currentPath,
+        relativeWorkspacePath(requestedRoot, currentPath),
+        currentSource,
+      );
+
+      const visitedPaths = new Set([currentPath]);
+
+      for (const query of ["middlewareAliases", "routeMiddleware"]) {
+        const searchResults = await textSearch.searchText(
+          requestedRoot,
+          query,
+          200,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        for (const result of searchResults) {
+          if (!isRequestedRootActive()) {
+            return [];
+          }
+
+          if (visitedPaths.has(result.path) || !isPhpPath(result.path)) {
+            continue;
+          }
+
+          visitedPaths.add(result.path);
+
+          try {
+            const content = await readNavigationFileContent(result.path);
+
+            if (!isRequestedRootActive()) {
+              return [];
+            }
+
+            addDefinitions(result.path, result.relativePath, content);
+          } catch {
+            if (!isRequestedRootActive()) {
+              return [];
+            }
+
+            continue;
+          }
+        }
+      }
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      return Array.from(targets.values()).sort((left, right) => {
+        const nameOrder = left.name.localeCompare(right.name);
+
+        if (nameOrder !== 0) {
+          return nameOrder;
+        }
+
+        return left.path.localeCompare(right.path);
+      });
+    },
+    [
+      isLaravelFrameworkActive,
+      readNavigationFileContent,
+      textSearch,
+      workspaceRoot,
+    ],
+  );
+
   const findPhpLaravelViewTarget = useCallback(
     async (viewName: string): Promise<PhpLaravelViewNavigationTarget | null> => {
       const requestedRoot = workspaceRoot;
@@ -15139,6 +15253,52 @@ export function useWorkbenchController(
     ],
   );
 
+  const goToPhpLaravelMiddlewareAliasDefinition = useCallback(
+    async (
+      context: Extract<
+        PhpIdentifierContext,
+        { kind: "laravelMiddlewareAliasString" }
+      >,
+    ): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !activeDocument || !isLaravelFrameworkActive) {
+        return false;
+      }
+
+      const aliases = await collectPhpLaravelMiddlewareAliasTargets(
+        activeDocument.content,
+        activeDocument.path,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      const target = aliases.find((alias) => alias.name === context.alias);
+
+      if (!target) {
+        setMessage(`No Laravel middleware alias ${context.alias} found.`);
+        return false;
+      }
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      return openNavigationTarget(target.path, target.position, target.name);
+    },
+    [
+      activeDocument,
+      collectPhpLaravelMiddlewareAliasTargets,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const goToPhpLaravelViewDefinition = useCallback(
     async (
       context: Extract<PhpIdentifierContext, { kind: "laravelViewString" }>,
@@ -15762,6 +15922,10 @@ export function useWorkbenchController(
       return goToPhpLaravelGateAbilityDefinition(context);
     }
 
+    if (context.kind === "laravelMiddlewareAliasString") {
+      return goToPhpLaravelMiddlewareAliasDefinition(context);
+    }
+
     if (context.kind === "laravelCacheStoreString") {
       return goToPhpLaravelCacheStoreDefinition(context);
     }
@@ -15833,6 +15997,7 @@ export function useWorkbenchController(
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelLogChannelDefinition,
     goToPhpLaravelMailMailerDefinition,
+    goToPhpLaravelMiddlewareAliasDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelRelationStringDefinition,
     goToPhpLaravelStorageDiskDefinition,
@@ -16361,6 +16526,10 @@ export function useWorkbenchController(
           return goToPhpLaravelGateAbilityDefinition(context);
         }
 
+        if (context.kind === "laravelMiddlewareAliasString") {
+          return goToPhpLaravelMiddlewareAliasDefinition(context);
+        }
+
         if (context.kind === "laravelCacheStoreString") {
           return goToPhpLaravelCacheStoreDefinition(context);
         }
@@ -16513,6 +16682,7 @@ export function useWorkbenchController(
     goToPhpLaravelEnvDefinition,
     goToPhpLaravelLogChannelDefinition,
     goToPhpLaravelMailMailerDefinition,
+    goToPhpLaravelMiddlewareAliasDefinition,
     goToPhpLaravelNamedRouteDefinition,
     goToPhpLaravelPasswordBrokerDefinition,
     goToPhpLaravelQueueConnectionDefinition,

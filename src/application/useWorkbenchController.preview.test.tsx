@@ -36098,6 +36098,102 @@ return [
     });
   });
 
+  it("opens Laravel middleware alias registrations before LSP fallback", async () => {
+    const controllerPath = "/workspace/routes/web.php";
+    const kernelPath = "/workspace/app/Http/Kernel.php";
+    const controllerSource = `<?php
+
+use Illuminate\\Support\\Facades\\Route;
+
+Route::middleware('verified')->group(function () {
+    Route::get('/admin', fn () => null);
+});
+`;
+    const kernelSource = `<?php
+
+namespace App\\Http;
+
+use Illuminate\\Foundation\\Http\\Kernel as HttpKernel;
+
+class Kernel extends HttpKernel
+{
+    protected $middlewareAliases = [
+        'auth' => \\App\\Http\\Middleware\\Authenticate::class,
+        'verified' => EnsureEmailIsVerified::class,
+    ];
+}
+`;
+    const languageServerFeaturesGateway = featuresGateway();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === kernelPath) {
+          return kernelSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      }),
+      runtimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        sessionId: 1,
+      },
+      searchText: vi.fn(async (_root: string, query: string) =>
+        query === "middlewareAliases"
+          ? [
+              {
+                column: 15,
+                lineNumber: 9,
+                lineText: "    protected $middlewareAliases = [",
+                path: kernelPath,
+                relativePath: "app/Http/Kernel.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("lightSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(controllerPath, "web.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(controllerSource, "Route::middleware('verified"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().commands
+        .find((candidate) => candidate.id === "editor.goToDefinition")
+        ?.run();
+    });
+
+    expect(languageServerFeaturesGateway.definition).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(kernelPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: kernelPath,
+      position: {
+        column: 10,
+        lineNumber: 11,
+      },
+    });
+  });
+
   it("suggests Laravel Password broker names from auth config", async () => {
     const controllerPath =
       "/workspace/app/Http/Controllers/PasswordController.php";

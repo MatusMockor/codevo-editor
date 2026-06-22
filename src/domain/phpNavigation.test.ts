@@ -1619,6 +1619,47 @@ class Request
       phpIdentifierContextAt(source, positionAfter(source, "$abilit")),
     ).not.toMatchObject({ kind: "laravelGateAbilityString" });
   });
+
+  it("routes Laravel middleware alias strings to a middleware alias context", () => {
+    const source = `<?php\n\nRoute::middleware('verified');\n`;
+
+    expect(
+      phpIdentifierContextAt(source, cursorAfter(source, "verified")),
+    ).toEqual({
+      alias: "verified",
+      kind: "laravelMiddlewareAliasString",
+    });
+  });
+
+  it("routes parameterized middleware alias strings to the alias before the colon", () => {
+    const source = `<?php\n\nRoute::middleware('throttle:60,1');\n`;
+
+    expect(
+      phpIdentifierContextAt(source, cursorAfter(source, "throttle")),
+    ).toEqual({
+      alias: "throttle",
+      kind: "laravelMiddlewareAliasString",
+    });
+  });
+
+  it("keeps auth guard navigation for auth: prefixed middleware", () => {
+    const source = `<?php\n\nRoute::middleware('auth:web');\n`;
+
+    expect(
+      phpIdentifierContextAt(source, cursorAfter(source, "web")),
+    ).toEqual({
+      guardName: "web",
+      kind: "laravelAuthGuardString",
+    });
+  });
+
+  it("does not treat dynamic middleware arguments as middleware alias contexts", () => {
+    const source = `<?php\n\nRoute::middleware($mw);\n`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "$m")),
+    ).not.toMatchObject({ kind: "laravelMiddlewareAliasString" });
+  });
 });
 
 function phpProjectDescriptor(): PhpProjectDescriptor {

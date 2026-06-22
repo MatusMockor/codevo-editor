@@ -22,6 +22,7 @@ import { phpLaravelDatabaseConnectionReferenceContextAt } from "./phpLaravelData
 import { phpLaravelEnvReferenceContextAt } from "./phpLaravelEnv";
 import { phpLaravelLogChannelReferenceContextAt } from "./phpLaravelLog";
 import { phpLaravelMailMailerReferenceContextAt } from "./phpLaravelMail";
+import { phpLaravelMiddlewareAliasReferenceContextAt } from "./phpLaravelMiddleware";
 import { phpLaravelPasswordBrokerReferenceContextAt } from "./phpLaravelPassword";
 import { phpLaravelNamedRouteReferenceContextAt } from "./phpLaravelRoutes";
 import { phpLaravelQueueConnectionReferenceContextAt } from "./phpLaravelQueue";
@@ -65,6 +66,10 @@ export type PhpIdentifierContext =
   | {
       ability: string;
       kind: "laravelGateAbilityString";
+    }
+  | {
+      alias: string;
+      kind: "laravelMiddlewareAliasString";
     }
   | {
       kind: "laravelCacheStoreString";
@@ -236,6 +241,18 @@ export function phpIdentifierContextAt(
     return {
       ability: gateAbilityReference.ability,
       kind: "laravelGateAbilityString",
+    };
+  }
+
+  const middlewareAliasReference = phpLaravelMiddlewareAliasReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (middlewareAliasReference) {
+    return {
+      alias: middlewareAliasReference.alias,
+      kind: "laravelMiddlewareAliasString",
     };
   }
 
