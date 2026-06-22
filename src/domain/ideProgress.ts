@@ -15,6 +15,7 @@ export interface IdeProgressInput {
   phpRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptRuntimeStatus: LanguageServerRuntimeStatus | null;
   indexProgress: IndexProgressState;
+  installingManagedPhpactor?: boolean;
 }
 
 const IDLE_INDICATOR: IdeProgressIndicator = {
@@ -25,12 +26,14 @@ const IDLE_INDICATOR: IdeProgressIndicator = {
 
 /**
  * Derives a prominent, workbench-toolbar progress indicator from the active
- * workspace's background IDE activity (index scan + language server boot).
+ * workspace's background IDE activity (managed engine install + index scan +
+ * language server boot).
  *
- * The label logic is intentionally extensible: an "installing" PHP engine
- * state (Slice B) can be added by surfacing an install flag in the input and
- * returning a busy/scanning indicator with "Installing PHP engine…" ahead of
- * the starting/indexing branches.
+ * While the managed PHP engine is installing on a background thread the
+ * indicator surfaces a busy "Installing PHP engine…" state ahead of the
+ * starting/indexing branches, since the engine cannot boot until the install
+ * finishes. Hard problem states (a crashed engine, a failed index) still win,
+ * so a genuine failure is never masked by an in-flight install.
  */
 export function ideProgressIndicator(
   input: IdeProgressInput,
@@ -66,6 +69,10 @@ export function ideProgressIndicator(
       state: "problem",
       text: "Indexing finished with errors",
     };
+  }
+
+  if (input.installingManagedPhpactor) {
+    return { busy: true, state: "scanning", text: "Installing PHP engine…" };
   }
 
   if (index.status === "scanning") {

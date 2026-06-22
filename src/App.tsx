@@ -390,9 +390,11 @@ function App() {
         javaScriptTypeScriptRuntimeStatus:
           workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
         indexProgress: workbench.indexProgress,
+        installingManagedPhpactor: workbench.installingManagedPhpactor,
       }),
     [
       workbench.indexProgress,
+      workbench.installingManagedPhpactor,
       workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
       workbench.languageServerRuntimeStatus,
       workbench.workspaceRoot,

@@ -59,6 +59,7 @@ import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntim
 import type {
   FileEntry,
   FileSearchResult,
+  ManagedPhpactorInstallCompletionEvent,
   PhpProjectDescriptor,
   TextSearchResult,
   WorkspaceDescriptor,
@@ -556,6 +557,7 @@ describe("useWorkbenchController preview tabs", () => {
         };
       }),
       installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -600,6 +602,7 @@ describe("useWorkbenchController preview tabs", () => {
         phpactor: null,
       })),
       installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const languageServerGateway: LanguageServerGateway = {
       planJavaScriptTypeScriptLanguageServer: vi.fn(
@@ -649,6 +652,7 @@ describe("useWorkbenchController preview tabs", () => {
         phpactor: null,
       })),
       installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const languageServerGateway: LanguageServerGateway = {
       planJavaScriptTypeScriptLanguageServer: vi.fn(
@@ -696,6 +700,7 @@ describe("useWorkbenchController preview tabs", () => {
         phpactor: null,
       })),
       installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const languageServerGateway: LanguageServerGateway = {
       planJavaScriptTypeScriptLanguageServer: vi.fn(
@@ -7432,125 +7437,117 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
-  it("ignores managed PHPactor install completion after switching project tabs", async () => {
-    const installPlanRefresh = createDeferred<LanguageServerPlan>();
-    const workspaceBPlan: LanguageServerPlan = {
-      ...phpactorLanguageServerPlan(),
-      message: "PHPactor B ready",
-    };
-    let workspaceAPlanRequests = 0;
-    const languageServerGateway: LanguageServerGateway = {
-      planJavaScriptTypeScriptLanguageServer: vi.fn(
-        async () =>
-          ({
-            command: null,
-            initializeRequest: null,
-            message: "JavaScript/TypeScript language server unavailable in test.",
-            provider: "typeScriptLanguageServer" as const,
-            status: "unavailable" as const,
-          }) satisfies LanguageServerPlan,
-      ),
-      planPhpLanguageServer: vi.fn(async (rootPath) => {
-        if (rootPath === "/workspace-a") {
-          workspaceAPlanRequests += 1;
-
-          if (workspaceAPlanRequests === 1) {
-            return {
-              ...phpactorLanguageServerPlan(),
-              message: "PHPactor A initial",
-            };
-          }
-
-          return installPlanRefresh.promise;
-        }
-
-        return workspaceBPlan;
-      }),
-    };
+  it("starts the managed PHPactor install without blocking on completion", async () => {
+    const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness({
+      installManagedPhpactor: vi.fn(async () => undefined),
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: {
+          executable: "phpactor",
+          path: "/managed/vendor/bin/phpactor",
+          source: "managed" as const,
+        },
+      })),
+    });
     const { getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
       },
-      languageServerGateway,
+      phpToolGateway: phpTools,
       workspaceDescriptor: phpWorkspaceDescriptor(),
-    });
-    await vi.waitFor(() => {
-      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
-        "/workspace-a",
-        defaultPhpLanguageServerOptions(),
-      );
     });
     await flushAsyncTurns();
 
     let installPromise: Promise<void> = Promise.resolve();
     await act(async () => {
       installPromise = getWorkbench().installManagedPhpactor();
+    });
+
+    // The install invoke resolves immediately (work is scheduled on a
+    // background thread) and the indicator stays busy while we wait for the
+    // completion event.
+    await act(async () => {
+      await installPromise;
+    });
+    expect(phpTools.installManagedPhpactor).toHaveBeenCalledWith("/workspace");
+    expect(getWorkbench().installingManagedPhpactor).toBe(true);
+
+    // Re-detection only happens once the background install reports completion.
+    vi.mocked(phpTools.detectPhpTools).mockClear();
+
+    await act(async () => {
+      emitCompletion({ root: "/workspace", error: null });
       await Promise.resolve();
     });
+    await flushAsyncTurns();
+
+    expect(phpTools.detectPhpTools).toHaveBeenCalledWith("/workspace");
+    expect(getWorkbench().installingManagedPhpactor).toBe(false);
+    expect(getWorkbench().message).toBe("Installed managed PHP IDE engine.");
+  });
+
+  it("ignores managed PHPactor install completion after switching project tabs", async () => {
+    const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      phpToolGateway: phpTools,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().installManagedPhpactor();
+    });
     await vi.waitFor(() => {
-      expect(
-        vi
-          .mocked(languageServerGateway.planPhpLanguageServer)
-          .mock.calls.filter(([rootPath]) => rootPath === "/workspace-a"),
-      ).toHaveLength(2);
+      expect(phpTools.installManagedPhpactor).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
     });
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
     });
-    await vi.waitFor(() => {
-      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
-        "/workspace-b",
-        defaultPhpLanguageServerOptions(),
-      );
-    });
+    await flushAsyncTurns();
     expect(getWorkbench().installingManagedPhpactor).toBe(false);
 
+    vi.mocked(phpTools.detectPhpTools).mockClear();
+
     await act(async () => {
-      installPlanRefresh.resolve({
-        ...phpactorLanguageServerPlan(),
-        message: "PHPactor A installed",
-      });
-      await installPromise;
+      emitCompletion({ root: "/workspace-a", error: null });
+      await Promise.resolve();
     });
     await flushAsyncTurns();
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().message).not.toBe("Installed managed PHP IDE engine.");
-    expect(getWorkbench().languageServerPlan?.message).toBe(
-      "PHPactor B ready",
-    );
+    // The stale completion never triggers re-detection for the abandoned root.
+    expect(phpTools.detectPhpTools).not.toHaveBeenCalledWith("/workspace-a");
   });
 
   it("ignores managed PHPactor install errors after switching project tabs", async () => {
-    const installManagedPhpactor = createDeferred<void>();
-    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
-      detectPhpTools: vi.fn(async () => ({
-        intelephense: null,
-        phpactor: null,
-      })),
-      installManagedPhpactor: vi.fn(async () => installManagedPhpactor.promise),
-    };
+    const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness();
     const { getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace-a",
         workspaceTabs: ["/workspace-a", "/workspace-b"],
       },
-      phpToolGateway,
+      phpToolGateway: phpTools,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
 
-    let installPromise: Promise<void> = Promise.resolve();
     await act(async () => {
-      installPromise = getWorkbench().installManagedPhpactor();
-      await Promise.resolve();
+      await getWorkbench().installManagedPhpactor();
     });
     await vi.waitFor(() => {
-      expect(phpToolGateway.installManagedPhpactor).toHaveBeenCalledOnce();
+      expect(phpTools.installManagedPhpactor).toHaveBeenCalledOnce();
     });
 
     await act(async () => {
@@ -7561,8 +7558,8 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().installingManagedPhpactor).toBe(false);
 
     await act(async () => {
-      installManagedPhpactor.reject(new Error("stale managed install"));
-      await installPromise;
+      emitCompletion({ root: "/workspace-a", error: "stale managed install" });
+      await Promise.resolve();
     });
     await flushAsyncTurns();
 
@@ -7576,33 +7573,67 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
-  it("clears managed PHPactor install loading when the last project tab closes", async () => {
-    const installManagedPhpactor = createDeferred<void>();
-    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
-      detectPhpTools: vi.fn(async () => ({
-        intelephense: null,
-        phpactor: null,
-      })),
-      installManagedPhpactor: vi.fn(async () => installManagedPhpactor.promise),
-    };
+  it("reports managed PHPactor install failures for the active workspace", async () => {
+    const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness();
     const { getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",
         workspaceTabs: ["/workspace"],
       },
-      phpToolGateway,
+      phpToolGateway: phpTools,
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     await flushAsyncTurns();
 
-    let installPromise: Promise<void> = Promise.resolve();
     await act(async () => {
-      installPromise = getWorkbench().installManagedPhpactor();
-      await Promise.resolve();
+      await getWorkbench().installManagedPhpactor();
     });
     await vi.waitFor(() => {
-      expect(phpToolGateway.installManagedPhpactor).toHaveBeenCalledOnce();
+      expect(getWorkbench().installingManagedPhpactor).toBe(true);
+    });
+
+    // A failed install must not run re-detection for the workspace.
+    vi.mocked(phpTools.detectPhpTools).mockClear();
+
+    await act(async () => {
+      emitCompletion({
+        root: "/workspace",
+        error: "composer require failed",
+      });
+      await Promise.resolve();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().installingManagedPhpactor).toBe(false);
+    expect(phpTools.detectPhpTools).not.toHaveBeenCalled();
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("composer require failed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("clears managed PHPactor install loading when the last project tab closes", async () => {
+    const { phpTools, emitCompletion } = createManagedPhpactorInstallHarness();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      phpToolGateway: phpTools,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().installManagedPhpactor();
+    });
+    await vi.waitFor(() => {
+      expect(phpTools.installManagedPhpactor).toHaveBeenCalledOnce();
       expect(getWorkbench().installingManagedPhpactor).toBe(true);
     });
 
@@ -7615,8 +7646,8 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().installingManagedPhpactor).toBe(false);
 
     await act(async () => {
-      installManagedPhpactor.resolve();
-      await installPromise;
+      emitCompletion({ root: "/workspace", error: null });
+      await Promise.resolve();
     });
     await flushAsyncTurns();
 
@@ -39490,6 +39521,7 @@ final class InvoiceAdapter
         phpactor: null,
       })),
       installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -39565,6 +39597,7 @@ final class InvoiceAdapter
         phpactor: null,
       })),
       installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
     };
     const { getWorkbench } = renderController({
       appSettings: {
@@ -39984,6 +40017,7 @@ function createControllerDependencies({
           phpactor: null,
         })),
         installManagedPhpactor: vi.fn(async () => undefined),
+        subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
       },
     projectSymbols: {
       searchProjectSymbols: vi.fn(async () => projectSymbols),
@@ -40261,6 +40295,43 @@ async function flushAsyncTurns(count = 12): Promise<void> {
       await Promise.resolve();
     }
   });
+}
+
+interface ManagedPhpactorInstallHarness {
+  phpTools: WorkbenchWorkspaceGateways["phpTools"];
+  emitCompletion: (event: ManagedPhpactorInstallCompletionEvent) => void;
+}
+
+function createManagedPhpactorInstallHarness(
+  overrides: Partial<WorkbenchWorkspaceGateways["phpTools"]> = {},
+): ManagedPhpactorInstallHarness {
+  const listeners = new Set<
+    (event: ManagedPhpactorInstallCompletionEvent) => void
+  >();
+
+  const phpTools: WorkbenchWorkspaceGateways["phpTools"] = {
+    detectPhpTools: vi.fn(async () => ({
+      intelephense: null,
+      phpactor: null,
+    })),
+    installManagedPhpactor: vi.fn(async () => undefined),
+    subscribeManagedPhpactorInstall: vi.fn(async (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    }),
+    ...overrides,
+  };
+
+  return {
+    phpTools,
+    emitCompletion(event) {
+      for (const listener of listeners) {
+        listener(event);
+      }
+    },
+  };
 }
 
 async function waitForClassSearch(): Promise<void> {

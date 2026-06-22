@@ -184,9 +184,25 @@ export interface WorkspaceDetectionGateway {
   detectWorkspace(path: string): Promise<WorkspaceDescriptor>;
 }
 
+export type ManagedPhpactorInstallUnsubscribeFn = () => void;
+
+export interface ManagedPhpactorInstallCompletionEvent {
+  root: string;
+  error: string | null;
+}
+
 export interface PhpToolGateway {
   detectPhpTools(workspaceRoot: string | null): Promise<PhpToolAvailability>;
-  installManagedPhpactor(): Promise<void>;
+  /**
+   * Starts the managed PHPactor install on a background thread and resolves as
+   * soon as the work has been scheduled. The long-running composer steps run
+   * off the UI thread; completion (success or failure) is delivered through
+   * {@link subscribeManagedPhpactorInstall}.
+   */
+  installManagedPhpactor(root: string): Promise<void>;
+  subscribeManagedPhpactorInstall(
+    listener: (event: ManagedPhpactorInstallCompletionEvent) => void,
+  ): Promise<ManagedPhpactorInstallUnsubscribeFn>;
 }
 
 export interface FileSearchGateway {

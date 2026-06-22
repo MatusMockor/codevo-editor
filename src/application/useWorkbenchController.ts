@@ -405,6 +405,8 @@ import {
   type FileSearchResult,
   type FileSearchGateway,
   type IntelligenceMode,
+  type ManagedPhpactorInstallCompletionEvent,
+  type ManagedPhpactorInstallUnsubscribeFn,
   type PhpToolGateway,
   type PhpToolAvailability,
   type TextSearchResult,
@@ -18021,61 +18023,12 @@ export function useWorkbenchController(
     installingManagedPhpactorRootRef.current = targetWorkspaceRoot;
 
     try {
-      await phpToolGateway.installManagedPhpactor();
-
-      if (
-        !workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          targetWorkspaceRoot,
-        )
-      ) {
-        return;
-      }
-
-      const tools = await phpToolGateway.detectPhpTools(targetWorkspaceRoot);
-
-      if (
-        !workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          targetWorkspaceRoot,
-        )
-      ) {
-        return;
-      }
-
-      if (tools.phpactor) {
-        setNotices((current) =>
-          replaceWorkbenchNoticeGroup(
-            current,
-            `phpactor-setup:${targetWorkspaceRoot}`,
-            [],
-          ),
-        );
-      }
-
-      setPhpTools(tools);
-      await refreshLanguageServerPlan(targetWorkspaceRoot);
-      if (
-        !workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          targetWorkspaceRoot,
-        )
-      ) {
-        return;
-      }
-
-      setLanguageServerSetupOpen(false);
-      setMessage("Installed managed PHP IDE engine.");
+      // Non-blocking: this only schedules the managed install on a background
+      // thread and resolves once the work has been queued. The long-running
+      // composer steps run off the UI thread and completion (success/failure)
+      // is delivered through the install-completion subscription below.
+      await phpToolGateway.installManagedPhpactor(targetWorkspaceRoot);
     } catch (error) {
-      if (
-        workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          targetWorkspaceRoot,
-        )
-      ) {
-        reportLanguageServerError(error);
-      }
-    } finally {
       if (
         workspaceRootKeysEqual(
           installingManagedPhpactorRootRef.current,
@@ -18085,15 +18038,120 @@ export function useWorkbenchController(
         installingManagedPhpactorRootRef.current = null;
         setInstallingManagedPhpactor(false);
       }
+
+      if (
+        workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
+        reportLanguageServerError(error);
+      }
     }
   }, [
     installingManagedPhpactor,
     phpToolGateway,
-    refreshLanguageServerPlan,
     reportLanguageServerError,
     workspaceDescriptor,
     workspaceRoot,
   ]);
+
+  const handleManagedPhpactorInstallCompletion = useCallback(
+    async (event: ManagedPhpactorInstallCompletionEvent) => {
+      const targetWorkspaceRoot = event.root;
+
+      // Per-root guard: ignore stale completions for a root that is no longer
+      // the one we are installing for (e.g. the user switched workspaces).
+      if (
+        !workspaceRootKeysEqual(
+          installingManagedPhpactorRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
+        return;
+      }
+
+      installingManagedPhpactorRootRef.current = null;
+      setInstallingManagedPhpactor(false);
+
+      const installFailedForActiveWorkspace =
+        Boolean(event.error) &&
+        workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          targetWorkspaceRoot,
+        );
+
+      if (installFailedForActiveWorkspace) {
+        reportLanguageServerError(event.error);
+        return;
+      }
+
+      if (event.error) {
+        return;
+      }
+
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
+        return;
+      }
+
+      try {
+        const tools = await phpToolGateway.detectPhpTools(targetWorkspaceRoot);
+
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            targetWorkspaceRoot,
+          )
+        ) {
+          return;
+        }
+
+        if (tools.phpactor) {
+          setNotices((current) =>
+            replaceWorkbenchNoticeGroup(
+              current,
+              `phpactor-setup:${targetWorkspaceRoot}`,
+              [],
+            ),
+          );
+        }
+
+        setPhpTools(tools);
+        await refreshLanguageServerPlan(targetWorkspaceRoot);
+
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            targetWorkspaceRoot,
+          )
+        ) {
+          return;
+        }
+
+        setLanguageServerSetupOpen(false);
+        setMessage("Installed managed PHP IDE engine.");
+      } catch (error) {
+        if (
+          workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            targetWorkspaceRoot,
+          )
+        ) {
+          reportLanguageServerError(error);
+        }
+      }
+    },
+    [
+      phpToolGateway,
+      refreshLanguageServerPlan,
+      reportLanguageServerError,
+    ],
+  );
 
   const startReindex = useCallback(async (
     mode: WorkspaceReindexMode,
@@ -20285,6 +20343,40 @@ export function useWorkbenchController(
       unsubscribe?.();
     };
   }, [handleMetadataScanCompletion, indexProgressGateway, reportError, workspaceRoot]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: ManagedPhpactorInstallUnsubscribeFn | null = null;
+
+    phpToolGateway
+      .subscribeManagedPhpactorInstall((event) => {
+        if (!active) {
+          return;
+        }
+
+        void handleManagedPhpactorInstallCompletion(event);
+      })
+      .then((dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+
+        unsubscribe = dispose;
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+
+        reportError("Language Server", error);
+      });
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [handleManagedPhpactorInstallCompletion, phpToolGateway, reportError]);
 
   useEffect(() => {
     let active = true;

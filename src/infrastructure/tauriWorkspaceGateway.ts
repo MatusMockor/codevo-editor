@@ -1,8 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type {
   FileEntry,
   FileSearchGateway,
   FileSearchResult,
+  ManagedPhpactorInstallCompletionEvent,
+  ManagedPhpactorInstallUnsubscribeFn,
   PhpToolGateway,
   PhpToolAvailability,
   TextSearchGateway,
@@ -11,6 +14,9 @@ import type {
   WorkspaceDetectionGateway,
   WorkspaceFileGateway,
 } from "../domain/workspace";
+
+const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT =
+  "php://managed-phpactor-install-completed";
 import type { LanguageServerWorkspaceEdit } from "../domain/languageServerFeatures";
 
 export class TauriWorkspaceGateway
@@ -49,8 +55,23 @@ export class TauriWorkspaceGateway
     return invoke<PhpToolAvailability>("detect_php_tools", { workspaceRoot });
   }
 
-  installManagedPhpactor(): Promise<void> {
-    return invoke<void>("install_managed_phpactor");
+  installManagedPhpactor(root: string): Promise<void> {
+    return invoke<void>("install_managed_phpactor", { root });
+  }
+
+  subscribeManagedPhpactorInstall(
+    listener: (event: ManagedPhpactorInstallCompletionEvent) => void,
+  ): Promise<ManagedPhpactorInstallUnsubscribeFn> {
+    if (!isTauri()) {
+      return Promise.resolve(() => undefined);
+    }
+
+    return listen<ManagedPhpactorInstallCompletionEvent>(
+      MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT,
+      (event) => {
+        listener(event.payload);
+      },
+    );
   }
 
   detectWorkspace(path: string): Promise<WorkspaceDescriptor> {

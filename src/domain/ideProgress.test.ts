@@ -173,6 +173,51 @@ describe("ideProgressIndicator", () => {
     expect(result.text).toBeNull();
   });
 
+  it("reports the managed PHP engine installing while the install runs", () => {
+    const result = ideProgressIndicator(
+      input({ installingManagedPhpactor: true }),
+    );
+
+    expect(result.state).toBe("scanning");
+    expect(result.busy).toBe(true);
+    expect(result.text).toBe("Installing PHP engine…");
+  });
+
+  it("prefers the installing label over a starting PHP engine", () => {
+    const result = ideProgressIndicator(
+      input({
+        installingManagedPhpactor: true,
+        phpRuntimeStatus: startingPhp(),
+      }),
+    );
+
+    expect(result.text).toBe("Installing PHP engine…");
+    expect(result.busy).toBe(true);
+  });
+
+  it("prefers the installing label over a scanning index", () => {
+    const result = ideProgressIndicator(
+      input({
+        installingManagedPhpactor: true,
+        indexProgress: scanningIndex(50),
+      }),
+    );
+
+    expect(result.text).toBe("Installing PHP engine…");
+  });
+
+  it("keeps a crashed engine as a problem even while installing", () => {
+    const result = ideProgressIndicator(
+      input({
+        installingManagedPhpactor: true,
+        phpRuntimeStatus: crashedPhp(),
+      }),
+    );
+
+    expect(result.state).toBe("problem");
+    expect(result.text).toBe("PHP engine crashed");
+  });
+
   it("ignores activity that belongs to a different workspace root", () => {
     const result = ideProgressIndicator(
       input({

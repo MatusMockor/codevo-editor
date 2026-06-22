@@ -14,6 +14,30 @@ const COMPOSER_COMMAND: &str = if cfg!(windows) {
 const MANAGED_PHP_ACTOR_VERSION: &str = "2026.05.30.2";
 const MOCKOR_EDITOR_PHPACTOR_PATH: &str = "MOCKOR_EDITOR_PHPACTOR_PATH";
 
+pub const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT: &str =
+    "php://managed-phpactor-install-completed";
+
+/// Receives the result of a managed PHPactor install that ran on a background
+/// thread. Implementations decouple the install worker from the Tauri runtime
+/// so the worker stays unit-testable without an `AppHandle`.
+pub(crate) trait ManagedPhpactorInstallEventSink: Send + 'static {
+    fn emit_completion(&self, root: String, error: Option<String>);
+}
+
+/// Runs the (blocking) managed PHPactor install on a dedicated thread and
+/// reports completion (success or failure) through `sink`. Returns immediately
+/// so the Tauri command never blocks the UI thread. The install logic itself is
+/// unchanged — this is only a threading + reporting wrapper.
+pub(crate) fn spawn_managed_phpactor_install<S>(root: String, sink: S)
+where
+    S: ManagedPhpactorInstallEventSink,
+{
+    std::thread::spawn(move || {
+        let error = install_managed_phpactor().err();
+        sink.emit_completion(root, error);
+    });
+}
+
 pub(crate) fn install_managed_phpactor() -> Result<(), String> {
     let phpactor_root = managed_phpactor_root()?;
 
@@ -284,6 +308,50 @@ fn run_composer_command(root: &Path, args: &[&str], context: &str) -> Result<(),
         .map_or_else(|| "terminated".to_string(), |code| code.to_string());
 
     Err(format!("{context} failed ({status}): {details}"))
+}
+
+#[cfg(test)]
+mod install_worker_tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    struct ChannelSink {
+        sender: mpsc::Sender<(String, Option<String>)>,
+    }
+
+    impl ManagedPhpactorInstallEventSink for ChannelSink {
+        fn emit_completion(&self, root: String, error: Option<String>) {
+            let _ = self.sender.send((root, error));
+        }
+    }
+
+    #[test]
+    fn spawned_install_reports_completion_with_requesting_root() {
+        let (sender, receiver) = mpsc::channel();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "mockor-managed-phpactor-test-{}",
+            std::process::id()
+        ));
+        // Point the install at an isolated, composer-less directory so the
+        // worker resolves quickly without mutating any real managed root.
+        std::env::set_var(MOCKOR_EDITOR_PHPACTOR_PATH, &temp_dir);
+
+        spawn_managed_phpactor_install(
+            "/workspace-a".to_string(),
+            ChannelSink {
+                sender: sender.clone(),
+            },
+        );
+
+        let (root, _error) = receiver
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("install worker should report completion");
+
+        std::env::remove_var(MOCKOR_EDITOR_PHPACTOR_PATH);
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        assert_eq!(root, "/workspace-a");
+    }
 }
 
 #[cfg(all(test, unix))]

@@ -149,9 +149,34 @@ fn create_directory(path: String) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagedPhpactorInstallCompletionEvent {
+    root: String,
+    error: Option<String>,
+}
+
+struct AppHandleManagedPhpactorInstallEventSink {
+    app: AppHandle,
+}
+
+impl managed_phpactor::ManagedPhpactorInstallEventSink
+    for AppHandleManagedPhpactorInstallEventSink
+{
+    fn emit_completion(&self, root: String, error: Option<String>) {
+        let _ = self.app.emit(
+            managed_phpactor::MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT,
+            ManagedPhpactorInstallCompletionEvent { root, error },
+        );
+    }
+}
+
 #[tauri::command]
-fn install_managed_phpactor() -> Result<(), String> {
-    managed_phpactor::install_managed_phpactor()
+fn install_managed_phpactor(app: AppHandle, root: String) {
+    managed_phpactor::spawn_managed_phpactor_install(
+        root,
+        AppHandleManagedPhpactorInstallEventSink { app },
+    );
 }
 
 #[tauri::command]
