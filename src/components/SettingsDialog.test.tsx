@@ -110,7 +110,7 @@ describe("SettingsDialog", () => {
     });
   });
 
-  it("keeps Format on Save disabled by default and persists enabling it from settings", async () => {
+  it("keeps Format on Save enabled by default and persists disabling it from settings", async () => {
     const onSave = vi.fn(async () => undefined);
 
     await act(async () => {
@@ -132,7 +132,7 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
-    expect(formatOnSaveCheckbox().checked).toBe(false);
+    expect(formatOnSaveCheckbox().checked).toBe(true);
 
     await act(async () => {
       formatOnSaveCheckbox().dispatchEvent(
@@ -146,12 +146,12 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
-        formatOnSave: true,
+        formatOnSave: false,
       },
     });
   });
 
-  it("keeps Format on Paste disabled by default and persists enabling it from settings", async () => {
+  it("keeps Format on Paste enabled by default and persists disabling it from settings", async () => {
     const onSave = vi.fn(async () => undefined);
 
     await act(async () => {
@@ -173,7 +173,7 @@ describe("SettingsDialog", () => {
       await Promise.resolve();
     });
 
-    expect(formatOnPasteCheckbox().checked).toBe(false);
+    expect(formatOnPasteCheckbox().checked).toBe(true);
 
     await act(async () => {
       formatOnPasteCheckbox().dispatchEvent(
@@ -187,7 +187,7 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
-        formatOnPaste: true,
+        formatOnPaste: false,
       },
     });
   });
