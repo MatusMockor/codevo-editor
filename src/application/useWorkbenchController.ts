@@ -1602,6 +1602,56 @@ export function useWorkbenchController(
     [languageServerGateway, reportError],
   );
 
+  // Detects the PHP tooling for a root, surfaces the managed PHP IDE engine
+  // notice when phpactor is missing, and refreshes the PHP language server
+  // plan. This is the expensive open-time work (150-700ms) that only matters
+  // once the PHP language server can actually run, i.e. in IDE (full smart)
+  // mode. It is shared between the open flow and the basic -> IDE mode switch
+  // so the probe can be deferred at open and replayed lazily when the user
+  // enables IDE mode. Every step re-checks the live root so a project switch
+  // mid-flight never mutates the now-active workspace state.
+  const runPhpWorkspaceProbe = useCallback(
+    async (rootPath: string) => {
+      try {
+        const tools = await phpToolGateway.detectPhpTools(rootPath);
+        const phpSetupNoticeGroup = `phpactor-setup:${rootPath}`;
+
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          return;
+        }
+
+        setPhpTools(tools);
+
+        if (tools.phpactor) {
+          setNotices((current) =>
+            replaceWorkbenchNoticeGroup(current, phpSetupNoticeGroup, []),
+          );
+          await refreshLanguageServerPlan(rootPath);
+          return;
+        }
+
+        setNotices((current) =>
+          replaceWorkbenchNoticeGroup(current, phpSetupNoticeGroup, [
+            createWorkbenchNotice(
+              "warning",
+              "PHP IDE Engine",
+              "Install the managed PHP IDE engine (one-click user profile bootstrap) to enable hover, completion, definition, and implementation support.",
+              phpSetupNoticeGroup,
+            ),
+          ]),
+        );
+        await refreshLanguageServerPlan(rootPath);
+      } catch (error) {
+        reportErrorForActiveWorkspaceRoot(rootPath, "PHP Tools", error);
+      }
+    },
+    [
+      phpToolGateway,
+      refreshLanguageServerPlan,
+      reportErrorForActiveWorkspaceRoot,
+    ],
+  );
+
   const refreshJavaScriptTypeScriptLanguageServerPlan = useCallback(
     async (
       rootPath: string,
@@ -3936,43 +3986,27 @@ export function useWorkbenchController(
         return;
       }
 
-      try {
-        const tools = await phpToolGateway.detectPhpTools(path);
-        const phpSetupNoticeGroup = `phpactor-setup:${path}`;
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
-          return;
-        }
-
-        setPhpTools(tools);
-        if (tools.phpactor) {
-          setNotices((current) =>
-            replaceWorkbenchNoticeGroup(current, phpSetupNoticeGroup, []),
-          );
-        } else {
-          setNotices((current) =>
-            replaceWorkbenchNoticeGroup(current, phpSetupNoticeGroup, [
-              createWorkbenchNotice(
-                "warning",
-                "PHP IDE Engine",
-                "Install the managed PHP IDE engine (one-click user profile bootstrap) to enable hover, completion, definition, and implementation support.",
-                phpSetupNoticeGroup,
-              ),
-            ]),
-          );
-        }
-        await refreshLanguageServerPlan(path);
-      } catch (error) {
-        reportErrorForActiveWorkspaceRoot(path, "PHP Tools", error);
+      // The PHP language server only runs in IDE (full smart) mode, so in
+      // basic/light mode the open-time PHP probe (detectPhpTools +
+      // planPhpLanguageServer) is pure overhead. Defer it: keep the plan and
+      // setup notice cleared and replay the probe when the user enables IDE
+      // mode (setSmartMode) or, eventually, lazily on demand.
+      if (!shouldStartLanguageServer(resolvedIntelligenceMode)) {
+        setLanguageServerPlan(null);
+        setNotices((current) =>
+          replaceWorkbenchNoticeGroup(current, `phpactor-setup:${path}`, []),
+        );
+        return;
       }
+
+      await runPhpWorkspaceProbe(path);
     },
     [
       applyWorkspaceSettings,
       cacheCurrentWorkspaceState,
       loadDirectory,
       persistAppSettings,
-      phpToolGateway,
-      refreshLanguageServerPlan,
+      runPhpWorkspaceProbe,
       reportError,
       restoreLanguageServerDiagnosticsForRoot,
       restoreCachedWorkspaceState,
@@ -6474,6 +6508,15 @@ export function useWorkbenchController(
           delete phpLanguageServerAutostartAttemptsByRootRef.current[
             normalizedWorkspaceRootKey(requestedRoot)
           ];
+
+          // Enabling IDE mode replays the PHP probe that was deferred at open
+          // time (detectPhpTools + plan refresh + managed engine notice), so
+          // the PHP language server can autostart and hover/completion light
+          // up. Only PHP workspaces need it; the autostart effect picks up the
+          // resulting ready plan.
+          if (workspaceDescriptor?.php) {
+            void runPhpWorkspaceProbe(requestedRoot);
+          }
         }
 
         intelligenceModeRef.current = nextMode;
@@ -6502,9 +6545,11 @@ export function useWorkbenchController(
       intelligenceMode,
       persistWorkspaceSettings,
       reportErrorForActiveWorkspaceRoot,
+      runPhpWorkspaceProbe,
       smartModeGateway,
       startInitialIndexScan,
       stopLanguageServerRuntime,
+      workspaceDescriptor,
       workspaceRoot,
     ],
   );
@@ -17772,6 +17817,25 @@ export function useWorkbenchController(
 
         let refreshedPhpLanguageServerPlan = false;
 
+        // Saving settings can also be what flips the project into IDE mode. The
+        // open-time PHP probe is deferred in basic mode, so the first time IDE
+        // mode turns on we must run the full probe (detectPhpTools + plan
+        // refresh + managed engine notice) here too, otherwise phpTools and the
+        // install notice would stay stale. The probe already refreshes the
+        // plan, so the later PHP plan refresh branches are skipped.
+        if (
+          !shouldStartLanguageServer(previousMode) &&
+          shouldStartLanguageServer(nextMode) &&
+          workspaceDescriptor?.php
+        ) {
+          await runPhpWorkspaceProbe(requestedRoot);
+          refreshedPhpLanguageServerPlan = true;
+
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            return;
+          }
+        }
+
         if (nextTrusted !== null && nextTrusted !== workspaceTrust?.trusted) {
           const trust = await workspaceTrustGateway.setTrust(
             requestedRoot,
@@ -17853,6 +17917,7 @@ export function useWorkbenchController(
       refreshLanguageServerPlan,
       refreshJavaScriptTypeScriptLanguageServerPlan,
       reportErrorForActiveWorkspaceRoot,
+      runPhpWorkspaceProbe,
       smartModeGateway,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,

@@ -567,6 +567,12 @@ describe("useWorkbenchController preview tabs", () => {
       },
       phpToolGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      // IDE mode keeps the open-time PHP probe active so the stale-switch
+      // isolation guard is exercised (the probe is deferred in basic mode).
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
     });
     await vi.waitFor(() => {
       expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace-a");
@@ -645,7 +651,10 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().languageServerPlan).toBeNull();
   });
 
-  it("runs PHP-specific workspace setup for a PHP project in basic mode", async () => {
+  it("defers PHP probe at open for a PHP project in basic mode", async () => {
+    // In basic (light) mode the PHP language server never runs, so the
+    // open-time PHP probe (detectPhpTools + planPhpLanguageServer) is pure
+    // overhead. It must be deferred until the user enables IDE mode.
     const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
       detectPhpTools: vi.fn(async () => ({
         intelephense: null,
@@ -686,11 +695,78 @@ describe("useWorkbenchController preview tabs", () => {
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace");
     expect(getWorkbench().intelligenceMode).toBe("basic");
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
+    expect(languageServerGateway.planPhpLanguageServer).not.toHaveBeenCalled();
+    expect(getWorkbench().languageServerPlan).toBeNull();
+    expect(getWorkbench().phpTools).toBeNull();
+  });
+
+  it("runs the deferred PHP probe and surfaces the IDE engine notice when switching a PHP project to IDE mode", async () => {
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(
+        async (rootPath) =>
+          ({
+            ...phpactorLanguageServerPlan(),
+            message: `PHPactor ${rootPath} ready`,
+          }) satisfies LanguageServerPlan,
+      ),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      phpToolGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    // Deferred at open in basic mode.
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
+    expect(languageServerGateway.planPhpLanguageServer).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await flushAsyncTurns(24);
+
+    // Enabling IDE mode runs the previously deferred PHP probe.
+    expect(getWorkbench().intelligenceMode).toBe("fullSmart");
     expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace");
     expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
       "/workspace",
       defaultPhpLanguageServerOptions(),
     );
+    expect(getWorkbench().languageServerPlan?.message).toBe(
+      "PHPactor /workspace ready",
+    );
+    // phpactor is missing, so the install notice must be surfaced.
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "PHP IDE Engine" &&
+          notice.message.includes("managed PHP IDE engine"),
+      ),
+    ).toBe(true);
   });
 
   it("runs PHP-specific workspace setup for a PHP project in full smart mode", async () => {
@@ -7334,6 +7410,12 @@ describe("useWorkbenchController preview tabs", () => {
       },
       languageServerGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      // IDE mode keeps the open-time PHP plan refresh active so the
+      // stale-switch isolation guard is exercised (deferred in basic mode).
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
     });
     await vi.waitFor(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
@@ -7400,6 +7482,12 @@ describe("useWorkbenchController preview tabs", () => {
       },
       languageServerGateway,
       workspaceDescriptor: phpWorkspaceDescriptor(),
+      // IDE mode keeps the open-time PHP plan refresh active so the
+      // stale-switch isolation guard is exercised (deferred in basic mode).
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
     });
     await vi.waitFor(() => {
       expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
