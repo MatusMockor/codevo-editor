@@ -1064,6 +1064,146 @@ class AlbumController
     ).toBeNull();
   });
 
+  it("resolves higher-order collection proxy members to the element type", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class User extends Model
+{
+    public function preview(): void
+    {
+        $users = User::all();
+
+        $users->map->ema
+        $users->filter->ema
+        $users->each->del
+        $users->reject->del
+        $users->sortBy->cre
+        $users->pluck->ema
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$users->map->ema"),
+        "$users->map",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\User");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$users->filter->ema"),
+        "$users->filter",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\User");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$users->each->del"),
+        "$users->each",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\User");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$users->reject->del"),
+        "$users->reject",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\User");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$users->sortBy->cre"),
+        "$users->sortBy",
+        laravelOptions,
+      ),
+    ).toBe("App\\Models\\User");
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$users->pluck->ema"),
+        "$users->pluck",
+        laravelOptions,
+      ),
+    ).toBeNull();
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$users->map->ema"),
+        "$users->map",
+      ),
+    ).toBeNull();
+  });
+
+  it("resolves higher-order proxy relation method calls against the element type", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Post extends Model
+{
+    public function author(): \\App\\Models\\User
+    {
+        return $this->belongsTo(User::class)->firstOrFail();
+    }
+
+    public function preview(): void
+    {
+        $posts = Post::all();
+
+        $owner = $posts->filter->author()->first();
+        $owner->nam
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$owner->nam"),
+        "$posts->filter->author()",
+        laravelOptions,
+      ),
+    ).toBe("Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\User>");
+  });
+
+  it("does not apply the higher-order proxy when the receiver is not a collection", () => {
+    const source = `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class User extends Model
+{
+    public function preview(): void
+    {
+        $user = User::first();
+
+        $user->map->ema
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$user->map->ema"),
+        "$user->map",
+        laravelOptions,
+      ),
+    ).toBeNull();
+  });
+
   it("resolves Laravel model assignments from Eloquent collection chains", () => {
     const source = `<?php
 namespace App\\Models;

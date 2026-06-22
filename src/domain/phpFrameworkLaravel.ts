@@ -8,6 +8,7 @@ import {
 } from "./phpTypeAnalysis";
 import { phpExtendsClassName, resolvePhpClassName } from "./phpNavigation";
 import { PHP_CLASS_NAME_CAPTURE_PATTERN } from "./phpReceiverExpressions";
+import { phpLaravelHigherOrderCollectionProxyElementType } from "./phpLaravelHigherOrderProxy";
 
 const laravelEloquentStaticBuilderMethods = new Set([
   "afterquery",
@@ -2054,6 +2055,17 @@ export function phpLaravelModelPropertyClassTypeFromSource(
   propertyName: string,
   receiverType: string | null,
 ): string | null {
+  const higherOrderProxyElementType =
+    phpLaravelHigherOrderCollectionProxyElementType(
+      source,
+      propertyName,
+      receiverType,
+    );
+
+  if (higherOrderProxyElementType) {
+    return higherOrderProxyElementType;
+  }
+
   const receiverModelType = receiverType
     ? phpLaravelResolvedModelTypeCandidate(source, receiverType)
     : null;
