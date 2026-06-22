@@ -306,6 +306,47 @@
   color-scheme: dark;
 }
 
+.app-shell[data-theme="darkPlus"] {
+  --color-accent: #007acc;
+  --color-active: #094771;
+  --color-active-text: #ffffff;
+  --color-active-muted: #0a2a3f;
+  --color-app: #1e1e1e;
+  --color-border: #2d2d2d;
+  --color-border-strong: #3c3c3c;
+  --color-control: #2d2d2d;
+  --color-disabled: #6b6b6b;
+  --color-error: #f48771;
+  --color-hover: #2a2d2e;
+  --color-hover-strong: #333333;
+  --color-modal: #252526;
+  --color-panel: #252526;
+  --color-panel-deep: #1e1e1e;
+  --color-sidebar: #252526;
+  --color-status: #007acc;
+  --color-success: #89d185;
+  --color-surface: #2d2d2d;
+  --color-tab: #2d2d2d;
+  --color-tab-active: #1e1e1e;
+  --color-tabs: #252526;
+  --color-text: #cccccc;
+  --color-text-muted: #9d9d9d;
+  --color-text-strong: #ffffff;
+  --color-text-subtle: #858585;
+  --color-warning: #cca700;
+  --color-white: #ffffff;
+  --change-added: #89d185;
+  --change-added-soft: rgba(137, 209, 133, 0.14);
+  --change-added-strong: #b0e3ad;
+  --change-deleted: #f48771;
+  --change-deleted-soft: rgba(244, 135, 113, 0.14);
+  --change-deleted-strong: #f7a895;
+  --change-modified: #e2c08d;
+  --change-modified-soft: rgba(226, 192, 141, 0.16);
+  --change-modified-strong: #efd6ad;
+  color-scheme: dark;
+}
+
 .app-shell[data-theme="catppuccinLatte"] {
   --color-accent: #8839ef;
   --color-active: #e0d4f7;
