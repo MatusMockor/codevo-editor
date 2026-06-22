@@ -26,15 +26,16 @@ describe("desktop window chrome config", () => {
 
   it("grants the custom chrome only the required window controls", () => {
     const capability = readJson("src-tauri/capabilities/default.json");
+    const windowPermissions = capability.permissions
+      .filter((permission: string) => permission.startsWith("core:window:"))
+      .sort();
 
-    expect(capability.permissions).toEqual(
-      expect.arrayContaining([
-        "core:window:allow-close",
-        "core:window:allow-minimize",
-        "core:window:allow-start-dragging",
-        "core:window:allow-toggle-maximize",
-      ]),
-    );
+    expect(windowPermissions).toEqual([
+      "core:window:allow-close",
+      "core:window:allow-minimize",
+      "core:window:allow-start-dragging",
+      "core:window:allow-toggle-maximize",
+    ]);
   });
 });
 
