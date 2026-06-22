@@ -2,7 +2,10 @@ import { DiffEditor } from "@monaco-editor/react";
 import { X } from "lucide-react";
 import type { MonacoAppTheme } from "../domain/settings";
 import type { GitFileDiff } from "../domain/git";
-import { setupShikiTokenization } from "../infrastructure/shikiHighlighter";
+import {
+  applyImmediateFallbackTheme,
+  setupShikiTokenization,
+} from "../infrastructure/shikiHighlighter";
 
 interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
@@ -47,12 +50,19 @@ export function GitDiffPreview({
       <div className="editor-panel">
         <DiffEditor
           beforeMount={(monaco) => {
+            // Apply a matching built-in dark/light theme synchronously so the
+            // diff editor paints the correct background on its first frame.
+            // Without this, Monaco renders the default white `vs` theme until
+            // the async Shiki setup below resolves and calls `setTheme`,
+            // producing a white flash when switching to/from the git diff view.
+            applyImmediateFallbackTheme(monaco, monacoTheme);
             setupShikiTokenization(monaco, monacoTheme).catch((error) => {
               console.error("Shiki tokenization setup failed", error);
             });
           }}
           height="100%"
           language={diff.language}
+          loading={<GitDiffLoadingPlaceholder />}
           modified={diff.modifiedContent}
           original={diff.originalContent}
           options={{
@@ -72,4 +82,11 @@ export function GitDiffPreview({
       </div>
     </section>
   );
+}
+
+// Rendered via the Monaco `loading` prop. Monaco's default loading element is a
+// white "Loading…" box; this matches the dark editor surface background so the
+// diff editor never flashes white while the Monaco chunk loads.
+function GitDiffLoadingPlaceholder() {
+  return <div className="editor-loading-placeholder" aria-hidden="true" />;
 }
