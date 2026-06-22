@@ -32,5 +32,20 @@ Commity: `b8d103dc` (1a parser) → `842b3203` (1b render + 1c insertion) → `5
 - **1c** `phpInsertionPoint.ts` — pozícia inzertu pred class `}` (matchingPairOffset), estetika (prázdne riadky), use-import edit za posledný `use`/`namespace`. (po 1a; paralelne s 1b)
 - **1d** integrácia — `providePhpCodeActions` callback (languageServerMonacoProviders.ts context + provideCodeActions async vetva), wiring v useWorkbenchController.ts (reuse resolvePhpClassSourcePaths + collectPhpMethods walker → diff chýbajúcich metód), Monaco code action "Implement methods" + workspace edit. Per-workspace izolácia + cache. (po 1a/1b/1c)
 
+## STAV (2026-06-22 večer)
+- Slice 1 (implement interface methods) HOTOVÝ + reálne otestovaný na kontentino/api (kontextové generovanie OK, validný PHP, správne use importy).
+- OTVORENÉ: phpactor stale diagnostika po code-action edite (status bar "1 error" + phpactor "Implement contracts" visia po implementácii). Probe (3 dočasné logy v useWorkbenchController.ts + EditorSurface.tsx, NECOMMITNUTÉ) dokázal: `[probe1 didChange->]` odíde, ale `[probe2 publishDiag<-]` NIKDY → phpactor nere-publikuje. Frontend OK (probe3 by clearol keby prišiel n=0).
+- Capabilities hypotéza VYVRÁTENÁ (subagent naklonoval phpactor zdroj): diagnostics-on-update je capability-independent, gated len config (diagnostics_on_update/save/open=true). Reálne kandidáti: (1) debounce+current-doc race v DiagnosticsEngine (1000ms sleep; didChange+didSave tesne → runs sa superseder-ujú), (2) diagnostic_outsource=true subprocess zlyháva v sandboxe, (3) version mismatch enqueueSave.
+- ĎALŠÍ KROK (zajtra): rozlišovací test — napíš metódy RUČNE (nie code action) → zmizne error? Ak áno → náš flow (didChange+didSave race), fixnuteľné u nás. Ak nie → všeobecný phpactor refresh limit (samostatný issue). + ak možno phpactor trace / diagnostic_outsource=false test. Potom odstrániť probe logy + cielený fix alebo označiť ako phpactor limit.
+
+## ŠIRŠÍ ROADMAP k PhpStorm parity (IDE mode)
+Už máme: generic PHP/PHP8 cez phpactor (hover/def/rename/completion/enums/promotion/readonly/attributes/match/code actions), Laravel magic (eloquent typy, helpery, higher-order proxy, route/model/Gate/Policy/middleware nav, validation completion), OOP code-gen Slice 1.
+1. Dokončiť OOP code-gen: Slice 2 getters/setters, Slice 3 constructor(+promotion), Slice 4 create method/property from usage. [rozbehnuté, HIGH]
+2. Laravel nav/completion balík: config()/route()/view()/__()/trans()/env() string literály → navigácia + completion (PhpStorm Laravel plugin parita). [MED náročnosť, HIGH denná hodnota]
+3. Refactoring suite: extract method/variable, change signature, inline, organize/optimize imports (remove unused use), reformat PSR-12. [MED-HIGH]
+4. Blade template support: nový jazyk subsystém (highlight, completion, Blade↔controller nav, @directives, components). [LARGE, HIGH pre Laravel]
+5. Robustnosť: phpactor diagnostic refresh fix (viď vyššie), health-check + auto-restart, viac quick-fixov/inšpekcií.
+6. UI parity: type/call hierarchy UI, find usages panel, structure/outline (máme breadcrumbs), TODO view.
+
 ## Postup per slice
 deleguj (write scope + TDD + zákaz revertu cudzích zmien + žiadny CodeRabbit) → samostatný review agent → integruj → testy + npm run check → commit/push (žiadna AI attribution) → update plánu.
