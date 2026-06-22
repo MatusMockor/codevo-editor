@@ -1203,7 +1203,7 @@ describe("useWorkbenchController preview tabs", () => {
     const workspaceTrustGateway: WorkspaceTrustGateway = {
       getTrust: vi.fn(async (rootPath) => ({
         rootPath,
-        trusted: true,
+        trusted: rootPath !== "/workspace-a",
       })),
       setTrust: vi.fn(async (rootPath, trusted) => ({
         rootPath,
@@ -1233,16 +1233,23 @@ describe("useWorkbenchController preview tabs", () => {
     });
 
     await act(async () => {
-      workspaceADirectory.resolve([]);
+      workspaceADirectory.resolve([
+        directoryEntry("/workspace-a/src", "src"),
+      ]);
       await Promise.resolve();
     });
     await flushAsyncTurns(24);
 
+    // The second project must stay active; nothing resolved late for the first
+    // project (its directory entries or its distinct trust verdict) may leak
+    // into the now-active workspace.
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTrust?.rootPath).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
     expect(
-      vi
-        .mocked(workspaceTrustGateway.getTrust)
-        .mock.calls.some(([rootPath]) => rootPath === "/workspace-a"),
+      Object.keys(getWorkbench().entriesByDirectory).some((directory) =>
+        directory.startsWith("/workspace-a"),
+      ),
     ).toBe(false);
   });
 
@@ -39405,6 +39412,315 @@ final class InvoiceAdapter
         path: facebookAdapterPath,
       },
     ]);
+  });
+
+  it("runs independent workspace-open operations concurrently", async () => {
+    const trust = createDeferred<{ rootPath: string; trusted: boolean }>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn((rootPath: string) => {
+        if (rootPath === "/workspace") {
+          return trust.promise;
+        }
+
+        return Promise.resolve({ rootPath, trusted: true });
+      }),
+      setTrust: vi.fn(async (rootPath, trusted) => ({ rootPath, trusted })),
+    };
+    const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] = {
+      detectWorkspace: vi.fn(async (rootPath) => ({
+        javaScriptTypeScript: null,
+        php: null,
+        rootPath,
+      })),
+    };
+    const { dependencies } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDetectionGateway,
+      workspaceTrustGateway,
+    });
+
+    // Workspace detection and the JavaScript/TypeScript language server plan are
+    // independent of the still-pending trust lookup, so they must run while
+    // getTrust is unresolved rather than waiting for it sequentially.
+    await vi.waitFor(() => {
+      expect(workspaceDetectionGateway.detectWorkspace).toHaveBeenCalledWith(
+        "/workspace",
+      );
+      expect(
+        dependencies.languageServerGateway
+          .planJavaScriptTypeScriptLanguageServer,
+      ).toHaveBeenCalledWith("/workspace", expect.anything());
+    });
+
+    expect(workspaceTrustGateway.getTrust).toHaveBeenCalledWith("/workspace");
+
+    await act(async () => {
+      trust.resolve({ rootPath: "/workspace", trusted: true });
+      await trust.promise;
+    });
+    await flushAsyncTurns(24);
+  });
+
+  it("does not let a stale concurrent PHP setup overwrite the active project tab", async () => {
+    const workspaceADetection =
+      createDeferred<
+        Awaited<
+          ReturnType<WorkbenchWorkspaceGateways["detection"]["detectWorkspace"]>
+        >
+      >();
+    const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] = {
+      detectWorkspace: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          return workspaceADetection.promise;
+        }
+
+        return {
+          javaScriptTypeScript: null,
+          php: null,
+          rootPath,
+        };
+      }),
+    };
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      phpToolGateway,
+      workspaceDetectionGateway,
+    });
+    await vi.waitFor(() => {
+      expect(workspaceDetectionGateway.detectWorkspace).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(workspaceDetectionGateway.detectWorkspace).toHaveBeenCalledWith(
+        "/workspace-b",
+      );
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+
+    // Resolve the first project's detection late: its PHP branch must not run
+    // against the now-active second project.
+    await act(async () => {
+      workspaceADetection.resolve(phpWorkspaceDescriptor());
+      await workspaceADetection.promise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceDescriptor?.rootPath).toBe("/workspace-b");
+    expect(getWorkbench().workspaceDescriptor?.php).toBe(null);
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+  });
+
+  it("does not feed a stale concurrent detection result into PHP setup for the active tab", async () => {
+    // Defense-in-depth: when a project's detection resolves after the active
+    // workspace has moved on, its descriptor must never be returned from the
+    // concurrent detection sub-task, otherwise the descriptor of the no longer
+    // active project could drive the PHP setup branch for whatever project is
+    // now live.
+    const workspaceADetection =
+      createDeferred<
+        Awaited<
+          ReturnType<WorkbenchWorkspaceGateways["detection"]["detectWorkspace"]>
+        >
+      >();
+    const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] = {
+      detectWorkspace: vi.fn(async (rootPath) => {
+        if (rootPath === "/workspace-a") {
+          return workspaceADetection.promise;
+        }
+
+        return {
+          javaScriptTypeScript: null,
+          php: null,
+          rootPath,
+        };
+      }),
+    };
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      phpToolGateway,
+      workspaceDetectionGateway,
+    });
+    await vi.waitFor(() => {
+      expect(workspaceDetectionGateway.detectWorkspace).toHaveBeenCalledWith(
+        "/workspace-a",
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(workspaceDetectionGateway.detectWorkspace).toHaveBeenCalledWith(
+        "/workspace-b",
+      );
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceDescriptor?.rootPath).toBe("/workspace-b");
+    expect(getWorkbench().workspaceDescriptor?.php).toBe(null);
+
+    // Resolve the stale first project's PHP detection after the second project
+    // has become the live workspace. The stale PHP descriptor must not slip
+    // through the concurrent detection sub-task to drive PHP setup, overwrite
+    // the active descriptor, or surface PHP tooling.
+    await act(async () => {
+      workspaceADetection.resolve(phpWorkspaceDescriptor());
+      await workspaceADetection.promise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceDescriptor?.rootPath).toBe("/workspace-b");
+    expect(getWorkbench().workspaceDescriptor?.php).toBe(null);
+    expect(getWorkbench().phpTools).toBe(null);
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+  });
+
+  it("does not let a stale parent-workspace directory load overwrite the active nested tab", async () => {
+    // loadDirectory's internal guard only checks subtree membership
+    // (workspacePathBelongsToRoot). When switching from a nested project to its
+    // parent, the nested root still "belongs to" the parent root, so the
+    // concurrent directory-load sub-task needs its own exact-root re-check guard
+    // to stop the stale nested entries from leaking into the parent workspace.
+    const nestedRoot = "/workspace/packages/app";
+    const parentRoot = "/workspace";
+    const nestedDirectory = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === nestedRoot) {
+        return nestedDirectory.promise;
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: nestedRoot,
+        workspaceTabs: [nestedRoot, parentRoot],
+      },
+      readDirectory,
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledWith(nestedRoot);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(parentRoot);
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledWith(parentRoot);
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe(parentRoot);
+
+    // Resolve the stale nested project's directory load after the parent
+    // project has become active. The nested entries must not surface in the
+    // now-active parent workspace tree.
+    await act(async () => {
+      nestedDirectory.resolve([
+        directoryEntry(`${nestedRoot}/src`, "src"),
+      ]);
+      await nestedDirectory.promise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe(parentRoot);
+    expect(getWorkbench().entriesByDirectory[nestedRoot]).toBeUndefined();
+    expect(
+      Object.keys(getWorkbench().entriesByDirectory).some((directory) =>
+        directory.startsWith(`${nestedRoot}/`),
+      ),
+    ).toBe(false);
+  });
+
+  it("restores session documents in parallel", async () => {
+    const reads: Array<{ deferred: Deferred<string>; path: string }> = [];
+    const readTextFile = vi.fn((path: string) => {
+      const deferred = createDeferred<string>();
+      reads.push({ deferred, path });
+      return deferred.promise;
+    });
+    const firstPath = "/workspace/src/First.ts";
+    const secondPath = "/workspace/src/Second.ts";
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      session: {
+        activePath: secondPath,
+        bottomPanelView: "problems" as const,
+        openPaths: [firstPath, secondPath],
+        sidebarView: "files" as const,
+      },
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceSettings,
+    });
+
+    // Both reads must be in flight before either resolves, proving the loop is
+    // parallel rather than awaiting each file one at a time.
+    await vi.waitFor(() => {
+      expect(reads.map((read) => read.path)).toEqual(
+        expect.arrayContaining([firstPath, secondPath]),
+      );
+    });
+    expect(reads).toHaveLength(2);
+
+    await act(async () => {
+      reads[1].deferred.resolve("export const second = 2;\n");
+      reads[0].deferred.resolve("export const first = 1;\n");
+      await Promise.all(reads.map((read) => read.deferred.promise));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual(
+      [firstPath, secondPath],
+    );
+    expect(getWorkbench().activePath).toBe(secondPath);
+    expect(
+      getWorkbench().notices.some((notice) => notice.source === "Session"),
+    ).toBe(false);
   });
 
   function renderController({

@@ -3513,13 +3513,24 @@ export function useWorkbenchController(
       path: string,
       options: {
         clearMessage?: boolean;
+        requireActiveRoot?: boolean;
       } = {},
     ) => {
+      // Subdirectory loads stay valid as long as the path still belongs to the
+      // live workspace root. The workspace-root load sub-task instead opts into
+      // exact-root matching so that switching to a parent workspace (whose root
+      // a now-stale nested root would still "belong to") cannot let stale
+      // entries leak into the active tree.
+      const isActiveRoot = () =>
+        options.requireActiveRoot
+          ? workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)
+          : workspacePathBelongsToRoot(path, currentWorkspaceRootRef.current);
+
       setLoadingDirectories((current) => new Set(current).add(path));
 
       try {
         const entries = await workspaceFiles.readDirectory(path);
-        if (!workspacePathBelongsToRoot(path, currentWorkspaceRootRef.current)) {
+        if (!isActiveRoot()) {
           return;
         }
 
@@ -3531,7 +3542,7 @@ export function useWorkbenchController(
           setMessage(null);
         }
       } catch (error) {
-        if (!workspacePathBelongsToRoot(path, currentWorkspaceRootRef.current)) {
+        if (!isActiveRoot()) {
           return;
         }
 
@@ -3559,29 +3570,36 @@ export function useWorkbenchController(
         return;
       }
 
-      const restoredDocuments: Record<string, EditorDocument> = {};
-      const restoredPaths: string[] = [];
-      let failedCount = 0;
-
-      for (const path of paths) {
-        try {
-          const content = await workspaceFiles.readTextFile(path);
-          restoredDocuments[path] = {
-            content,
-            language: detectLanguage(path),
-            name: getFileName(path),
-            path,
-            savedContent: content,
-          };
-          restoredPaths.push(path);
-        } catch {
-          failedCount += 1;
-        }
-      }
+      const reads = await Promise.allSettled(
+        paths.map((path) => workspaceFiles.readTextFile(path)),
+      );
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
         return;
       }
+
+      const restoredDocuments: Record<string, EditorDocument> = {};
+      const restoredPaths: string[] = [];
+      let failedCount = 0;
+
+      paths.forEach((path, index) => {
+        const read = reads[index];
+
+        if (read.status !== "fulfilled") {
+          failedCount += 1;
+          return;
+        }
+
+        const content = read.value;
+        restoredDocuments[path] = {
+          content,
+          language: detectLanguage(path),
+          name: getFileName(path),
+          path,
+          savedContent: content,
+        };
+        restoredPaths.push(path);
+      });
 
       setDocuments(restoredDocuments);
       setOpenPaths(restoredPaths);
@@ -3814,42 +3832,73 @@ export function useWorkbenchController(
         return;
       }
 
-      if (!cachedWorkspaceState?.entriesByDirectory[path]) {
-        await loadDirectory(path);
-
-        if (!isCurrentOpenWorkspaceRequest()) {
+      // Directory load, workspace trust, workspace detection and session
+      // restore are all independent of one another, so they run concurrently.
+      // Each sub-task keeps its own try/catch plus a post-await isolation guard
+      // (workspaceRootKeysEqual against the live root) so that switching to
+      // another project mid-flight never lets stale results mutate the active
+      // workspace state.
+      const loadDirectoryTask = async (): Promise<void> => {
+        if (cachedWorkspaceState?.entriesByDirectory[path]) {
           return;
         }
-      }
 
-      let descriptor: WorkspaceDescriptor | null = null;
-      try {
-        const trust = await workspaceTrustGateway.getTrust(path);
+        // Match the other concurrent sub-tasks: opt into the exact-root guard so
+        // a parent-workspace switch mid-load cannot let stale entries leak, and
+        // re-check the live root once more after the await before trusting that
+        // this open is still the active one.
+        await loadDirectory(path, { requireActiveRoot: true });
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
           return;
         }
+      };
 
-        setWorkspaceTrust(trust);
-      } catch (error) {
-        reportErrorForActiveWorkspaceRoot(path, "Workspace Trust", error);
-      }
+      const loadTrustTask = async (): Promise<void> => {
+        try {
+          const trust = await workspaceTrustGateway.getTrust(path);
 
-      try {
-        descriptor = await workspaceDetection.detectWorkspace(path);
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
+            return;
+          }
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
+          setWorkspaceTrust(trust);
+        } catch (error) {
+          reportErrorForActiveWorkspaceRoot(path, "Workspace Trust", error);
+        }
+      };
+
+      const detectWorkspaceTask =
+        async (): Promise<WorkspaceDescriptor | null> => {
+          try {
+            const detected = await workspaceDetection.detectWorkspace(path);
+
+            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
+              // Stale: the active workspace changed while detection was in
+              // flight. Return null (never the stale descriptor) so the PHP
+              // setup branch only ever sees the descriptor of the still-active
+              // open request.
+              return null;
+            }
+
+            setWorkspaceDescriptor(detected);
+            return detected;
+          } catch (error) {
+            reportErrorForActiveWorkspaceRoot(
+              path,
+              "Workspace Detection",
+              error,
+            );
+            return null;
+          }
+        };
+
+      const restoreSessionTask = async (): Promise<void> => {
+        if (cachedWorkspaceState) {
+          workspaceSessionRestoredRef.current = true;
           return;
         }
 
-        setWorkspaceDescriptor(descriptor);
-      } catch (error) {
-        reportErrorForActiveWorkspaceRoot(path, "Workspace Detection", error);
-      }
-
-      if (cachedWorkspaceState) {
-        workspaceSessionRestoredRef.current = true;
-      } else {
         await restoreWorkspaceSession(path, workspaceSettings.session);
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
@@ -3857,12 +3906,24 @@ export function useWorkbenchController(
         }
 
         workspaceSessionRestoredRef.current = true;
-      }
+      };
 
+      // Fire-and-forget plans/scans that already isolate themselves per root.
       void refreshJavaScriptTypeScriptLanguageServerPlan(path);
 
       if (shouldIndexWorkspace(resolvedIntelligenceMode)) {
         void startInitialIndexScan(path);
+      }
+
+      const [, , descriptor] = await Promise.all([
+        loadDirectoryTask(),
+        loadTrustTask(),
+        detectWorkspaceTask(),
+        restoreSessionTask(),
+      ]);
+
+      if (!isCurrentOpenWorkspaceRequest()) {
+        return;
       }
 
       if (!descriptor?.php) {
