@@ -14,6 +14,7 @@ import {
   type Psr4Root,
 } from "./workspace";
 import { phpLaravelAuthGuardReferenceContextAt } from "./phpLaravelAuth";
+import { phpLaravelGateAbilityReferenceContextAt } from "./phpLaravelAuthorization";
 import { phpLaravelBroadcastConnectionReferenceContextAt } from "./phpLaravelBroadcasting";
 import { phpLaravelCacheStoreReferenceContextAt } from "./phpLaravelCache";
 import { phpLaravelConfigReferenceContextAt } from "./phpLaravelConfig";
@@ -60,6 +61,10 @@ export type PhpIdentifierContext =
   | {
       guardName: string;
       kind: "laravelAuthGuardString";
+    }
+  | {
+      ability: string;
+      kind: "laravelGateAbilityString";
     }
   | {
       kind: "laravelCacheStoreString";
@@ -219,6 +224,18 @@ export function phpIdentifierContextAt(
     return {
       guardName: authGuardReference.guardName,
       kind: "laravelAuthGuardString",
+    };
+  }
+
+  const gateAbilityReference = phpLaravelGateAbilityReferenceContextAt(
+    source,
+    position,
+  );
+
+  if (gateAbilityReference) {
+    return {
+      ability: gateAbilityReference.ability,
+      kind: "laravelGateAbilityString",
     };
   }
 

@@ -1600,6 +1600,25 @@ class Request
       "App\\Models\\User",
     );
   });
+
+  it("routes Laravel authorization ability strings to a Gate ability context", () => {
+    const source = `<?php\n\nGate::allows('update-post');\n`;
+
+    expect(
+      phpIdentifierContextAt(source, cursorAfter(source, "update-post")),
+    ).toEqual({
+      ability: "update-post",
+      kind: "laravelGateAbilityString",
+    });
+  });
+
+  it("does not treat dynamic authorization abilities as Gate ability contexts", () => {
+    const source = `<?php\n\nGate::allows($ability);\n`;
+
+    expect(
+      phpIdentifierContextAt(source, positionAfter(source, "$abilit")),
+    ).not.toMatchObject({ kind: "laravelGateAbilityString" });
+  });
 });
 
 function phpProjectDescriptor(): PhpProjectDescriptor {
