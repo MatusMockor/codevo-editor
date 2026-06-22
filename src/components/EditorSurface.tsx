@@ -1063,6 +1063,7 @@ export function EditorSurface({
         options={{
           autoIndent: "full",
           automaticLayout: true,
+          bracketPairColorization: { enabled: true },
           detectIndentation: true,
           domReadOnly: isReadOnly,
           formatOnPaste,
@@ -1081,6 +1082,7 @@ export function EditorSurface({
           scrollBeyondLastLine: false,
           "semanticHighlighting.enabled": true,
           smoothScrolling: true,
+          stickyScroll: { enabled: true },
           suggestOnTriggerCharacters: true,
           tabSize: 2,
         }}
