@@ -1,8 +1,10 @@
 import {
   FolderOpen,
+  LoaderCircle,
   RefreshCw,
   Search,
   Settings as SettingsIcon,
+  TriangleAlert,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -43,6 +45,7 @@ import {
   indexProgressLabel,
   type IndexProgressState,
 } from "./domain/indexProgress";
+import { ideProgressIndicator } from "./domain/ideProgress";
 import { editorChangeHunks } from "./domain/editorChangeMarkers";
 import type { GitChangeStatus } from "./domain/git";
 import {
@@ -379,6 +382,22 @@ function App() {
       workbench.workspaceRoot,
     ],
   );
+  const ideProgress = useMemo(
+    () =>
+      ideProgressIndicator({
+        workspaceRoot: workbench.workspaceRoot,
+        phpRuntimeStatus: workbench.languageServerRuntimeStatus,
+        javaScriptTypeScriptRuntimeStatus:
+          workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+        indexProgress: workbench.indexProgress,
+      }),
+    [
+      workbench.indexProgress,
+      workbench.javaScriptTypeScriptLanguageServerRuntimeStatus,
+      workbench.languageServerRuntimeStatus,
+      workbench.workspaceRoot,
+    ],
+  );
   const monacoTheme = useMemo(
     () =>
       monacoThemeForAppTheme(
@@ -633,6 +652,30 @@ function App() {
               workbench.workspaceTrust?.trusted ?? false,
             )}
           </span>
+          {ideProgress.text ? (
+            <button
+              aria-live="polite"
+              className={`toolbar-progress ${ideProgress.state}`}
+              onClick={() =>
+                workbench.showBottomPanelView(
+                  ideProgress.state === "problem" ? "problems" : "index",
+                )
+              }
+              title={ideProgress.text}
+              type="button"
+            >
+              {ideProgress.state === "problem" ? (
+                <TriangleAlert aria-hidden="true" size={14} />
+              ) : (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="toolbar-progress-spinner"
+                  size={14}
+                />
+              )}
+              <span className="toolbar-progress-text">{ideProgress.text}</span>
+            </button>
+          ) : null}
           {workbench.workspaceRoot ? (
             <span className="toolbar-status">
               {indexToolbarLabel(workbench.indexProgress)}

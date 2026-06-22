@@ -1327,6 +1327,64 @@ button {
   color: var(--color-text-strong);
 }
 
+.toolbar-progress {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  max-width: 280px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 11px;
+  transition: border-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard);
+}
+
+.toolbar-progress:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
+.toolbar-progress.scanning {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
+.toolbar-progress.problem {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.toolbar-progress-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-progress-spinner {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  animation: toolbar-progress-spin 0.9s linear infinite;
+}
+
+@keyframes toolbar-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbar-progress-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
 .editor-panel {
   position: relative;
   display: flex;
