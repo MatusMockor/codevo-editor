@@ -1398,6 +1398,32 @@ button {
   min-height: 0;
 }
 
+/*
+ * The Monaco editor stays mounted even when no document is open (so opening the
+ * first file only swaps the model instead of remounting Monaco and flashing a
+ * blank surface). These cover the editor with the same panel-deep background so
+ * the user sees a calm placeholder rather than the white Monaco loading box.
+ */
+.editor-empty-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: var(--color-panel-deep);
+  color: var(--color-text-subtle);
+}
+
+.editor-empty-overlay p {
+  margin: 0;
+}
+
+.editor-loading-placeholder {
+  width: 100%;
+  height: 100%;
+  background: var(--color-panel-deep);
+}
+
 .breadcrumbs {
   display: flex;
   flex: 0 0 auto;
