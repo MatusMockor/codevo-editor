@@ -79,6 +79,7 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   props: null as { options?: Record<string, unknown> } | null,
   registeredContext: null as {
     providePhpCodeActions?: (source: string) => unknown;
+    providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
   } | null,
 }));
 
@@ -91,7 +92,10 @@ vi.mock("./languageServerMonacoProviders", async () => {
     ...actual,
     registerLanguageServerMonacoProviders: (
       monaco: unknown,
-      context: { providePhpCodeActions?: (source: string) => unknown },
+      context: {
+        providePhpCodeActions?: (source: string) => unknown;
+        providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
+      },
     ) => {
       editorSurfaceMocks.registeredContext = context;
       return actual.registerLanguageServerMonacoProviders(
@@ -281,6 +285,75 @@ describe("EditorSurface", () => {
 
     expect(providePhpCodeActions).toHaveBeenCalledWith(
       "<?php\nclass Example {}\n",
+    );
+  });
+
+  it("forwards providePhpLaravelDefinition into the language server provider context", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\n$value = config('app.name');\n",
+      language: "php",
+      name: "Service.php",
+      path: "/workspace/app/Service.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const providePhpLaravelDefinition = vi.fn(async () => true);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpLaravelDefinition={providePhpLaravelDefinition}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const context = editorSurfaceMocks.registeredContext;
+
+    expect(context?.providePhpLaravelDefinition).toEqual(expect.any(Function));
+
+    await context?.providePhpLaravelDefinition?.(
+      "<?php\n$value = config('app.name');\n",
+      24,
+    );
+
+    expect(providePhpLaravelDefinition).toHaveBeenCalledWith(
+      "<?php\n$value = config('app.name');\n",
+      24,
     );
   });
 

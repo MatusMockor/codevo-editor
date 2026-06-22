@@ -5517,6 +5517,87 @@ function store($request): void
     });
   });
 
+  it("navigates a Laravel string-helper definition and skips phpactor when handled", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$value = config('app.name');\n";
+    const offset = source.indexOf("app.name");
+    const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
+    const column = offset - lineStart + 1;
+    const providePhpLaravelDefinition = vi.fn(async () => true);
+    const gateway = featuresGateway({
+      definition: [
+        {
+          range: range(1, 6, 1, 10),
+          uri: "file:///project/config/app.php",
+        },
+      ],
+    });
+    const context = providerContext({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "Service.php",
+        path: "/project/src/Service.php",
+        savedContent: source,
+      },
+      featuresGateway: gateway,
+      providePhpLaravelDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.definitionProvider.provideDefinition(
+        model({ content: source, path: "/project/src/Service.php" }),
+        { column, lineNumber: 2 },
+      ),
+    ).resolves.toBeNull();
+    expect(providePhpLaravelDefinition).toHaveBeenCalledTimes(1);
+    expect(providePhpLaravelDefinition).toHaveBeenCalledWith(source, offset);
+    expect(gateway.definition).not.toHaveBeenCalled();
+  });
+
+  it("falls back to phpactor definition when the Laravel callback does not handle the offset", async () => {
+    const registered = createRegisteredProviders();
+    const source = "<?php\n$user = $repository->find();\n";
+    const providePhpLaravelDefinition = vi.fn(async () => false);
+    const gateway = featuresGateway({
+      definition: [
+        {
+          range: range(1, 6, 1, 10),
+          uri: "file:///project/src/Models/User.php",
+        },
+      ],
+    });
+    const context = providerContext({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "Service.php",
+        path: "/project/src/Service.php",
+        savedContent: source,
+      },
+      featuresGateway: gateway,
+      providePhpLaravelDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.definitionProvider.provideDefinition(
+        model({ content: source, path: "/project/src/Service.php" }),
+        { column: 20, lineNumber: 2 },
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        uri: {
+          fsPath: "/project/src/Models/User.php",
+          path: "/project/src/Models/User.php",
+        },
+      }),
+    ]);
+    expect(providePhpLaravelDefinition).toHaveBeenCalledTimes(1);
+    expect(gateway.definition).toHaveBeenCalledTimes(1);
+  });
+
   it("maps in-root PHP implementation locations", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -8128,6 +8209,9 @@ function providerContext(
     providePhpCodeActions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
     >;
+    providePhpLaravelDefinition: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpLaravelDefinition"]
+    >;
     providePhpMethodCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodCompletions"]
     >;
@@ -8154,6 +8238,7 @@ function providerContext(
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
     providePhpCodeActions: overrides.providePhpCodeActions,
+    providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
     refreshGateway: overrides.refreshGateway,

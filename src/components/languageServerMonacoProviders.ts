@@ -182,6 +182,22 @@ export interface LanguageServerMonacoProviderContext {
   getWorkspaceRoot?(): string | null;
   limitNavigationResultsToOpenModels?: boolean;
   providePhpCodeActions?(source: string): Promise<PhpCodeActionDescriptor[]>;
+  /**
+   * Resolves and navigates to the target of a Laravel global string-helper
+   * literal (`config`, `view`, `__`/`trans`, `env`) located at `offset`.
+   *
+   * Because the editor hosts a single Monaco model and opens files through its
+   * own tab system (`limitNavigationResultsToOpenModels`), the callback performs
+   * the navigation itself and resolves `true` when it handled the request. The
+   * definition provider then returns `null` so Monaco does not also attempt to
+   * navigate to a — possibly not-yet-open — model. It resolves `false` when the
+   * offset is not a (resolvable) Laravel literal, leaving the regular phpactor
+   * definition flow untouched.
+   */
+  providePhpLaravelDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
   providePhpMethodCompletions?(
     source: string,
     position: MonacoPosition,
@@ -721,6 +737,10 @@ async function provideDefinition(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.Location[] | null> {
+  if (await provideLaravelStringLiteralDefinition(context, model, position)) {
+    return null;
+  }
+
   return provideNavigationLocations(
     monaco,
     context,
@@ -730,6 +750,65 @@ async function provideDefinition(
     (rootPath, requestPosition) =>
       context.featuresGateway.definition(rootPath, requestPosition),
   );
+}
+
+/**
+ * Attempts Laravel global string-helper navigation (config / view / trans / env)
+ * for a PHP document. Returns `true` when the request was handled (the target
+ * file was opened by the controller), so the caller stops and Monaco does not
+ * navigate. Per-project isolation is enforced inside the controller callback,
+ * which re-checks the active workspace after each await and drops stale results.
+ */
+async function provideLaravelStringLiteralDefinition(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<boolean> {
+  if (!context.providePhpLaravelDefinition) {
+    return false;
+  }
+
+  const documentContext = activePhpDocumentContext(context, model);
+
+  if (!documentContext) {
+    return false;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    return await context.providePhpLaravelDefinition(source, offset);
+  } catch (error) {
+    if (isPhpDocumentContextActive(context, documentContext)) {
+      context.reportError(error);
+    }
+
+    return false;
+  }
+}
+
+/**
+ * Converts a 1-based Monaco position into a 0-based character offset into
+ * `source`. Lines beyond the source resolve to its end; columns beyond a line
+ * clamp to that line's end.
+ */
+function offsetAtMonacoPosition(source: string, position: MonacoPosition): number {
+  const lines = source.split("\n");
+  const targetLine = Math.max(0, position.lineNumber - 1);
+  let offset = 0;
+
+  for (let line = 0; line < targetLine && line < lines.length; line += 1) {
+    offset += (lines[line]?.length ?? 0) + 1;
+  }
+
+  if (targetLine >= lines.length) {
+    return source.length;
+  }
+
+  const column = Math.max(0, position.column - 1);
+
+  return offset + Math.min(column, lines[targetLine]?.length ?? 0);
 }
 
 async function provideImplementation(

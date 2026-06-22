@@ -133,6 +133,10 @@ interface EditorSurfaceProps {
   onRevertChangeHunk(hunk: EditorChangeHunk): void;
   phpSyntaxDiagnosticsGateway: PhpSyntaxDiagnosticsGateway;
   providePhpCodeActions?(source: string): Promise<PhpCodeActionDescriptor[]>;
+  providePhpLaravelDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
   providePhpMethodCompletions(
     source: string,
     position: EditorPosition,
@@ -185,6 +189,7 @@ export function EditorSurface({
   onRevertChangeHunk,
   phpSyntaxDiagnosticsGateway,
   providePhpCodeActions = async () => [],
+  providePhpLaravelDefinition = async () => false,
   providePhpMethodCompletions,
   providePhpMethodSignature,
 }: EditorSurfaceProps) {
@@ -211,6 +216,7 @@ export function EditorSurface({
   const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
+  const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
@@ -310,6 +316,10 @@ export function EditorSurface({
   }, [providePhpCodeActions]);
 
   useEffect(() => {
+    phpLaravelDefinitionRef.current = providePhpLaravelDefinition;
+  }, [providePhpLaravelDefinition]);
+
+  useEffect(() => {
     phpMethodCompletionsRef.current = providePhpMethodCompletions;
   }, [providePhpMethodCompletions]);
 
@@ -400,6 +410,8 @@ export function EditorSurface({
       getWorkspaceRoot: () => workspaceRoot,
       limitNavigationResultsToOpenModels: true,
       providePhpCodeActions: (source) => phpCodeActionsRef.current(source),
+      providePhpLaravelDefinition: (source, offset) =>
+        phpLaravelDefinitionRef.current(source, offset),
       providePhpMethodCompletions: (source, position) =>
         phpMethodCompletionsRef.current(source, position),
       providePhpMethodSignature: (source, position) =>

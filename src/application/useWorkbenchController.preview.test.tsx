@@ -38416,6 +38416,547 @@ class AppController
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  describe("Laravel string-helper Cmd+Click definition", () => {
+    it("navigates a config literal to the config file key line", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const appConfigPath = "/workspace/config/app.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.name');
+    }
+}
+`;
+      const appConfigSource = `<?php
+
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+];
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === appConfigPath) {
+            return appConfigSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("app.name") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(appConfigPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: appConfigPath,
+        position: {
+          column: 6,
+          lineNumber: 4,
+        },
+      });
+    });
+
+    it("navigates a view literal to its Blade file", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/DashboardController.php";
+      const bladePath = "/workspace/resources/views/admin/dashboard.blade.php";
+      const controllerSource = `<?php
+
+class DashboardController
+{
+    public function show(): mixed
+    {
+        return view('admin.dashboard');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === bladePath) {
+            return "<h1>Dashboard</h1>\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "DashboardController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("admin.dashboard") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: bladePath,
+        position: {
+          column: 1,
+          lineNumber: 1,
+        },
+      });
+    });
+
+    it("navigates a trans literal to the lang file key line", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const langBase = "/workspace/lang";
+      const langRoot = "/workspace/lang/en";
+      const messagesPath = "/workspace/lang/en/messages.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('messages.welcome');
+    }
+}
+`;
+      const messagesSource = `<?php
+
+return [
+    'welcome' => 'Welcome',
+];
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readDirectory: vi.fn(async (path: string) =>
+          path === langBase ? [directoryEntry(langRoot, "en")] : [],
+        ),
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === messagesPath) {
+            return messagesSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("messages.welcome") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(messagesPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: messagesPath,
+        position: {
+          column: 6,
+          lineNumber: 4,
+        },
+      });
+    });
+
+    it("navigates a route literal to its named route definition", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/CommentController.php";
+      const routesPath = "/workspace/routes/web.php";
+      const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): string
+    {
+        return route('comments.show');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === routesPath) {
+            return `<?php
+Route::get('/comments/{comment}', [CommentController::class, 'show'])
+    ->name('comments.show');
+`;
+          }
+
+          return `<?php\n// ${path}\n`;
+        }),
+        searchText: vi.fn(async (_root, query) =>
+          query === "->name("
+            ? [
+                {
+                  column: 5,
+                  lineNumber: 3,
+                  lineText: "    ->name('comments.show');",
+                  path: routesPath,
+                  relativePath: "routes/web.php",
+                },
+              ]
+            : [],
+        ),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "CommentController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("comments.show") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(routesPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: routesPath,
+        position: {
+          column: 13,
+          lineNumber: 3,
+        },
+      });
+    });
+
+    it("does not navigate when the resolved Laravel file does not exist", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const missingConfigPath = "/workspace/config/missing.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('missing.key');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === missingConfigPath) {
+            throw new Error(`Missing ${path}`);
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("missing.key") + 1,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(controllerPath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("returns false when the offset is not inside a Laravel helper literal", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return strtoupper('app.name');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("app.name") + 1,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(controllerPath);
+    });
+
+    it("drops a stale config navigation after switching project tabs mid-read", async () => {
+      const controllerPath =
+        "/workspace-a/app/Http/Controllers/AppController.php";
+      const appConfigPath = "/workspace-a/config/app.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.name');
+    }
+}
+`;
+      const staleConfigRead = createDeferred<string>();
+      let configReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === appConfigPath) {
+            configReadCount += 1;
+            return staleConfigRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("app.name") + 1,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(configReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleConfigRead.resolve(`<?php
+
+return [
+    'name' => 'Stale',
+];
+`);
+      let handled = true;
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(appConfigPath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("drops a stale view navigation after switching project tabs mid-read", async () => {
+      const controllerPath =
+        "/workspace-a/app/Http/Controllers/DashboardController.php";
+      const bladePath =
+        "/workspace-a/resources/views/admin/dashboard.blade.php";
+      const controllerSource = `<?php
+
+class DashboardController
+{
+    public function show(): mixed
+    {
+        return view('admin.dashboard');
+    }
+}
+`;
+      const staleBladeRead = createDeferred<string>();
+      let bladeReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === bladePath) {
+            bladeReadCount += 1;
+            return staleBladeRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "DashboardController.php"),
+        );
+      });
+
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("admin.dashboard") + 1,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(bladeReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleBladeRead.resolve("<h1>Dashboard</h1>\n");
+      let handled = true;
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+  });
+
   it("suggests Laravel Blade views inside view helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const viewsRoot = "/workspace/resources/views";

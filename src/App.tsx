@@ -831,6 +831,7 @@ function App() {
             onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
             providePhpCodeActions={workbench.providePhpCodeActions}
+            providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
             providePhpMethodSignature={workbench.providePhpMethodSignature}
             workspaceRoot={workbench.workspaceRoot}

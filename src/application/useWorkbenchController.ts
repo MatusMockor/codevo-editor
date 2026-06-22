@@ -215,6 +215,13 @@ import {
   phpLaravelScopeMethodName,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "../domain/phpFrameworkLaravel";
+import { detectLaravelStringLiteralHelper } from "../domain/laravelStringLiteralHelpers";
+import {
+  resolveLaravelConfigTarget,
+  resolveLaravelEnvTarget,
+  resolveLaravelTransTarget,
+  resolveLaravelViewTarget,
+} from "../domain/laravelPathResolution";
 import {
   phpLaravelNamedRouteDefinitions,
   phpLaravelNamedRouteReferenceContextAt,
@@ -14407,6 +14414,140 @@ export function useWorkbenchController(
     [collectPhpAbstractMembersToImplement, workspaceRoot],
   );
 
+  // Powers Cmd+Click / native "Go to Definition" on Laravel global string-helper
+  // literals (config / view / __ / trans / env / route). Monaco's definition provider
+  // delegates here; because the editor opens files through its own tab system
+  // (and limits native navigation to already-open models), this callback DOES
+  // the navigation and resolves `true` when it handled the request — the
+  // provider then returns null and Monaco does not also navigate. Detection uses
+  // detectLaravelStringLiteralHelper; laravelPathResolution gates resolvability;
+  // the proven per-helper finders perform the file read + key-line lookup and
+  // carry the per-workspace isolation guards (requested-root capture +
+  // re-check after each await), so stale results are dropped on tab switch.
+  // Defense in depth: this callback ALSO captures the requested root up front
+  // and re-checks it after each finder await (before openNavigationTarget) so a
+  // tab switch mid-resolution can never navigate into a stale-workspace file.
+  const providePhpLaravelDefinition = useCallback(
+    async (source: string, offset: number): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isLaravelFrameworkActive || !requestedRoot) {
+        return false;
+      }
+
+      const match = detectLaravelStringLiteralHelper(source, offset);
+
+      if (!match) {
+        return false;
+      }
+
+      if (match.helper === "config") {
+        if (!resolveLaravelConfigTarget(match.literal)) {
+          return false;
+        }
+
+        const target = await findPhpLaravelConfigTarget(match.literal);
+
+        // Per-workspace isolation guard: drop the resolved target if the user
+        // switched project tabs during the file read so we never navigate into
+        // a stale-workspace file inside the now-active workspace.
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return target
+          ? openNavigationTarget(target.path, target.position, target.key)
+          : false;
+      }
+
+      if (match.helper === "view") {
+        if (!resolveLaravelViewTarget(match.literal)) {
+          return false;
+        }
+
+        const target = await findPhpLaravelViewTarget(match.literal);
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return target
+          ? openNavigationTarget(target.path, target.position, target.name)
+          : false;
+      }
+
+      if (match.helper === "trans") {
+        if (!resolveLaravelTransTarget(match.literal)) {
+          return false;
+        }
+
+        const target = await findPhpLaravelTranslationTarget(match.literal);
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return target
+          ? openNavigationTarget(target.path, target.position, target.key)
+          : false;
+      }
+
+      if (match.helper === "env") {
+        if (!resolveLaravelEnvTarget(match.literal)) {
+          return false;
+        }
+
+        const target = await findPhpLaravelEnvTarget(match.literal);
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return target
+          ? openNavigationTarget(target.path, target.position, target.name)
+          : false;
+      }
+
+      if (match.helper === "route") {
+        if (!activeDocument) {
+          return false;
+        }
+
+        const routes = await collectPhpLaravelNamedRouteTargets(
+          activeDocument.content,
+          activeDocument.path,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        const target = routes.find(
+          (route) => route.name.toLowerCase() === match.literal.toLowerCase(),
+        );
+
+        return target
+          ? openNavigationTarget(target.path, target.position, target.name)
+          : false;
+      }
+
+      return false;
+    },
+    [
+      activeDocument,
+      collectPhpLaravelNamedRouteTargets,
+      findPhpLaravelConfigTarget,
+      findPhpLaravelEnvTarget,
+      findPhpLaravelTranslationTarget,
+      findPhpLaravelViewTarget,
+      isLaravelFrameworkActive,
+      openNavigationTarget,
+      workspaceRoot,
+    ],
+  );
+
   const openPhpClassTarget = useCallback(
     async (className: string, label: string): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
@@ -21288,6 +21429,7 @@ export function useWorkbenchController(
     previewFile,
     previewPath,
     providePhpCodeActions,
+    providePhpLaravelDefinition,
     providePhpMethodCompletions,
     providePhpMethodSignature,
     openSettingsPanel,
