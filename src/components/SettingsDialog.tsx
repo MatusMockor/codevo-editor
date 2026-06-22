@@ -1,6 +1,7 @@
 import { Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  defaultShortcutForCommand,
   keymapCommands,
   normalizeShortcutInput,
   type KeymapCommandId,
@@ -688,7 +689,7 @@ function KeymapSettingsPanel({
             onChange={(event) =>
               onChangeShortcut(command.id, event.currentTarget.value)
             }
-            placeholder={command.defaultShortcut}
+            placeholder={defaultShortcutForCommand(command.id)}
             spellCheck={false}
             value={appSettings.keymap[command.id]}
           />

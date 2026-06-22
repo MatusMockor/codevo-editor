@@ -23,9 +23,11 @@ import {
   breadcrumbPathFromCursorAndSymbols,
 } from "../domain/breadcrumbs";
 import {
+  detectKeymapPlatform,
   parseShortcut,
   shortcutForCommand,
   type KeymapCommandId,
+  type KeymapPlatform,
   type KeymapSettings,
 } from "../domain/keymap";
 import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
@@ -1752,6 +1754,7 @@ function breadcrumbFeaturesGateway(
 function monacoKeybindingsForShortcut(
   monaco: typeof Monaco,
   shortcut: string,
+  platform: KeymapPlatform = detectKeymapPlatform(),
 ): number[] {
   const parsed = parseShortcut(shortcut);
 
@@ -1766,12 +1769,15 @@ function monacoKeybindingsForShortcut(
   }
 
   let keybinding = keyCode;
+  const primaryModifier =
+    platform === "mac" ? parsed.meta : parsed.meta || parsed.ctrl;
+  const controlModifier = platform === "mac" ? parsed.ctrl : false;
 
-  if (parsed.meta) {
+  if (primaryModifier) {
     keybinding |= monaco.KeyMod.CtrlCmd;
   }
 
-  if (parsed.ctrl) {
+  if (controlModifier) {
     keybinding |= monaco.KeyMod.WinCtrl ?? monaco.KeyMod.CtrlCmd;
   }
 

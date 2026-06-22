@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
+import { defaultKeymapSettings } from "../domain/keymap";
 import { SettingsDialog } from "./SettingsDialog";
 
 describe("SettingsDialog", () => {
@@ -20,6 +21,7 @@ describe("SettingsDialog", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    vi.restoreAllMocks();
   });
 
   it("autosaves setting changes without a Save button", async () => {
@@ -227,6 +229,44 @@ describe("SettingsDialog", () => {
         javaScriptTypeScriptService: "off",
       },
     });
+  });
+
+  it("shows platform-specific keymap placeholders", async () => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue("Linux x86_64");
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={{
+            ...defaultAppSettings(),
+            keymap: {
+              ...defaultKeymapSettings("linux"),
+              "editor.save": "",
+            },
+          }}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      settingsSectionButton("Keymap").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(inputWithLabel("Save File").placeholder).toBe("Ctrl+S");
   });
 
   it("persists TypeScript version preference changes", async () => {
@@ -556,6 +596,30 @@ describe("SettingsDialog", () => {
     }
 
     return button;
+  }
+
+  function settingsSectionButton(labelText: string): HTMLButtonElement {
+    const button = Array.from(host.querySelectorAll("button")).find(
+      (item) => item.textContent?.trim() === labelText,
+    );
+
+    if (!button) {
+      throw new Error(`${labelText} settings section was not rendered.`);
+    }
+
+    return button;
+  }
+
+  function inputWithLabel(labelText: string): HTMLInputElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) => item.textContent?.includes(labelText));
+    const input = label?.querySelector<HTMLInputElement>("input");
+
+    if (!input) {
+      throw new Error(`${labelText} input was not rendered.`);
+    }
+
+    return input;
   }
 
   function checkboxWithLabel(labelText: string): HTMLInputElement {
