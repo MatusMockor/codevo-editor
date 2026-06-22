@@ -714,6 +714,7 @@ function App() {
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}
+            editorFontSize={workbench.appSettings.editorFontSize}
             isOpeningFile={workbench.isOpeningFile}
             applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
               workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit

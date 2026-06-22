@@ -16,6 +16,9 @@ describe("keymap", () => {
       "editor.closeTab": "Cmd+W",
       "editor.fileStructure": "Cmd+R",
       "editor.extendSelection": "Alt+ArrowUp",
+      "editor.fontZoomIn": "Cmd+=",
+      "editor.fontZoomOut": "Cmd+-",
+      "editor.fontZoomReset": "Cmd+0",
       "editor.goToDeclaration": "",
       "editor.goToDefinition": "Cmd+B",
       "editor.goToSourceDefinition": "",
@@ -34,16 +37,46 @@ describe("keymap", () => {
     expect(defaultShortcutForCommand("editor.save", "linux")).toBe("Ctrl+S");
     expect(defaultShortcutForCommand("editor.save", "windows")).toBe("Ctrl+S");
     expect(defaultShortcutForCommand("editor.save", "mac")).toBe("Cmd+S");
+    expect(defaultShortcutForCommand("editor.fontZoomIn", "linux")).toBe(
+      "Ctrl+=",
+    );
+    expect(defaultShortcutForCommand("editor.fontZoomOut", "linux")).toBe(
+      "Ctrl+-",
+    );
+    expect(defaultShortcutForCommand("editor.fontZoomReset", "linux")).toBe(
+      "Ctrl+0",
+    );
     expect(defaultKeymapSettings("linux")).toMatchObject({
       "class.quickOpen": "Ctrl+O",
       "editor.closeTab": "Ctrl+W",
       "editor.fileStructure": "Ctrl+R",
+      "editor.fontZoomIn": "Ctrl+=",
+      "editor.fontZoomOut": "Ctrl+-",
+      "editor.fontZoomReset": "Ctrl+0",
       "editor.goToDefinition": "Ctrl+B",
       "file.quickOpen": "Ctrl+P",
       "navigation.back": "Ctrl+[",
       "navigation.forward": "Ctrl+]",
     });
     expect(defaultKeymapSettings("linux")["terminal.show"]).toBe("Ctrl+`");
+  });
+
+  it("matches the font zoom shortcuts against the platform primary modifier", () => {
+    expect(
+      matchesShortcut(keyEvent({ key: "=", metaKey: true }), "Cmd+=", "mac"),
+    ).toBe(true);
+    expect(
+      matchesShortcut(keyEvent({ key: "-", metaKey: true }), "Cmd+-", "mac"),
+    ).toBe(true);
+    expect(
+      matchesShortcut(keyEvent({ key: "0", metaKey: true }), "Cmd+0", "mac"),
+    ).toBe(true);
+    expect(
+      matchesShortcut(keyEvent({ key: "=", ctrlKey: true }), "Cmd+=", "linux"),
+    ).toBe(true);
+    expect(
+      matchesShortcut(keyEvent({ key: "0", metaKey: true }), "Cmd+0", "linux"),
+    ).toBe(false);
   });
 
   it("normalizes persisted keymaps and keeps unknown values out", () => {

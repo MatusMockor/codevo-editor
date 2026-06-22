@@ -78,6 +78,24 @@ export const keymapCommands = [
     label: "Extend Selection",
   },
   {
+    category: "Editor",
+    defaultShortcut: "Cmd+=",
+    id: "editor.fontZoomIn",
+    label: "Increase Editor Font Size",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+-",
+    id: "editor.fontZoomOut",
+    label: "Decrease Editor Font Size",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Cmd+0",
+    id: "editor.fontZoomReset",
+    label: "Reset Editor Font Size",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",

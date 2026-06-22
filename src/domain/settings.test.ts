@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   appThemeOptions,
   defaultAppSettings,
+  defaultEditorFontSize,
   defaultWorkspaceSessionState,
   defaultWorkspaceSettings,
+  maxEditorFontSize,
+  minEditorFontSize,
   monacoThemeForAppTheme,
   normalizeAppSettings,
+  normalizeEditorFontSize,
   normalizeWorkspaceSession,
   normalizeWorkspaceSettings,
   resolveAppTheme,
@@ -18,6 +22,7 @@ import { defaultKeymapSettings } from "./keymap";
 describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
+      editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
@@ -72,6 +77,7 @@ describe("settings defaults", () => {
 describe("normalizeAppSettings", () => {
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
+      editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
@@ -80,6 +86,7 @@ describe("normalizeAppSettings", () => {
     });
     expect(
       normalizeAppSettings({
+        editorFontSize: 18,
         keymap: { "editor.save": "Cmd+Shift+S" },
         recentWorkspacePath: null,
         runtimePolicy: "suspendOnBackground",
@@ -87,6 +94,7 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
     ).toEqual({
+      editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
         "editor.save": "Cmd+Shift+S",
@@ -102,12 +110,31 @@ describe("normalizeAppSettings", () => {
         theme: "ayuMirage",
       }),
     ).toEqual({
+      editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
       workspaceTabs: [],
     });
+  });
+
+  it("clamps and falls back persisted editor font size", () => {
+    expect(normalizeAppSettings({ editorFontSize: 100 }).editorFontSize).toBe(
+      maxEditorFontSize,
+    );
+    expect(normalizeAppSettings({ editorFontSize: 2 }).editorFontSize).toBe(
+      minEditorFontSize,
+    );
+    expect(normalizeAppSettings({ editorFontSize: 16.7 }).editorFontSize).toBe(
+      16,
+    );
+    expect(
+      normalizeAppSettings({ editorFontSize: "20" }).editorFontSize,
+    ).toBe(defaultEditorFontSize);
+    expect(
+      normalizeAppSettings({ editorFontSize: Number.NaN }).editorFontSize,
+    ).toBe(defaultEditorFontSize);
   });
 
   it("deduplicates workspace tabs by normalized root key", () => {
@@ -117,6 +144,7 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project/api/", "/project/web", "/project/api"],
       }),
     ).toEqual({
+      editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: "/project/api",
       runtimePolicy: "keepAlive",
@@ -311,6 +339,28 @@ describe("settings ignore pattern text", () => {
   });
 });
 
+describe("normalizeEditorFontSize", () => {
+  it("clamps to the supported font size range and rounds to whole pixels", () => {
+    expect(defaultEditorFontSize).toBe(14);
+    expect(minEditorFontSize).toBe(8);
+    expect(maxEditorFontSize).toBe(40);
+    expect(normalizeEditorFontSize(14)).toBe(14);
+    expect(normalizeEditorFontSize(7)).toBe(minEditorFontSize);
+    expect(normalizeEditorFontSize(999)).toBe(maxEditorFontSize);
+    expect(normalizeEditorFontSize(15.9)).toBe(15);
+  });
+
+  it("falls back to the default for invalid values", () => {
+    expect(normalizeEditorFontSize("16")).toBe(defaultEditorFontSize);
+    expect(normalizeEditorFontSize(undefined)).toBe(defaultEditorFontSize);
+    expect(normalizeEditorFontSize(null)).toBe(defaultEditorFontSize);
+    expect(normalizeEditorFontSize(Number.NaN)).toBe(defaultEditorFontSize);
+    expect(normalizeEditorFontSize(Number.POSITIVE_INFINITY)).toBe(
+      defaultEditorFontSize,
+    );
+  });
+});
+
 describe("monacoThemeForAppTheme", () => {
   it("maps light theme to Monaco light and keeps dark themes dark", () => {
     expect(monacoThemeForAppTheme("light")).toBe("calm-light");
@@ -334,6 +384,15 @@ describe("appThemeOptions", () => {
   it("offers the VS Code Dark Plus theme", () => {
     const option = appThemeOptions.find((entry) => entry.id === "darkPlus");
     expect(option).toEqual({ id: "darkPlus", label: "Dark Plus (VS Code)" });
+  });
+
+  it("offers the Ayu Mirage theme", () => {
+    const option = appThemeOptions.find((entry) => entry.id === "ayuMirage");
+    expect(option).toEqual({ id: "ayuMirage", label: "Ayu Mirage" });
+  });
+
+  it("maps Ayu Mirage to the bundled official Shiki theme", () => {
+    expect(monacoThemeForAppTheme("ayuMirage")).toBe("ayu-mirage");
   });
 });
 

@@ -7,6 +7,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
@@ -56,6 +57,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await gateway.saveAppSettings({
+      editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
         "editor.save": "Cmd+Shift+S",
@@ -103,6 +105,7 @@ describe("BrowserSettingsGateway", () => {
     });
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
         "editor.save": "Cmd+Shift+S",
@@ -157,6 +160,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",

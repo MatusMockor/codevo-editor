@@ -42,7 +42,12 @@ export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
 
+export const defaultEditorFontSize = 14;
+export const minEditorFontSize = 8;
+export const maxEditorFontSize = 40;
+
 export interface AppSettings {
+  editorFontSize: number;
   keymap: KeymapSettings;
   recentWorkspacePath: string | null;
   runtimePolicy: BackgroundRuntimePolicy;
@@ -103,12 +108,23 @@ export interface SettingsGateway {
 
 export function defaultAppSettings(): AppSettings {
   return {
+    editorFontSize: defaultEditorFontSize,
     keymap: defaultKeymapSettings(),
     recentWorkspacePath: null,
     runtimePolicy: "keepAlive",
     theme: "dark",
     workspaceTabs: [],
   };
+}
+
+export function normalizeEditorFontSize(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return defaultEditorFontSize;
+  }
+
+  const rounded = Math.floor(value);
+
+  return Math.min(Math.max(rounded, minEditorFontSize), maxEditorFontSize);
 }
 
 export function defaultWorkspaceSettings(): WorkspaceSettings {
@@ -169,6 +185,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     value.recentWorkspacePath,
     defaults.recentWorkspacePath,
   );
+  const editorFontSize =
+    value.editorFontSize === undefined
+      ? defaults.editorFontSize
+      : normalizeEditorFontSize(value.editorFontSize);
   const keymap = normalizeKeymapSettings(value.keymap);
   const runtimePolicy = isBackgroundRuntimePolicy(value.runtimePolicy)
     ? value.runtimePolicy
@@ -180,6 +200,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   );
 
   return {
+    editorFontSize,
     keymap,
     recentWorkspacePath,
     runtimePolicy,

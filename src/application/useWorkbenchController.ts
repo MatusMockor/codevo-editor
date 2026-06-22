@@ -386,7 +386,9 @@ import type {
 import { isTypeProjectSymbol } from "../domain/projectSymbols";
 import {
   defaultAppSettings,
+  defaultEditorFontSize,
   defaultWorkspaceSettings,
+  normalizeEditorFontSize,
   type AppSettings,
   type BackgroundRuntimePolicy,
   type SettingsGateway,
@@ -1101,6 +1103,35 @@ export function useWorkbenchController(
     },
     [applyAppSettings, settingsGateway],
   );
+
+  const setEditorFontSize = useCallback(
+    (nextFontSize: number) => {
+      const currentSettings = appSettingsRef.current;
+      const editorFontSize = normalizeEditorFontSize(nextFontSize);
+
+      if (editorFontSize === currentSettings.editorFontSize) {
+        return;
+      }
+
+      void persistAppSettings({
+        ...currentSettings,
+        editorFontSize,
+      }).catch((error) => reportError("Settings", error));
+    },
+    [persistAppSettings, reportError],
+  );
+
+  const zoomEditorFontIn = useCallback(() => {
+    setEditorFontSize(appSettingsRef.current.editorFontSize + 1);
+  }, [setEditorFontSize]);
+
+  const zoomEditorFontOut = useCallback(() => {
+    setEditorFontSize(appSettingsRef.current.editorFontSize - 1);
+  }, [setEditorFontSize]);
+
+  const resetEditorFontSize = useCallback(() => {
+    setEditorFontSize(defaultEditorFontSize);
+  }, [setEditorFontSize]);
 
   const persistWorkspaceSettings = useCallback(
     async (rootPath: string, nextSettings: WorkspaceSettings) => {
@@ -18719,6 +18750,33 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.fontZoomIn",
+      title: "Increase Editor Font Size",
+      category: "Editor",
+      shortcut: shortcut("editor.fontZoomIn"),
+      isEnabled: () => true,
+      run: zoomEditorFontIn,
+    });
+
+    registry.register({
+      id: "editor.fontZoomOut",
+      title: "Decrease Editor Font Size",
+      category: "Editor",
+      shortcut: shortcut("editor.fontZoomOut"),
+      isEnabled: () => true,
+      run: zoomEditorFontOut,
+    });
+
+    registry.register({
+      id: "editor.fontZoomReset",
+      title: "Reset Editor Font Size",
+      category: "Editor",
+      shortcut: shortcut("editor.fontZoomReset"),
+      isEnabled: () => true,
+      run: resetEditorFontSize,
+    });
+
+    registry.register({
       id: "editor.goToSourceDefinition",
       title: "Go to Source Definition",
       category: "Editor",
@@ -19184,6 +19242,9 @@ export function useWorkbenchController(
     toggleBottomPanel,
     toggleSmartMode,
     toggleWorkspaceTrust,
+    zoomEditorFontIn,
+    zoomEditorFontOut,
+    resetEditorFontSize,
     indexProgress,
     intelligenceMode,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -19799,6 +19860,24 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("editor.fontZoomIn")) {
+        event.preventDefault();
+        zoomEditorFontIn();
+        return;
+      }
+
+      if (matches("editor.fontZoomOut")) {
+        event.preventDefault();
+        zoomEditorFontOut();
+        return;
+      }
+
+      if (matches("editor.fontZoomReset")) {
+        event.preventDefault();
+        resetEditorFontSize();
+        return;
+      }
+
       if (matches("editor.goToSourceDefinition")) {
         event.preventDefault();
         void goToSourceDefinition();
@@ -19916,10 +19995,13 @@ export function useWorkbenchController(
     openSettingsPanel,
     openWorkspaceSymbols,
     quitApplication,
+    resetEditorFontSize,
     saveActiveDocument,
     showBottomPanelView,
     toggleBottomPanel,
     workspaceRoot,
+    zoomEditorFontIn,
+    zoomEditorFontOut,
   ]);
 
   useEffect(() => {

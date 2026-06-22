@@ -54,7 +54,7 @@ import {
 } from "../domain/phpMethodCompletions";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import type { EditorDocument } from "../domain/workspace";
-import type { MonacoAppTheme } from "../domain/settings";
+import { defaultEditorFontSize, type MonacoAppTheme } from "../domain/settings";
 import {
   registerJavaScriptTypeScriptLanguageServerMonacoProviders,
   type JavaScriptTypeScriptWorkspaceEditApplicationContext,
@@ -80,6 +80,7 @@ interface ChangePreviewState {
 
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  editorFontSize?: number;
   isOpeningFile?: boolean;
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
@@ -137,6 +138,7 @@ interface EditorSurfaceProps {
 
 export function EditorSurface({
   activeDocument,
+  editorFontSize = defaultEditorFontSize,
   isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
   applyPhpLanguageServerWorkspaceEdit = async () => undefined,
@@ -1069,7 +1071,7 @@ export function EditorSurface({
           formatOnPaste,
           fontFamily:
             "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-          fontSize: 13,
+          fontSize: editorFontSize,
           glyphMargin: true,
           insertSpaces: true,
           lineHeight: 20,

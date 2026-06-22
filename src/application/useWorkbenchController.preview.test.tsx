@@ -40213,6 +40213,67 @@ final class InvoiceAdapter
     expect(readTextFile).not.toHaveBeenCalled();
   });
 
+  it("increases, decreases, and resets the editor font size and persists it", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontSize: 14,
+      },
+    });
+    await flushAsyncTurns();
+
+    const runCommand = async (id: string) => {
+      const command = getWorkbench().commands.find(
+        (candidate) => candidate.id === id,
+      );
+      await act(async () => {
+        await command?.run();
+        await Promise.resolve();
+      });
+    };
+
+    await runCommand("editor.fontZoomIn");
+    expect(getWorkbench().appSettings.editorFontSize).toBe(15);
+    expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ editorFontSize: 15 }),
+    );
+
+    await runCommand("editor.fontZoomOut");
+    await runCommand("editor.fontZoomOut");
+    expect(getWorkbench().appSettings.editorFontSize).toBe(13);
+
+    await runCommand("editor.fontZoomReset");
+    expect(getWorkbench().appSettings.editorFontSize).toBe(14);
+    expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ editorFontSize: 14 }),
+    );
+  });
+
+  it("clamps the editor font size to the supported range", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontSize: 39,
+      },
+    });
+    await flushAsyncTurns();
+
+    const runCommand = async (id: string) => {
+      const command = getWorkbench().commands.find(
+        (candidate) => candidate.id === id,
+      );
+      await act(async () => {
+        await command?.run();
+        await Promise.resolve();
+      });
+    };
+
+    await runCommand("editor.fontZoomIn");
+    await runCommand("editor.fontZoomIn");
+    await runCommand("editor.fontZoomIn");
+    expect(getWorkbench().appSettings.editorFontSize).toBe(40);
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
