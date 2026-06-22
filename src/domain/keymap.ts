@@ -134,6 +134,7 @@ export const keymapCommands = [
 ] as const;
 
 export type KeymapCommandId = (typeof keymapCommands)[number]["id"];
+export type KeymapPlatform = "linux" | "mac" | "other" | "windows";
 export type KeymapSettings = Record<KeymapCommandId, string>;
 
 export interface ParsedShortcut {
@@ -144,14 +145,72 @@ export interface ParsedShortcut {
   shift: boolean;
 }
 
-export function defaultKeymapSettings(): KeymapSettings {
+interface KeymapNavigator {
+  platform?: string;
+  userAgent?: string;
+  userAgentData?: {
+    platform?: string;
+  };
+}
+
+export function detectKeymapPlatform(
+  navigatorLike: KeymapNavigator | undefined =
+    typeof navigator === "undefined" ? undefined : navigator,
+): KeymapPlatform {
+  const platformText = [
+    navigatorLike?.userAgentData?.platform,
+    navigatorLike?.platform,
+    navigatorLike?.userAgent,
+    navigatorLike ? "" : processPlatform(),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (/(mac|iphone|ipad|ipod|darwin)/.test(platformText)) {
+    return "mac";
+  }
+
+  if (/(win|windows)/.test(platformText)) {
+    return "windows";
+  }
+
+  if (/(linux|x11)/.test(platformText)) {
+    return "linux";
+  }
+
+  return "other";
+}
+
+export function defaultKeymapSettings(
+  platform: KeymapPlatform = detectKeymapPlatform(),
+): KeymapSettings {
   return Object.fromEntries(
-    keymapCommands.map((command) => [command.id, command.defaultShortcut]),
+    keymapCommands.map((command) => [
+      command.id,
+      defaultShortcutForCommand(command.id, platform),
+    ]),
   ) as KeymapSettings;
 }
 
-export function normalizeKeymapSettings(value: unknown): KeymapSettings {
-  const defaults = defaultKeymapSettings();
+export function defaultShortcutForCommand(
+  commandId: KeymapCommandId,
+  platform: KeymapPlatform = detectKeymapPlatform(),
+): string {
+  const command = keymapCommands.find((candidate) => candidate.id === commandId);
+
+  if (!command) {
+    return "";
+  }
+
+  return shortcutForPlatform(command.defaultShortcut, platform);
+}
+
+export function normalizeKeymapSettings(
+  value: unknown,
+  platform: KeymapPlatform = detectKeymapPlatform(),
+): KeymapSettings {
+  const defaults = defaultKeymapSettings(platform);
 
   if (!isRecord(value)) {
     return defaults;
@@ -166,7 +225,11 @@ export function normalizeKeymapSettings(value: unknown): KeymapSettings {
       continue;
     }
 
-    keymap[command.id] = normalizeShortcutInput(shortcut);
+    const normalized = normalizeShortcutInput(shortcut);
+    keymap[command.id] =
+      platform === "mac" || normalized !== command.defaultShortcut
+        ? normalized
+        : defaultShortcutForCommand(command.id, platform);
   }
 
   return keymap;
@@ -175,13 +238,15 @@ export function normalizeKeymapSettings(value: unknown): KeymapSettings {
 export function shortcutForCommand(
   keymap: KeymapSettings,
   commandId: KeymapCommandId,
+  platform: KeymapPlatform = detectKeymapPlatform(),
 ): string {
-  return keymap[commandId] ?? defaultKeymapSettings()[commandId];
+  return keymap[commandId] ?? defaultKeymapSettings(platform)[commandId];
 }
 
 export function matchesShortcut(
   event: KeyboardEvent,
   shortcut: string,
+  platform: KeymapPlatform = detectKeymapPlatform(),
 ): boolean {
   const parsed = parseShortcut(shortcut);
 
@@ -189,9 +254,13 @@ export function matchesShortcut(
     return false;
   }
 
+  const metaMatchesPrimary = parsed.meta && platform !== "mac";
+  const expectedMeta = parsed.meta && !metaMatchesPrimary;
+  const expectedCtrl = parsed.ctrl || metaMatchesPrimary;
+
   return (
-    event.metaKey === parsed.meta &&
-    event.ctrlKey === parsed.ctrl &&
+    event.metaKey === expectedMeta &&
+    event.ctrlKey === expectedCtrl &&
     event.altKey === parsed.alt &&
     event.shiftKey === parsed.shift &&
     normalizeKeyboardEventKey(event.key) === parsed.key
@@ -279,10 +348,32 @@ function normalizeKeyboardEventKey(key: string): string {
   return key.toLowerCase();
 }
 
+function shortcutForPlatform(
+  shortcut: string,
+  platform: KeymapPlatform,
+): string {
+  const normalized = normalizeShortcutInput(shortcut);
+
+  if (platform === "mac") {
+    return normalized;
+  }
+
+  return normalized
+    .split("+")
+    .map((part) => (part === "Cmd" ? "Ctrl" : part))
+    .join("+");
+}
+
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function processPlatform(): string {
+  return (
+    (globalThis as { process?: { platform?: string } }).process?.platform ?? ""
+  );
 }

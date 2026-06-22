@@ -118,6 +118,7 @@ describe("EditorSurface", () => {
     editorSurfaceMocks.editor = null;
     editorSurfaceMocks.monaco = null;
     editorSurfaceMocks.props = null;
+    vi.restoreAllMocks();
   });
 
   it("configures responsive suggestions and parameter hints", async () => {
@@ -1283,6 +1284,8 @@ interface ParserFactory
   });
 
   it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue("Linux x86_64");
+
     const activeDocument: EditorDocument = {
       content: "export class UserService {}\n",
       language: "typescript",
@@ -1313,7 +1316,7 @@ interface ParserFactory
           languageServerDiagnosticsByPath={{}}
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
-          keymap={defaultKeymapSettings()}
+          keymap={defaultKeymapSettings("linux")}
           monacoTheme="calm-dark"
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
@@ -1338,8 +1341,28 @@ interface ParserFactory
     });
 
     const actions = editor.addAction.mock.calls.map(([action]) => action);
-    actions.find((action) => action.id === "mockor.goToDefinition")?.run();
-    actions.find((action) => action.id === "mockor.goToImplementation")?.run();
+    const goToDefinitionAction = actions.find(
+      (action) => action.id === "mockor.goToDefinition",
+    );
+    const goToImplementationAction = actions.find(
+      (action) => action.id === "mockor.goToImplementation",
+    );
+
+    expect(goToDefinitionAction).toEqual(
+      expect.objectContaining({
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB],
+      }),
+    );
+    expect(goToImplementationAction).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyB,
+        ],
+      }),
+    );
+
+    goToDefinitionAction?.run();
+    goToImplementationAction?.run();
 
     expect(onGoToDefinition).toHaveBeenCalledTimes(1);
     expect(onGoToImplementationAt).toHaveBeenCalledWith({
