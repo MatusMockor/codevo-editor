@@ -55,6 +55,13 @@ SPORNÉ (hlbšie overiť pred delegáciou):
 - Reálne PHP gapy (po odfiltrovaní false-positives): MorphTo/contextual-binding/@method-overloading UŽ existujú. Dodané: dynamic route($var) nav (F), model mutation chains (G). Zostáva: Blade (VEĽKÉ produktové — nový jazyk subsystém), Laravel-advanced (gate/policy, events, factories, validation, macros LARGE) — klesajúca hodnota.
 - [DONE] SLICE F: Navigate route helpers using assigned string literals — commit cb35c3e7.
 - [DONE] SLICE G: Preserve model type through visibility and append mutations — commit 0cbcd845.
+- [DONE] SLICE H: Navigate Laravel authorization abilities to Gate define — commit (Gate/Policy nav). Gate::allows/authorize/$user->can('ability') → Gate::define. Konzervatívne. Reuse route-nav mechanizmu. 1217 testov.
+- [DONE] SLICE I: Complete Laravel validation rule names — commit (validation completion). Built-in rule completion v validate()/Validator::make() rule kontexte. Konzervatívne. 1225 testov.
+- ZOSTÁVA (klesajúca hodnota / produktové, čaká na user smer): Blade template support (VEĽKÉ — nový jazyk subsystém, týždne), Laravel nav (events/listeners MED, middleware-general S, factory LOW), macro resolution (LARGE). Generic PHP/PHP8 plne cez phpactor.
+
+## STOP BOD (po 10 slices)
+Všetky rozumné HIGH/MED JS/TS aj PHP parity slices dodané + verifikované. Ďalší zmysluplný veľký krok = Blade (zásadné produktové rozhodnutie) → čaká na user smer. Zvyšok = LOW hodnota.
+Celkovo dodané: JS/TS B,A,A2,C,D,E + PHP F,G,H,I. Adversariálna verifikácia odfiltrovala ~15+ false-positives.
 
 ## Commity tejto fázy
 - ab364781 Guard server-initiated JS TS workspace edits during tab switches (B)
