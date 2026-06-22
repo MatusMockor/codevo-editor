@@ -688,6 +688,33 @@ class Album extends Model
         ),
       ).toBe("App\\Models\\Album");
     }
+    for (const methodName of [
+      "makeVisible",
+      "makeHidden",
+      "makeVisibleIf",
+      "makeHiddenIf",
+      "setVisible",
+      "setHidden",
+      "append",
+      "setAppends",
+    ]) {
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "App\\Models\\Album",
+          null,
+        ),
+      ).toBe("App\\Models\\Album");
+      expect(
+        phpLaravelMethodCallReturnTypeFromSource(
+          source,
+          methodName,
+          "Album",
+          `$album->${methodName}('content')`,
+        ),
+      ).toBe("App\\Models\\Album");
+    }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,

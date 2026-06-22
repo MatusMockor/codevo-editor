@@ -761,6 +761,7 @@ const laravelEloquentModelBuilderFactoryMethods = new Set([
 ]);
 
 const laravelEloquentModelFluentMethods = new Set([
+  "append",
   "load",
   "loadaggregate",
   "loadavg",
@@ -777,6 +778,13 @@ const laravelEloquentModelFluentMethods = new Set([
   "loadmorphmin",
   "loadmorphsum",
   "loadsum",
+  "makehidden",
+  "makehiddenif",
+  "makevisible",
+  "makevisibleif",
+  "setappends",
+  "sethidden",
+  "setvisible",
 ]);
 
 const laravelDatabaseQueryBuilderFactoryMethods = new Set(["table"]);
