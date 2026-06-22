@@ -59,9 +59,14 @@ SPORNÉ (hlbšie overiť pred delegáciou):
 - [DONE] SLICE I: Complete Laravel validation rule names — commit (validation completion). Built-in rule completion v validate()/Validator::make() rule kontexte. Konzervatívne. 1225 testov.
 - ZOSTÁVA (klesajúca hodnota / produktové, čaká na user smer): Blade template support (VEĽKÉ — nový jazyk subsystém, týždne), Laravel nav (events/listeners MED, middleware-general S, factory LOW), macro resolution (LARGE). Generic PHP/PHP8 plne cez phpactor.
 
-## STOP BOD (po 10 slices)
-Všetky rozumné HIGH/MED JS/TS aj PHP parity slices dodané + verifikované. Ďalší zmysluplný veľký krok = Blade (zásadné produktové rozhodnutie) → čaká na user smer. Zvyšok = LOW hodnota.
-Celkovo dodané: JS/TS B,A,A2,C,D,E + PHP F,G,H,I. Adversariálna verifikácia odfiltrovala ~15+ false-positives.
+## Ďalšie slices (user vybral 2,3,4)
+- [DONE] SLICE J: Navigate middleware aliases to Kernel registrations — commit a5f29b5e. ->middleware('alias')/throttle:60,1 → Kernel $middlewareAliases/$routeMiddleware. Auth guard nav zachované.
+- SKIP: events/listeners nav (LOW — ::class už cez phpactor, $listen legacy) a factory states (ZERO — moderné states sú metódy cez phpactor). Overené, neimplementované zámerne.
+- [DONE] SLICE K: Add format on paste editor setting — commit (format-on-paste). Monaco formatOnPaste option, default false.
+
+## STOP BOD (po 12 slices)
+Dodané: JS/TS B,A,A2,C,D,E,K + PHP F,G,H,I,J. Všetky cez TDD + nezávislý review + commit/push. Adversariálna verifikácia odfiltrovala ~15+ false-positives (vrátane celého pesimistického PHP auditu).
+Zostáva (väčšie/produktové, nech rozhodne user): Blade support (nový jazyk subsystém), Emmet (externá závislosť), breadcrumbs (M-L UI, Monaco nemá natívne — custom React nad document symbols), macro resolution (LARGE).
 
 ## Commity tejto fázy
 - ab364781 Guard server-initiated JS TS workspace edits during tab switches (B)
