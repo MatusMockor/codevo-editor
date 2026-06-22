@@ -33,6 +33,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
 import { TypeHierarchy } from "./components/TypeHierarchy";
+import { WindowChrome } from "./components/WindowChrome";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
 import {
   languageServerCapabilityLabels,
@@ -52,6 +53,10 @@ import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
 } from "./domain/settings";
+import type {
+  EditorMenuCommand,
+  EditorMenuCommandRunner,
+} from "./domain/editorMenuCommand";
 import { javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
 import type { IntelligenceMode } from "./domain/workspace";
 import { workspaceRootKeysEqual } from "./domain/workspaceRootKey";
@@ -171,6 +176,8 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(152);
   const [activeFileRevealSignal, setActiveFileRevealSignal] = useState(0);
+  const [editorMenuCommandRunner, setEditorMenuCommandRunner] =
+    useState<EditorMenuCommandRunner | null>(null);
   const fileStatusesByPathRef = useRef<Record<string, GitChangeStatus>>({});
   const workbench = useWorkbenchController(
     workspaceGateways,
@@ -473,6 +480,28 @@ function App() {
     },
     [bottomPanelHeight],
   );
+  const updateEditorMenuCommandRunner = useCallback(
+    (runner: EditorMenuCommandRunner | null) => {
+      setEditorMenuCommandRunner(() => runner);
+    },
+    [],
+  );
+  const runEditMenuCommand = useCallback(
+    (command: EditorMenuCommand) => {
+      editorMenuCommandRunner?.(command);
+    },
+    [editorMenuCommandRunner],
+  );
+  const editorMenuCommandContext = useMemo(() => {
+    if (editorMenuCommandRunner) {
+      return workbench.commandContext;
+    }
+
+    return {
+      ...workbench.commandContext,
+      hasActiveDocument: false,
+    };
+  }, [editorMenuCommandRunner, workbench.commandContext]);
 
   return (
     <main
@@ -480,6 +509,15 @@ function App() {
       data-theme={workbench.appSettings.theme}
       style={shellStyle}
     >
+      <WindowChrome
+        appTitle="Mockor Editor"
+        commandContext={editorMenuCommandContext}
+        commands={workbench.commands}
+        onCommandError={workbench.reportCommandError}
+        onEditCommand={runEditMenuCommand}
+        onQuitApplication={workbench.quitApplication}
+      />
+
       <aside className="activity-bar" aria-label="Primary navigation">
         <button
           onClick={workbench.openWorkspace}
@@ -764,6 +802,7 @@ function App() {
               }
             }}
             onCursorPositionChange={workbench.updateActiveEditorPosition}
+            onEditorMenuCommandRunnerChange={updateEditorMenuCommandRunner}
             onGoBack={() => void workbench.navigateBackward()}
             onGoForward={() => void workbench.navigateForwardInHistory()}
             onGoToDefinition={() => void workbench.goToDefinition()}

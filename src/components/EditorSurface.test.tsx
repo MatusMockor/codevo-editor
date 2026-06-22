@@ -251,6 +251,182 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("publishes a synchronous window chrome edit menu runner for Monaco commands", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editorMenuCommandRunnerChange = vi.fn();
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onEditorMenuCommandRunnerChange={editorMenuCommandRunnerChange}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const editor = editorSurfaceMocks.editor;
+    const runner = editorMenuCommandRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+
+    expect(runner).toEqual(expect.any(Function));
+
+    act(() => {
+      runner("undo");
+      runner("redo");
+      runner("cut");
+      runner("copy");
+      runner("paste");
+      runner("selectAll");
+    });
+
+    expect(editor?.focus).toHaveBeenCalledTimes(6);
+    expect(editor?.trigger).toHaveBeenNthCalledWith(
+      1,
+      "mockor.windowChrome",
+      "undo",
+      null,
+    );
+    expect(editor?.trigger).toHaveBeenNthCalledWith(
+      2,
+      "mockor.windowChrome",
+      "redo",
+      null,
+    );
+    expect(editor?.trigger).toHaveBeenNthCalledWith(
+      3,
+      "mockor.windowChrome",
+      "editor.action.clipboardCutAction",
+      null,
+    );
+    expect(editor?.trigger).toHaveBeenNthCalledWith(
+      4,
+      "mockor.windowChrome",
+      "editor.action.clipboardCopyAction",
+      null,
+    );
+    expect(editor?.trigger).toHaveBeenNthCalledWith(
+      5,
+      "mockor.windowChrome",
+      "editor.action.clipboardPasteAction",
+      null,
+    );
+    expect(editor?.trigger).toHaveBeenNthCalledWith(
+      6,
+      "mockor.windowChrome",
+      "editor.action.selectAll",
+      null,
+    );
+  });
+
+  it("clears the window chrome edit menu runner when no document is targetable", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editorMenuCommandRunnerChange = vi.fn();
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const renderSurface = (document: EditorDocument | null) => (
+      <EditorSurface
+        activeDocument={document}
+        changeHunks={[]}
+        editorRevealTarget={null}
+        flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+        languageServerDiagnosticsByPath={{}}
+        javaScriptTypeScriptValidationEnabled={true}
+        languageServerFeaturesGateway={languageServerFeaturesGateway()}
+        languageServerRuntimeStatus={null}
+        keymap={defaultKeymapSettings()}
+        monacoTheme="calm-dark"
+        onChange={vi.fn()}
+        onCloseActiveTab={vi.fn()}
+        onCursorPositionChange={vi.fn()}
+        onGoBack={vi.fn()}
+        onGoForward={vi.fn()}
+        onGoToDefinition={vi.fn()}
+        onGoToImplementationAt={vi.fn()}
+        onEditorFocused={vi.fn()}
+        onEditorMenuCommandRunnerChange={editorMenuCommandRunnerChange}
+        onLanguageServerError={vi.fn()}
+        onOpenClass={vi.fn()}
+        onOpenFile={vi.fn()}
+        onOpenFileStructure={vi.fn()}
+        onRevealTargetHandled={vi.fn()}
+        onRevertChangeHunk={vi.fn()}
+        phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+        providePhpMethodCompletions={vi.fn(async () => [])}
+        providePhpMethodSignature={vi.fn(async () => null)}
+      />
+    );
+
+    await act(async () => {
+      root.render(renderSurface(activeDocument));
+      await Promise.resolve();
+    });
+
+    expect(editorMenuCommandRunnerChange).toHaveBeenCalledWith(
+      expect.any(Function),
+    );
+
+    await act(async () => {
+      root.render(renderSurface(null));
+      await Promise.resolve();
+    });
+
+    expect(editorMenuCommandRunnerChange).toHaveBeenLastCalledWith(null);
+  });
+
   it("detects indentation from the file so manual formatting respects its style", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",

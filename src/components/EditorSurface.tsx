@@ -12,6 +12,10 @@ import {
   type EditorSelectionTextRange,
 } from "../domain/editorSelectionRanges";
 import type {
+  EditorMenuCommand,
+  EditorMenuCommandRunner,
+} from "../domain/editorMenuCommand";
+import type {
   EditorPosition,
   EditorRevealTarget,
   LanguageServerFeaturesGateway,
@@ -113,6 +117,7 @@ interface EditorSurfaceProps {
   workspaceRoot?: string | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
+  onEditorMenuCommandRunnerChange?(runner: EditorMenuCommandRunner | null): void;
   onGoBack(): void;
   onGoForward(): void;
   onGoToDefinition(): void;
@@ -163,6 +168,7 @@ export function EditorSurface({
   workspaceRoot = null,
   onCloseActiveTab,
   onCursorPositionChange,
+  onEditorMenuCommandRunnerChange,
   onGoBack,
   onGoForward,
   onGoToDefinition,
@@ -337,6 +343,39 @@ export function EditorSurface({
     phpIdeReadinessVersion,
     providePhpMethodCompletions,
   ]);
+
+  useEffect(() => {
+    if (!onEditorMenuCommandRunnerChange) {
+      return;
+    }
+
+    if (!editorApi || !activeDocument) {
+      onEditorMenuCommandRunnerChange(null);
+      return;
+    }
+
+    const targetPath = activeDocument.path;
+    const runner: EditorMenuCommandRunner = (command) => {
+      const model = editorApi.getModel();
+
+      if (!model || modelPath(model) !== targetPath) {
+        return;
+      }
+
+      editorApi.focus();
+      editorApi.trigger(
+        "mockor.windowChrome",
+        editorActionForMenuCommand(command),
+        null,
+      );
+    };
+
+    onEditorMenuCommandRunnerChange(runner);
+
+    return () => {
+      onEditorMenuCommandRunnerChange(null);
+    };
+  }, [activeDocument?.path, editorApi, onEditorMenuCommandRunnerChange]);
 
   useEffect(() => {
     if (!monacoApi) {
@@ -1138,6 +1177,23 @@ export function EditorSurface({
       ) : null}
     </div>
   );
+}
+
+function editorActionForMenuCommand(command: EditorMenuCommand): string {
+  switch (command) {
+    case "copy":
+      return "editor.action.clipboardCopyAction";
+    case "cut":
+      return "editor.action.clipboardCutAction";
+    case "paste":
+      return "editor.action.clipboardPasteAction";
+    case "redo":
+      return "redo";
+    case "selectAll":
+      return "editor.action.selectAll";
+    case "undo":
+      return "undo";
+  }
 }
 
 function expandEditorSelection(
