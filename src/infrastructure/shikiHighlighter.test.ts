@@ -88,6 +88,12 @@ describe("buildShikiTheme", () => {
   });
 });
 
+describe("APP_SHIKI_THEMES", () => {
+  it("includes the bundled VS Code Dark Plus theme", () => {
+    expect(APP_SHIKI_THEMES).toContain("dark-plus");
+  });
+});
+
 describe("createAppHighlighter", () => {
   it("loads all app themes and languages", async () => {
     const highlighter = await createAppHighlighter();
@@ -97,6 +103,11 @@ describe("createAppHighlighter", () => {
     for (const lang of SHIKI_LANGS) {
       expect(highlighter.getLoadedLanguages()).toContain(lang);
     }
+  });
+
+  it("loads the bundled Dark Plus theme", async () => {
+    const highlighter = await createAppHighlighter();
+    expect(highlighter.getLoadedThemes()).toContain("dark-plus");
   });
 });
 

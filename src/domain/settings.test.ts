@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  appThemeOptions,
   defaultAppSettings,
   defaultWorkspaceSessionState,
   defaultWorkspaceSettings,
@@ -319,6 +320,14 @@ describe("monacoThemeForAppTheme", () => {
     expect(monacoThemeForAppTheme("catppuccinMocha")).toBe("catppuccin-mocha");
     expect(monacoThemeForAppTheme("catppuccinLatte")).toBe("catppuccin-latte");
     expect(monacoThemeForAppTheme("oneLight")).toBe("one-light");
+    expect(monacoThemeForAppTheme("darkPlus")).toBe("dark-plus");
+  });
+});
+
+describe("appThemeOptions", () => {
+  it("offers the VS Code Dark Plus theme", () => {
+    const option = appThemeOptions.find((entry) => entry.id === "darkPlus");
+    expect(option).toEqual({ id: "darkPlus", label: "Dark Plus (VS Code)" });
   });
 });
 
@@ -341,5 +350,7 @@ describe("terminalThemeForAppTheme", () => {
     );
     expect(terminalThemeForAppTheme("system", true).foreground).toBe("#263240");
     expect(terminalThemeForAppTheme("system", false).foreground).toBe("#d8dee9");
+    expect(terminalThemeForAppTheme("darkPlus").background).toBe("#1e1e1e");
+    expect(terminalThemeForAppTheme("darkPlus").foreground).toBe("#cccccc");
   });
 });

@@ -17,6 +17,7 @@ export const appThemeOptions = [
   { id: "catppuccinMocha", label: "Catppuccin Mocha" },
   { id: "catppuccinLatte", label: "Catppuccin Latte" },
   { id: "oneLight", label: "One Light" },
+  { id: "darkPlus", label: "Dark Plus (VS Code)" },
 ] as const;
 
 export type AppTheme = (typeof appThemeOptions)[number]["id"];
@@ -29,7 +30,8 @@ export type MonacoAppTheme =
   | "dracula"
   | "catppuccin-mocha"
   | "catppuccin-latte"
-  | "one-light";
+  | "one-light"
+  | "dark-plus";
 export type BackgroundRuntimePolicy =
   | "keepAlive"
   | "singleActive"
@@ -394,6 +396,10 @@ export function monacoThemeForAppTheme(
     return "one-light";
   }
 
+  if (theme === "darkPlus") {
+    return "dark-plus";
+  }
+
   if (resolveAppTheme(theme, prefersLight) === "light") {
     return "calm-light";
   }
@@ -577,6 +583,31 @@ export function terminalThemeForAppTheme(
       selectionBackground: "#cfcfcf",
       white: "#4f525e",
       yellow: "#7a5800",
+    };
+  }
+
+  if (theme === "darkPlus") {
+    return {
+      background: "#1e1e1e",
+      black: "#000000",
+      blue: "#2472c8",
+      brightBlack: "#666666",
+      brightBlue: "#3b8eea",
+      brightCyan: "#29b8db",
+      brightGreen: "#23d18b",
+      brightMagenta: "#d670d6",
+      brightRed: "#f14c4c",
+      brightWhite: "#e5e5e5",
+      brightYellow: "#f5f543",
+      cursor: "#ffffff",
+      cyan: "#11a8cd",
+      foreground: "#cccccc",
+      green: "#0dbc79",
+      magenta: "#bc3fbc",
+      red: "#cd3131",
+      selectionBackground: "#264f78",
+      white: "#e5e5e5",
+      yellow: "#e5e510",
     };
   }
 

@@ -274,6 +274,7 @@ export const APP_SHIKI_THEMES = [
   "catppuccin-mocha",
   "catppuccin-latte",
   "material-deep-ocean",
+  "dark-plus",
   ...customPalettes.map((palette) => palette.name),
 ] as const;
 
@@ -291,6 +292,10 @@ export function createAppHighlighter(): Promise<HighlighterCore> {
       import("shiki/themes/one-dark-pro.mjs"),
       import("shiki/themes/catppuccin-mocha.mjs"),
       import("shiki/themes/catppuccin-latte.mjs"),
+      // VS Code "Dark+" — bundled by Shiki with 50+ rich TextMate scopes, so it
+      // renders the canonical VS Code colors (purple keywords, yellow functions,
+      // teal types, orange strings) without going through buildShikiTheme.
+      import("shiki/themes/dark-plus.mjs"),
       materialDeepOceanTheme(),
       ...customPalettes.map((palette) => buildShikiTheme(palette)),
     ],
