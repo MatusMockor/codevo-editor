@@ -944,7 +944,7 @@ export function EditorSurface({
         options={{
           autoIndent: "full",
           automaticLayout: true,
-          detectIndentation: false,
+          detectIndentation: true,
           domReadOnly: activeDocument.readOnly === true,
           fontFamily:
             "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",

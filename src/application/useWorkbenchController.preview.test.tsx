@@ -3525,6 +3525,116 @@ describe("useWorkbenchController preview tabs", () => {
       expect(getWorkbench().activeDocument?.content).toBe(formatted);
     });
 
+    it("formats with the active document's detected four-space indentation", async () => {
+      const path = "/workspace/src/App.ts";
+      const unformatted = [
+        "function run() {",
+        "    const value=1;",
+        "    return value;",
+        "}",
+        "",
+      ].join("\n");
+      const formatted = [
+        "function run() {",
+        "    const value = 1;",
+        "    return value;",
+        "}",
+        "",
+      ].join("\n");
+      const featuresGatewayInstance = featuresGateway();
+      vi.mocked(featuresGatewayInstance.formatting).mockResolvedValue([
+        wholeDocumentReplacement(unformatted, formatted),
+      ]);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptLanguageServerFeaturesGateway:
+          featuresGatewayInstance,
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        readTextFile: vi.fn(async () => "export const value=1;\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
+        "/workspace",
+        path,
+        expect.objectContaining({ insertSpaces: true, tabSize: 4 }),
+      );
+    });
+
+    it("falls back to two-space indentation when the document has none", async () => {
+      const path = "/workspace/src/App.ts";
+      const unformatted = "export const value=2;\n";
+      const formatted = "export const value = 2;\n";
+      const featuresGatewayInstance = featuresGateway();
+      vi.mocked(featuresGatewayInstance.formatting).mockResolvedValue([
+        wholeDocumentReplacement(unformatted, formatted),
+      ]);
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptLanguageServerFeaturesGateway:
+          featuresGatewayInstance,
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        readTextFile: vi.fn(async () => "export const value=1;\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(featuresGatewayInstance.formatting).toHaveBeenCalledWith(
+        "/workspace",
+        path,
+        expect.objectContaining({ insertSpaces: true, tabSize: 2 }),
+      );
+    });
+
     it("still saves the document when the formatting provider throws", async () => {
       const path = "/workspace/src/App.ts";
       const unformatted = "export const value=2;\n";

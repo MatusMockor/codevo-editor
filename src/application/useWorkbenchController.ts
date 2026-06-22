@@ -102,10 +102,10 @@ import {
   type LanguageServerWorkspaceSymbol,
 } from "../domain/languageServerFeatures";
 import {
-  defaultFormatOnSaveOptions,
   planFormatOnSave,
   type FormatOnSavePlan,
 } from "../domain/formatOnSave";
+import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
 import {
   matchesShortcut,
   shortcutForCommand,
@@ -6142,8 +6142,9 @@ export function useWorkbenchController(
       plan: FormatOnSavePlan,
       requestedRoot: string,
       path: string,
+      content: string,
     ): Promise<LanguageServerTextEdit[]> => {
-      const options = defaultFormatOnSaveOptions();
+      const options = formattingOptionsFromContent(content);
 
       if (plan.provider === "javaScriptTypeScript") {
         return javaScriptTypeScriptLanguageServerFeaturesGateway.formatting(
@@ -6226,6 +6227,7 @@ export function useWorkbenchController(
           plan,
           requestedRoot,
           document.path,
+          document.content,
         );
 
         if (!isRequestedSessionActive()) {

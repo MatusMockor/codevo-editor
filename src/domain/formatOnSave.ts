@@ -6,6 +6,7 @@ import {
   canUseLanguageServerFeature,
   type LanguageServerFormattingOptions,
 } from "./languageServerFeatures";
+import { defaultFormattingOptions } from "./formattingOptionsFromContent";
 import type { LanguageServerRuntimeStatus } from "./languageServerRuntime";
 import type { EditorDocument } from "./workspace";
 import { workspaceRootKeysEqual } from "./workspaceRootKey";
@@ -31,10 +32,7 @@ export interface FormatOnSavePlan {
 }
 
 export function defaultFormatOnSaveOptions(): LanguageServerFormattingOptions {
-  return {
-    insertSpaces: true,
-    tabSize: 2,
-  };
+  return defaultFormattingOptions();
 }
 
 export function planFormatOnSave(
