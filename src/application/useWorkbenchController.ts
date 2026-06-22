@@ -380,8 +380,13 @@ import {
 } from "../domain/phpNavigation";
 import {
   parsePhpClassStructure,
+  type PhpClassStructure,
   type PhpMethodMember,
+  type PhpPropertyMember,
 } from "../domain/phpClassStructure";
+import { renderAccessors } from "../domain/phpAccessorCodeGen";
+import { renderConstructor } from "../domain/phpConstructorCodeGen";
+import { organizePhpImports } from "../domain/phpImportsOrganizer";
 import {
   renderImplementMethodsStubs,
   renderUseImports,
@@ -14358,63 +14363,46 @@ export function useWorkbenchController(
         return [];
       }
 
-      if (phpSuperTypeReferences(source).length === 0) {
-        return [];
-      }
+      const structure = parsePhpClassStructure(source);
+      const actions: PhpCodeActionDescriptor[] = [];
 
-      const collected = await collectPhpAbstractMembersToImplement(
+      const implementMethodsAction = await phpImplementMethodsCodeAction(
         source,
+        structure,
+        collectPhpAbstractMembersToImplement,
         isRequestedRootActive,
       );
 
-      if (!isRequestedRootActive() || !collected) {
+      if (!isRequestedRootActive()) {
         return [];
       }
 
-      const ownStructure = parsePhpClassStructure(source);
-      const implementedNames = new Set(
-        ownStructure.methods.map((method) => method.name.toLowerCase()),
+      if (implementMethodsAction) {
+        actions.push(implementMethodsAction);
+      }
+
+      const accessorsAction = phpGenerateAccessorsCodeAction(source, structure);
+
+      if (accessorsAction) {
+        actions.push(accessorsAction);
+      }
+
+      const constructorAction = phpGenerateConstructorCodeAction(
+        source,
+        structure,
       );
-      const missingMembers = [...collected.abstractMembers.entries()]
-        .filter(
-          ([memberKey]) =>
-            !implementedNames.has(memberKey) &&
-            !collected.satisfiedNames.has(memberKey),
-        )
-        .map(([, entry]) => entry);
 
-      if (missingMembers.length === 0) {
-        return [];
+      if (constructorAction) {
+        actions.push(constructorAction);
       }
 
-      const insertionPoint = findClassBodyInsertionOffset(source);
+      const optimizeImportsAction = phpOptimizeImportsCodeAction(source);
 
-      if (!insertionPoint) {
-        return [];
+      if (optimizeImportsAction) {
+        actions.push(optimizeImportsAction);
       }
 
-      const stubs = renderImplementMethodsStubs(
-        missingMembers.map((entry) => entry.member),
-      );
-      const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
-      const trailingBlankLine = insertionPoint.needsTrailingBlankLine
-        ? "\n"
-        : "";
-      const insertionPosition = offsetToPosition(source, insertionPoint.offset);
-      const edits: PhpCodeActionTextEdit[] = [
-        {
-          range: zeroLengthPhpEditRange(insertionPosition),
-          text: `${leadingBlankLine}${stubs}\n${trailingBlankLine}`,
-        },
-      ];
-
-      const importEdit = phpImplementMethodsImportEdit(source, missingMembers);
-
-      if (importEdit) {
-        edits.unshift(importEdit);
-      }
-
-      return [{ edits, title: "Implement methods" }];
+      return actions;
     },
     [collectPhpAbstractMembersToImplement, workspaceRoot],
   );
@@ -22890,6 +22878,436 @@ const PHP_BUILTIN_TYPE_NAMES = new Set([
   "true",
   "void",
 ]);
+
+type PhpAbstractMembersCollector = (
+  source: string,
+  isRequestedRootActive: () => boolean,
+) => Promise<{
+  abstractMembers: Map<string, AbstractMemberToImplement>;
+  satisfiedNames: Set<string>;
+} | null>;
+
+/**
+ * Builds the "Implement methods" code action by resolving the abstract members
+ * inherited from supertypes (cross-file, hence async) that the current class
+ * has not yet implemented. Returns `null` when the class has no supertypes,
+ * when resolution is dropped for a stale workspace, or when nothing is missing.
+ */
+async function phpImplementMethodsCodeAction(
+  source: string,
+  structure: PhpClassStructure,
+  collect: PhpAbstractMembersCollector,
+  isRequestedRootActive: () => boolean,
+): Promise<PhpCodeActionDescriptor | null> {
+  if (phpSuperTypeReferences(source).length === 0) {
+    return null;
+  }
+
+  const collected = await collect(source, isRequestedRootActive);
+
+  if (!isRequestedRootActive() || !collected) {
+    return null;
+  }
+
+  const implementedNames = new Set(
+    structure.methods.map((method) => method.name.toLowerCase()),
+  );
+  const missingMembers = [...collected.abstractMembers.entries()]
+    .filter(
+      ([memberKey]) =>
+        !implementedNames.has(memberKey) &&
+        !collected.satisfiedNames.has(memberKey),
+    )
+    .map(([, entry]) => entry);
+
+  if (missingMembers.length === 0) {
+    return null;
+  }
+
+  const insertionPoint = findClassBodyInsertionOffset(source);
+
+  if (!insertionPoint) {
+    return null;
+  }
+
+  const stubs = renderImplementMethodsStubs(
+    missingMembers.map((entry) => entry.member),
+  );
+  const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
+  const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";
+  const insertionPosition = offsetToPosition(source, insertionPoint.offset);
+  const edits: PhpCodeActionTextEdit[] = [
+    {
+      range: zeroLengthPhpEditRange(insertionPosition),
+      text: `${leadingBlankLine}${stubs}\n${trailingBlankLine}`,
+    },
+  ];
+
+  const importEdit = phpImplementMethodsImportEdit(source, missingMembers);
+
+  if (importEdit) {
+    edits.unshift(importEdit);
+  }
+
+  return { edits, title: "Implement methods" };
+}
+
+/**
+ * Offers "Generate getters and setters" for instance properties that are still
+ * missing an accessor. Conservative: a property is skipped when the class
+ * already declares any matching `getX` / `isX` (getter) AND `setX` (setter),
+ * and the whole action is suppressed when nothing is missing.
+ */
+function phpGenerateAccessorsCodeAction(
+  source: string,
+  structure: PhpClassStructure,
+): PhpCodeActionDescriptor | null {
+  const instanceProperties = structure.properties.filter(
+    (property) => !property.isStatic,
+  );
+
+  if (instanceProperties.length === 0) {
+    return null;
+  }
+
+  const methodNames = new Set(
+    structure.methods.map((method) => method.name.toLowerCase()),
+  );
+  const missingProperties = instanceProperties.filter(
+    (property) => !phpPropertyHasAllAccessors(property, methodNames),
+  );
+
+  if (missingProperties.length === 0) {
+    return null;
+  }
+
+  return phpClassBodyInsertionAction(
+    source,
+    renderAccessors(missingProperties, { mode: "both" }),
+    "Generate getters and setters",
+  );
+}
+
+function phpPropertyHasAllAccessors(
+  property: PhpPropertyMember,
+  methodNames: ReadonlySet<string>,
+): boolean {
+  const pascalName = phpPascalCasePropertyName(property.name);
+  const hasGetter =
+    methodNames.has(`get${pascalName}`.toLowerCase()) ||
+    methodNames.has(`is${pascalName}`.toLowerCase());
+
+  if (!hasGetter) {
+    return false;
+  }
+
+  if (property.isReadonly) {
+    return true;
+  }
+
+  return methodNames.has(`set${pascalName}`.toLowerCase());
+}
+
+function phpPascalCasePropertyName(name: string): string {
+  return name
+    .split(/[_\s-]+/)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join("");
+}
+
+/**
+ * Offers "Generate constructor" when the class has instance properties and no
+ * existing `__construct`.
+ */
+function phpGenerateConstructorCodeAction(
+  source: string,
+  structure: PhpClassStructure,
+): PhpCodeActionDescriptor | null {
+  const instanceProperties = structure.properties.filter(
+    (property) => !property.isStatic,
+  );
+
+  if (instanceProperties.length === 0) {
+    return null;
+  }
+
+  const hasConstructor = structure.methods.some(
+    (method) => method.name.toLowerCase() === "__construct",
+  );
+
+  if (hasConstructor) {
+    return null;
+  }
+
+  return phpClassBodyInsertionAction(
+    source,
+    renderConstructor(instanceProperties),
+    "Generate constructor",
+  );
+}
+
+/**
+ * Wraps a rendered class-body block in a zero-length insertion edit at the end
+ * of the class body, matching the spacing convention of "Implement methods".
+ */
+function phpClassBodyInsertionAction(
+  source: string,
+  block: string,
+  title: string,
+): PhpCodeActionDescriptor | null {
+  const insertionPoint = findClassBodyInsertionOffset(source);
+
+  if (!insertionPoint) {
+    return null;
+  }
+
+  const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
+  const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";
+  const insertionPosition = offsetToPosition(source, insertionPoint.offset);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(insertionPosition),
+        text: `${leadingBlankLine}${block}\n${trailingBlankLine}`,
+      },
+    ],
+    title,
+  };
+}
+
+/**
+ * Offers "Optimize imports" when `organizePhpImports` reports a change (unused
+ * imports removed and/or reordering). The edit replaces the exact span of the
+ * existing top-level `use` block with the organized block. The action is
+ * skipped when that span cannot be located confidently.
+ */
+function phpOptimizeImportsCodeAction(
+  source: string,
+): PhpCodeActionDescriptor | null {
+  const organized = organizePhpImports(source);
+
+  if (!organized || !organized.changed) {
+    return null;
+  }
+
+  const useBlockRange = phpTopLevelUseBlockRange(source);
+
+  if (!useBlockRange) {
+    return null;
+  }
+
+  const startPosition = offsetToPosition(source, useBlockRange.start);
+  const endPosition = offsetToPosition(source, useBlockRange.end);
+
+  return {
+    edits: [
+      {
+        range: {
+          endColumn: endPosition.column + 1,
+          endLineNumber: endPosition.line + 1,
+          startColumn: startPosition.column + 1,
+          startLineNumber: startPosition.line + 1,
+        },
+        text: organized.organizedUseBlock,
+      },
+    ],
+    title: "Optimize imports",
+  };
+}
+
+/**
+ * Conservatively locates the contiguous span covering the existing top-level
+ * `use` statements: from the start of the first `use` line to the end of the
+ * last `use` statement (before the first type body opens). Returns `null` when
+ * no top-level `use` statement is found.
+ */
+function phpTopLevelUseBlockRange(
+  source: string,
+): { end: number; start: number } | null {
+  const masked = phpMaskStringsAndComments(source);
+  const bodyLimit = phpFirstTypeBodyOffset(masked);
+  const spans: Array<{ end: number; start: number }> = [];
+
+  for (const match of masked.matchAll(/(^|\n)([ \t]*)use\b[^;]*;/g)) {
+    const lineStart = (match.index ?? 0) + match[1].length;
+
+    if (lineStart >= bodyLimit) {
+      break;
+    }
+
+    if (!phpUseStatementIsTopLevel(masked, lineStart)) {
+      continue;
+    }
+
+    spans.push({
+      end: lineStart + (match[0].length - match[1].length),
+      start: lineStart,
+    });
+  }
+
+  if (spans.length === 0) {
+    return null;
+  }
+
+  if (!phpUseSpansAreContiguous(source, spans)) {
+    return null;
+  }
+
+  return { end: spans[spans.length - 1].end, start: spans[0].start };
+}
+
+/**
+ * Guards the optimize-imports replacement: only treat the span from the first
+ * to the last `use` as safe to overwrite when the gaps BETWEEN the statements
+ * (in the ORIGINAL source) hold nothing but whitespace. This protects trailing
+ * comments and any stray top-level content from being silently deleted; when a
+ * gap is non-empty the action is suppressed (conservative no-op).
+ */
+function phpUseSpansAreContiguous(
+  source: string,
+  spans: ReadonlyArray<{ end: number; start: number }>,
+): boolean {
+  for (let index = 1; index < spans.length; index += 1) {
+    const gap = source.slice(spans[index - 1].end, spans[index].start);
+
+    if (gap.trim().length > 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function phpUseStatementIsTopLevel(masked: string, offset: number): boolean {
+  let braceDepth = 0;
+  let parenDepth = 0;
+
+  for (let index = 0; index < offset && index < masked.length; index += 1) {
+    const character = masked[index];
+
+    if (character === "{") {
+      braceDepth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      continue;
+    }
+
+    if (character === "(") {
+      parenDepth += 1;
+      continue;
+    }
+
+    if (character === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+    }
+  }
+
+  return braceDepth === 0 && parenDepth === 0;
+}
+
+function phpFirstTypeBodyOffset(masked: string): number {
+  const match =
+    /(?<![:\\$>A-Za-z0-9_])(?:abstract\s+|final\s+|readonly\s+)*(?:class|interface|trait|enum)\s+[A-Za-z_][A-Za-z0-9_]*/.exec(
+      masked,
+    );
+
+  if (!match) {
+    return masked.length;
+  }
+
+  const bodyStart = masked.indexOf("{", match.index + match[0].length);
+
+  if (bodyStart < 0) {
+    return masked.length;
+  }
+
+  return bodyStart + 1;
+}
+
+function phpMaskStringsAndComments(source: string): string {
+  let output = "";
+  let quote: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] || "";
+    const next = source[index + 1] || "";
+
+    if (inLineComment) {
+      output += character === "\n" ? "\n" : " ";
+
+      if (character === "\n") {
+        inLineComment = false;
+      }
+
+      continue;
+    }
+
+    if (inBlockComment) {
+      output += character === "\n" ? "\n" : " ";
+
+      if (character === "*" && next === "/") {
+        output += " ";
+        index += 1;
+        inBlockComment = false;
+      }
+
+      continue;
+    }
+
+    if (quote) {
+      output += character === "\n" ? "\n" : " ";
+
+      if (character === "\\" && quote !== "`") {
+        output += next === "\n" ? "\n" : " ";
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "/" && next === "/") {
+      output += "  ";
+      index += 1;
+      inLineComment = true;
+      continue;
+    }
+
+    if (character === "#" && next !== "[" && source[index - 1] !== "$") {
+      output += " ";
+      inLineComment = true;
+      continue;
+    }
+
+    if (character === "/" && next === "*") {
+      output += "  ";
+      index += 1;
+      inBlockComment = true;
+      continue;
+    }
+
+    if (character === "'" || character === '"' || character === "`") {
+      output += " ";
+      quote = character;
+      continue;
+    }
+
+    output += character;
+  }
+
+  return output;
+}
 
 function zeroLengthPhpEditRange(position: {
   column: number;

@@ -40549,6 +40549,425 @@ interface GreeterContract
     await expect(actionsPromise).resolves.toEqual([]);
   });
 
+  it("offers a generate getters and setters action for properties without accessors", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    private int $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const accessorAction = actions.find(
+      (action) => action.title === "Generate getters and setters",
+    );
+    expect(accessorAction).toBeDefined();
+    const accessorText = accessorAction?.edits[0]?.text ?? "";
+    expect(accessorText).toContain("public function getName(): string");
+    expect(accessorText).toContain(
+      "public function setName(string $name): void",
+    );
+    expect(accessorText).toContain("public function getBalance(): int");
+  });
+
+  it("offers no generate getters and setters action when every property has accessors", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    public function getName(): string
+    {
+        return $this->name;
+    }
+
+    public function setName(string $name): void
+    {
+        $this->name = $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(
+      actions.some((action) => action.title === "Generate getters and setters"),
+    ).toBe(false);
+  });
+
+  it("offers a generate constructor action for a class with properties and no constructor", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    private int $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const constructorAction = actions.find(
+      (action) => action.title === "Generate constructor",
+    );
+    expect(constructorAction).toBeDefined();
+    const constructorText = constructorAction?.edits[0]?.text ?? "";
+    expect(constructorText).toContain(
+      "public function __construct(string $name, int $balance)",
+    );
+    expect(constructorText).toContain("$this->name = $name;");
+    expect(constructorText).toContain("$this->balance = $balance;");
+  });
+
+  it("offers no generate constructor action when the class already has a constructor", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    public function __construct(string $name)
+    {
+        $this->name = $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(
+      actions.some((action) => action.title === "Generate constructor"),
+    ).toBe(false);
+  });
+
+  it("offers an optimize imports action when an import is unused", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+use App\\Support\\Unused;
+use App\\Support\\Money;
+
+class Account
+{
+    private Money $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const optimizeAction = actions.find(
+      (action) => action.title === "Optimize imports",
+    );
+    expect(optimizeAction).toBeDefined();
+    const optimizeText = optimizeAction?.edits[0]?.text ?? "";
+    expect(optimizeText).toContain("use App\\Support\\Money;");
+    expect(optimizeText).not.toContain("Unused");
+  });
+
+  it("offers no optimize imports action when imports are already clean", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+use App\\Support\\Money;
+
+class Account
+{
+    private Money $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions.some((action) => action.title === "Optimize imports")).toBe(
+      false,
+    );
+  });
+
+  it("does not offer optimize imports when a comment sits between use statements", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+use App\\Support\\Unused;
+// keep this note about Money
+use App\\Support\\Money;
+
+class Account
+{
+    private Money $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions.some((action) => action.title === "Optimize imports")).toBe(
+      false,
+    );
+  });
+
+  it("replaces the use block with an empty string when every import is unused", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+use App\\Support\\Unused;
+
+class Account
+{
+    private string $name;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const optimizeAction = actions.find(
+      (action) => action.title === "Optimize imports",
+    );
+    expect(optimizeAction).toBeDefined();
+    const optimizeEdit = optimizeAction?.edits[0];
+    expect(optimizeEdit?.text).toBe("");
+    expect(optimizeEdit?.range.startLineNumber).toBe(5);
+    expect(optimizeEdit?.range.endLineNumber).toBe(5);
+  });
+
+  it("drops stale generate-constructor code actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Greeter.php";
+    const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+    private string $name;
+}
+`;
+    const interfaceRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === interfacePath) {
+        return interfaceRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(interfacePath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    interfaceRead.resolve(`<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(string $name): string;
+}
+`);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
