@@ -10,6 +10,8 @@
     "check": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
+    "debug": "tauri dev",
+    "debug:build": "tauri build --debug",
     "test": "vitest run"
   },
   "dependencies": {
