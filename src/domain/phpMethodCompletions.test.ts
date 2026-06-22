@@ -643,6 +643,46 @@ class Album extends Model
         "Album::findOrNew(1)",
       ),
     ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "findOrFail",
+        "Album",
+        "Album::findOrFail(1)",
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "findOrFail",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        null,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "firstOrFail",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        null,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "sole",
+        "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
+        null,
+      ),
+    ).toBe("App\\Models\\Album");
+    expect(
+      phpLaravelMethodCallReturnTypeFromSource(
+        source,
+        "sole",
+        "Album",
+        "Album::sole()",
+      ),
+    ).toBe("App\\Models\\Album");
     for (const methodName of [
       "createOrFirst",
       "createOrRestore",
