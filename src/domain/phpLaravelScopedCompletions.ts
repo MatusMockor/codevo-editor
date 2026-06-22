@@ -13,6 +13,7 @@ import { phpLaravelQueueConnectionReferenceContextAt } from "./phpLaravelQueue";
 import { phpLaravelRedisConnectionReferenceContextAt } from "./phpLaravelRedis";
 import { phpLaravelStorageDiskReferenceContextAt } from "./phpLaravelStorage";
 import { phpLaravelTranslationReferenceContextAt } from "./phpLaravelTranslations";
+import { phpLaravelValidationRuleStringContextAt } from "./phpLaravelValidation";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 import { phpLaravelRelationStringCompletionContextAt } from "./phpNavigation";
 
@@ -36,6 +37,7 @@ export function phpLaravelScopedStringCompletionContextAt(
       phpLaravelPasswordBrokerReferenceContextAt(source, position) ||
       phpLaravelLogChannelReferenceContextAt(source, position) ||
       phpLaravelStorageDiskReferenceContextAt(source, position) ||
+      phpLaravelValidationRuleStringContextAt(source, position) ||
       phpLaravelViewReferenceContextAt(source, position),
   );
 }

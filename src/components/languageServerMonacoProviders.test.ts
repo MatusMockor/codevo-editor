@@ -1502,6 +1502,47 @@ function show($user): void
     expect(providePhpMethodCompletions).toHaveBeenCalled();
   });
 
+  it("does not offer local variables as a fallback inside Laravel validation rule strings", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => []);
+    const source = `<?php
+function store($request): void
+{
+    $request->validate([
+        'email' => 're',
+    ]);
+}
+`;
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: source,
+      },
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({
+          content: source,
+          lineContent: "        'email' => 're',",
+          word: {
+            endColumn: 22,
+            startColumn: 20,
+          },
+        }),
+        {
+          column: 22,
+          lineNumber: 5,
+        },
+      ),
+    ).resolves.toEqual({
+      suggestions: [],
+    });
+    expect(providePhpMethodCompletions).toHaveBeenCalled();
+  });
+
   it("filters PHP LSP locals and keywords inside member access completions", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({

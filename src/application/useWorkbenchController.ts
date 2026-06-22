@@ -316,6 +316,10 @@ import {
   phpLaravelViewReferenceContextAt,
   type PhpLaravelViewTarget,
 } from "../domain/phpLaravelViews";
+import {
+  phpLaravelValidationRuleCompletions,
+  phpLaravelValidationRuleStringContextAt,
+} from "../domain/phpLaravelValidation";
 import { firstPhpDocTypeToken } from "../domain/phpDocTemplates";
 import {
   phpAssignmentExpressionForVariableBefore,
@@ -13580,6 +13584,24 @@ export function useWorkbenchController(
             ),
             kind: "view",
             name: view.name,
+            parameters: "",
+            returnType: null,
+          }));
+      }
+
+      const validationRuleContext = phpLaravelValidationRuleStringContextAt(
+        source,
+        position,
+      );
+
+      if (isLaravelFrameworkActive && validationRuleContext) {
+        return phpLaravelValidationRuleCompletions(validationRuleContext.prefix)
+          .slice(0, 80)
+          .map((rule) => ({
+            declaringClassName: "Laravel validation rule",
+            insertText: rule.insertText,
+            kind: "config",
+            name: rule.name,
             parameters: "",
             returnType: null,
           }));
