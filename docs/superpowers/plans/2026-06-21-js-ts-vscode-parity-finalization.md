@@ -64,7 +64,12 @@ SPORNÉ (hlbšie overiť pred delegáciou):
 - SKIP: events/listeners nav (LOW — ::class už cez phpactor, $listen legacy) a factory states (ZERO — moderné states sú metódy cez phpactor). Overené, neimplementované zámerne.
 - [DONE] SLICE K: Add format on paste editor setting — commit (format-on-paste). Monaco formatOnPaste option, default false.
 
-## STOP BOD (po 12 slices)
+## JS/TS nice-to-have dokončené (user request)
+- [DONE] SLICE K: format on paste — commit 8a670e4c.
+- [DONE] SLICE L: breadcrumbs navigačný bar — commit de4a2428. Domain breadcrumbs.ts + Breadcrumbs.tsx + EditorSurface integrácia, per-document izolácia.
+- [DONE] SLICE M: Emmet (emmet-monaco-es, tokenizer:'standard' kvôli Shiki) — commit 0de13d54. Idempotentná registrácia (WeakMap, leak fix po review). CAVEAT: runtime funkčnosť so Shiki NEOVERENÁ (browser navigácia zamietnutá, Tauri desktop neautomatizovateľný). Manuálne overiť: app → .tsx → `div.container`+Tab → `<div className="container"></div>`. No-regression ak nefunguje.
+
+## STOP BOD (po 14 slices)
 Dodané: JS/TS B,A,A2,C,D,E,K + PHP F,G,H,I,J. Všetky cez TDD + nezávislý review + commit/push. Adversariálna verifikácia odfiltrovala ~15+ false-positives (vrátane celého pesimistického PHP auditu).
 Zostáva (väčšie/produktové, nech rozhodne user): Blade support (nový jazyk subsystém), Emmet (externá závislosť), breadcrumbs (M-L UI, Monaco nemá natívne — custom React nad document symbols), macro resolution (LARGE).
 
