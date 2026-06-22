@@ -32,6 +32,7 @@ export interface ThemePalette {
   keywordItalic?: boolean;
   namespace: string;
   regexp: string;
+  decorator: string;
 }
 
 export const calmDark: ThemePalette = {
@@ -54,19 +55,20 @@ export const calmDark: ThemePalette = {
   diffInserted: "#8fbcae22",
   diffRemoved: "#d98b8b22",
   keyword: "#b48ead",
-  func: "#8aa9c9",
-  type: "#d8b878",
+  func: "#dcc188",
+  type: "#7fb9b0",
   string: "#8fbcae",
-  number: "#d8b878",
+  number: "#d29a6e",
   variable: "#c2c8d2",
-  parameter: "#c2c8d2",
-  property: "#c2c8d2",
-  constant: "#d8b878",
+  parameter: "#c9b39a",
+  property: "#a7c0d8",
+  constant: "#d2a96e",
   operator: "#8b94a3",
-  comment: "#5e6573",
+  comment: "#6e7787",
   commentItalic: true,
-  namespace: "#d8b878",
+  namespace: "#7fb9b0",
   regexp: "#8fbcae",
+  decorator: "#cfa6c8",
 };
 
 export const calmLight: ThemePalette = {
@@ -89,19 +91,20 @@ export const calmLight: ThemePalette = {
   diffInserted: "#2a7d6f22",
   diffRemoved: "#b0565622",
   keyword: "#8a5c8f",
-  func: "#3d7c8a",
-  type: "#9a7016",
+  func: "#946a14",
+  type: "#2f7d86",
   string: "#2a7d6f",
-  number: "#9a7016",
+  number: "#b05a2a",
   variable: "#3a4654",
-  parameter: "#3a4654",
-  property: "#3a4654",
-  constant: "#9a7016",
+  parameter: "#6a5a3a",
+  property: "#2f5f78",
+  constant: "#b05a2a",
   operator: "#5d6b7a",
-  comment: "#74808f",
+  comment: "#6b7787",
   commentItalic: true,
-  namespace: "#9a7016",
+  namespace: "#2f7d86",
   regexp: "#2a7d6f",
+  decorator: "#8a5c8f",
 };
 
 export const ayuMirage: ThemePalette = {
@@ -137,6 +140,7 @@ export const ayuMirage: ThemePalette = {
   commentItalic: true,
   namespace: "#73d0ff",
   regexp: "#95e6cb",
+  decorator: "#ffad66",
 };
 
 export const materialDeepOcean: ThemePalette = {
@@ -173,6 +177,7 @@ export const materialDeepOcean: ThemePalette = {
   keywordItalic: true,
   namespace: "#eeffff",
   regexp: "#89ddff",
+  decorator: "#c792ea",
 };
 
 export const oneLight: ThemePalette = {
@@ -208,6 +213,7 @@ export const oneLight: ThemePalette = {
   commentItalic: true,
   namespace: "#c18401",
   regexp: "#e45649",
+  decorator: "#a626a4",
 };
 
 // material-deep-ocean is built bespoke (matches the PhpStorm Material .icls

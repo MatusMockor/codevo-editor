@@ -1057,6 +1057,7 @@ export function EditorSurface({
           quickSuggestionsDelay: 10,
           readOnly: activeDocument.readOnly === true,
           scrollBeyondLastLine: false,
+          "semanticHighlighting.enabled": true,
           smoothScrolling: true,
           suggestOnTriggerCharacters: true,
           tabSize: 2,

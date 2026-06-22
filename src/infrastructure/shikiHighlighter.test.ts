@@ -6,7 +6,7 @@ import {
   configureShikiLanguageFeatures,
   createAppHighlighter,
 } from "./shikiHighlighter";
-import { ayuMirage } from "../components/themePalettes";
+import { ayuMirage, calmDark } from "../components/themePalettes";
 
 describe("buildShikiTheme", () => {
   it("maps palette to a TextMate theme", () => {
@@ -20,6 +20,71 @@ describe("buildShikiTheme", () => {
     expect(scopeColor("keyword")).toBe("#ffad66");
     expect(scopeColor("variable.parameter")).toBe("#dfbfff");
     expect(scopeColor("constant.numeric")).toBe("#ffcc66");
+  });
+
+  it("covers the common TextMate scopes that previously fell back to variable", () => {
+    const theme = buildShikiTheme(calmDark);
+    const hasScope = (scope: string) =>
+      theme.tokenColors.some((t) => t.scope.includes(scope));
+    for (const scope of [
+      "support.function",
+      "support.type",
+      "support.class",
+      "storage.type",
+      "storage.modifier",
+      "entity.name.class",
+      "variable.other.constant",
+      "entity.name.decorator",
+      "meta.decorator",
+    ]) {
+      expect(hasScope(scope)).toBe(true);
+    }
+  });
+
+  it("enables semantic highlighting on the generated theme", () => {
+    const theme = buildShikiTheme(calmDark);
+    expect(theme.semanticHighlighting).toBe(true);
+  });
+
+  it("maps semantic token types to distinct palette colors", () => {
+    const theme = buildShikiTheme(calmDark);
+    expect(theme.semanticTokenColors).toBeDefined();
+    const colors = theme.semanticTokenColors as Record<
+      string,
+      string | { foreground?: string }
+    >;
+    const foreground = (key: string) => {
+      const value = colors[key];
+      return typeof value === "string" ? value : value?.foreground;
+    };
+
+    expect(foreground("function")).toBe(calmDark.func);
+    expect(foreground("method")).toBe(calmDark.func);
+    expect(foreground("parameter")).toBe(calmDark.parameter);
+    expect(foreground("property")).toBe(calmDark.property);
+    expect(foreground("variable")).toBe(calmDark.variable);
+    expect(foreground("type")).toBe(calmDark.type);
+    expect(foreground("class")).toBe(calmDark.type);
+    expect(foreground("interface")).toBe(calmDark.type);
+    expect(foreground("enum")).toBe(calmDark.type);
+    expect(foreground("namespace")).toBe(calmDark.namespace);
+    expect(foreground("macro")).toBe(calmDark.decorator);
+    expect(foreground("decorator")).toBe(calmDark.decorator);
+
+    // Functions and parameters must be visually distinct from plain variables
+    // (this is the core "flat highlighting" problem the mapping solves).
+    expect(foreground("function")).not.toBe(calmDark.variable);
+    expect(foreground("parameter")).not.toBe(calmDark.variable);
+    expect(foreground("type")).not.toBe(calmDark.variable);
+  });
+
+  it("emits semantic token rules into tokenColors so Monaco can match them", () => {
+    const theme = buildShikiTheme(calmDark);
+    const scopeColor = (scope: string) =>
+      theme.tokenColors.find((t) => t.scope.includes(scope))?.settings.foreground;
+    expect(scopeColor("function")).toBe(calmDark.func);
+    expect(scopeColor("parameter")).toBe(calmDark.parameter);
+    expect(scopeColor("type")).toBe(calmDark.type);
   });
 });
 

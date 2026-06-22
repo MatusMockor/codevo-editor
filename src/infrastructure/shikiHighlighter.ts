@@ -10,11 +10,61 @@ import {
 export interface ShikiThemeRegistration {
   name: string;
   type: "dark" | "light";
+  /**
+   * Opt-in flag consumed by VS Code-compatible theme readers. Monaco's
+   * standalone theme service ignores it (it tracks semantic highlighting via
+   * the editor option), so we keep it for correctness / round-tripping.
+   */
+  semanticHighlighting: boolean;
+  /**
+   * VS Code-style semantic token -> color map. Monaco's standalone theme
+   * service does NOT read this field (it resolves semantic tokens through the
+   * `rules`/`tokenColors` array via `_match([type, ...modifiers].join("."))`),
+   * so the same colors are also emitted into `tokenColors`. This field is kept
+   * so the generated theme stays a faithful VS Code theme object.
+   */
+  semanticTokenColors: Record<string, string>;
   colors: Record<string, string>;
   tokenColors: Array<{
     scope: string[];
     settings: { foreground?: string; fontStyle?: string };
   }>;
+}
+
+/**
+ * Maps the Language Server semantic token *types* (the legend used by the
+ * JS/TS Monaco providers) to palette colors. Functions/methods, parameters,
+ * types and properties get their own colors so identifiers stop collapsing
+ * into a single flat "variable" color (the VS Code Dark+ behaviour).
+ */
+function buildSemanticTokenColors(p: ThemePalette): Record<string, string> {
+  return {
+    function: p.func,
+    method: p.func,
+    "function.defaultLibrary": p.func,
+    parameter: p.parameter,
+    property: p.property,
+    "property.declaration": p.property,
+    variable: p.variable,
+    "variable.readonly": p.constant,
+    "variable.defaultLibrary": p.constant,
+    type: p.type,
+    class: p.type,
+    interface: p.type,
+    enum: p.type,
+    enumMember: p.constant,
+    struct: p.type,
+    typeParameter: p.type,
+    namespace: p.namespace,
+    macro: p.decorator,
+    decorator: p.decorator,
+    keyword: p.keyword,
+    string: p.string,
+    number: p.number,
+    regexp: p.regexp,
+    operator: p.operator,
+    comment: p.comment,
+  };
 }
 
 export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
@@ -23,9 +73,23 @@ export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
     settings: italic ? { foreground, fontStyle: "italic" } : { foreground },
   });
 
+  const semanticTokenColors = buildSemanticTokenColors(p);
+
+  // Monaco's standalone theme service resolves semantic tokens through the
+  // same `rules` array that TextMate scopes use (it calls
+  // `_match([tokenType, ...modifiers].join("."))`). Emit the semantic map as
+  // token rules so semantic highlighting actually picks up colors, since
+  // `@shikijs/monaco` drops the dedicated `semanticTokenColors` field when it
+  // converts the theme into Monaco's `IStandaloneThemeData`.
+  const semanticTokenRules = Object.entries(semanticTokenColors).map(
+    ([token, foreground]) => tok([token], foreground),
+  );
+
   return {
     name: p.name,
     type: p.base === "vs" ? "light" : "dark",
+    semanticHighlighting: true,
+    semanticTokenColors,
     colors: {
       "editor.background": p.bg,
       "editor.foreground": p.fg,
@@ -53,8 +117,16 @@ export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
       "diffEditor.removedTextBackground": p.diffRemoved,
     },
     tokenColors: [
-      tok(["comment", "punctuation.definition.comment"], p.comment, p.commentItalic),
-      tok(["string", "string.quoted"], p.string),
+      tok(
+        [
+          "comment",
+          "punctuation.definition.comment",
+          "comment.block.documentation",
+        ],
+        p.comment,
+        p.commentItalic,
+      ),
+      tok(["string", "string.quoted", "string.template"], p.string),
       tok(["constant.character.escape", "string.regexp"], p.regexp),
       tok(
         [
@@ -68,17 +140,72 @@ export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
         p.keywordItalic ?? false,
       ),
       tok(["constant.numeric"], p.number),
-      tok(["constant.language", "constant.other", "support.constant"], p.constant),
-      tok(["entity.name.function", "support.function", "meta.function-call"], p.func),
-      tok(["entity.name.type", "entity.name.class", "support.class"], p.type),
-      tok(["variable", "variable.other"], p.variable),
-      tok(["variable.parameter"], p.parameter),
       tok(
-        ["variable.other.property", "variable.other.object.property", "meta.property"],
+        [
+          "constant.language",
+          "constant.other",
+          "support.constant",
+          "variable.other.constant",
+          "variable.other.enummember",
+        ],
+        p.constant,
+      ),
+      tok(
+        [
+          "entity.name.function",
+          "support.function",
+          "meta.function-call",
+          "entity.name.function.member",
+          "variable.function",
+        ],
+        p.func,
+      ),
+      tok(
+        [
+          "entity.name.type",
+          "entity.name.class",
+          "entity.other.inherited-class",
+          "support.type",
+          "support.class",
+          "entity.name.type.interface",
+          "entity.name.type.enum",
+        ],
+        p.type,
+      ),
+      tok(["variable", "variable.other", "variable.other.readwrite"], p.variable),
+      tok(["variable.parameter", "meta.parameter", "variable.parameter.function"], p.parameter),
+      tok(
+        [
+          "variable.other.property",
+          "variable.other.object.property",
+          "meta.property",
+          "support.variable.property",
+          "variable.other.member",
+        ],
         p.property,
       ),
-      tok(["entity.name.namespace", "support.other.namespace"], p.namespace),
+      tok(
+        [
+          "entity.name.namespace",
+          "support.other.namespace",
+          "entity.name.scope-resolution",
+        ],
+        p.namespace,
+      ),
+      tok(
+        [
+          "meta.decorator",
+          "entity.name.decorator",
+          "punctuation.decorator",
+          "meta.annotation",
+          "support.macro",
+        ],
+        p.decorator,
+      ),
       tok(["keyword.operator"], p.operator),
+      // Semantic token rules: Monaco resolves LSP semantic tokens through this
+      // same array, so they must be appended for semantic highlighting to color.
+      ...semanticTokenRules,
     ],
   };
 }
@@ -99,8 +226,9 @@ function materialDeepOceanTheme(): ShikiThemeRegistration {
     scope,
     settings: italic ? { foreground, fontStyle: "italic" } : { foreground },
   });
+  const base = buildShikiTheme(materialDeepOcean);
   return {
-    ...buildShikiTheme(materialDeepOcean),
+    ...base,
     tokenColors: [
       tok(["comment", "punctuation.definition.comment", "comment.block.documentation"], "#717cb4", true),
       tok(["keyword.other.phpdoc", "storage.type.phpdoc"], "#c792ea"),
@@ -116,6 +244,12 @@ function materialDeepOceanTheme(): ShikiThemeRegistration {
       tok(["variable.other.property", "variable.other.object.property", "meta.property"], "#eeffff"),
       tok(["entity.name.namespace", "support.other.namespace"], "#c3d3de"),
       tok(["keyword.operator", "punctuation"], "#89ddff"),
+      // Semantic token rules let JS/TS LSP semantic highlighting color
+      // functions/parameters/types in this theme too (PHP keeps the bespoke
+      // TextMate rules above).
+      ...Object.entries(base.semanticTokenColors).map(([token, foreground]) =>
+        tok([token], foreground),
+      ),
     ],
   };
 }
