@@ -65,6 +65,7 @@ import {
   configureShikiLanguageFeatures,
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
+import { setupEmmet } from "../infrastructure/emmetSetup";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
@@ -1164,6 +1165,7 @@ function currentEditorTextRange(
 function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
   configureTypescriptJavascriptDefaults(monaco);
   configureShikiLanguageFeatures(monaco);
+  setupEmmet(monaco);
   setupShikiTokenization(monaco, theme).catch((error) => {
     console.error("Shiki tokenization setup failed", error);
   });
