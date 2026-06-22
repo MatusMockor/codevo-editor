@@ -22,6 +22,10 @@ PHPDoc/phpstan/psalm typy v stuboch (`@return array<int,\App\User>`); Laravel-aw
 ## Riziká
 Regex edge cases (variadic `...`/by-ref `&`/intersection `A&B`/union/nullable/multi-line sig/`#[Attr]`) → testovať od začiatku, použiť `matchingPairOffset` (balanced) nie `[^)]*`. Insertion point cez `matchingPairOffset` od class `{` (nie krehký regex). Per-workspace izolácia v každom async kroku (`isRequestedRootActive`). Cross-file resolution fail → NIKDY negenerovať nesprávne signatúry (degradovať/nezobraziť). Async latency → cache (`phpClassMemberCacheRef` vzor, `phpSourceSignature`).
 
+## Slice 1 — HOTOVÝ ✅ (implement interface methods, end-to-end, full 1460 pass)
+Commity: `b8d103dc` (1a parser) → `842b3203` (1b render + 1c insertion) → `52120263` (1d integrácia + 1e wiring).
+"Implement methods" Monaco quick-fix na PHP triede s neimplementovaným interface/abstract → vloží stubs so správnymi signatúrami (cross-file z reálneho interface, PHPDoc/phpstan typy, union/intersection/nullable/variadic/by-ref verne) + konzervatívne `use` importy. Per-workspace izolácia testovaná (drop-on-switch na provider AJ computation vrstve). Review pozn.: 2. review tvrdil chýbajúci drop test = FALSE-POSITIVE (testy existujú na riadkoch 4786/4846/40483, overené behom).
+
 ## Slice 1 rozdelenie (TDD, každý: deleguj → review → commit)
 - **1a** `phpClassStructure.ts` — `PhpMember` model (meno, params s typmi/default/variadic/by-ref, return type, PHPDoc @param/@return, visibility, static, abstract) + full-member parser (všetky members, nie public-only). Reuse `phpMethodParameters`/`matchingPairOffset`. Pokryť edge cases. FUNDAMENT.
 - **1b** `phpCodeGen.ts` — render stub z `PhpMember` (visibility, presné typy, PHPDoc blok, telo throw/TODO, static, indentácia) + use-import lines. (po 1a)
