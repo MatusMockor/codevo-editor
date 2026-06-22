@@ -428,7 +428,7 @@ describe("EditorSurface", () => {
     );
   });
 
-  it("keeps Monaco JavaScript and TypeScript built-ins active unless the managed runtime matches the workspace", async () => {
+  it("keeps Monaco JavaScript and TypeScript built-in providers active unless the managed runtime matches the workspace, while never enabling built-in diagnostics", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
       language: "typescript",
@@ -496,10 +496,15 @@ describe("EditorSurface", () => {
     expect(latestTypeScriptModeConfiguration(monaco)).toEqual(
       expect.objectContaining({
         completionItems: true,
-        diagnostics: true,
+        diagnostics: false,
         hovers: true,
       }),
     );
+    expect(latestTypeScriptDiagnosticsOptions(monaco)).toEqual({
+      noSemanticValidation: true,
+      noSuggestionDiagnostics: true,
+      noSyntaxValidation: true,
+    });
 
     await act(async () => {
       renderSurface({
@@ -514,7 +519,7 @@ describe("EditorSurface", () => {
     expect(latestTypeScriptModeConfiguration(monaco)).toEqual(
       expect.objectContaining({
         completionItems: true,
-        diagnostics: true,
+        diagnostics: false,
         hovers: true,
       }),
     );
@@ -2308,6 +2313,16 @@ function languageDefaults() {
 function latestTypeScriptModeConfiguration(monaco: ReturnType<typeof createMonaco>) {
   const calls =
     monaco.languages.typescript.typescriptDefaults.setModeConfiguration.mock
+      .calls;
+
+  return calls[calls.length - 1]?.[0];
+}
+
+function latestTypeScriptDiagnosticsOptions(
+  monaco: ReturnType<typeof createMonaco>,
+) {
+  const calls =
+    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions.mock
       .calls;
 
   return calls[calls.length - 1]?.[0];

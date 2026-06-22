@@ -23,14 +23,20 @@ describe("configureTypescriptJavascriptDefaults", () => {
     expect(typescriptDefaults.setEagerModelSync).toHaveBeenCalledWith(true);
     expect(javascriptDefaults.setEagerModelSync).toHaveBeenCalledWith(true);
     expect(typescriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
-      noSemanticValidation: false,
-      noSyntaxValidation: false,
+      noSemanticValidation: true,
+      noSuggestionDiagnostics: true,
+      noSyntaxValidation: true,
+    });
+    expect(javascriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
+      noSemanticValidation: true,
+      noSuggestionDiagnostics: true,
+      noSyntaxValidation: true,
     });
     expect(typescriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
       expect.objectContaining({
         completionItems: true,
         definitions: true,
-        diagnostics: true,
+        diagnostics: false,
         hovers: true,
         rename: true,
       }),
@@ -64,6 +70,7 @@ describe("configureTypescriptJavascriptDefaults", () => {
 
     expect(typescriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
       noSemanticValidation: true,
+      noSuggestionDiagnostics: true,
       noSyntaxValidation: true,
     });
     expect(javascriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
@@ -72,6 +79,34 @@ describe("configureTypescriptJavascriptDefaults", () => {
         diagnostics: false,
         hovers: true,
       }),
+    );
+  });
+
+  it("keeps Monaco built-in JS/TS diagnostics disabled even when the managed language server is inactive and validation is enabled", () => {
+    const typescriptDefaults = languageDefaults();
+    const javascriptDefaults = languageDefaults();
+    const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
+
+    configureTypescriptJavascriptDefaults(monaco as never, {
+      managedLanguageServerActive: false,
+      validationEnabled: true,
+    });
+
+    expect(typescriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
+      noSemanticValidation: true,
+      noSuggestionDiagnostics: true,
+      noSyntaxValidation: true,
+    });
+    expect(javascriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
+      noSemanticValidation: true,
+      noSuggestionDiagnostics: true,
+      noSyntaxValidation: true,
+    });
+    expect(typescriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ diagnostics: false }),
+    );
+    expect(javascriptDefaults.setModeConfiguration).toHaveBeenCalledWith(
+      expect.objectContaining({ diagnostics: false }),
     );
   });
 
@@ -87,6 +122,7 @@ describe("configureTypescriptJavascriptDefaults", () => {
 
     expect(typescriptDefaults.setDiagnosticsOptions).toHaveBeenCalledWith({
       noSemanticValidation: true,
+      noSuggestionDiagnostics: true,
       noSyntaxValidation: true,
     });
     expect(typescriptDefaults.setModeConfiguration).toHaveBeenCalledWith({
