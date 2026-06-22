@@ -40056,6 +40056,163 @@ final class InvoiceAdapter
     ).toBe(false);
   });
 
+  it("opens a hover-prefetched file from cache without a second read", async () => {
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+
+    await act(async () => {
+      getWorkbench().prefetchFile(file);
+    });
+    await flushFilePrefetch();
+
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(readTextFile).toHaveBeenCalledWith(file.path);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    await flushAsyncTurns();
+
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(getWorkbench().activePath).toBe(file.path);
+    expect(getWorkbench().activeDocument?.content).toContain(file.path);
+  });
+
+  it("invalidates the prefetch cache for a file after it is saved", async () => {
+    const contentsByPath: Record<string, string> = {
+      "/workspace/src/User.php": "<?php\n// original\n",
+    };
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+
+    await act(async () => {
+      getWorkbench().prefetchFile(file);
+    });
+    await flushFilePrefetch();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    await flushAsyncTurns();
+
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      getWorkbench().updateActiveDocument("<?php\n// edited\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      getWorkbench().closeDocument(file.path);
+    });
+    await flushAsyncTurns();
+
+    contentsByPath["/workspace/src/User.php"] = "<?php\n// fresh from disk\n";
+
+    await act(async () => {
+      getWorkbench().prefetchFile(file);
+    });
+    await flushFilePrefetch();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toContain("fresh from disk");
+  });
+
+  it("does not serve prefetched content from an inactive workspace after switching", async () => {
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    const sharedPath = "/shared/User.php";
+    const file = fileEntry(sharedPath, "User.php");
+
+    await act(async () => {
+      getWorkbench().prefetchFile(file);
+    });
+    await flushFilePrefetch();
+
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    readTextFile.mockClear();
+
+    await act(async () => {
+      getWorkbench().prefetchFile(file);
+    });
+    await flushFilePrefetch();
+
+    expect(readTextFile).toHaveBeenCalledTimes(1);
+    expect(readTextFile).toHaveBeenCalledWith(sharedPath);
+  });
+
+  it("does not prefetch large binary files", async () => {
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    const binary = fileEntry("/workspace/assets/logo.png", "logo.png");
+
+    await act(async () => {
+      getWorkbench().prefetchFile(binary);
+    });
+    await flushFilePrefetch();
+
+    expect(readTextFile).not.toHaveBeenCalled();
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
@@ -40595,6 +40752,15 @@ async function flushAsyncTurns(count = 12): Promise<void> {
       await Promise.resolve();
     }
   });
+}
+
+async function flushFilePrefetch(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 150);
+    });
+  });
+  await flushAsyncTurns();
 }
 
 interface ManagedPhpactorInstallHarness {

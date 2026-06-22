@@ -39,6 +39,8 @@ interface FileTreeProps {
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
   onToggleDirectory(path: string): void;
+  onPrefetchFile?(entry: FileEntry): void;
+  onCancelPrefetchFile?(entry: FileEntry): void;
 }
 
 export function FileTree({
@@ -53,6 +55,8 @@ export function FileTree({
   onOpenFile,
   onPreviewFile,
   onToggleDirectory,
+  onPrefetchFile,
+  onCancelPrefetchFile,
 }: FileTreeProps) {
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
   const pendingRevealKeyRef = useRef<string | null>(null);
@@ -255,6 +259,8 @@ export function FileTree({
               onOpenFile={onOpenFile}
               onPreviewFile={onPreviewFile}
               onToggleDirectory={onToggleDirectory}
+              onPrefetchFile={onPrefetchFile}
+              onCancelPrefetchFile={onCancelPrefetchFile}
               row={row}
               rowStyle={{
                 "--tree-level": row.level,
@@ -285,6 +291,8 @@ interface TreeRowProps {
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
   onToggleDirectory(path: string): void;
+  onPrefetchFile?(entry: FileEntry): void;
+  onCancelPrefetchFile?(entry: FileEntry): void;
   rowStyle: CSSProperties;
 }
 
@@ -297,6 +305,8 @@ function TreeRow({
   onOpenFile,
   onPreviewFile,
   onToggleDirectory,
+  onPrefetchFile,
+  onCancelPrefetchFile,
   rowStyle,
 }: TreeRowProps) {
   const { entry, status } = row;
@@ -323,6 +333,27 @@ function TreeRow({
         }
 
         onPreviewFile(entry);
+      }}
+      onMouseEnter={() => {
+        if (isDirectory) {
+          return;
+        }
+
+        onPrefetchFile?.(entry);
+      }}
+      onMouseLeave={() => {
+        if (isDirectory) {
+          return;
+        }
+
+        onCancelPrefetchFile?.(entry);
+      }}
+      onFocus={() => {
+        if (isDirectory) {
+          return;
+        }
+
+        onPrefetchFile?.(entry);
       }}
       onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
       ref={entry.path === activePath ? activeRowRef : undefined}

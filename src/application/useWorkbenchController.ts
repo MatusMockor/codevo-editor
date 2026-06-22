@@ -107,6 +107,11 @@ import {
 } from "../domain/formatOnSave";
 import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
 import {
+  FilePrefetchCache,
+  isPrefetchableContentSize,
+  shouldPrefetchFileContent,
+} from "../domain/filePrefetchCache";
+import {
   matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
@@ -535,6 +540,7 @@ interface CachedWorkspaceWorkbenchState {
 
 const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
 const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
+const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 
 export type SidebarView = "files" | "git" | "php";
 
@@ -869,6 +875,10 @@ export function useWorkbenchController(
   const workspaceStateCacheRef = useRef<
     Record<string, CachedWorkspaceWorkbenchState>
   >({});
+  const filePrefetchCacheRef = useRef<FilePrefetchCache>(new FilePrefetchCache());
+  const filePrefetchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
   const lastPhpFileOutlineRefreshKeyRef = useRef<string | null>(null);
   const contextualDiagnosticsFilterRef = useRef(
     async (
@@ -2598,6 +2608,15 @@ export function useWorkbenchController(
     ],
   );
 
+  const resetFilePrefetchState = useCallback(() => {
+    for (const timer of filePrefetchTimersRef.current.values()) {
+      clearTimeout(timer);
+    }
+
+    filePrefetchTimersRef.current.clear();
+    filePrefetchCacheRef.current.clear();
+  }, []);
+
   const clearActiveWorkspace = useCallback(async () => {
     const currentRootPath = currentWorkspaceRootRef.current;
 
@@ -2608,6 +2627,7 @@ export function useWorkbenchController(
     workspaceSessionRestoredRef.current = false;
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
+    resetFilePrefetchState();
     languageServerRuntimeStatusByRootRef.current = {};
     languageServerDiagnosticsByRootRef.current = {};
     javaScriptTypeScriptRuntimeStatusByRootRef.current = {};
@@ -2698,6 +2718,7 @@ export function useWorkbenchController(
     clearIndexWorkspaceState,
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     clearLanguageServerDiagnostics,
+    resetFilePrefetchState,
     stopProjectRuntimes,
   ]);
 
@@ -3693,6 +3714,10 @@ export function useWorkbenchController(
         previousRootPath &&
         !workspaceRootKeysEqual(previousRootPath, path);
 
+      if (switchingWorkspace) {
+        resetFilePrefetchState();
+      }
+
       if (switchingWorkspace && shouldCachePreviousWorkspace) {
         openFileRequestTokenRef.current += 1;
         cacheCurrentWorkspaceState(previousRootPath);
@@ -4014,6 +4039,7 @@ export function useWorkbenchController(
       restoreCachedWorkspaceState,
       restoreJavaScriptTypeScriptDiagnosticsForRoot,
       restoreWorkspaceSession,
+      resetFilePrefetchState,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
@@ -4465,9 +4491,18 @@ export function useWorkbenchController(
           previewPath,
         );
         const replacedPath = replacement?.path ?? null;
-        openingFileFlagOwnerTokenRef.current = requestToken;
-        setIsOpeningFile(true);
-        const content = await workspaceFiles.readTextFile(entry.path);
+        const prefetchedContent = filePrefetchCacheRef.current.get(
+          requestedRoot,
+          entry.path,
+        );
+
+        if (prefetchedContent === null) {
+          openingFileFlagOwnerTokenRef.current = requestToken;
+          setIsOpeningFile(true);
+        }
+
+        const content =
+          prefetchedContent ?? (await workspaceFiles.readTextFile(entry.path));
 
         if (
           openFileRequestTokenRef.current !== requestToken ||
@@ -4527,6 +4562,7 @@ export function useWorkbenchController(
         setGitDiffPreview(null);
         setActivePath(entry.path);
         setMessage(null);
+        filePrefetchCacheRef.current.invalidate(entry.path);
         clearOpeningFileForRequest();
         return true;
       } catch (error) {
@@ -4564,6 +4600,90 @@ export function useWorkbenchController(
       workspaceRoot,
     ],
   );
+
+  const prefetchFileContentNow = useCallback(
+    async (entry: FileEntry) => {
+      if (entry.kind === "directory") {
+        return;
+      }
+
+      if (!shouldPrefetchFileContent(entry.path)) {
+        return;
+      }
+
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+
+      if (documentsRef.current[entry.path]) {
+        return;
+      }
+
+      if (filePrefetchCacheRef.current.has(requestedRoot, entry.path)) {
+        return;
+      }
+
+      try {
+        const content = await workspaceFiles.readTextFile(entry.path);
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        if (documentsRef.current[entry.path]) {
+          return;
+        }
+
+        if (!isPrefetchableContentSize(content)) {
+          return;
+        }
+
+        filePrefetchCacheRef.current.set(requestedRoot, entry.path, content);
+      } catch {
+        // Prefetch is a best-effort optimization; ignore read failures so the
+        // real open (with its own error handling) stays the source of truth.
+      }
+    },
+    [workspaceFiles, workspaceRoot],
+  );
+
+  const prefetchFile = useCallback(
+    (entry: FileEntry) => {
+      if (entry.kind === "directory") {
+        return;
+      }
+
+      if (!shouldPrefetchFileContent(entry.path)) {
+        return;
+      }
+
+      const timers = filePrefetchTimersRef.current;
+
+      if (timers.has(entry.path)) {
+        return;
+      }
+
+      const timer = setTimeout(() => {
+        timers.delete(entry.path);
+        void prefetchFileContentNow(entry);
+      }, FILE_PREFETCH_HOVER_DELAY_MS);
+
+      timers.set(entry.path, timer);
+    },
+    [prefetchFileContentNow],
+  );
+
+  const cancelFilePrefetch = useCallback((entry: FileEntry) => {
+    const timers = filePrefetchTimersRef.current;
+    const timer = timers.get(entry.path);
+
+    if (timer === undefined) {
+      return;
+    }
+
+    clearTimeout(timer);
+    timers.delete(entry.path);
+  }, []);
 
   const previewFile = useCallback(
     async (entry: FileEntry) => {
@@ -6419,6 +6539,7 @@ export function useWorkbenchController(
         documentToSave.path,
         documentToSave.content,
       );
+      filePrefetchCacheRef.current.invalidate(documentToSave.path);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -17494,6 +17615,8 @@ export function useWorkbenchController(
       }
 
       await workspaceFiles.renamePath(activeDocument.path, nextPath);
+      filePrefetchCacheRef.current.invalidate(activeDocument.path);
+      filePrefetchCacheRef.current.invalidate(nextPath);
       if (isLanguageServerDocument(activeDocument)) {
         await notifyPhpFileRenamed(activeDocument.path, nextPath);
       }
@@ -17572,6 +17695,7 @@ export function useWorkbenchController(
 
     try {
       await workspaceFiles.deletePath(activeDocument.path);
+      filePrefetchCacheRef.current.invalidate(activeDocument.path);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -20875,6 +20999,8 @@ export function useWorkbenchController(
     openWorkspaceSymbolResult,
     openWorkspaceSymbols,
     openPinnedFile,
+    prefetchFile,
+    cancelFilePrefetch,
     previewFile,
     previewPath,
     providePhpMethodCompletions,

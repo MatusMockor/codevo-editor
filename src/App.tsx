@@ -605,6 +605,8 @@ function App() {
             onOpenFile={workbench.openPinnedFile}
             onPreviewFile={workbench.previewFile}
             onToggleDirectory={workbench.toggleDirectory}
+            onPrefetchFile={workbench.prefetchFile}
+            onCancelPrefetchFile={workbench.cancelFilePrefetch}
             revealActivePath={
               workbench.workspaceSettings.revealActiveFileInTree
             }
