@@ -119,6 +119,7 @@ describe("EditorSurface", () => {
     editorSurfaceMocks.monaco = null;
     editorSurfaceMocks.props = null;
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("configures responsive suggestions and parameter hints", async () => {
@@ -1284,7 +1285,7 @@ interface ParserFactory
   });
 
   it("routes JavaScript and TypeScript navigation through workbench actions", async () => {
-    vi.spyOn(window.navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    stubNavigatorPlatform("Linux x86_64");
 
     const activeDocument: EditorDocument = {
       content: "export class UserService {}\n",
@@ -2540,6 +2541,14 @@ function createMonaco(model: FakeModel) {
       }
     },
   };
+}
+
+function stubNavigatorPlatform(platform: string): void {
+  vi.stubGlobal("navigator", {
+    platform,
+    userAgent: `Mozilla/5.0 (${platform})`,
+    userAgentData: { platform },
+  });
 }
 
 function languageDefaults() {
