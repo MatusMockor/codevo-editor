@@ -502,6 +502,7 @@ button {
 
 .app-shell {
   --window-chrome-height: 36px;
+
   color-scheme: dark;
   display: grid;
   width: 100%;

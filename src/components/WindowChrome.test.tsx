@@ -29,6 +29,8 @@ describe("WindowChrome", () => {
     hasWorkspace: false,
   };
   let host: HTMLDivElement;
+  let originalExecCommandDescriptor: PropertyDescriptor | undefined;
+  let restoreExecCommand = false;
   let root: Root;
 
   beforeEach(() => {
@@ -36,6 +38,8 @@ describe("WindowChrome", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
+    originalExecCommandDescriptor = undefined;
+    restoreExecCommand = false;
     minimizeWindow.mockReset();
     toggleMaximizeWindow.mockReset();
     closeWindow.mockReset();
@@ -44,6 +48,17 @@ describe("WindowChrome", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    if (restoreExecCommand) {
+      if (originalExecCommandDescriptor) {
+        Object.defineProperty(
+          document,
+          "execCommand",
+          originalExecCommandDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "execCommand");
+      }
+    }
     vi.unstubAllGlobals();
   });
 
@@ -123,6 +138,11 @@ describe("WindowChrome", () => {
       userAgent: "Mozilla/5.0 X11 Linux x86_64",
     });
     const execCommand = vi.fn();
+    originalExecCommandDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "execCommand",
+    );
+    restoreExecCommand = true;
     Object.defineProperty(document, "execCommand", {
       configurable: true,
       value: execCommand,
