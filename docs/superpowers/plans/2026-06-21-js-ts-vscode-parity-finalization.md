@@ -50,6 +50,12 @@ SPORNÉ (hlbšie overiť pred delegáciou):
   - breadcrumbs (L, LOW pre JS/TS)
 - ROZHODNUTIE: JS/TS light mode je realisticky čo najbližšie k VS Code pre HIGH-value. Ďalší smer (zvyšné JS/TS nice-to-have vs prechod na PHP IDE mode) = míľnik medzi fázami → potvrdiť s userom.
 
+## PHP IDE mode fáza (po JS/TS)
+- Audit + verifikácia: prvý audit ~80-85% PhpStorm parity; druhý audit tvrdil ~50-55% (0% PHP8/code-gen) — VERIFIKÁCIOU VYVRÁTENÝ: PHP8 (enums, constructor promotion, readonly, attributes, match), code actions (implement contract, generate accessor/constructor, add use), rename cross-file, hover/def/inlay/symbols VŠETKO funguje cez phpactor LSP (2026.05.30.2). Projekt správne deleguje generic PHP na phpactor; TS vrstva = Laravel semantika + false-positive suppression.
+- Reálne PHP gapy (po odfiltrovaní false-positives): MorphTo/contextual-binding/@method-overloading UŽ existujú. Dodané: dynamic route($var) nav (F), model mutation chains (G). Zostáva: Blade (VEĽKÉ produktové — nový jazyk subsystém), Laravel-advanced (gate/policy, events, factories, validation, macros LARGE) — klesajúca hodnota.
+- [DONE] SLICE F: Navigate route helpers using assigned string literals — commit cb35c3e7.
+- [DONE] SLICE G: Preserve model type through visibility and append mutations — commit 0cbcd845.
+
 ## Commity tejto fázy
 - ab364781 Guard server-initiated JS TS workspace edits during tab switches (B)
 - 4f9687c1 Add format on save for editor documents (A)
