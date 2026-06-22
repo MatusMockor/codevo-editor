@@ -215,6 +215,12 @@ export function SettingsDialog({
                       autoSaveConfigured: true,
                     })
                   }
+                  onChangeFormatOnPaste={(formatOnPaste) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      formatOnPaste,
+                    })
+                  }
                   onChangeFormatOnSave={(formatOnSave) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -378,6 +384,7 @@ interface GeneralSettingsProps {
   workspaceRoot: string | null;
   workspaceSettings: WorkspaceSettings;
   onChangeAutoSave(autoSave: boolean): void;
+  onChangeFormatOnPaste(formatOnPaste: boolean): void;
   onChangeFormatOnSave(formatOnSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeJavaScriptTypeScriptService(
@@ -406,6 +413,7 @@ function GeneralSettings({
   draftTrusted,
   hasWorkspace,
   onChangeAutoSave,
+  onChangeFormatOnPaste,
   onChangeFormatOnSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
@@ -582,6 +590,18 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>Format on Save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.formatOnPaste}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeFormatOnPaste(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Format on Paste</span>
       </label>
 
       <label className="settings-toggle">

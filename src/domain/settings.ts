@@ -52,6 +52,7 @@ export interface WorkspaceSettings {
   autoSave: boolean;
   autoSaveConfigured: boolean;
   extraIgnorePatterns: string[];
+  formatOnPaste: boolean;
   formatOnSave: boolean;
   intelligenceMode: IntelligenceMode;
   intelephensePath: string | null;
@@ -113,6 +114,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     autoSave: true,
     autoSaveConfigured: true,
     extraIgnorePatterns: [],
+    formatOnPaste: false,
     formatOnSave: false,
     intelligenceMode: "basic",
     intelephensePath: null,
@@ -200,6 +202,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     extraIgnorePatterns: normalizePatternList(
       value.extraIgnorePatterns,
       defaults.extraIgnorePatterns,
+    ),
+    formatOnPaste: normalizeBoolean(
+      value.formatOnPaste,
+      defaults.formatOnPaste,
     ),
     formatOnSave: normalizeBoolean(value.formatOnSave, defaults.formatOnSave),
     intelligenceMode: isIntelligenceMode(value.intelligenceMode)

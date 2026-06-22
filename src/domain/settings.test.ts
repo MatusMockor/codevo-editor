@@ -27,6 +27,7 @@ describe("settings defaults", () => {
       autoSave: true,
       autoSaveConfigured: true,
       extraIgnorePatterns: [],
+      formatOnPaste: false,
       formatOnSave: false,
       intelligenceMode: "basic",
       intelephensePath: null,
@@ -138,6 +139,7 @@ describe("normalizeWorkspaceSettings", () => {
         autoSave: true,
         autoSaveConfigured: true,
         extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
+        formatOnPaste: true,
         formatOnSave: true,
         intelligenceMode: "lightSmart",
         intelephensePath: "/tools/intelephense",
@@ -177,6 +179,7 @@ describe("normalizeWorkspaceSettings", () => {
       autoSave: true,
       autoSaveConfigured: true,
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
+      formatOnPaste: true,
       formatOnSave: true,
       intelligenceMode: "lightSmart",
       intelephensePath: "/tools/intelephense",
@@ -239,6 +242,16 @@ describe("normalizeWorkspaceSettings", () => {
     ).toBe(false);
     expect(
       normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave,
+    ).toBe(true);
+  });
+
+  it("defaults formatOnPaste to false and ignores non-boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).formatOnPaste).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ formatOnPaste: "yes" }).formatOnPaste,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ formatOnPaste: true }).formatOnPaste,
     ).toBe(true);
   });
 

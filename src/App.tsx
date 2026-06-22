@@ -681,6 +681,7 @@ function App() {
             flushPendingJavaScriptTypeScriptLanguageServerDocument={
               workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
             }
+            formatOnPaste={workbench.workspaceSettings.formatOnPaste}
             javaScriptTypeScriptLanguageServerFeaturesGateway={
               javaScriptTypeScriptLanguageServerFeaturesGateway
             }

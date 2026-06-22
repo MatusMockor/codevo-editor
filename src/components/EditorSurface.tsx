@@ -81,6 +81,7 @@ interface EditorSurfaceProps {
     path: string,
   ): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
+  formatOnPaste?: boolean;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRefreshGateway?: LanguageServerRefreshGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus?: LanguageServerRuntimeStatus | null;
@@ -128,6 +129,7 @@ export function EditorSurface({
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
+  formatOnPaste = false,
   languageServerDiagnosticsByPath,
   languageServerFeaturesGateway,
   languageServerRefreshGateway,
@@ -946,6 +948,7 @@ export function EditorSurface({
           automaticLayout: true,
           detectIndentation: true,
           domReadOnly: activeDocument.readOnly === true,
+          formatOnPaste,
           fontFamily:
             "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
           fontSize: 13,
