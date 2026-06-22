@@ -58,7 +58,12 @@ import {
 } from "../domain/phpMethodCompletions";
 import { phpLaravelScopedStringCompletionContextAt } from "../domain/phpLaravelScopedCompletions";
 import type { EditorDocument } from "../domain/workspace";
-import { defaultEditorFontSize, type MonacoAppTheme } from "../domain/settings";
+import {
+  defaultEditorFontFamily,
+  defaultEditorFontLigatures,
+  defaultEditorFontSize,
+  type MonacoAppTheme,
+} from "../domain/settings";
 import {
   registerJavaScriptTypeScriptLanguageServerMonacoProviders,
   type JavaScriptTypeScriptWorkspaceEditApplicationContext,
@@ -84,6 +89,8 @@ interface ChangePreviewState {
 
 interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  editorFontFamily?: string;
+  editorFontLigatures?: boolean;
   editorFontSize?: number;
   isOpeningFile?: boolean;
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit?(
@@ -143,6 +150,8 @@ interface EditorSurfaceProps {
 
 export function EditorSurface({
   activeDocument,
+  editorFontFamily = defaultEditorFontFamily,
+  editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
   isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => undefined,
@@ -1108,8 +1117,8 @@ export function EditorSurface({
           detectIndentation: true,
           domReadOnly: isReadOnly,
           formatOnPaste,
-          fontFamily:
-            "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontFamily: editorFontFamily,
+          fontLigatures: editorFontLigatures,
           fontSize: editorFontSize,
           glyphMargin: true,
           insertSpaces: true,

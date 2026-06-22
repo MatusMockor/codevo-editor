@@ -270,6 +270,150 @@ describe("SettingsDialog", () => {
     expect(inputWithLabel("Save File").placeholder).toBe("Ctrl+S");
   });
 
+  it("opens directly to the requested settings section", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="appearance"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(settingsSectionButton("Appearance").ariaSelected).toBe("true");
+    expect(selectWithLabel("Font family")).not.toBeNull();
+  });
+
+  it("renders editor font controls in Appearance settings", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      settingsSectionButton("Appearance").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(selectWithLabel("Theme")).not.toBeNull();
+    const fontFamilySelect = selectWithLabel("Font family");
+    expect(fontFamilySelect.options.length).toBeGreaterThan(1);
+    expect(
+      Array.from(fontFamilySelect.options).some(
+        (option) => option.value === "Fira Code",
+      ),
+    ).toBe(true);
+    expect(inputWithLabel("Font size").type).toBe("number");
+    expect(checkboxWithLabel("Font ligatures").checked).toBe(false);
+  });
+
+  it("persists editor font appearance changes", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      settingsSectionButton("Appearance").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      selectWithLabel("Font family").value = "Fira Code";
+      selectWithLabel("Font family").dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontFamily: "Fira Code",
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("Font size"), "16", "change");
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontFamily: "Fira Code",
+        editorFontSize: 16,
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+
+    await act(async () => {
+      checkboxWithLabel("Font ligatures").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontFamily: "Fira Code",
+        editorFontLigatures: true,
+        editorFontSize: 16,
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+  });
+
   it("persists TypeScript version preference changes", async () => {
     const onSave = vi.fn(async () => undefined);
 
@@ -621,6 +765,32 @@ describe("SettingsDialog", () => {
     }
 
     return input;
+  }
+
+  function changeInputValue(
+    input: HTMLInputElement,
+    value: string,
+    eventName = "input",
+  ): void {
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+
+    valueSetter?.call(input, value);
+    input.dispatchEvent(new Event(eventName, { bubbles: true }));
+  }
+
+  function selectWithLabel(labelText: string): HTMLSelectElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) => item.textContent?.includes(labelText));
+    const select = label?.querySelector<HTMLSelectElement>("select");
+
+    if (!select) {
+      throw new Error(`${labelText} select was not rendered.`);
+    }
+
+    return select;
   }
 
   function checkboxWithLabel(labelText: string): HTMLInputElement {

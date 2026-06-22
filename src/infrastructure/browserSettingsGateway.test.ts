@@ -7,6 +7,9 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      editorFontFamily:
+        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
@@ -57,6 +60,8 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await gateway.saveAppSettings({
+      editorFontFamily: "Fira Code, monospace",
+      editorFontLigatures: true,
       editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
@@ -105,6 +110,8 @@ describe("BrowserSettingsGateway", () => {
     });
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      editorFontFamily: "Fira Code, monospace",
+      editorFontLigatures: true,
       editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
@@ -160,6 +167,9 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
+      editorFontFamily:
+        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,

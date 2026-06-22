@@ -132,6 +132,83 @@ describe("WindowChrome", () => {
     expect(host.querySelector(".window-menu-popover")).toBeNull();
   });
 
+  it("runs enabled View menu commands from the custom menu", async () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Mozilla/5.0 X11 Linux x86_64",
+    });
+    const openAppearanceSettings = vi.fn();
+    const increaseFont = vi.fn();
+    const decreaseFont = vi.fn();
+    const resetFont = vi.fn();
+    const toggleLigatures = vi.fn();
+    const commands: Command[] = [
+      command(
+        "workbench.openAppearanceSettings",
+        "Open Appearance Settings",
+        openAppearanceSettings,
+      ),
+      command("editor.fontZoomIn", "Increase Editor Font Size", increaseFont),
+      command("editor.fontZoomOut", "Decrease Editor Font Size", decreaseFont),
+      command("editor.fontZoomReset", "Reset Editor Font Size", resetFont),
+      command(
+        "editor.toggleFontLigatures",
+        "Toggle Editor Font Ligatures",
+        toggleLigatures,
+      ),
+    ];
+
+    await act(async () => {
+      root.render(
+        <WindowChrome
+          appTitle="Mockor Editor"
+          commandContext={commandContext}
+          commands={commands}
+          onCommandError={vi.fn()}
+          onEditCommand={vi.fn()}
+          onQuitApplication={vi.fn()}
+        />,
+      );
+    });
+
+    await act(async () => {
+      buttonWithText(host, "View").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Increase Editor Font Size").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "View").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Decrease Editor Font Size").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "View").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Reset Editor Font Size").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "View").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Toggle Editor Font Ligatures").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "View").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Open Appearance Settings").click();
+    });
+
+    expect(increaseFont).toHaveBeenCalledOnce();
+    expect(decreaseFont).toHaveBeenCalledOnce();
+    expect(resetFont).toHaveBeenCalledOnce();
+    expect(toggleLigatures).toHaveBeenCalledOnce();
+    expect(openAppearanceSettings).toHaveBeenCalledOnce();
+  });
+
   it("routes Edit menu commands through the active editor callback", async () => {
     vi.stubGlobal("navigator", {
       platform: "Linux x86_64",
@@ -345,4 +422,14 @@ function buttonWithText(host: HTMLElement, text: string): HTMLButtonElement {
   }
 
   return button;
+}
+
+function command(id: string, title: string, run: () => void): Command {
+  return {
+    category: "Test",
+    id,
+    isEnabled: () => true,
+    run,
+    title,
+  };
 }

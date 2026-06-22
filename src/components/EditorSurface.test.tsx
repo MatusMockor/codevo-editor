@@ -666,7 +666,7 @@ describe("EditorSurface", () => {
     );
   });
 
-  it("uses the provided editor font size for the Monaco fontSize option", async () => {
+  it("uses the provided editor font settings for Monaco options", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
       language: "typescript",
@@ -688,6 +688,8 @@ describe("EditorSurface", () => {
         <EditorSurface
           activeDocument={activeDocument}
           changeHunks={[]}
+          editorFontFamily="Fira Code, monospace"
+          editorFontLigatures={true}
           editorFontSize={22}
           editorRevealTarget={null}
           flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
@@ -720,6 +722,8 @@ describe("EditorSurface", () => {
 
     expect(editorSurfaceMocks.props?.options).toEqual(
       expect.objectContaining({
+        fontFamily: "Fira Code, monospace",
+        fontLigatures: true,
         fontSize: 22,
       }),
     );

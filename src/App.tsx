@@ -752,6 +752,8 @@ function App() {
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}
+            editorFontFamily={workbench.appSettings.editorFontFamily}
+            editorFontLigatures={workbench.appSettings.editorFontLigatures}
             editorFontSize={workbench.appSettings.editorFontSize}
             isOpeningFile={workbench.isOpeningFile}
             applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
@@ -981,6 +983,7 @@ function App() {
 
       <SettingsDialog
         appSettings={workbench.appSettings}
+        initialSection={workbench.settingsInitialSection}
         isOpen={workbench.settingsOpen}
         onClose={() => workbench.setSettingsOpen(false)}
         onOpenJavaScriptTypeScriptServiceLog={

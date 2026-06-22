@@ -40274,6 +40274,53 @@ final class InvoiceAdapter
     expect(getWorkbench().appSettings.editorFontSize).toBe(40);
   });
 
+  it("toggles editor font ligatures from a registered command and persists it", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontLigatures: false,
+      },
+    });
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.toggleFontLigatures",
+    );
+
+    expect(command?.title).toBe("Toggle Editor Font Ligatures");
+    expect(command?.category).toBe("Editor");
+
+    await act(async () => {
+      await command?.run();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().appSettings.editorFontLigatures).toBe(true);
+    expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ editorFontLigatures: true }),
+    );
+  });
+
+  it("opens Appearance settings from a registered command", async () => {
+    const { getWorkbench } = renderController();
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "workbench.openAppearanceSettings",
+    );
+
+    expect(command?.title).toBe("Open Appearance Settings");
+    expect(command?.category).toBe("Workbench");
+
+    await act(async () => {
+      await command?.run();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().settingsOpen).toBe(true);
+    expect(getWorkbench().settingsInitialSection).toBe("appearance");
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,

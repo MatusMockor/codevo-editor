@@ -392,6 +392,7 @@ import {
   type AppSettings,
   type BackgroundRuntimePolicy,
   type SettingsGateway,
+  type SettingsSection,
   type StatusBarItemVisibility,
   type WorkspaceSessionState,
   type WorkspaceSettings,
@@ -765,6 +766,8 @@ export function useWorkbenchController(
   const [workspaceSettings, setWorkspaceSettings] =
     useState<WorkspaceSettings>(defaultWorkspaceSettings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] =
+    useState<SettingsSection>("general");
   const [fileStructureOpen, setFileStructureOpen] = useState(false);
   const [fileStructureScope, setFileStructureScope] =
     useState<PhpFileStructureScope>("current");
@@ -1132,6 +1135,15 @@ export function useWorkbenchController(
   const resetEditorFontSize = useCallback(() => {
     setEditorFontSize(defaultEditorFontSize);
   }, [setEditorFontSize]);
+
+  const toggleEditorFontLigatures = useCallback(() => {
+    const currentSettings = appSettingsRef.current;
+
+    void persistAppSettings({
+      ...currentSettings,
+      editorFontLigatures: !currentSettings.editorFontLigatures,
+    }).catch((error) => reportError("Settings", error));
+  }, [persistAppSettings, reportError]);
 
   const persistWorkspaceSettings = useCallback(
     async (rootPath: string, nextSettings: WorkspaceSettings) => {
@@ -18472,18 +18484,30 @@ export function useWorkbenchController(
     await startReindex("hard");
   }, [startReindex]);
 
+  const openSettingsSection = useCallback(
+    (section: SettingsSection) => {
+      setSettingsInitialSection(section);
+      setPaletteOpen(false);
+      setQuickOpenOpen(false);
+      setClassOpenOpen(false);
+      setWorkspaceSymbolsOpen(false);
+      setTextSearchOpen(false);
+      setLanguageServerSetupOpen(false);
+      setFileStructureOpen(false);
+      setCallHierarchyView(null);
+      setTypeHierarchyView(null);
+      setSettingsOpen(true);
+    },
+    [],
+  );
+
   const openSettingsPanel = useCallback(() => {
-    setPaletteOpen(false);
-    setQuickOpenOpen(false);
-    setClassOpenOpen(false);
-    setWorkspaceSymbolsOpen(false);
-    setTextSearchOpen(false);
-    setLanguageServerSetupOpen(false);
-    setFileStructureOpen(false);
-    setCallHierarchyView(null);
-    setTypeHierarchyView(null);
-    setSettingsOpen(true);
-  }, []);
+    openSettingsSection("general");
+  }, [openSettingsSection]);
+
+  const openAppearanceSettingsPanel = useCallback(() => {
+    openSettingsSection("appearance");
+  }, [openSettingsSection]);
 
   const closeFloatingSurface = useCallback((): boolean => {
     if (typeHierarchyView) {
@@ -18777,6 +18801,15 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "editor.toggleFontLigatures",
+      title: "Toggle Editor Font Ligatures",
+      category: "Editor",
+      shortcut: shortcut("editor.toggleFontLigatures"),
+      isEnabled: () => true,
+      run: toggleEditorFontLigatures,
+    });
+
+    registry.register({
       id: "editor.goToSourceDefinition",
       title: "Go to Source Definition",
       category: "Editor",
@@ -19044,6 +19077,15 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "workbench.openAppearanceSettings",
+      title: "Open Appearance Settings",
+      category: "Workbench",
+      shortcut: shortcut("workbench.openAppearanceSettings"),
+      isEnabled: () => true,
+      run: openAppearanceSettingsPanel,
+    });
+
+    registry.register({
       id: "panel.showProblems",
       title: "Show Problems",
       category: "Workbench",
@@ -19220,6 +19262,7 @@ export function useWorkbenchController(
     navigateBackward,
     navigateForwardInHistory,
     openCallHierarchy,
+    openAppearanceSettingsPanel,
     openFileStructure,
     openTypeHierarchy,
     openSettingsPanel,
@@ -19240,6 +19283,7 @@ export function useWorkbenchController(
     installingManagedPhpactor,
     stopLanguageServer,
     toggleBottomPanel,
+    toggleEditorFontLigatures,
     toggleSmartMode,
     toggleWorkspaceTrust,
     zoomEditorFontIn,
@@ -19830,6 +19874,12 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("workbench.openAppearanceSettings")) {
+        event.preventDefault();
+        openAppearanceSettingsPanel();
+        return;
+      }
+
       if (matches("editor.save")) {
         event.preventDefault();
         void saveActiveDocument();
@@ -19875,6 +19925,12 @@ export function useWorkbenchController(
       if (matches("editor.fontZoomReset")) {
         event.preventDefault();
         resetEditorFontSize();
+        return;
+      }
+
+      if (matches("editor.toggleFontLigatures")) {
+        event.preventDefault();
+        toggleEditorFontLigatures();
         return;
       }
 
@@ -19991,6 +20047,7 @@ export function useWorkbenchController(
     goToTypeDefinition,
     navigateBackward,
     navigateForwardInHistory,
+    openAppearanceSettingsPanel,
     openFileStructure,
     openSettingsPanel,
     openWorkspaceSymbols,
@@ -19999,6 +20056,7 @@ export function useWorkbenchController(
     saveActiveDocument,
     showBottomPanelView,
     toggleBottomPanel,
+    toggleEditorFontLigatures,
     workspaceRoot,
     zoomEditorFontIn,
     zoomEditorFontOut,
@@ -21132,6 +21190,7 @@ export function useWorkbenchController(
     setTextSearchQuery,
     setLanguageServerSetupOpen,
     setStatusBarItemVisibility,
+    settingsInitialSection,
     setFileStructureOpen,
     setFileStructureScopeMode,
     setSmartMode,

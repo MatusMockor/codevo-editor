@@ -19,6 +19,7 @@ describe("keymap", () => {
       "editor.fontZoomIn": "Cmd+=",
       "editor.fontZoomOut": "Cmd+-",
       "editor.fontZoomReset": "Cmd+0",
+      "editor.toggleFontLigatures": "",
       "editor.goToDeclaration": "",
       "editor.goToDefinition": "Cmd+B",
       "editor.goToSourceDefinition": "",
@@ -30,6 +31,7 @@ describe("keymap", () => {
       "file.quickOpen": "Cmd+P",
       "navigation.back": "Cmd+[",
       "navigation.forward": "Cmd+]",
+      "workbench.openAppearanceSettings": "",
     });
   });
 

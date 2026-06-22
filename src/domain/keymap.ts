@@ -96,6 +96,12 @@ export const keymapCommands = [
     label: "Reset Editor Font Size",
   },
   {
+    category: "Editor",
+    defaultShortcut: "",
+    id: "editor.toggleFontLigatures",
+    label: "Toggle Editor Font Ligatures",
+  },
+  {
     category: "File",
     defaultShortcut: "Cmd+P",
     id: "file.quickOpen",
@@ -136,6 +142,12 @@ export const keymapCommands = [
     defaultShortcut: "Cmd+,",
     id: "workbench.openSettings",
     label: "Open Settings",
+  },
+  {
+    category: "Workbench",
+    defaultShortcut: "",
+    id: "workbench.openAppearanceSettings",
+    label: "Open Appearance Settings",
   },
   {
     category: "Workbench",

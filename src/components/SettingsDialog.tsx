@@ -8,6 +8,11 @@ import {
 } from "../domain/keymap";
 import {
   appThemeOptions,
+  defaultEditorFontFamily,
+  maxEditorFontSize,
+  minEditorFontSize,
+  normalizeEditorFontFamily,
+  normalizeEditorFontSize,
   settingsIgnorePatternsFromText,
   settingsIgnorePatternsText,
   type AppSettings,
@@ -16,6 +21,7 @@ import {
   type JavaScriptTypeScriptServiceMode,
   type JavaScriptTypeScriptVersionPreference,
   type PhpBackendPreference,
+  type SettingsSection,
   type StatusBarItemVisibility,
   type WorkspaceSettings,
 } from "../domain/settings";
@@ -35,6 +41,7 @@ export interface SettingsSaveInput {
 
 interface SettingsDialogProps {
   appSettings: AppSettings;
+  initialSection?: SettingsSection;
   isOpen: boolean;
   phpTools: PhpToolAvailability | null;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -47,8 +54,6 @@ interface SettingsDialogProps {
   onSave(input: SettingsSaveInput): Promise<void>;
 }
 
-type SettingsSection = "general" | "keymap" | "php" | "index" | "appearance";
-
 const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: "general", label: "General" },
   { id: "keymap", label: "Keymap" },
@@ -59,6 +64,7 @@ const sections: Array<{ id: SettingsSection; label: string }> = [
 
 export function SettingsDialog({
   appSettings,
+  initialSection = "general",
   isOpen,
   onClose,
   onOpenJavaScriptTypeScriptServiceLog,
@@ -95,7 +101,7 @@ export function SettingsDialog({
     }
 
     wasOpenRef.current = true;
-    setActiveSection("general");
+    setActiveSection(initialSection);
     setDraftAppSettings(appSettings);
     setDraftWorkspaceSettings(workspaceSettings);
     setDraftTrusted(Boolean(workspaceTrust?.trusted));
@@ -105,7 +111,13 @@ export function SettingsDialog({
     setIgnorePatternsText(
       settingsIgnorePatternsText(workspaceSettings.extraIgnorePatterns),
     );
-  }, [appSettings, isOpen, workspaceSettings, workspaceTrust]);
+  }, [appSettings, initialSection, isOpen, workspaceSettings, workspaceTrust]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setActiveSection(initialSection);
+    }
+  }, [initialSection, isOpen]);
 
   const selectedSectionLabel = useMemo(() => {
     const section = sections.find((item) => item.id === activeSection);
@@ -362,6 +374,25 @@ export function SettingsDialog({
               {activeSection === "appearance" ? (
                 <AppearanceSettings
                   appSettings={draftAppSettings}
+                  onChangeEditorFontFamily={(editorFontFamily) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      editorFontFamily:
+                        normalizeEditorFontFamily(editorFontFamily),
+                    })
+                  }
+                  onChangeEditorFontLigatures={(editorFontLigatures) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      editorFontLigatures,
+                    })
+                  }
+                  onChangeEditorFontSize={(editorFontSize) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      editorFontSize: normalizeEditorFontSize(editorFontSize),
+                    })
+                  }
                   onChangeTheme={(theme) =>
                     updateAppSettings({
                       ...draftAppSettingsRef.current,
@@ -848,13 +879,52 @@ function IndexSettings({
 
 interface AppearanceSettingsProps {
   appSettings: AppSettings;
+  onChangeEditorFontFamily(value: string): void;
+  onChangeEditorFontLigatures(enabled: boolean): void;
+  onChangeEditorFontSize(value: number): void;
   onChangeTheme(theme: AppTheme): void;
 }
 
 function AppearanceSettings({
   appSettings,
+  onChangeEditorFontFamily,
+  onChangeEditorFontLigatures,
+  onChangeEditorFontSize,
   onChangeTheme,
 }: AppearanceSettingsProps) {
+  const [fontFamilyOptions, setFontFamilyOptions] = useState(
+    defaultEditorFontFamilyOptions,
+  );
+  const queryLocalFonts = (globalThis as LocalFontQueryGlobal).queryLocalFonts;
+  const canQueryLocalFonts = typeof queryLocalFonts === "function";
+  const visibleFontFamilyOptions = useMemo(
+    () =>
+      uniqueSortedStrings([
+        ...fontFamilyOptions,
+        appSettings.editorFontFamily,
+      ]),
+    [appSettings.editorFontFamily, fontFamilyOptions],
+  );
+
+  const loadInstalledFonts = async () => {
+    if (!queryLocalFonts) {
+      return;
+    }
+
+    try {
+      const localFonts = await queryLocalFonts();
+      const localFamilies = localFonts
+        .map((font) => font.family.trim())
+        .filter(Boolean);
+
+      setFontFamilyOptions((current) =>
+        uniqueSortedStrings([...current, ...localFamilies]),
+      );
+    } catch {
+      setFontFamilyOptions(defaultEditorFontFamilyOptions);
+    }
+  };
+
   return (
     <div className="settings-group">
       <label className="settings-field">
@@ -872,8 +942,90 @@ function AppearanceSettings({
           ))}
         </select>
       </label>
+
+      <label className="settings-field">
+        <span>Font family</span>
+        <select
+          onChange={(event) =>
+            onChangeEditorFontFamily(event.currentTarget.value)
+          }
+          value={appSettings.editorFontFamily}
+        >
+          {visibleFontFamilyOptions.map((fontFamily) => (
+            <option key={fontFamily} value={fontFamily}>
+              {fontFamily}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="settings-actions">
+        <button
+          disabled={!canQueryLocalFonts}
+          onClick={() => void loadInstalledFonts()}
+          type="button"
+        >
+          Load installed fonts
+        </button>
+      </div>
+
+      <label className="settings-field">
+        <span>Font size</span>
+        <input
+          max={maxEditorFontSize}
+          min={minEditorFontSize}
+          onChange={(event) =>
+            onChangeEditorFontSize(event.currentTarget.valueAsNumber)
+          }
+          type="number"
+          value={appSettings.editorFontSize}
+        />
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={appSettings.editorFontLigatures}
+          onChange={(event) =>
+            onChangeEditorFontLigatures(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Font ligatures</span>
+      </label>
     </div>
   );
+}
+
+interface LocalFontData {
+  family: string;
+}
+
+type LocalFontQueryGlobal = typeof globalThis & {
+  queryLocalFonts?: () => Promise<LocalFontData[]>;
+};
+
+const defaultEditorFontFamilyOptions = uniqueSortedStrings([
+  defaultEditorFontFamily,
+  "Berkeley Mono",
+  "Cascadia Code",
+  "Consolas",
+  "Fira Code",
+  "Hack",
+  "IBM Plex Mono",
+  "Iosevka",
+  "JetBrains Mono",
+  "Menlo",
+  "Monaco",
+  "Roboto Mono",
+  "SFMono-Regular",
+  "Source Code Pro",
+  "Ubuntu Mono",
+  "monospace",
+]);
+
+function uniqueSortedStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function detectedToolPath(tool: ToolLocation | null | undefined): string {

@@ -16,7 +16,7 @@ interface WindowChromeProps {
   onQuitApplication(): void;
 }
 
-type WindowMenuKey = "edit" | "file";
+type WindowMenuKey = "edit" | "file" | "view";
 
 interface WindowMenuItem {
   disabled?: boolean;
@@ -69,6 +69,7 @@ export function WindowChrome({
         onQuitApplication,
         platform,
       ),
+      view: viewMenuItems(commandsById, commandContext),
     }),
     [commandContext, commandsById, onEditCommand, onQuitApplication, platform],
   );
@@ -175,6 +176,15 @@ export function WindowChrome({
               label="Edit"
               onOpen={() =>
                 setOpenMenu((current) => (current === "edit" ? null : "edit"))
+              }
+              onSelectItem={runMenuItem}
+            />
+            <WindowMenu
+              isOpen={openMenu === "view"}
+              items={menus.view}
+              label="View"
+              onOpen={() =>
+                setOpenMenu((current) => (current === "view" ? null : "view"))
               }
               onSelectItem={runMenuItem}
             />
@@ -310,6 +320,46 @@ function editMenuItems(
     separatorBefore: item.separatorBefore,
     shortcut: item.shortcut,
   }));
+}
+
+function viewMenuItems(
+  commandsById: Map<string, Command>,
+  context: CommandContext,
+): WindowMenuItem[] {
+  return [
+    commandMenuItem(
+      commandsById,
+      context,
+      "editor.fontZoomIn",
+      "Increase Editor Font Size",
+    ),
+    commandMenuItem(
+      commandsById,
+      context,
+      "editor.fontZoomOut",
+      "Decrease Editor Font Size",
+    ),
+    commandMenuItem(
+      commandsById,
+      context,
+      "editor.fontZoomReset",
+      "Reset Editor Font Size",
+    ),
+    commandMenuItem(
+      commandsById,
+      context,
+      "editor.toggleFontLigatures",
+      "Toggle Editor Font Ligatures",
+      true,
+    ),
+    commandMenuItem(
+      commandsById,
+      context,
+      "workbench.openAppearanceSettings",
+      "Open Appearance Settings",
+      true,
+    ),
+  ];
 }
 
 function commandMenuItem(
