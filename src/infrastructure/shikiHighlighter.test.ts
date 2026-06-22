@@ -7,20 +7,20 @@ import {
   configureShikiLanguageFeatures,
   createAppHighlighter,
 } from "./shikiHighlighter";
-import { ayuMirage, calmDark } from "../components/themePalettes";
+import { calmDark } from "../components/themePalettes";
 
 describe("buildShikiTheme", () => {
   it("maps palette to a TextMate theme", () => {
-    const theme = buildShikiTheme(ayuMirage);
-    expect(theme.name).toBe("ayu-mirage");
+    const theme = buildShikiTheme(calmDark);
+    expect(theme.name).toBe("calm-dark");
     expect(theme.type).toBe("dark");
-    expect(theme.colors["editor.background"]).toBe("#1f2430");
+    expect(theme.colors["editor.background"]).toBe("#16181d");
     const scopeColor = (scope: string) =>
       theme.tokenColors.find((t) => t.scope.includes(scope))?.settings.foreground;
-    expect(scopeColor("entity.name.function")).toBe("#ffd173");
-    expect(scopeColor("keyword")).toBe("#ffad66");
-    expect(scopeColor("variable.parameter")).toBe("#dfbfff");
-    expect(scopeColor("constant.numeric")).toBe("#ffcc66");
+    expect(scopeColor("entity.name.function")).toBe(calmDark.func);
+    expect(scopeColor("keyword")).toBe(calmDark.keyword);
+    expect(scopeColor("variable.parameter")).toBe(calmDark.parameter);
+    expect(scopeColor("constant.numeric")).toBe(calmDark.number);
   });
 
   it("covers the common TextMate scopes that previously fell back to variable", () => {
@@ -119,6 +119,10 @@ describe("APP_SHIKI_THEMES", () => {
   it("includes the bundled VS Code Dark Plus theme", () => {
     expect(APP_SHIKI_THEMES).toContain("dark-plus");
   });
+
+  it("includes the bundled official Ayu Mirage theme", () => {
+    expect(APP_SHIKI_THEMES).toContain("ayu-mirage");
+  });
 });
 
 describe("createAppHighlighter", () => {
@@ -135,6 +139,37 @@ describe("createAppHighlighter", () => {
   it("loads the bundled Dark Plus theme", async () => {
     const highlighter = await createAppHighlighter();
     expect(highlighter.getLoadedThemes()).toContain("dark-plus");
+  });
+
+  it("loads the bundled official Ayu Mirage theme", async () => {
+    const highlighter = await createAppHighlighter();
+    expect(highlighter.getLoadedThemes()).toContain("ayu-mirage");
+  });
+
+  it("uses the official VS Code Ayu Mirage colors, not the legacy custom palette", async () => {
+    const highlighter = await createAppHighlighter();
+    const theme = highlighter.getTheme("ayu-mirage");
+    // Shiki's resolved theme exposes its TextMate rules under `settings`.
+    const rules = theme.settings as Array<{
+      scope?: string | string[];
+      settings: { foreground?: string };
+    }>;
+    const scopeColor = (scope: string) =>
+      rules.find((rule) => {
+        const ruleScope = rule.scope;
+        if (Array.isArray(ruleScope)) {
+          return ruleScope.includes(scope);
+        }
+        return ruleScope === scope;
+      })?.settings.foreground;
+
+    // Official Ayu Mirage values (https://github.com/ayu-theme) — these differ
+    // from the previous hand-rolled palette (bg #1f2430, func #ffd173,
+    // keyword #ffad66, number #ffcc66), proving the bundled theme is in use.
+    expect(theme.colors?.["editor.background"]?.toLowerCase()).toBe("#242936");
+    expect(scopeColor("entity.name.function")?.toLowerCase()).toBe("#ffcd66");
+    expect(scopeColor("keyword")?.toLowerCase()).toBe("#ffa659");
+    expect(scopeColor("constant.numeric")?.toLowerCase()).toBe("#dfbfff");
   });
 });
 

@@ -275,6 +275,7 @@ export const APP_SHIKI_THEMES = [
   "catppuccin-latte",
   "material-deep-ocean",
   "dark-plus",
+  "ayu-mirage",
   ...customPalettes.map((palette) => palette.name),
 ] as const;
 
@@ -296,6 +297,11 @@ export function createAppHighlighter(): Promise<HighlighterCore> {
       // renders the canonical VS Code colors (purple keywords, yellow functions,
       // teal types, orange strings) without going through buildShikiTheme.
       import("shiki/themes/dark-plus.mjs"),
+      // Official VS Code "Ayu Mirage" — bundled by Shiki with the full TextMate
+      // scope set, so it renders the canonical Ayu Mirage colors (func #ffcd66,
+      // keyword #ffa659, comment #6e7c8f, number #dfbfff) 1:1 instead of going
+      // through buildShikiTheme with a hand-rolled palette.
+      import("shiki/themes/ayu-mirage.mjs"),
       materialDeepOceanTheme(),
       ...customPalettes.map((palette) => buildShikiTheme(palette)),
     ],

@@ -107,41 +107,11 @@ export const calmLight: ThemePalette = {
   decorator: "#8a5c8f",
 };
 
-export const ayuMirage: ThemePalette = {
-  name: "ayu-mirage",
-  base: "vs-dark",
-  bg: "#1f2430",
-  fg: "#cccac2",
-  lineHighlight: "#242b38",
-  selection: "#33415e",
-  cursor: "#ffcc66",
-  lineNumber: "#707a8c",
-  lineNumberActive: "#ffd580",
-  whitespace: "#3b4557",
-  widgetBg: "#242b38",
-  border: "#3a4453",
-  selectedBg: "#2f3a4f",
-  selectedFg: "#fff3d4",
-  accent: "#ffcc66",
-  inputBg: "#1f2430",
-  diffInserted: "#95e6cb22",
-  diffRemoved: "#f2877922",
-  keyword: "#ffad66",
-  func: "#ffd173",
-  type: "#73d0ff",
-  string: "#d5ff80",
-  number: "#ffcc66",
-  variable: "#cccac2",
-  parameter: "#dfbfff",
-  property: "#f28779",
-  constant: "#ffcc66",
-  operator: "#f29e74",
-  comment: "#5c6773",
-  commentItalic: true,
-  namespace: "#73d0ff",
-  regexp: "#95e6cb",
-  decorator: "#ffad66",
-};
+// Ayu Mirage is no longer a custom palette: the editor uses Shiki's bundled
+// official "ayu-mirage" theme (imported directly in shikiHighlighter.ts) so the
+// syntax colors match VS Code's Ayu Mirage 1:1. The terminal palette for this
+// theme is defined independently in domain/settings.ts (terminalThemeForAppTheme),
+// and the chrome lives in App.css ([data-theme="ayuMirage"]).
 
 export const materialDeepOcean: ThemePalette = {
   name: "material-deep-ocean",
@@ -221,6 +191,5 @@ export const oneLight: ThemePalette = {
 export const customPalettes: ThemePalette[] = [
   calmDark,
   calmLight,
-  ayuMirage,
   oneLight,
 ];
