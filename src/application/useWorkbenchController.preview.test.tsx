@@ -593,6 +593,153 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("does not run PHP-specific workspace setup for a JavaScript-only project", async () => {
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "Language server unavailable in test.",
+            provider: "phpactor" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      phpToolGateway,
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().workspaceDescriptor?.php).toBeNull();
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
+    expect(languageServerGateway.planPhpLanguageServer).not.toHaveBeenCalled();
+    expect(getWorkbench().languageServerPlan).toBeNull();
+  });
+
+  it("runs PHP-specific workspace setup for a PHP project in basic mode", async () => {
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(
+        async (rootPath) =>
+          ({
+            ...phpactorLanguageServerPlan(),
+            message: `PHPactor ${rootPath} ready`,
+          }) satisfies LanguageServerPlan,
+      ),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      phpToolGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+    expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace");
+    expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+      "/workspace",
+      defaultPhpLanguageServerOptions(),
+    );
+  });
+
+  it("runs PHP-specific workspace setup for a PHP project in full smart mode", async () => {
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(
+        async (rootPath) =>
+          ({
+            ...phpactorLanguageServerPlan(),
+            message: `PHPactor ${rootPath} ready`,
+          }) satisfies LanguageServerPlan,
+      ),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      phpToolGateway,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().intelligenceMode).toBe("fullSmart");
+    expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace");
+    expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+      "/workspace",
+      defaultPhpLanguageServerOptions(),
+    );
+  });
+
   it("ignores stale workspace trust errors after switching project tabs", async () => {
     const workspaceATrust =
       createDeferred<Awaited<ReturnType<WorkspaceTrustGateway["getTrust"]>>>();
