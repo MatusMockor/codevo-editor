@@ -74,6 +74,24 @@ export interface PhpWorkspaceEditApplicationContext {
   editedOpenPaths: string[];
   rootPath: string;
 }
+
+export interface PhpCodeActionTextEditRange {
+  endColumn: number;
+  endLineNumber: number;
+  startColumn: number;
+  startLineNumber: number;
+}
+
+export interface PhpCodeActionTextEdit {
+  range: PhpCodeActionTextEditRange;
+  text: string;
+}
+
+export interface PhpCodeActionDescriptor {
+  edits: PhpCodeActionTextEdit[];
+  kind?: string;
+  title: string;
+}
 export type PhpWorkspaceEditApplier = (
   edit: LanguageServerWorkspaceEdit,
   context: PhpWorkspaceEditApplicationContext,
@@ -163,6 +181,7 @@ export interface LanguageServerMonacoProviderContext {
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
   limitNavigationResultsToOpenModels?: boolean;
+  providePhpCodeActions?(source: string): Promise<PhpCodeActionDescriptor[]>;
   providePhpMethodCompletions?(
     source: string,
     position: MonacoPosition,
@@ -1463,14 +1482,31 @@ async function provideCodeActions(
     actionContext,
   );
   const request = featureDocumentRequestContext(context, model, "codeAction");
+  const phpDocumentContext = activePhpDocumentContext(context, model);
+  const phpActions = context.providePhpCodeActions
+    ? await providePhpImplementMethodsCodeActions(
+        monaco,
+        context,
+        model,
+        actionContext,
+        phpDocumentContext,
+      )
+    : [];
+  // PHP actions resolve from a different workspace-aware flow than the LSP
+  // request; re-validate their document context at EVERY return so a workspace
+  // switch during any later await drops them (per-project isolation).
+  const activePhpActions = () =>
+    phpDocumentContext && isPhpDocumentContextActive(context, phpDocumentContext)
+      ? phpActions
+      : [];
 
   if (!request) {
-    return codeActionList(localActions);
+    return codeActionList([...activePhpActions(), ...localActions]);
   }
 
   try {
     if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
-      return codeActionList(localActions);
+      return codeActionList([...activePhpActions(), ...localActions]);
     }
 
     const actions = await context.featuresGateway.codeActions(
@@ -1481,7 +1517,7 @@ async function provideCodeActions(
     );
 
     if (!isFeatureRequestActive(context, request)) {
-      return codeActionList(localActions);
+      return codeActionList([...activePhpActions(), ...localActions]);
     }
 
     return codeActionList([
@@ -1495,13 +1531,82 @@ async function provideCodeActions(
           actionContext,
         ),
       ),
+      ...activePhpActions(),
       ...localActions,
     ]);
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
 
-    return codeActionList(localActions);
+    return codeActionList([...activePhpActions(), ...localActions]);
   }
+}
+
+async function providePhpImplementMethodsCodeActions(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  actionContext: Monaco.languages.CodeActionContext,
+  documentContext: ReturnType<typeof activePhpDocumentContext>,
+): Promise<Monaco.languages.CodeAction[]> {
+  if (!context.providePhpCodeActions) {
+    return [];
+  }
+
+  if (actionContext.only && !actionContext.only.startsWith("quickfix")) {
+    return [];
+  }
+
+  if (!documentContext) {
+    return [];
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+
+  try {
+    const descriptors = await context.providePhpCodeActions(source);
+
+    if (!isPhpDocumentContextActive(context, documentContext)) {
+      return [];
+    }
+
+    return descriptors.map((descriptor) =>
+      toPhpCodeAction(monaco, model, descriptor),
+    );
+  } catch (error) {
+    if (isPhpDocumentContextActive(context, documentContext)) {
+      context.reportError(error);
+    }
+
+    return [];
+  }
+}
+
+function toPhpCodeAction(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  descriptor: PhpCodeActionDescriptor,
+): Monaco.languages.CodeAction {
+  const versionId = model.getVersionId();
+
+  return {
+    edit: {
+      edits: descriptor.edits.map((edit) => ({
+        resource: model.uri,
+        textEdit: {
+          range: new monaco.Range(
+            edit.range.startLineNumber,
+            edit.range.startColumn,
+            edit.range.endLineNumber,
+            edit.range.endColumn,
+          ),
+          text: edit.text,
+        },
+        versionId,
+      })),
+    },
+    kind: descriptor.kind ?? "quickfix",
+    title: descriptor.title,
+  };
 }
 
 async function resolveCodeAction(

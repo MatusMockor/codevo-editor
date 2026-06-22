@@ -65,6 +65,7 @@ import {
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
   registerLanguageServerMonacoProviders,
+  type PhpCodeActionDescriptor,
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
 import {
@@ -131,6 +132,7 @@ interface EditorSurfaceProps {
   onRevealTargetHandled(): void;
   onRevertChangeHunk(hunk: EditorChangeHunk): void;
   phpSyntaxDiagnosticsGateway: PhpSyntaxDiagnosticsGateway;
+  providePhpCodeActions?(source: string): Promise<PhpCodeActionDescriptor[]>;
   providePhpMethodCompletions(
     source: string,
     position: EditorPosition,
@@ -182,6 +184,7 @@ export function EditorSurface({
   onRevealTargetHandled,
   onRevertChangeHunk,
   phpSyntaxDiagnosticsGateway,
+  providePhpCodeActions = async () => [],
   providePhpMethodCompletions,
   providePhpMethodSignature,
 }: EditorSurfaceProps) {
@@ -207,6 +210,7 @@ export function EditorSurface({
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
   const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
+  const phpCodeActionsRef = useRef(providePhpCodeActions);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
   const [syntaxDiagnosticsByPath, setSyntaxDiagnosticsByPath] = useState<
@@ -302,6 +306,10 @@ export function EditorSurface({
   }, [onLanguageServerError]);
 
   useEffect(() => {
+    phpCodeActionsRef.current = providePhpCodeActions;
+  }, [providePhpCodeActions]);
+
+  useEffect(() => {
     phpMethodCompletionsRef.current = providePhpMethodCompletions;
   }, [providePhpMethodCompletions]);
 
@@ -391,6 +399,7 @@ export function EditorSurface({
       getRuntimeStatus: () => runtimeStatusRef.current,
       getWorkspaceRoot: () => workspaceRoot,
       limitNavigationResultsToOpenModels: true,
+      providePhpCodeActions: (source) => phpCodeActionsRef.current(source),
       providePhpMethodCompletions: (source, position) =>
         phpMethodCompletionsRef.current(source, position),
       providePhpMethodSignature: (source, position) =>

@@ -378,6 +378,19 @@ import {
   type PhpIdentifierContext,
   type PhpMethodDefinitionHint,
 } from "../domain/phpNavigation";
+import {
+  parsePhpClassStructure,
+  type PhpMethodMember,
+} from "../domain/phpClassStructure";
+import {
+  renderImplementMethodsStubs,
+  renderUseImports,
+} from "../domain/phpCodeGen";
+import {
+  findClassBodyInsertionOffset,
+  findUseImportInsertionOffset,
+  offsetToPosition,
+} from "../domain/phpInsertionPoint";
 import type {
   ProjectSymbolKind,
   ProjectSymbolSearchGateway,
@@ -458,6 +471,29 @@ interface PhpClassMemberCacheEntry {
 interface PhpClassMemberReadResult {
   content: string;
   members: PhpMethodCompletion[];
+}
+
+interface AbstractMemberToImplement {
+  declaringSource: string;
+  member: PhpMethodMember;
+}
+
+interface PhpCodeActionTextEditRange {
+  endColumn: number;
+  endLineNumber: number;
+  startColumn: number;
+  startLineNumber: number;
+}
+
+interface PhpCodeActionTextEdit {
+  range: PhpCodeActionTextEditRange;
+  text: string;
+}
+
+export interface PhpCodeActionDescriptor {
+  edits: PhpCodeActionTextEdit[];
+  kind?: string;
+  title: string;
 }
 
 interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
@@ -14205,6 +14241,184 @@ export function useWorkbenchController(
     ],
   );
 
+  const collectPhpAbstractMembersToImplement = useCallback(
+    async (
+      source: string,
+      isRequestedRootActive: () => boolean,
+    ): Promise<{
+      abstractMembers: Map<string, AbstractMemberToImplement>;
+      satisfiedNames: Set<string>;
+    } | null> => {
+      const abstractMembers = new Map<string, AbstractMemberToImplement>();
+      const satisfiedNames = new Set<string>();
+      const visitedClassNames = new Set<string>();
+
+      const collectSuperType = async (
+        ownerSource: string,
+        reference: string,
+      ): Promise<boolean> => {
+        const resolvedClassName = resolvePhpClassName(ownerSource, reference);
+
+        if (!resolvedClassName) {
+          return true;
+        }
+
+        const normalizedClassName = resolvedClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const visitedKey = normalizedClassName.toLowerCase();
+
+        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+          return true;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        for (const path of await resolvePhpClassSourcePaths(
+          normalizedClassName,
+        )) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          try {
+            const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            const structure = parsePhpClassStructure(
+              content,
+              shortPhpName(normalizedClassName),
+            );
+
+            for (const method of structure.methods) {
+              const memberKey = method.name.toLowerCase();
+
+              if (method.isAbstract) {
+                if (!abstractMembers.has(memberKey)) {
+                  abstractMembers.set(memberKey, {
+                    declaringSource: content,
+                    member: method,
+                  });
+                }
+
+                continue;
+              }
+
+              satisfiedNames.add(memberKey);
+            }
+
+            for (const superTypeReference of phpSuperTypeReferences(content)) {
+              if (!(await collectSuperType(content, superTypeReference))) {
+                return false;
+              }
+            }
+
+            return true;
+          } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            continue;
+          }
+        }
+
+        return true;
+      };
+
+      for (const reference of phpSuperTypeReferences(source)) {
+        if (!(await collectSuperType(source, reference))) {
+          return null;
+        }
+      }
+
+      return { abstractMembers, satisfiedNames };
+    },
+    [readNavigationFileContent, resolvePhpClassSourcePaths],
+  );
+
+  const providePhpCodeActions = useCallback(
+    async (source: string): Promise<PhpCodeActionDescriptor[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return [];
+      }
+
+      if (phpCurrentTypeKind(source) !== "class") {
+        return [];
+      }
+
+      if (phpSuperTypeReferences(source).length === 0) {
+        return [];
+      }
+
+      const collected = await collectPhpAbstractMembersToImplement(
+        source,
+        isRequestedRootActive,
+      );
+
+      if (!isRequestedRootActive() || !collected) {
+        return [];
+      }
+
+      const ownStructure = parsePhpClassStructure(source);
+      const implementedNames = new Set(
+        ownStructure.methods.map((method) => method.name.toLowerCase()),
+      );
+      const missingMembers = [...collected.abstractMembers.entries()]
+        .filter(
+          ([memberKey]) =>
+            !implementedNames.has(memberKey) &&
+            !collected.satisfiedNames.has(memberKey),
+        )
+        .map(([, entry]) => entry);
+
+      if (missingMembers.length === 0) {
+        return [];
+      }
+
+      const insertionPoint = findClassBodyInsertionOffset(source);
+
+      if (!insertionPoint) {
+        return [];
+      }
+
+      const stubs = renderImplementMethodsStubs(
+        missingMembers.map((entry) => entry.member),
+      );
+      const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
+      const trailingBlankLine = insertionPoint.needsTrailingBlankLine
+        ? "\n"
+        : "";
+      const insertionPosition = offsetToPosition(source, insertionPoint.offset);
+      const edits: PhpCodeActionTextEdit[] = [
+        {
+          range: zeroLengthPhpEditRange(insertionPosition),
+          text: `${leadingBlankLine}${stubs}\n${trailingBlankLine}`,
+        },
+      ];
+
+      const importEdit = phpImplementMethodsImportEdit(source, missingMembers);
+
+      if (importEdit) {
+        edits.unshift(importEdit);
+      }
+
+      return [{ edits, title: "Implement methods" }];
+    },
+    [collectPhpAbstractMembersToImplement, workspaceRoot],
+  );
+
   const openPhpClassTarget = useCallback(
     async (className: string, label: string): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
@@ -21085,6 +21299,7 @@ export function useWorkbenchController(
     cancelFilePrefetch,
     previewFile,
     previewPath,
+    providePhpCodeActions,
     providePhpMethodCompletions,
     providePhpMethodSignature,
     openSettingsPanel,
@@ -22653,5 +22868,156 @@ function isLanguageServerStatusForWorkspace(
 
   return (
     Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
+  );
+}
+
+const PHP_BUILTIN_TYPE_NAMES = new Set([
+  "array",
+  "bool",
+  "callable",
+  "false",
+  "float",
+  "int",
+  "iterable",
+  "mixed",
+  "never",
+  "null",
+  "object",
+  "parent",
+  "self",
+  "static",
+  "string",
+  "true",
+  "void",
+]);
+
+function zeroLengthPhpEditRange(position: {
+  column: number;
+  line: number;
+}): PhpCodeActionTextEditRange {
+  return {
+    endColumn: position.column + 1,
+    endLineNumber: position.line + 1,
+    startColumn: position.column + 1,
+    startLineNumber: position.line + 1,
+  };
+}
+
+/**
+ * Conservatively computes the `use` import edit needed so the generated method
+ * stubs reference valid type names in the implementing class. For each class
+ * type used in a missing member's signature we resolve its fully-qualified name
+ * in the SOURCE THAT DECLARED IT (interface / abstract class) and only add a
+ * `use` when:
+ *  - the FQN resolves confidently, and
+ *  - its short name matches the token written in the stub (no alias mismatch),
+ *    and
+ *  - the implementing class does not already resolve that token to the same FQN.
+ * If any condition is unmet the type is skipped — never inserting a wrong `use`.
+ */
+function phpImplementMethodsImportEdit(
+  classSource: string,
+  missingMembers: AbstractMemberToImplement[],
+): PhpCodeActionTextEdit | null {
+  const requiredFqns = new Set<string>();
+
+  for (const entry of missingMembers) {
+    for (const token of phpSignatureClassTypeTokens(entry.member)) {
+      const fqn = phpResolvedImportableFqn(entry.declaringSource, token);
+
+      if (!fqn) {
+        continue;
+      }
+
+      if (shortPhpName(fqn).toLowerCase() !== token.toLowerCase()) {
+        continue;
+      }
+
+      if (phpTypeTokenAlreadyResolvable(classSource, token, fqn)) {
+        continue;
+      }
+
+      requiredFqns.add(fqn);
+    }
+  }
+
+  if (requiredFqns.size === 0) {
+    return null;
+  }
+
+  const insertionPoint = findUseImportInsertionOffset(classSource);
+
+  if (!insertionPoint) {
+    return null;
+  }
+
+  const importLines = renderUseImports([...requiredFqns]);
+
+  if (!importLines) {
+    return null;
+  }
+
+  const insertionPosition = offsetToPosition(classSource, insertionPoint.offset);
+  const leadingNewline = insertionPoint.needsLeadingNewline ? "\n" : "";
+
+  return {
+    range: zeroLengthPhpEditRange(insertionPosition),
+    text: `${leadingNewline}${importLines}\n`,
+  };
+}
+
+function phpSignatureClassTypeTokens(member: PhpMethodMember): string[] {
+  const types = [
+    ...member.parameters.map((parameter) => parameter.type),
+    member.returnType,
+  ];
+
+  return types.flatMap(phpClassTypeTokensFromType);
+}
+
+function phpClassTypeTokensFromType(type: string | null): string[] {
+  if (!type) {
+    return [];
+  }
+
+  return type
+    .replace(/^\?/, "")
+    .split(/[|&]/)
+    .map((part) => part.trim().replace(/^\?/, "").replace(/^\\+/, ""))
+    .filter(
+      (part) =>
+        /^[A-Za-z_][A-Za-z0-9_\\]*$/.test(part) &&
+        !PHP_BUILTIN_TYPE_NAMES.has(part.toLowerCase()),
+    );
+}
+
+function phpResolvedImportableFqn(
+  declaringSource: string,
+  token: string,
+): string | null {
+  const resolved = resolvePhpClassName(declaringSource, token);
+
+  if (!resolved) {
+    return null;
+  }
+
+  const normalized = resolved.trim().replace(/^\\+/, "");
+
+  return normalized.includes("\\") ? normalized : null;
+}
+
+function phpTypeTokenAlreadyResolvable(
+  classSource: string,
+  token: string,
+  fqn: string,
+): boolean {
+  const resolved = resolvePhpClassName(classSource, token);
+
+  if (!resolved) {
+    return false;
+  }
+
+  return (
+    resolved.trim().replace(/^\\+/, "").toLowerCase() === fqn.toLowerCase()
   );
 }

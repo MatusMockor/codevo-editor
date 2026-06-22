@@ -40274,6 +40274,281 @@ final class InvoiceAdapter
     expect(getWorkbench().appSettings.editorFontSize).toBe(40);
   });
 
+  it("offers an implement-methods code action for an unimplemented interface", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(string $name): string;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.title).toBe("Implement methods");
+    const insertEdit = actions[0]?.edits[0];
+    expect(insertEdit?.text).toContain(
+      "public function greet(string $name): string",
+    );
+    expect(insertEdit?.range).toEqual({
+      endColumn: 1,
+      endLineNumber: 9,
+      startColumn: 1,
+      startLineNumber: 9,
+    });
+  });
+
+  it("adds a use import for stub types that are not imported in the class", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+
+namespace App\\Contracts;
+
+use App\\Models\\Greeting;
+
+interface GreeterContract
+{
+    public function greet(): Greeting;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions).toHaveLength(1);
+    const importEdit = actions[0]?.edits.find((edit) =>
+      edit.text.includes("use App\\Models\\Greeting;"),
+    );
+    expect(importEdit).toBeDefined();
+    const stubEdit = actions[0]?.edits.find((edit) =>
+      edit.text.includes("public function greet(): Greeting"),
+    );
+    expect(stubEdit).toBeDefined();
+  });
+
+  it("offers no implement-methods code action when every interface method is implemented", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+    public function greet(string $name): string
+    {
+        return $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(string $name): string;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpCodeActions(classSource),
+    ).resolves.toEqual([]);
+  });
+
+  it("offers no implement-methods code action for a class without supertypes", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpCodeActions(classSource),
+    ).resolves.toEqual([]);
+  });
+
+  it("drops stale implement-methods code actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Greeter.php";
+    const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+}
+`;
+    const interfaceRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === interfacePath) {
+        return interfaceRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(interfacePath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    interfaceRead.resolve(`<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(string $name): string;
+}
+`);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,

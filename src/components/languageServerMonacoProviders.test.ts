@@ -4678,6 +4678,221 @@ function store($request): void
     expect(gateway.codeActions).not.toHaveBeenCalled();
   });
 
+  it("merges the PHP implement-methods code action with phpactor actions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: null,
+          data: null,
+          edit: workspaceEdit(
+            "file:///project/src/User.php",
+            "use App\\Models\\User;\n",
+          ),
+          isPreferred: true,
+          kind: "quickfix",
+          title: "Import User",
+        },
+      ],
+    });
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 1,
+              endLineNumber: 5,
+              startColumn: 1,
+              startLineNumber: 5,
+            },
+            text: "\n    public function handle(): void\n    {\n        // TODO: Implement handle().\n    }\n",
+          },
+        ],
+        title: "Implement methods",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo implements Bar\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(providePhpCodeActions).toHaveBeenCalledWith(
+      "<?php\nclass Foo implements Bar\n{\n}\n",
+    );
+    expect(actions.actions).toEqual([
+      expect.objectContaining({ title: "Import User" }),
+      expect.objectContaining({
+        edit: {
+          edits: [
+            {
+              resource: {
+                fsPath: "/project/src/User.php",
+                path: "/project/src/User.php",
+              },
+              textEdit: {
+                range: expect.objectContaining({
+                  endColumn: 1,
+                  endLineNumber: 5,
+                  startColumn: 1,
+                  startLineNumber: 5,
+                }),
+                text: "\n    public function handle(): void\n    {\n        // TODO: Implement handle().\n    }\n",
+              },
+              versionId: 42,
+            },
+          ],
+        },
+        kind: "quickfix",
+        title: "Implement methods",
+      }),
+    ]);
+  });
+
+  it("omits the PHP implement-methods code action when the callback returns nothing", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const providePhpCodeActions = vi.fn(async () => []);
+    const context = providerContext({
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(providePhpCodeActions).toHaveBeenCalled();
+    expect(actions.actions).toEqual([]);
+  });
+
+  it("drops in-flight PHP implement-methods code actions when the workspace switches", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const implementMethods = createDeferred<
+      Array<{
+        edits: Array<{
+          range: {
+            endColumn: number;
+            endLineNumber: number;
+            startColumn: number;
+            startLineNumber: number;
+          };
+          text: string;
+        }>;
+        title: string;
+      }>
+    >();
+    const providePhpCodeActions = vi.fn(async () => implementMethods.promise);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      getWorkspaceRoot: () => activeRoot,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actionsPromise = registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo implements Bar\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    await Promise.resolve();
+    activeRoot = null;
+    implementMethods.resolve([
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 1,
+              endLineNumber: 5,
+              startColumn: 1,
+              startLineNumber: 5,
+            },
+            text: "stale",
+          },
+        ],
+        title: "Implement methods",
+      },
+    ]);
+
+    await expect(actionsPromise).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+  });
+
+  it("drops resolved PHP implement-methods actions when the workspace switches during a later LSP await", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot: string | null = "/project";
+    const flush = createDeferred<void>();
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 1,
+              endLineNumber: 5,
+              startColumn: 1,
+              startLineNumber: 5,
+            },
+            text: "stale",
+          },
+        ],
+        title: "Implement methods",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      flushPendingDocumentChange: vi.fn(async () => flush.promise),
+      getWorkspaceRoot: () => activeRoot,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actionsPromise = registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo implements Bar\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(providePhpCodeActions).toHaveBeenCalled();
+    });
+    activeRoot = null;
+    flush.resolve();
+
+    await expect(actionsPromise).resolves.toEqual({
+      actions: [],
+      dispose: expect.any(Function),
+    });
+  });
+
   it("applies PHP workspace edit events for the active workspace and session", async () => {
     const registered = createRegisteredProviders();
     const openPath = "/project/src/User.php";
@@ -7910,6 +8125,9 @@ function providerContext(
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
     limitNavigationResultsToOpenModels: boolean;
+    providePhpCodeActions: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
+    >;
     providePhpMethodCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpMethodCompletions"]
     >;
@@ -7935,6 +8153,7 @@ function providerContext(
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
+    providePhpCodeActions: overrides.providePhpCodeActions,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,
     refreshGateway: overrides.refreshGateway,

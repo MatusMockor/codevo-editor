@@ -77,7 +77,34 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   editor: null as FakeEditor | null,
   monaco: null as ReturnType<typeof createMonaco> | null,
   props: null as { options?: Record<string, unknown> } | null,
+  registeredContext: null as {
+    providePhpCodeActions?: (source: string) => unknown;
+  } | null,
 }));
+
+vi.mock("./languageServerMonacoProviders", async () => {
+  const actual = await vi.importActual<
+    typeof import("./languageServerMonacoProviders")
+  >("./languageServerMonacoProviders");
+
+  return {
+    ...actual,
+    registerLanguageServerMonacoProviders: (
+      monaco: unknown,
+      context: { providePhpCodeActions?: (source: string) => unknown },
+    ) => {
+      editorSurfaceMocks.registeredContext = context;
+      return actual.registerLanguageServerMonacoProviders(
+        monaco as Parameters<
+          typeof actual.registerLanguageServerMonacoProviders
+        >[0],
+        context as Parameters<
+          typeof actual.registerLanguageServerMonacoProviders
+        >[1],
+      );
+    },
+  };
+});
 
 vi.mock("@monaco-editor/react", async () => {
   const React = await import("react");
@@ -118,6 +145,7 @@ describe("EditorSurface", () => {
     editorSurfaceMocks.editor = null;
     editorSurfaceMocks.monaco = null;
     editorSurfaceMocks.props = null;
+    editorSurfaceMocks.registeredContext = null;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -188,6 +216,71 @@ describe("EditorSurface", () => {
         quickSuggestionsDelay: 10,
         suggestOnTriggerCharacters: true,
       }),
+    );
+  });
+
+  it("forwards providePhpCodeActions into the language server provider context", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass Example {}\n",
+      language: "php",
+      name: "Example.php",
+      path: "/workspace/app/Example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const providePhpCodeActions = vi.fn(async () => []);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpCodeActions={providePhpCodeActions}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const context = editorSurfaceMocks.registeredContext;
+
+    expect(context?.providePhpCodeActions).toEqual(expect.any(Function));
+
+    await context?.providePhpCodeActions?.("<?php\nclass Example {}\n");
+
+    expect(providePhpCodeActions).toHaveBeenCalledWith(
+      "<?php\nclass Example {}\n",
     );
   });
 
