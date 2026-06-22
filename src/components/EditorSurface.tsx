@@ -554,10 +554,12 @@ export function EditorSurface({
       return;
     }
 
+    const keymapPlatform = detectKeymapPlatform();
     const keybinding = (commandId: KeymapCommandId) =>
       monacoKeybindingsForShortcut(
         monacoApi,
-        shortcutForCommand(keymap, commandId),
+        shortcutForCommand(keymap, commandId, keymapPlatform),
+        keymapPlatform,
       );
     const disposables = [
       editorApi.addAction({
@@ -1781,7 +1783,7 @@ function breadcrumbFeaturesGateway(
 function monacoKeybindingsForShortcut(
   monaco: typeof Monaco,
   shortcut: string,
-  platform: KeymapPlatform = detectKeymapPlatform(),
+  platform: KeymapPlatform,
 ): number[] {
   const parsed = parseShortcut(shortcut);
 
