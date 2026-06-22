@@ -106,8 +106,9 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
 };
+#[cfg(target_os = "macos")]
+use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
 use tauri::{
-    menu::{Menu, MenuItemBuilder, SubmenuBuilder},
     AppHandle, Emitter, Manager, RunEvent, State, WindowEvent,
 };
 use tauri_plugin_opener::OpenerExt;
@@ -129,8 +130,11 @@ use workspace_runtime::{
     dispose_workspace_root as dispose_workspace_runtime_root, WorkspaceRuntimeDisposal,
 };
 
+#[cfg(target_os = "macos")]
 const CLOSE_ACTIVE_TAB_EVENT: &str = "mockor-close-active-tab";
+#[cfg(target_os = "macos")]
 const CLOSE_ACTIVE_TAB_MENU_ID: &str = "close-active-tab";
+#[cfg(target_os = "macos")]
 const QUIT_APPLICATION_MENU_ID: &str = "quit-application";
 
 #[derive(Serialize)]
@@ -1100,6 +1104,7 @@ fn path_file_label(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let close_tab = MenuItemBuilder::with_id(CLOSE_ACTIVE_TAB_MENU_ID, "Close Tab")
         .accelerator("CmdOrCtrl+W")
@@ -4996,18 +5001,10 @@ mod tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .enable_macos_default_menu(false)
-        .menu(application_menu)
-        .on_window_event(|window, event| {
-            if matches!(
-                event,
-                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
-            ) {
-                shutdown_runtime_processes(window.app_handle());
-            }
-        })
-        .on_menu_event(|app, event| match event.id().as_ref() {
+    let builder = tauri::Builder::default().enable_macos_default_menu(false);
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(application_menu).on_menu_event(|app, event| {
+        match event.id().as_ref() {
             CLOSE_ACTIVE_TAB_MENU_ID => {
                 let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
             }
@@ -5016,6 +5013,17 @@ pub fn run() {
                 app.exit(0);
             }
             _ => {}
+        }
+    });
+
+    builder
+        .on_window_event(|window, event| {
+            if matches!(
+                event,
+                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+            ) {
+                shutdown_runtime_processes(window.app_handle());
+            }
         })
         .manage(Mutex::new(SmartModeService::new()))
         .manage(PhpLanguageServerRegistry::new())

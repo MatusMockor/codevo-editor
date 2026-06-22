@@ -19814,7 +19814,7 @@ export function useWorkbenchController(
         return;
       }
 
-      if (event.metaKey && !event.altKey && !event.ctrlKey && event.key.toLowerCase() === "q") {
+      if (matchesShortcut(event, "Cmd+Q")) {
         event.preventDefault();
         quitApplication();
         return;
@@ -21108,6 +21108,7 @@ export function useWorkbenchController(
     reportCommandError: (error: unknown) => reportError("Command", error),
     reportLanguageServerError,
     previewGitChange,
+    quitApplication,
     refreshPhpTree,
     refreshGitStatus,
     revertGitChanges,
