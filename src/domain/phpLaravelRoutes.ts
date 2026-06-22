@@ -40,6 +40,12 @@ interface PhpLaravelNamedRouteReferenceArgument {
   openParen: number;
 }
 
+interface PhpVariableReference {
+  end: number;
+  name: string;
+  start: number;
+}
+
 interface PhpStringLiteral {
   closed: boolean;
   quote: "'" | "\"";
@@ -88,7 +94,7 @@ export function phpLaravelNamedRouteReferenceContextAt(
   const literal = stringLiteralAtOffset(source, offset);
 
   if (!literal) {
-    return null;
+    return phpLaravelNamedRouteVariableReferenceContextAt(source, offset);
   }
 
   const argument = firstArgumentCallContextAt(source, literal);
@@ -116,6 +122,49 @@ export function phpLaravelNamedRouteReferenceContextAt(
     name: literal.closed ? literal.value : prefix,
     position: editorPositionAtOffset(source, literal.quoteStart + 1),
     prefix,
+  };
+}
+
+function phpLaravelNamedRouteVariableReferenceContextAt(
+  source: string,
+  offset: number,
+): PhpLaravelNamedRouteReferenceContext | null {
+  const variable = phpVariableReferenceAtOffset(source, offset);
+
+  if (!variable) {
+    return null;
+  }
+
+  const argument = firstArgumentCallContextForVariable(source, variable);
+
+  if (!argument || !isPhpCodeOffset(source, argument.openParen)) {
+    return null;
+  }
+
+  const call = laravelNamedRouteReferenceCallAt(source, argument.openParen);
+
+  if (
+    !call ||
+    !isSupportedNamedRouteArgumentName(call, argument.argumentName)
+  ) {
+    return null;
+  }
+
+  const literalValue = phpVariableAssignedStringLiteralBefore(
+    source,
+    variable.name,
+    argument.openParen,
+  );
+
+  if (literalValue === null) {
+    return null;
+  }
+
+  return {
+    call,
+    name: literalValue,
+    position: editorPositionAtOffset(source, variable.start),
+    prefix: literalValue,
   };
 }
 
@@ -1080,6 +1129,152 @@ function namedArgumentNameBeforeLiteral(
   const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$/.exec(prefix);
 
   return match?.[1] ?? undefined;
+}
+
+function phpVariableReferenceAtOffset(
+  source: string,
+  offset: number,
+): PhpVariableReference | null {
+  for (
+    let start = source.lastIndexOf("$", Math.min(offset, source.length - 1));
+    start >= 0;
+    start = source.lastIndexOf("$", start - 1)
+  ) {
+    const match = /^\$[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(start));
+
+    if (!match) {
+      continue;
+    }
+
+    const end = start + match[0].length;
+
+    if (offset < start || offset > end) {
+      return null;
+    }
+
+    return { end, name: match[0].slice(1), start };
+  }
+
+  return null;
+}
+
+function firstArgumentCallContextForVariable(
+  source: string,
+  variable: PhpVariableReference,
+): PhpLaravelNamedRouteReferenceArgument | null {
+  for (
+    let openParen = source.lastIndexOf("(", variable.start);
+    openParen >= 0;
+    openParen = source.lastIndexOf("(", openParen - 1)
+  ) {
+    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+
+    if (closeParen === null || variable.start > closeParen) {
+      continue;
+    }
+
+    if (
+      topLevelArgumentIndexAtOffset(source, openParen, variable.start) !== 0
+    ) {
+      continue;
+    }
+
+    if (!isSoleFirstArgumentVariable(source, closeParen, variable)) {
+      continue;
+    }
+
+    const argumentName = namedArgumentNameBeforeLiteral(
+      source,
+      openParen + 1,
+      variable.start,
+    );
+
+    if (argumentName === undefined) {
+      continue;
+    }
+
+    return { argumentName, openParen };
+  }
+
+  return null;
+}
+
+function isSoleFirstArgumentVariable(
+  source: string,
+  closeParen: number,
+  variable: PhpVariableReference,
+): boolean {
+  const afterVariable = source.slice(
+    variable.end,
+    Math.min(closeParen + 1, source.length),
+  );
+
+  return /^\s*(?:,|\))/.test(afterVariable);
+}
+
+function phpVariableAssignedStringLiteralBefore(
+  source: string,
+  variableName: string,
+  beforeOffset: number,
+): string | null {
+  const scope = source.slice(0, beforeOffset);
+  const assignmentPattern = new RegExp(
+    `\\$${escapeRegExp(variableName)}\\s*([.+\\-*/%&|^]|\\?\\?|<<|>>)?=(?!=|>)\\s*`,
+    "g",
+  );
+  let resolvedValue: string | null = null;
+  let assignmentCount = 0;
+
+  for (const match of scope.matchAll(assignmentPattern)) {
+    const assignmentStart = match.index ?? 0;
+
+    if (!isPhpCodeOffset(source, assignmentStart)) {
+      continue;
+    }
+
+    if (match[1]) {
+      return null;
+    }
+
+    assignmentCount += 1;
+    resolvedValue = phpAssignedStringLiteralValueAt(
+      source,
+      assignmentStart + match[0].length,
+    );
+  }
+
+  if (assignmentCount !== 1) {
+    return null;
+  }
+
+  return resolvedValue;
+}
+
+function phpAssignedStringLiteralValueAt(
+  source: string,
+  valueStart: number,
+): string | null {
+  const literal = stringLiteralStartingAt(source, valueStart);
+
+  if (!literal?.closed) {
+    return null;
+  }
+
+  if (literal.quote === "\"" && hasPhpVariableInterpolation(literal.value)) {
+    return null;
+  }
+
+  const afterLiteral = skipWhitespace(source, literal.quoteEnd + 1);
+
+  if (source[afterLiteral] !== ";") {
+    return null;
+  }
+
+  return literal.value;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function topLevelArgumentValueStartAt(

@@ -385,6 +385,126 @@ return route('comments.sh
     });
   });
 
+  it("resolves route variable arguments assigned a single string literal", () => {
+    const source = `<?php
+$name = 'comments.show';
+
+return route($name);
+`;
+
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "route($na"),
+      ),
+    ).toEqual({
+      call: "route",
+      name: "comments.show",
+      position: positionOf(source, "$name)"),
+      prefix: "comments.show",
+    });
+  });
+
+  it("resolves to_route variable arguments assigned a single string literal", () => {
+    const source = `<?php
+$routeName = "comments.index";
+
+return to_route($routeName);
+`;
+
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "to_route($route"),
+      ),
+    ).toEqual({
+      call: "to_route",
+      name: "comments.index",
+      position: positionOf(source, "$routeName)"),
+      prefix: "comments.index",
+    });
+  });
+
+  it("resolves Route::has variable arguments assigned a single string literal", () => {
+    const source = `<?php
+$name = 'comments.destroy';
+
+if (Route::has($name)) {
+}
+`;
+
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "Route::has($na"),
+      ),
+    ).toEqual({
+      call: "Route::has",
+      name: "comments.destroy",
+      position: positionOf(source, "$name))"),
+      prefix: "comments.destroy",
+    });
+  });
+
+  it("ignores route variable arguments with multiple ambiguous assignments", () => {
+    const source = `<?php
+$name = 'comments.show';
+$name = 'comments.index';
+
+return route($name);
+`;
+
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "route($na"),
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores route variable arguments without any assignment", () => {
+    const source = `<?php
+return route($name);
+`;
+
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "route($na"),
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores route variable arguments assigned a dynamic expression", () => {
+    const source = `<?php
+$name = $request->input('route');
+
+return route($name);
+`;
+
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "route($na"),
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores route variable arguments assigned an interpolated string", () => {
+    const source = `<?php
+$name = "comments.$action";
+
+return route($name);
+`;
+
+    expect(
+      phpLaravelNamedRouteReferenceContextAt(
+        source,
+        cursorAfter(source, "route($na"),
+      ),
+    ).toBeNull();
+  });
+
   it("extracts literal names from chained Laravel route definitions", () => {
     const source = `<?php
 use Illuminate\\Support\\Facades\\Route;
