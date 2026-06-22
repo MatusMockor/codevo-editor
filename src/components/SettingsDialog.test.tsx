@@ -22,6 +22,7 @@ describe("SettingsDialog", () => {
     act(() => root.unmount());
     host.remove();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("autosaves setting changes without a Save button", async () => {
@@ -232,7 +233,7 @@ describe("SettingsDialog", () => {
   });
 
   it("shows platform-specific keymap placeholders", async () => {
-    vi.spyOn(window.navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    stubNavigatorPlatform("Linux x86_64");
 
     await act(async () => {
       root.render(
@@ -632,5 +633,13 @@ describe("SettingsDialog", () => {
     }
 
     return input;
+  }
+
+  function stubNavigatorPlatform(platform: string): void {
+    vi.stubGlobal("navigator", {
+      platform,
+      userAgent: `Mozilla/5.0 (${platform})`,
+      userAgentData: { platform },
+    });
   }
 });
