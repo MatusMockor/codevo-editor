@@ -64,6 +64,7 @@ import {
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
 import {
+  applyImmediateFallbackTheme,
   configureShikiLanguageFeatures,
   setupShikiTokenization,
 } from "../infrastructure/shikiHighlighter";
@@ -985,26 +986,13 @@ export function EditorSurface({
     phpSyntaxDiagnosticsGateway,
   ]);
 
-  if (!activeDocument) {
-    if (isOpeningFile) {
-      return (
-        <div className="empty-editor" data-testid="editor-opening">
-          <p>Opening file…</p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="empty-editor">
-        <p>Open a file to start editing.</p>
-      </div>
-    );
-  }
-
-  const breadcrumbSymbols = breadcrumbSymbolsByPath[activeDocument.path] ?? [];
-  const breadcrumbPath = cursorPosition
-    ? breadcrumbPathFromCursorAndSymbols(cursorPosition, breadcrumbSymbols)
+  const breadcrumbSymbols = activeDocument
+    ? breadcrumbSymbolsByPath[activeDocument.path] ?? []
     : [];
+  const breadcrumbPath =
+    activeDocument && cursorPosition
+      ? breadcrumbPathFromCursorAndSymbols(cursorPosition, breadcrumbSymbols)
+      : [];
 
   const navigateToBreadcrumbSymbol = (symbol: LanguageServerDocumentSymbol) => {
     if (!editorApi) {
@@ -1022,7 +1010,7 @@ export function EditorSurface({
   };
 
   const changePreviewStyle =
-    changePreview && editorApi
+    activeDocument && changePreview && editorApi
       ? editorChangePopoverStyle(
           editorApi,
           changePreview.hunk,
@@ -1030,31 +1018,51 @@ export function EditorSurface({
         )
       : undefined;
 
+  // The Monaco editor stays mounted at all times so switching files only swaps
+  // the model (path/value) instead of unmounting/remounting Monaco — which would
+  // re-run its initialization and flash a blank surface (VS Code never does
+  // this). When no document is open we feed Monaco a stable placeholder model
+  // and cover it with an overlay, instead of replacing the editor with a plain
+  // div.
+  const isReadOnly = activeDocument?.readOnly === true;
+  const overlay = activeDocument ? null : isOpeningFile ? (
+    <div className="editor-empty-overlay" data-testid="editor-opening">
+      <p>Opening file…</p>
+    </div>
+  ) : (
+    <div className="editor-empty-overlay" data-testid="editor-empty">
+      <p>Open a file to start editing.</p>
+    </div>
+  );
+
   return (
     <div
-      aria-labelledby={getTabId(activeDocument.path)}
+      aria-labelledby={activeDocument ? getTabId(activeDocument.path) : undefined}
       className="editor-panel"
-      id={getTabPanelId(activeDocument.path)}
+      id={activeDocument ? getTabPanelId(activeDocument.path) : undefined}
       onFocusCapture={onEditorFocused}
       onMouseDown={onEditorFocused}
       role="tabpanel"
     >
-      <Breadcrumbs
-        fileName={activeDocument.name}
-        onNavigate={navigateToBreadcrumbSymbol}
-        path={breadcrumbPath}
-      />
+      {activeDocument ? (
+        <Breadcrumbs
+          fileName={activeDocument.name}
+          onNavigate={navigateToBreadcrumbSymbol}
+          path={breadcrumbPath}
+        />
+      ) : null}
       <Editor
         beforeMount={(monaco) => beforeMonacoMount(monaco, monacoTheme)}
         height="100%"
-        language={activeDocument.language}
+        language={activeDocument ? activeDocument.language : PLACEHOLDER_LANGUAGE}
+        loading={<EditorLoadingPlaceholder />}
         onChange={(value) => onChange(value || "")}
         onMount={handleMount}
         options={{
           autoIndent: "full",
           automaticLayout: true,
           detectIndentation: true,
-          domReadOnly: activeDocument.readOnly === true,
+          domReadOnly: isReadOnly,
           formatOnPaste,
           fontFamily:
             "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
@@ -1067,18 +1075,19 @@ export function EditorSurface({
           parameterHints: { enabled: true, cycle: true },
           quickSuggestions: { other: true, comments: false, strings: true },
           quickSuggestionsDelay: 10,
-          readOnly: activeDocument.readOnly === true,
+          readOnly: isReadOnly,
           scrollBeyondLastLine: false,
           "semanticHighlighting.enabled": true,
           smoothScrolling: true,
           suggestOnTriggerCharacters: true,
           tabSize: 2,
         }}
-        path={activeDocument.path}
+        path={activeDocument ? activeDocument.path : PLACEHOLDER_PATH}
         theme={monacoTheme}
-        value={activeDocument.content}
+        value={activeDocument ? activeDocument.content : ""}
       />
-      {changePreview ? (
+      {overlay}
+      {activeDocument && changePreview ? (
         <div
           aria-label="Local change preview"
           className={`editor-change-popover editor-change-popover-${changePreview.hunk.kind}`}
@@ -1175,7 +1184,25 @@ function currentEditorTextRange(
   };
 }
 
+// Stable placeholder model identity used while no document is open, so Monaco
+// keeps a single mounted instance instead of remounting when the first file
+// opens.
+const PLACEHOLDER_PATH = "inmemory://workbench/empty";
+const PLACEHOLDER_LANGUAGE = "plaintext";
+
+// Rendered via the Monaco `loading` prop. Monaco's default loading element is a
+// white "Loading…" box; this matches the editor surface background so the very
+// first Monaco chunk load does not flash white.
+function EditorLoadingPlaceholder() {
+  return <div className="editor-loading-placeholder" aria-hidden="true" />;
+}
+
 function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
+  // Apply a matching built-in dark/light theme synchronously so Monaco paints
+  // the correct background on its first frame. Without this, Monaco renders the
+  // default white `vs` theme until the async Shiki setup below resolves and
+  // calls `setTheme`, producing a white flash on dark themes.
+  applyImmediateFallbackTheme(monaco, theme);
   configureTypescriptJavascriptDefaults(monaco);
   configureShikiLanguageFeatures(monaco);
   setupEmmet(monaco);

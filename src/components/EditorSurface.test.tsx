@@ -2178,7 +2178,16 @@ interface ParserFactory
     ).toHaveBeenCalled();
   });
 
-  it("shows a loading state while a file is being opened", async () => {
+  it("keeps the Monaco editor mounted and overlays an opening state while a file is being opened", async () => {
+    const model: FakeModel = {
+      uri: {
+        fsPath: "inmemory://workbench/empty",
+        path: "inmemory://workbench/empty",
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
     await act(async () => {
       root.render(
         <EditorSurface
@@ -2216,11 +2225,20 @@ interface ParserFactory
     });
 
     expect(host.querySelector('[data-testid="editor-opening"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="monaco-editor"]')).toBeNull();
+    expect(host.querySelector('[data-testid="monaco-editor"]')).not.toBeNull();
     expect(host.textContent).not.toContain("Open a file to start editing.");
   });
 
-  it("shows the empty placeholder when nothing is open and no file is loading", async () => {
+  it("keeps the Monaco editor mounted and overlays the empty placeholder when nothing is open", async () => {
+    const model: FakeModel = {
+      uri: {
+        fsPath: "inmemory://workbench/empty",
+        path: "inmemory://workbench/empty",
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
     await act(async () => {
       root.render(
         <EditorSurface
@@ -2258,7 +2276,124 @@ interface ParserFactory
     });
 
     expect(host.querySelector('[data-testid="editor-opening"]')).toBeNull();
+    expect(host.querySelector('[data-testid="editor-empty"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="monaco-editor"]')).not.toBeNull();
     expect(host.textContent).toContain("Open a file to start editing.");
+  });
+
+  it("wires a synchronous beforeMount so the dark fallback theme is applied before Shiki loads", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const beforeMount = (
+      editorSurfaceMocks.props as { beforeMount?: (m: unknown) => void } | null
+    )?.beforeMount;
+    expect(beforeMount).toBeTypeOf("function");
+  });
+
+  it("renders a dark loading placeholder instead of the default white Monaco loading box", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const loading = (
+      editorSurfaceMocks.props as { loading?: unknown } | null
+    )?.loading;
+    expect(loading).not.toBeNull();
+    expect(loading).toBeDefined();
   });
 });
 

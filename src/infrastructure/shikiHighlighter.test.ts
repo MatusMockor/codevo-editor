@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   APP_SHIKI_THEMES,
   SHIKI_LANGS,
+  applyImmediateFallbackTheme,
   buildShikiTheme,
   configureShikiLanguageFeatures,
   createAppHighlighter,
@@ -85,6 +86,32 @@ describe("buildShikiTheme", () => {
     expect(scopeColor("function")).toBe(calmDark.func);
     expect(scopeColor("parameter")).toBe(calmDark.parameter);
     expect(scopeColor("type")).toBe(calmDark.type);
+  });
+});
+
+describe("applyImmediateFallbackTheme", () => {
+  it("applies the built-in dark theme synchronously for dark app themes", () => {
+    for (const theme of [
+      "calm-dark",
+      "one-dark-pro",
+      "dracula",
+      "catppuccin-mocha",
+      "material-deep-ocean",
+      "dark-plus",
+      "ayu-mirage",
+    ]) {
+      const setTheme = vi.fn();
+      applyImmediateFallbackTheme({ editor: { setTheme } }, theme);
+      expect(setTheme).toHaveBeenCalledWith("vs-dark");
+    }
+  });
+
+  it("applies the built-in light theme synchronously for light app themes", () => {
+    for (const theme of ["calm-light", "one-light", "catppuccin-latte"]) {
+      const setTheme = vi.fn();
+      applyImmediateFallbackTheme({ editor: { setTheme } }, theme);
+      expect(setTheme).toHaveBeenCalledWith("vs");
+    }
   });
 });
 

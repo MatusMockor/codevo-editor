@@ -446,6 +446,37 @@ export function configureShikiLanguageFeatures(
   }
 }
 
+/**
+ * Light-mode Monaco theme ids. Used to pick the matching built-in fallback so
+ * Monaco never paints a white background before the async Shiki themes load.
+ */
+const LIGHT_APP_THEMES = new Set([
+  "calm-light",
+  "one-light",
+  "catppuccin-latte",
+]);
+
+interface MonacoThemeHost {
+  editor: {
+    setTheme(theme: string): void;
+  };
+}
+
+/**
+ * Synchronously applies a built-in Monaco theme (`vs` / `vs-dark`) matched to
+ * the target app theme's light/dark mode. This runs in `beforeMount`, before
+ * the async Shiki highlighter resolves and registers the real theme, so Monaco
+ * paints the correct dark (or light) background on its very first frame instead
+ * of flashing the default white `vs` theme. The real Shiki theme overrides this
+ * once `setupShikiTokenization` finishes.
+ */
+export function applyImmediateFallbackTheme(
+  monaco: MonacoThemeHost,
+  theme: string,
+): void {
+  monaco.editor.setTheme(LIGHT_APP_THEMES.has(theme) ? "vs" : "vs-dark");
+}
+
 export async function setupShikiTokenization(
   monaco: MonacoForShiki & Parameters<typeof shikiToMonaco>[1],
   theme: string,
