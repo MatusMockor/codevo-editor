@@ -11,7 +11,9 @@ Orchestrátor-driven (deleguj → nezávislý review → commit). Žiadny CodeRa
 Owner: src/application/useWorkbenchController.ts (openWorkspacePath ~3817+, restoreWorkspaceSession ~3566), src-tauri (project.rs detect, managed_phpactor.rs).
 - [DONE] P1: OVERENÉ — audit tvrdenie FALSE. JS-only už má fast-path (guard `if(!descriptor?.php) return` @3868 PRED drahými PHP volaniami; Rust composer.rs short-circuituje). Žiadna prod zmena, pridané 3 regression testy (commit fast-path). 1268 testov.
 - [DONE] P2: commit "Parallelize workspace open...". openWorkspacePath nezávislé ops (loadDirectory/getTrust/detectWorkspace/restoreSession) cez Promise.all + restoreWorkspaceSession Promise.allSettled. ~2-4× rýchlejšie otvorenie. BONUS: review odhalil REÁLNY izolačný leak (loadDirectory subtree guard → nested→parent prepnutie pretieklo entries) → opravený (requireActiveRoot exact-root flag). detectWorkspaceTask vracia null pri stale. 1273 testov, tab-switch 130 pass.
-- [ ] P2b (neskôr): odložiť basic-mode PHP probe (detectPhpTools/plan) — vyžaduje wire setSmartMode na basic→fullSmart prechod alebo lazy pri prvom PHP súbore. Multi-touch.
+- [DONE] P2b: defer basic-mode PHP probe — commit "Defer PHP probe...". runPhpWorkspaceProbe helper, spustí sa LEN keď IDE mode (open-fullSmart / setSmartMode / saveWorkbenchSettings). ~150-700ms rýchlejší open PHP projektu v basic mode. PHP IDE flow zachovaný (všetky IDE-on cesty volajú probe).
+- [DONE] P3: phpactor background install — commit "Install managed phpactor in background...". Rust thread + event, frontend non-blocking + listener (per-root guard). UI neblokuje.
+- [DONE] PROGRESS UX: commit "Show IDE indexing and engine progress...". Toolbar spinner + texty "Indexing workspace…"/"Installing PHP engine…"/"Starting PHP engine…"/error. ideProgress.ts helper, per-workspace izolácia.
 - [ ] P3: phpactor managed install non-blocking/background. M, MED.
 - Pozn: index sa v "basic" mode NEspúšťa (shouldIndexWorkspace false) — OK.
 
