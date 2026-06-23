@@ -47,5 +47,15 @@ Už máme: generic PHP/PHP8 cez phpactor (hover/def/rename/completion/enums/prom
 5. Robustnosť: phpactor diagnostic refresh fix (viď vyššie), health-check + auto-restart, viac quick-fixov/inšpekcií.
 6. UI parity: type/call hierarchy UI, find usages panel, structure/outline (máme breadcrumbs), TODO view.
 
+## NOČNÝ ŠPRINT — hotové (2026-06-23), full suite 1775 testov zelená
+Každý slice: TDD → nezávislý review → commit/push, per-workspace izolácia overená, git pull --rebase priebežne.
+- #1 OOP CODE-GEN ✅ KOMPLETNÉ: implement interface methods, generate getters/setters, generate constructor (+promotion), create method/property from usage, optimize imports, extract variable. Code actions cez Cmd+. (providePhpCodeActions, source+range).
+- #2 LARAVEL nav/completion ✅: completion (config/view/trans) UŽ EXISTOVALA (phpLaravelConfig/Views/Translations — nededuplikované); pridaná Cmd+Click nav (providePhpLaravelDefinition) na config/view/trans/env/route literály.
+- #3 REFACTORING: optimize imports ✅, extract variable ✅, Format Document command (Shift+Alt+F) ✅. NECHANÉ (L, produktové rozhodnutie usera): change signature, inline, extract method.
+- #4 BLADE: syntax UŽ existovala (Shiki blade grammar — bladeLanguage Monarch duplikát zahodený); pridaná nav (Cmd+Click @include/@extends/@component/<x-comp>) + completion (@direktívy, view/component names) pre "blade" language.
+- #5 ROBUSTNOSŤ: phpactor + TS LSP auto-restart pri crashe ✅ (backoff/limit/per-workspace izolácia, zapojené v lib.rs). Diagnostic refresh po edite = ZNÁMY phpactor-internal problém (čaká rozlišovací test 1 — ručný edit; capabilities hypotéza vyvrátená).
+- #6 UI PANELY: type/call hierarchy + structure + breadcrumbs UŽ EXISTOVALI; pridaný TODO panel (Cmd+Shift+T) + Find References panel (Shift+F12).
+- POZN: laravelKeyExtraction.ts commitnutý ale nateraz NEVYUŽITÝ (completion má vlastné extraktory) — ráno zapojiť do completion alebo odstrániť.
+
 ## Postup per slice
 deleguj (write scope + TDD + zákaz revertu cudzích zmien + žiadny CodeRabbit) → samostatný review agent → integruj → testy + npm run check → commit/push (žiadna AI attribution) → update plánu.
