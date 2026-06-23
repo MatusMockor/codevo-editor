@@ -4534,6 +4534,104 @@ function store($request): void
     );
   });
 
+  it("returns PHP code actions that already carry an inline edit without requesting a resolve", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const inlineEditAction = {
+      ...backedCodeAction(),
+      __languageServerAction: {
+        command: null,
+        data: { id: "override-method" },
+        edit: workspaceEdit(
+          "file:///project/src/User.php",
+          "public function handle(): void {}\n",
+        ),
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Override one of 3 methods",
+      },
+      edit: {
+        edits: [
+          {
+            resource: {
+              fsPath: "/project/src/User.php",
+              path: "/project/src/User.php",
+            },
+            textEdit: {
+              range: new registered.monaco.Range(1, 1, 1, 1),
+              text: "public function handle(): void {}\n",
+            },
+            versionId: 42,
+          },
+        ],
+      },
+      title: "Override one of 3 methods",
+    };
+
+    const resolved =
+      await registered.codeActionProvider.resolveCodeAction(inlineEditAction);
+
+    expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
+    expect(resolved).toBe(inlineEditAction);
+  });
+
+  it("returns PHP code actions that already carry a command without requesting a resolve", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const context = providerContext({ featuresGateway: gateway });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const commandAction = {
+      ...backedCodeAction(),
+      __languageServerAction: {
+        command: {
+          arguments: [],
+          command: "phpactor.fixAll",
+          title: "Fix all",
+        },
+        data: { id: "fix-all" },
+        edit: null,
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Fix all",
+      },
+      command: {
+        arguments: [],
+        id: "mockor.php.executeLanguageServerCommand",
+        title: "Fix all",
+      },
+      title: "Fix all",
+    };
+
+    const resolved =
+      await registered.codeActionProvider.resolveCodeAction(commandAction);
+
+    expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
+    expect(resolved).toBe(commandAction);
+  });
+
+  it("does not report an error when a PHP server without resolve support fails to resolve an edit-less action", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.resolveCodeAction).mockRejectedValueOnce(
+      new Error("Handler codeAction/resolve not found"),
+    );
+    const reportError = vi.fn();
+    const context = providerContext({ featuresGateway: gateway, reportError });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const editlessAction = backedCodeAction();
+
+    const resolved =
+      await registered.codeActionProvider.resolveCodeAction(editlessAction);
+
+    expect(resolved).toBe(editlessAction);
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
   it("drops in-flight PHP code-action resolves after same-root session restart", async () => {
     const registered = createRegisteredProviders();
     let activeSessionId = 1;
@@ -8876,6 +8974,7 @@ function runningStatus(
     capabilities: {
       callHierarchy: true,
       codeAction: true,
+      codeActionResolve: true,
       codeLens: true,
       completion: true,
       declaration: true,

@@ -4810,6 +4810,7 @@ function runningStatus(
     capabilities: {
       callHierarchy: true,
       codeAction: true,
+      codeActionResolve: true,
       codeLens: true,
       completion: true,
       declaration: true,

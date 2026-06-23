@@ -2067,6 +2067,10 @@ async function resolveCodeAction(
     return action;
   }
 
+  if (isLanguageServerActionAlreadyResolved(backedAction.__languageServerAction)) {
+    return action;
+  }
+
   try {
     const resolved = await context.featuresGateway.resolveCodeAction(
       backedAction.__workspaceRoot,
@@ -2101,6 +2105,10 @@ async function resolveCodeAction(
 
     return mapped ? { ...action, ...mapped } : action;
   } catch (error) {
+    if (isUnsupportedCodeActionResolveError(error)) {
+      return action;
+    }
+
     if (
       isStoredLanguageServerPayloadActive(
         context,
@@ -2113,6 +2121,39 @@ async function resolveCodeAction(
 
     return action;
   }
+}
+
+/**
+ * A lazy LSP code action can be applied directly once it already carries an
+ * inline `edit` or a `command`; only `data`-only actions still need a
+ * `codeAction/resolve` round-trip. Our own PHP actions (Implement / Override
+ * methods, getters, constructor) always ship an inline `edit`, so this guard
+ * keeps them working without an extra resolve request — and avoids asking a
+ * server that does not support `codeAction/resolve` to fill in what is already
+ * present.
+ */
+function isLanguageServerActionAlreadyResolved(
+  action: LanguageServerCodeAction,
+): boolean {
+  return Boolean(action.edit) || Boolean(action.command);
+}
+
+/**
+ * Some servers (e.g. phpactor) advertise `codeActionProvider` but ship lazy
+ * actions without a `codeAction/resolve` handler. Resolving such an edit-less
+ * action surfaces a JSON-RPC "Handler codeAction/resolve not found" error. The
+ * Rust side already skips the resolve request when the server does not advertise
+ * `resolveProvider`; this guard is the matching client-side defence so the user
+ * never sees a confusing "Handler not found" notice when an edit-less action
+ * simply cannot be resolved.
+ */
+function isUnsupportedCodeActionResolveError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+
+  return /codeAction\/resolve.*not found|not found.*codeAction\/resolve/i.test(
+    message,
+  );
 }
 
 function provideLocalCodeActions(

@@ -68,6 +68,7 @@ pub enum LanguageServerRuntimeStatus {
 pub struct LanguageServerCapabilities {
     pub call_hierarchy: bool,
     pub code_action: bool,
+    pub code_action_resolve: bool,
     pub code_lens: bool,
     pub declaration: bool,
     pub hover: bool,
@@ -2648,6 +2649,11 @@ fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabilities, Strin
     Ok(LanguageServerCapabilities {
         call_hierarchy: is_capability_enabled(capabilities.get("callHierarchyProvider")),
         code_action: is_capability_enabled(capabilities.get("codeActionProvider")),
+        code_action_resolve: capabilities
+            .get("codeActionProvider")
+            .and_then(|provider| provider.get("resolveProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         code_lens: is_capability_enabled(capabilities.get("codeLensProvider")),
         declaration: is_capability_enabled(capabilities.get("declarationProvider")),
         hover: is_capability_enabled(capabilities.get("hoverProvider")),
@@ -3622,6 +3628,7 @@ mod tests {
                 capabilities: LanguageServerCapabilities {
                     call_hierarchy: false,
                     code_action: false,
+                    code_action_resolve: false,
                     code_lens: false,
                     declaration: true,
                     hover: true,
@@ -3665,6 +3672,7 @@ mod tests {
             capabilities: LanguageServerCapabilities {
                 call_hierarchy: true,
                 code_action: true,
+                code_action_resolve: false,
                 code_lens: true,
                 declaration: true,
                 hover: true,
@@ -3743,6 +3751,7 @@ mod tests {
                     "willRenameFiles": true,
                     "workspaceSymbol": true,
                     "codeAction": true,
+                    "codeActionResolve": false,
                     "codeLens": true,
                 },
             })
@@ -3875,7 +3884,10 @@ mod tests {
                     "typeHierarchyProvider": true,
                     "codeLensProvider": {},
                     "workspaceSymbolProvider": true,
-                    "codeActionProvider": { "codeActionKinds": ["quickfix"] },
+                    "codeActionProvider": {
+                        "codeActionKinds": ["quickfix"],
+                        "resolveProvider": true
+                    },
                     "documentFormattingProvider": true,
                     "documentRangeFormattingProvider": true,
                     "workspace": {
@@ -3894,6 +3906,7 @@ mod tests {
             LanguageServerCapabilities {
                 call_hierarchy: true,
                 code_action: true,
+                code_action_resolve: true,
                 code_lens: true,
                 declaration: true,
                 hover: false,
@@ -3932,6 +3945,53 @@ mod tests {
                 workspace_symbol: true,
             }
         );
+    }
+
+    #[test]
+    fn code_action_resolve_capability_reflects_resolve_provider_flag() {
+        let resolve_true = parse_capabilities(&json!({
+            "result": {
+                "capabilities": {
+                    "codeActionProvider": { "resolveProvider": true }
+                }
+            }
+        }))
+        .expect("capabilities");
+        assert!(resolve_true.code_action);
+        assert!(resolve_true.code_action_resolve);
+
+        let resolve_false = parse_capabilities(&json!({
+            "result": {
+                "capabilities": {
+                    "codeActionProvider": { "resolveProvider": false }
+                }
+            }
+        }))
+        .expect("capabilities");
+        assert!(resolve_false.code_action);
+        assert!(!resolve_false.code_action_resolve);
+
+        let resolve_absent = parse_capabilities(&json!({
+            "result": {
+                "capabilities": {
+                    "codeActionProvider": { "codeActionKinds": ["quickfix"] }
+                }
+            }
+        }))
+        .expect("capabilities");
+        assert!(resolve_absent.code_action);
+        assert!(!resolve_absent.code_action_resolve);
+
+        let code_action_bool = parse_capabilities(&json!({
+            "result": {
+                "capabilities": {
+                    "codeActionProvider": true
+                }
+            }
+        }))
+        .expect("capabilities");
+        assert!(code_action_bool.code_action);
+        assert!(!code_action_bool.code_action_resolve);
     }
 
     #[test]

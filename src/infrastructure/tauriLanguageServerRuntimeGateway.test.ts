@@ -235,6 +235,7 @@ function runtimeCapabilities(): Extract<
   return {
     callHierarchy: true,
     codeAction: true,
+    codeActionResolve: true,
     codeLens: true,
     completion: true,
     declaration: true,

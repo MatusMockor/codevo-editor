@@ -2294,6 +2294,22 @@ fn javascript_typescript_text_document_code_actions(
     filter_lsp_code_actions_to_workspace(&root_path, parse_code_action_result(&result)?)
 }
 
+/// Whether the running server advertises `codeActionProvider.resolveProvider`.
+///
+/// Some servers (notably phpactor) advertise `codeActionProvider` but ship lazy
+/// code actions without a `codeAction/resolve` handler. Sending the resolve
+/// request anyway returns a JSON-RPC "Handler codeAction/resolve not found"
+/// error that surfaces to the user as a confusing notice. When this returns
+/// `false` the resolve request must be skipped and the action returned
+/// unchanged.
+fn lsp_status_supports_code_action_resolve(status: &LanguageServerRuntimeStatus) -> bool {
+    matches!(
+        status,
+        LanguageServerRuntimeStatus::Running { capabilities, .. }
+            if capabilities.code_action_resolve
+    )
+}
+
 #[tauri::command]
 fn text_document_code_action_resolve(
     root_path: String,
@@ -2301,6 +2317,10 @@ fn text_document_code_action_resolve(
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeAction, String> {
     ensure_lsp_code_action_payload_in_workspace(&root_path, &action)?;
+
+    if !lsp_status_supports_code_action_resolve(&registry.status(&root_path)) {
+        return Ok(action);
+    }
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_action(&action);
@@ -2321,6 +2341,10 @@ fn javascript_typescript_text_document_code_action_resolve(
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeAction, String> {
     ensure_lsp_code_action_payload_in_workspace(&root_path, &action)?;
+
+    if !lsp_status_supports_code_action_resolve(&registry.status(&root_path)) {
+        return Ok(action);
+    }
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_action(&action);
@@ -3709,11 +3733,13 @@ mod tests {
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
         filter_lsp_workspace_symbols_to_workspace,
-        javascript_typescript_did_change_configuration_settings, normalize_path,
-        parse_definition_result, parse_javascript_typescript_navigation_locations_result,
-        path_from_file_uri, workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        javascript_typescript_did_change_configuration_settings,
+        lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
+        parse_javascript_typescript_navigation_locations_result, path_from_file_uri,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
+    use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
@@ -4228,6 +4254,40 @@ mod tests {
             &outside_uri_item
         )
         .is_err());
+    }
+
+    #[test]
+    fn code_action_resolve_is_gated_on_server_resolve_capability() {
+        let running_with_resolve = LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: LanguageServerCapabilities {
+                code_action: true,
+                code_action_resolve: true,
+                ..LanguageServerCapabilities::default()
+            },
+        };
+        assert!(lsp_status_supports_code_action_resolve(
+            &running_with_resolve
+        ));
+
+        let running_without_resolve = LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: LanguageServerCapabilities {
+                code_action: true,
+                code_action_resolve: false,
+                ..LanguageServerCapabilities::default()
+            },
+        };
+        assert!(!lsp_status_supports_code_action_resolve(
+            &running_without_resolve
+        ));
+
+        assert!(!lsp_status_supports_code_action_resolve(
+            &LanguageServerRuntimeStatus::Starting { session_id: 1 }
+        ));
+        assert!(!lsp_status_supports_code_action_resolve(
+            &LanguageServerRuntimeStatus::Stopped
+        ));
     }
 
     #[test]
