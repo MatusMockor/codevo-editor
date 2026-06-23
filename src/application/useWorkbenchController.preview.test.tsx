@@ -42063,6 +42063,142 @@ class Greeter
     ).toBe(false);
   });
 
+  it("aggregates TODO comments across workspace source files and skips dependency directories", async () => {
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace") {
+        return [
+          directoryEntry("/workspace/app", "app"),
+          directoryEntry("/workspace/vendor", "vendor"),
+          directoryEntry("/workspace/node_modules", "node_modules"),
+          fileEntry("/workspace/composer.lock", "composer.lock"),
+        ];
+      }
+
+      if (path === "/workspace/app") {
+        return [
+          fileEntry("/workspace/app/UserController.php", "UserController.php"),
+          fileEntry("/workspace/app/helper.ts", "helper.ts"),
+        ];
+      }
+
+      throw new Error(`unexpected directory read: ${path}`);
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === "/workspace/app/UserController.php") {
+        return "<?php\n// TODO: wire the controller\nclass UserController {}\n";
+      }
+
+      if (path === "/workspace/app/helper.ts") {
+        return "// FIXME drop legacy path\nexport const value = 1;\n";
+      }
+
+      return `// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+
+    await act(async () => {
+      await getWorkbench().refreshWorkspaceTodos();
+    });
+
+    const todos = getWorkbench().workspaceTodos;
+
+    expect(todos).toHaveLength(2);
+    expect(todos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          filePath: "/workspace/app/UserController.php",
+          relativePath: "app/UserController.php",
+          tag: "TODO",
+          text: "wire the controller",
+          line: 2,
+        }),
+        expect.objectContaining({
+          filePath: "/workspace/app/helper.ts",
+          relativePath: "app/helper.ts",
+          tag: "FIXME",
+          text: "drop legacy path",
+          line: 1,
+        }),
+      ]),
+    );
+    expect(getWorkbench().workspaceTodosLoading).toBe(false);
+    expect(readDirectory).not.toHaveBeenCalledWith("/workspace/vendor");
+    expect(readDirectory).not.toHaveBeenCalledWith("/workspace/node_modules");
+    expect(readTextFile).not.toHaveBeenCalledWith("/workspace/composer.lock");
+  });
+
+  it("drops TODO scan results when the workspace tab switches mid-scan", async () => {
+    const workspaceARead = createDeferred<string>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace-a") {
+        return [fileEntry("/workspace-a/Todo.php", "Todo.php")];
+      }
+
+      if (path === "/workspace-b") {
+        return [fileEntry("/workspace-b/Other.php", "Other.php")];
+      }
+
+      throw new Error(`unexpected directory read: ${path}`);
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === "/workspace-a/Todo.php") {
+        return workspaceARead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory,
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+    let scanPromise: Promise<void> | null = null;
+    act(() => {
+      scanPromise = getWorkbench().refreshWorkspaceTodos();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+
+    await act(async () => {
+      workspaceARead.resolve(
+        "<?php\n// TODO: stale workspace-a comment\nclass Todo {}\n",
+      );
+      await scanPromise;
+      await Promise.resolve();
+    });
+
+    // The stale /workspace-a comment must never appear inside /workspace-b.
+    expect(
+      getWorkbench().workspaceTodos.some((todo) =>
+        todo.filePath.startsWith("/workspace-a"),
+      ),
+    ).toBe(false);
+    expect(getWorkbench().workspaceTodos).toEqual([]);
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,

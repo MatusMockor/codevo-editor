@@ -33,6 +33,18 @@ describe("keymap", () => {
     });
   });
 
+  it("defaults the TODO panel toggle to the platform primary modifier", () => {
+    expect(defaultShortcutForCommand("panel.toggleTodo", "mac")).toBe(
+      "Cmd+Shift+T",
+    );
+    expect(defaultShortcutForCommand("panel.toggleTodo", "linux")).toBe(
+      "Ctrl+Shift+T",
+    );
+    expect(defaultKeymapSettings("mac")["panel.toggleTodo"]).toBe(
+      "Cmd+Shift+T",
+    );
+  });
+
   it("defaults the format document shortcut to Shift+Alt+F on every platform", () => {
     expect(defaultShortcutForCommand("editor.formatDocument", "mac")).toBe(
       "Shift+Alt+F",

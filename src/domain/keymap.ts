@@ -150,6 +150,12 @@ export const keymapCommands = [
     label: "Toggle Bottom Panel",
   },
   {
+    category: "Workbench",
+    defaultShortcut: "Cmd+Shift+T",
+    id: "panel.toggleTodo",
+    label: "Toggle TODO Panel",
+  },
+  {
     category: "Terminal",
     defaultShortcut: "Ctrl+`",
     id: "terminal.show",

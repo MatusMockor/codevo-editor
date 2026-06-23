@@ -1,5 +1,6 @@
 import {
   FolderOpen,
+  ListChecks,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -32,6 +33,7 @@ import { QuickOpen } from "./components/QuickOpen";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
+import { TodoPanel } from "./components/TodoPanel";
 import { TypeHierarchy } from "./components/TypeHierarchy";
 import { WindowChrome } from "./components/WindowChrome";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
@@ -534,6 +536,14 @@ function App() {
           <Search aria-hidden="true" size={20} />
         </button>
         <button
+          disabled={!workbench.workspaceRoot}
+          onClick={workbench.openTodoPanel}
+          title="TODO comments"
+          type="button"
+        >
+          <ListChecks aria-hidden="true" size={20} />
+        </button>
+        <button
           className="activity-bar-secondary"
           onClick={workbench.openSettingsPanel}
           title="Settings"
@@ -973,6 +983,18 @@ function App() {
         onClose={workbench.closeTypeHierarchy}
         onOpen={workbench.openTypeHierarchyRow}
         view={workbench.typeHierarchyView}
+      />
+
+      <TodoPanel
+        isLoading={workbench.workspaceTodosLoading}
+        isOpen={workbench.todoPanelOpen}
+        onClose={workbench.closeTodoPanel}
+        onOpenTodo={(todo) => {
+          workbench.closeTodoPanel();
+          void workbench.openWorkspaceTodo(todo);
+        }}
+        onRefresh={() => void workbench.refreshWorkspaceTodos()}
+        todos={workbench.workspaceTodos}
       />
 
       <LanguageServerSetup

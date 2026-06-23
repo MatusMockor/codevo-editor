@@ -27,6 +27,8 @@ import {
   type GitStatus,
 } from "../domain/git";
 import type { BottomPanelView } from "../domain/bottomPanel";
+import { extractTodoComments } from "../domain/todoComments";
+import type { WorkspaceTodo } from "../domain/workspaceTodo";
 import {
   applyMetadataScanCompletion,
   createIndexHealthCompletionLog,
@@ -631,6 +633,45 @@ const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
 const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
 const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 
+// TODO-comment scan is conservative so it never blocks the UI on large trees:
+// it skips dependency / VCS / build directories, only reads source-like files,
+// caps the number of files read and skips files that are too large to be hand
+// written source (generated bundles, fixtures, etc.).
+const WORKSPACE_TODO_MAX_FILES = 2000;
+const WORKSPACE_TODO_MAX_FILE_BYTES = 512 * 1024;
+const WORKSPACE_TODO_SKIPPED_DIRECTORIES: ReadonlySet<string> = new Set([
+  ".git",
+  ".hg",
+  ".idea",
+  ".next",
+  ".nuxt",
+  ".svn",
+  ".turbo",
+  ".vscode",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "out",
+  "storage",
+  "target",
+  "vendor",
+]);
+const WORKSPACE_TODO_SOURCE_EXTENSIONS: ReadonlySet<string> = new Set([
+  "blade.php",
+  "css",
+  "htm",
+  "html",
+  "js",
+  "jsx",
+  "mjs",
+  "php",
+  "scss",
+  "ts",
+  "tsx",
+  "vue",
+]);
+
 export type SidebarView = "files" | "git" | "php";
 
 function isLaravelMorphToReturnTypeName(returnType: string | null): boolean {
@@ -742,6 +783,9 @@ export function useWorkbenchController(
   const [bottomPanelView, setBottomPanelView] =
     useState<BottomPanelView>("problems");
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
+  const [todoPanelOpen, setTodoPanelOpen] = useState(false);
+  const [workspaceTodos, setWorkspaceTodos] = useState<WorkspaceTodo[]>([]);
+  const [workspaceTodosLoading, setWorkspaceTodosLoading] = useState(false);
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus());
@@ -2780,6 +2824,9 @@ export function useWorkbenchController(
     setSidebarView("files");
     setBottomPanelView("problems");
     setBottomPanelVisible(false);
+    setTodoPanelOpen(false);
+    setWorkspaceTodos([]);
+    setWorkspaceTodosLoading(false);
     setGitStatus(emptyGitStatus());
     setGitLoading(false);
     setGitDiffLoading(false);
@@ -3897,6 +3944,13 @@ export function useWorkbenchController(
         setBottomPanelView("problems");
         setBottomPanelVisible(false);
       }
+
+      // The TODO panel is a transient, workspace-scoped overlay (not part of the
+      // cached per-tab state). Always reset it on a switch so one project's TODOs
+      // can never appear inside another project's tab.
+      setTodoPanelOpen(false);
+      setWorkspaceTodos([]);
+      setWorkspaceTodosLoading(false);
 
       setEditorRevealTarget(null);
       setLoadingDirectories(new Set());
@@ -7291,6 +7345,184 @@ export function useWorkbenchController(
     },
     [workspaceFiles],
   );
+
+  // Harvests TODO/FIXME/... comments across the active workspace. The walk is
+  // conservative (skips dependency / build / VCS directories, only reads
+  // source-like files, caps the file count + file size) so it never blocks the
+  // UI on large trees. Per-project isolation is sacred here: the requested root
+  // is captured up front and re-checked after EVERY readDirectory / readTextFile
+  // await — the moment the user switches project tabs the scan bails out and
+  // returns null so stale-workspace TODOs can never land in the now-active tab.
+  const collectWorkspaceTodos = useCallback(
+    async (root: string): Promise<WorkspaceTodo[] | null> => {
+      const requestedRoot = root;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      const todos: WorkspaceTodo[] = [];
+      let filesScanned = 0;
+
+      const visitDirectory = async (directory: string): Promise<boolean> => {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        let entries: FileEntry[];
+
+        try {
+          entries = await workspaceFiles.readDirectory(directory);
+        } catch {
+          // A directory that disappears mid-scan is skipped; a stale switch is
+          // reported so the whole scan is dropped by the caller.
+          return isRequestedRootActive();
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        for (const entry of entries) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (filesScanned >= WORKSPACE_TODO_MAX_FILES) {
+            return true;
+          }
+
+          if (entry.kind === "directory") {
+            if (WORKSPACE_TODO_SKIPPED_DIRECTORIES.has(entry.name)) {
+              continue;
+            }
+
+            const ok = await visitDirectory(entry.path);
+
+            if (!ok) {
+              return false;
+            }
+
+            continue;
+          }
+
+          if (!isWorkspaceTodoSourceFile(entry.name)) {
+            continue;
+          }
+
+          filesScanned += 1;
+
+          let content: string;
+
+          try {
+            content = await workspaceFiles.readTextFile(entry.path);
+          } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            continue;
+          }
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (content.length > WORKSPACE_TODO_MAX_FILE_BYTES) {
+            continue;
+          }
+
+          const relativePath = relativeWorkspacePath(requestedRoot, entry.path);
+
+          for (const comment of extractTodoComments(content)) {
+            todos.push({
+              column: comment.column,
+              filePath: entry.path,
+              line: comment.line,
+              relativePath,
+              tag: comment.tag,
+              text: comment.text,
+            });
+          }
+        }
+
+        return true;
+      };
+
+      const completed = await visitDirectory(requestedRoot);
+
+      if (!completed || !isRequestedRootActive()) {
+        return null;
+      }
+
+      return todos;
+    },
+    [workspaceFiles],
+  );
+
+  const refreshWorkspaceTodos = useCallback(async (): Promise<void> => {
+    const requestedRoot = workspaceRoot;
+
+    if (!requestedRoot) {
+      setWorkspaceTodos([]);
+      setWorkspaceTodosLoading(false);
+      return;
+    }
+
+    setWorkspaceTodosLoading(true);
+
+    const todos = await collectWorkspaceTodos(requestedRoot);
+
+    // Re-check after the awaited scan before mutating shared state: a tab switch
+    // during the scan must not splash another workspace's TODOs into this tab.
+    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      return;
+    }
+
+    if (todos === null) {
+      setWorkspaceTodosLoading(false);
+      return;
+    }
+
+    setWorkspaceTodos(todos);
+    setWorkspaceTodosLoading(false);
+  }, [collectWorkspaceTodos, workspaceRoot]);
+
+  const openWorkspaceTodo = useCallback(
+    async (todo: WorkspaceTodo): Promise<boolean> => {
+      // WorkspaceTodo mirrors the pure extractTodoComments result, whose `line`
+      // and `column` are already 1-based — the same convention EditorPosition's
+      // `lineNumber`/`column` use — so this is a direct 1:1 mapping, no offset.
+      return openNavigationTarget(
+        todo.filePath,
+        { column: todo.column, lineNumber: todo.line },
+        todo.tag,
+      );
+    },
+    [openNavigationTarget],
+  );
+
+  const openTodoPanel = useCallback(() => {
+    setTodoPanelOpen(true);
+    void refreshWorkspaceTodos();
+  }, [refreshWorkspaceTodos]);
+
+  const closeTodoPanel = useCallback(() => {
+    setTodoPanelOpen(false);
+  }, []);
+
+  const toggleTodoPanel = useCallback(() => {
+    setTodoPanelOpen((open) => {
+      if (open) {
+        return false;
+      }
+
+      void refreshWorkspaceTodos();
+      return true;
+    });
+  }, [refreshWorkspaceTodos]);
 
   const resolvePhpClassReference = useCallback(
     (source: string, className: string): string | null => {
@@ -19694,6 +19926,25 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "panel.toggleTodo",
+      title: "Toggle TODO Panel",
+      category: "Workbench",
+      shortcut: shortcut("panel.toggleTodo"),
+      isEnabled: (context) => context.hasWorkspace,
+      run: toggleTodoPanel,
+    });
+
+    registry.register({
+      id: "panel.refreshTodo",
+      title: "Refresh TODO Comments",
+      category: "Workbench",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void refreshWorkspaceTodos();
+      },
+    });
+
+    registry.register({
       id: "terminal.show",
       title: "Show Terminal",
       category: "Terminal",
@@ -19865,6 +20116,8 @@ export function useWorkbenchController(
     installingManagedPhpactor,
     stopLanguageServer,
     toggleBottomPanel,
+    toggleTodoPanel,
+    refreshWorkspaceTodos,
     toggleSmartMode,
     toggleWorkspaceTrust,
     zoomEditorFontIn,
@@ -20479,6 +20732,14 @@ export function useWorkbenchController(
         return;
       }
 
+      if (matches("panel.toggleTodo")) {
+        event.preventDefault();
+        if (workspaceRoot) {
+          toggleTodoPanel();
+        }
+        return;
+      }
+
       if (matches("editor.goToDefinition")) {
         event.preventDefault();
         void goToDefinition();
@@ -20624,6 +20885,7 @@ export function useWorkbenchController(
     saveActiveDocument,
     showBottomPanelView,
     toggleBottomPanel,
+    toggleTodoPanel,
     workspaceRoot,
     zoomEditorFontIn,
     zoomEditorFontOut,
@@ -21701,6 +21963,13 @@ export function useWorkbenchController(
     openFileStructure,
     openImplementationTarget,
     openProblemNotice,
+    openTodoPanel,
+    closeTodoPanel,
+    refreshWorkspaceTodos,
+    openWorkspaceTodo,
+    todoPanelOpen,
+    workspaceTodos,
+    workspaceTodosLoading,
     openPhpFileOutlineNode,
     openClassSearchResult,
     openWorkspaceSymbolResult,
@@ -21914,6 +22183,22 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
   }
 
   return path;
+}
+
+function isWorkspaceTodoSourceFile(name: string): boolean {
+  const fileName = name.toLowerCase();
+
+  if (fileName.endsWith(".blade.php")) {
+    return true;
+  }
+
+  const lastDot = fileName.lastIndexOf(".");
+
+  if (lastDot <= 0) {
+    return false;
+  }
+
+  return WORKSPACE_TODO_SOURCE_EXTENSIONS.has(fileName.slice(lastDot + 1));
 }
 
 /**
