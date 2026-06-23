@@ -2606,6 +2606,180 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("clears stale diagnostics for the old path when renaming a PHP document", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 711,
+    };
+    const oldPath = "/workspace/app/Models/User.php";
+    const newPath = "/workspace/app/Models/Account.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Undefined variable",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 711,
+        uri: fileUriFromPath(oldPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toHaveLength(1);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.php");
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
+  it("clears stale diagnostics for the old path when renaming a TypeScript document", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 712,
+    };
+    const oldPath = "/workspace/src/User.ts";
+    const newPath = "/workspace/src/Account.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === oldPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${requestedPath}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Type mismatch",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 712,
+        uri: fileUriFromPath(oldPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toHaveLength(1);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
   it("clears diagnostics for a deleted TypeScript document and sends didClose", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)

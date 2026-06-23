@@ -18896,6 +18896,7 @@ export function useWorkbenchController(
     }
 
     const parentPath = getParentPath(activeDocument.path);
+    const oldPath = activeDocument.path;
     const nextPath = joinWorkspacePath(parentPath, nextName);
 
     try {
@@ -18933,6 +18934,8 @@ export function useWorkbenchController(
         return;
       }
 
+      clearLanguageServerDiagnosticsForPath(requestedRoot, oldPath);
+
       setDocuments((current) => {
         const currentDocument = current[activeDocument.path] ?? activeDocument;
         const renamedDocument = {
@@ -18963,6 +18966,7 @@ export function useWorkbenchController(
     activeDocument,
     applyJavaScriptTypeScriptRenameEdits,
     applyPhpRenameEdits,
+    clearLanguageServerDiagnosticsForPath,
     notifyJavaScriptTypeScriptFileRenamed,
     notifyPhpFileRenamed,
     prompter,
