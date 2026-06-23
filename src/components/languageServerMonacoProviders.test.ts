@@ -7878,7 +7878,218 @@ function store($request): void
 
 });
 
+describe("registerLanguageServerMonacoProviders blade providers", () => {
+  it("registers blade definition and completion providers and disposes them", () => {
+    const registered = createRegisteredProviders();
+    const disposable = registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext(),
+    );
+
+    expect(registered.bladeDefinitionLanguage).toBe("blade");
+    expect(registered.bladeCompletionLanguage).toBe("blade");
+    expect(registered.bladeCompletionProvider.triggerCharacters).toEqual([
+      "@",
+      "'",
+      "\"",
+      "-",
+      ".",
+    ]);
+
+    disposable.dispose();
+
+    expect(registered.bladeDefinitionDispose).toHaveBeenCalled();
+    expect(registered.bladeCompletionDispose).toHaveBeenCalled();
+  });
+
+  it("delegates blade go-to-definition to the controller and returns null", async () => {
+    const registered = createRegisteredProviders();
+    const source = "@include('partials.alert')\n";
+    const offset = source.indexOf("partials.alert");
+    const lineStart = source.lastIndexOf("\n", offset - 1) + 1;
+    const column = offset - lineStart + 1;
+    const provideBladeDefinition = vi.fn(async () => true);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.bladeDefinitionProvider.provideDefinition(
+        model({
+          content: source,
+          path: "/project/resources/views/show.blade.php",
+        }),
+        { column, lineNumber: 1 },
+      ),
+    ).resolves.toBeNull();
+    expect(provideBladeDefinition).toHaveBeenCalledTimes(1);
+    expect(provideBladeDefinition).toHaveBeenCalledWith(source, offset);
+  });
+
+  it("does not call the blade definition callback for a non-blade active document", async () => {
+    const registered = createRegisteredProviders();
+    const provideBladeDefinition = vi.fn(async () => true);
+    const context = providerContext({
+      activeDocument: document(),
+      provideBladeDefinition,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await expect(
+      registered.bladeDefinitionProvider.provideDefinition(
+        model({ content: "@include('x')", path: "/project/src/User.php" }),
+        { column: 1, lineNumber: 1 },
+      ),
+    ).resolves.toBeNull();
+    expect(provideBladeDefinition).not.toHaveBeenCalled();
+  });
+
+  it("maps blade directive completions to keyword items replacing the directive token", async () => {
+    const registered = createRegisteredProviders();
+    const source = "@inc\n";
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        detail: "Blade directive",
+        insertText: "include",
+        kind: "directive" as const,
+        label: "@include",
+        replaceEnd: 4,
+        replaceStart: 1,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        path: "/project/resources/views/show.blade.php",
+      }),
+      { column: 5, lineNumber: 1 },
+    );
+
+    expect(provideBladeCompletions).toHaveBeenCalledWith(source, {
+      column: 5,
+      lineNumber: 1,
+    });
+    expect(result.suggestions).toHaveLength(1);
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "include",
+        kind: registered.monaco.languages.CompletionItemKind.Keyword,
+        label: "@include",
+        range: {
+          endColumn: 5,
+          endLineNumber: 1,
+          startColumn: 2,
+          startLineNumber: 1,
+        },
+      }),
+    );
+  });
+
+  it("maps blade view completions to file items", async () => {
+    const registered = createRegisteredProviders();
+    const source = "@include('part')\n";
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        detail: "partials/alert.blade.php",
+        insertText: "partials.alert",
+        kind: "view" as const,
+        label: "partials.alert",
+        replaceEnd: source.indexOf("part") + "part".length,
+        replaceStart: source.indexOf("part"),
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        path: "/project/resources/views/show.blade.php",
+      }),
+      { column: source.indexOf("part") + 1, lineNumber: 1 },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        insertText: "partials.alert",
+        kind: registered.monaco.languages.CompletionItemKind.File,
+        label: "partials.alert",
+      }),
+    );
+  });
+
+  it("returns no blade completions for a non-blade active document", async () => {
+    const registered = createRegisteredProviders();
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        insertText: "include",
+        kind: "directive" as const,
+        label: "@include",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: document(),
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({ content: "@inc", path: "/project/src/User.php" }),
+      { column: 5, lineNumber: 1 },
+    );
+
+    expect(result.suggestions).toEqual([]);
+    expect(provideBladeCompletions).not.toHaveBeenCalled();
+  });
+
+  it("drops blade completions when the workspace switches during resolution", async () => {
+    const registered = createRegisteredProviders();
+    const source = "@include('part')\n";
+    let activeRoot = "/project";
+    const provideBladeCompletions = vi.fn(async () => {
+      activeRoot = "/other";
+      return [
+        {
+          insertText: "partials.alert",
+          kind: "view" as const,
+          label: "partials.alert",
+        },
+      ];
+    });
+    const context = providerContext({
+      activeDocument: bladeDocument(source),
+      getWorkspaceRoot: () => activeRoot,
+      provideBladeCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      model({
+        content: source,
+        path: "/project/resources/views/show.blade.php",
+      }),
+      { column: 12, lineNumber: 1 },
+    );
+
+    expect(provideBladeCompletions).toHaveBeenCalledTimes(1);
+    expect(result.suggestions).toEqual([]);
+  });
+});
+
 function createRegisteredProviders() {
+  const bladeDefinitionDispose = vi.fn();
+  const bladeCompletionDispose = vi.fn();
   const codeActionDispose = vi.fn();
   const codeLensDispose = vi.fn();
   const commandDispose = vi.fn();
@@ -7905,6 +8116,12 @@ function createRegisteredProviders() {
   const signatureDispose = vi.fn();
   const typeDefinitionDispose = vi.fn();
   const registered: {
+    bladeCompletionDispose: ReturnType<typeof vi.fn>;
+    bladeCompletionLanguage: string | null;
+    bladeCompletionProvider: any;
+    bladeDefinitionDispose: ReturnType<typeof vi.fn>;
+    bladeDefinitionLanguage: string | null;
+    bladeDefinitionProvider: any;
     codeActionDispose: ReturnType<typeof vi.fn>;
     codeActionLanguage: string | null;
     codeActionMetadata: any;
@@ -7981,6 +8198,12 @@ function createRegisteredProviders() {
     typeDefinitionLanguage: string | null;
     typeDefinitionProvider: any;
   } = {
+    bladeCompletionDispose,
+    bladeCompletionLanguage: null,
+    bladeCompletionProvider: null,
+    bladeDefinitionDispose,
+    bladeDefinitionLanguage: null,
+    bladeDefinitionProvider: null,
     codeActionDispose,
     codeActionLanguage: null,
     codeActionMetadata: null,
@@ -8094,6 +8317,7 @@ function createRegisteredProviders() {
         File: 17,
         Function: 3,
         Interface: 8,
+        Keyword: 18,
         Method: 2,
         Property: 10,
         Text: 1,
@@ -8155,6 +8379,12 @@ function createRegisteredProviders() {
         return { dispose: codeLensDispose };
       }),
       registerCompletionItemProvider: vi.fn((language, provider) => {
+        if (language === "blade") {
+          registered.bladeCompletionLanguage = language;
+          registered.bladeCompletionProvider = provider;
+          return { dispose: bladeCompletionDispose };
+        }
+
         registered.completionLanguage = language;
         registered.completionProvider = provider;
         return { dispose: completionDispose };
@@ -8165,6 +8395,12 @@ function createRegisteredProviders() {
         return { dispose: declarationDispose };
       }),
       registerDefinitionProvider: vi.fn((language, provider) => {
+        if (language === "blade") {
+          registered.bladeDefinitionLanguage = language;
+          registered.bladeDefinitionProvider = provider;
+          return { dispose: bladeDefinitionDispose };
+        }
+
         registered.definitionLanguage = language;
         registered.definitionProvider = provider;
         return { dispose: definitionDispose };
@@ -8297,6 +8533,12 @@ function providerContext(
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
     limitNavigationResultsToOpenModels: boolean;
+    provideBladeCompletions: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeCompletions"]
+    >;
+    provideBladeDefinition: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeDefinition"]
+    >;
     providePhpCodeActions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
     >;
@@ -8328,6 +8570,8 @@ function providerContext(
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
+    provideBladeCompletions: overrides.provideBladeCompletions,
+    provideBladeDefinition: overrides.provideBladeDefinition,
     providePhpCodeActions: overrides.providePhpCodeActions,
     providePhpLaravelDefinition: overrides.providePhpLaravelDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
@@ -8623,6 +8867,16 @@ function document(): EditorDocument {
   };
 }
 
+function bladeDocument(content: string): EditorDocument {
+  return {
+    content,
+    language: "blade",
+    name: "show.blade.php",
+    path: "/project/resources/views/show.blade.php",
+    savedContent: content,
+  };
+}
+
 function phpCompletionFixtureSource(): string {
   return `<?php
 function show() {
@@ -8654,6 +8908,15 @@ function model(
       }
 
       throw new Error("model source unavailable");
+    }),
+    getPositionAt: vi.fn((offset: number) => {
+      const source = overrides.content ?? "";
+      const clamped = Math.max(0, Math.min(offset, source.length));
+      const before = source.slice(0, clamped);
+      const lineNumber = before.split("\n").length;
+      const lineStart = before.lastIndexOf("\n") + 1;
+
+      return { column: clamped - lineStart + 1, lineNumber };
     }),
     getLineContent: vi.fn(() => overrides.lineContent ?? "$user"),
     getValueInRange: vi.fn(() => "$user"),

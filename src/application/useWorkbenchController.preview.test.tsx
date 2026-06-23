@@ -38957,6 +38957,342 @@ class DashboardController
     });
   });
 
+  describe("Blade Cmd+Click definition and completion", () => {
+    it("navigates an @include directive to the referenced view file", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const partialPath = "/workspace/resources/views/partials/alert.blade.php";
+      const bladeSource = "@include('partials.alert')\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === partialPath) {
+            return "<div>Alert</div>\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("partials.alert") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(partialPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: partialPath,
+        position: { column: 1, lineNumber: 1 },
+      });
+    });
+
+    it("navigates an <x-...> component tag to its component view file", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      // The flat candidate (forms/input.blade.php) is intentionally absent so the
+      // resolver must fall through to the directory index candidate.
+      const componentPath =
+        "/workspace/resources/views/components/forms/input/index.blade.php";
+      const bladeSource = "<x-forms.input name=\"email\" />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === componentPath) {
+            return "<input />\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("forms.input") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(componentPath);
+    });
+
+    it("does not navigate when the referenced Blade view does not exist", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const bladeSource = "@include('partials.missing')\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("partials.missing") + 1,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("drops a stale Blade view navigation after switching project tabs mid-read", async () => {
+      const bladePath = "/workspace-a/resources/views/show.blade.php";
+      const partialPath =
+        "/workspace-a/resources/views/partials/alert.blade.php";
+      const bladeSource = "@include('partials.alert')\n";
+      const stalePartialRead = createDeferred<string>();
+      let partialReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === partialPath) {
+            partialReadCount += 1;
+            return stalePartialRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("partials.alert") + 1,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(partialReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      stalePartialRead.resolve("<div>Alert</div>\n");
+      let handled = true;
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(partialPath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("suggests Blade directives after an @ prefix", async () => {
+      const bladeSource = "@inc\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+          column: 5,
+          lineNumber: 1,
+        });
+      });
+
+      const labels = completions.map((completion) => completion.label);
+      expect(labels).toContain("@include");
+      expect(labels).toContain("@includeIf");
+      expect(completions.every((completion) => completion.kind === "directive")).toBe(
+        true,
+      );
+      const include = completions.find(
+        (completion) => completion.label === "@include",
+      );
+      expect(include).toEqual(
+        expect.objectContaining({
+          insertText: "include",
+          replaceEnd: bladeSource.indexOf("@inc") + 4,
+          replaceStart: bladeSource.indexOf("@inc") + 1,
+        }),
+      );
+    });
+
+    it("suggests Blade view names inside an @include literal", async () => {
+      const bladeSource = "@include('comments')\n";
+      const viewsRoot = "/workspace/resources/views";
+      const commentsDirectory = "/workspace/resources/views/comments";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readDirectory: vi.fn(async (path: string) => {
+          if (path === viewsRoot) {
+            return [directoryEntry(commentsDirectory, "comments")];
+          }
+
+          if (path === commentsDirectory) {
+            return [
+              fileEntry(
+                `${commentsDirectory}/index.blade.php`,
+                "index.blade.php",
+              ),
+              fileEntry(`${commentsDirectory}/show.blade.php`, "show.blade.php"),
+            ];
+          }
+
+          return [];
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+          column: bladeSource.indexOf("')") + 1,
+          lineNumber: 1,
+        });
+      });
+
+      const labels = completions.map((completion) => completion.label).sort();
+      expect(labels).toEqual(["comments.index", "comments.show"]);
+      expect(completions.every((completion) => completion.kind === "view")).toBe(
+        true,
+      );
+    });
+
+    it("suggests Blade component names inside an <x- tag", async () => {
+      const bladeSource = "<x-fo\n";
+      const componentsRoot = "/workspace/resources/views/components";
+      const formsDirectory =
+        "/workspace/resources/views/components/forms";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readDirectory: vi.fn(async (path: string) => {
+          if (path === componentsRoot) {
+            return [directoryEntry(formsDirectory, "forms")];
+          }
+
+          if (path === formsDirectory) {
+            return [
+              fileEntry(`${formsDirectory}/input.blade.php`, "input.blade.php"),
+              fileEntry(`${formsDirectory}/select.blade.php`, "select.blade.php"),
+            ];
+          }
+
+          return [];
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+          column: bladeSource.indexOf("\n") + 1,
+          lineNumber: 1,
+        });
+      });
+
+      const labels = completions.map((completion) => completion.label).sort();
+      expect(labels).toEqual(["forms.input", "forms.select"]);
+      expect(
+        completions.every((completion) => completion.kind === "component"),
+      ).toBe(true);
+    });
+  });
+
   it("suggests Laravel Blade views inside view helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const viewsRoot = "/workspace/resources/views";

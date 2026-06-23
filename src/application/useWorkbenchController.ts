@@ -223,6 +223,13 @@ import {
   resolveLaravelViewTarget,
 } from "../domain/laravelPathResolution";
 import {
+  BLADE_DIRECTIVES,
+  bladeComponentCandidateRelativePaths,
+  bladeViewCandidateRelativePaths,
+  detectBladeDirectiveCompletionAt,
+  detectBladeReferenceAt,
+} from "../domain/bladeNavigation";
+import {
   phpLaravelNamedRouteDefinitions,
   phpLaravelNamedRouteReferenceContextAt,
   type PhpLaravelNamedRouteDefinition,
@@ -524,6 +531,20 @@ export interface PhpCodeActionDescriptor {
 export interface PhpCodeActionRange {
   end: number;
   start: number;
+}
+
+/**
+ * A Blade completion item the controller hands to the Monaco "blade" completion
+ * provider. Structurally compatible with the provider's `BladeCompletion`; kept
+ * local so the controller does not depend on the components layer.
+ */
+export interface BladeCompletionItem {
+  detail?: string;
+  insertText: string;
+  kind: "directive" | "view" | "component";
+  label: string;
+  replaceStart?: number;
+  replaceEnd?: number;
 }
 
 interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
@@ -14588,6 +14609,227 @@ export function useWorkbenchController(
     ],
   );
 
+  // Cmd+Click navigation for `.blade.php` documents. detectBladeReferenceAt
+  // (pure) classifies the offset; view / component references resolve to their
+  // candidate blade files and we open the first that exists. Conservative: an
+  // unresolvable or non-existent reference returns false (no phpactor fallback
+  // for blade). Per-project isolation: capture the requested root up front and
+  // re-check after every file read (and before openNavigationTarget) so a tab
+  // switch mid-resolution can never navigate into a stale-workspace file.
+  const provideBladeDefinition = useCallback(
+    async (source: string, offset: number): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return false;
+      }
+
+      const reference = detectBladeReferenceAt(source, offset);
+
+      if (!reference) {
+        return false;
+      }
+
+      const candidateRelativePaths =
+        reference.kind === "component"
+          ? bladeComponentCandidateRelativePaths(reference.name)
+          : reference.kind === "view"
+            ? bladeViewCandidateRelativePaths(reference.name)
+            : [];
+
+      if (candidateRelativePaths.length === 0) {
+        return false;
+      }
+
+      for (const relativePath of candidateRelativePaths) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        const path = joinWorkspacePath(requestedRoot, relativePath);
+
+        try {
+          await readNavigationFileContent(path);
+        } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          continue;
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return openNavigationTarget(
+          path,
+          { column: 1, lineNumber: 1 },
+          reference.name,
+        );
+      }
+
+      return false;
+    },
+    [openNavigationTarget, readNavigationFileContent, workspaceRoot],
+  );
+
+  // Scans `resources/views/components` for component blade files and returns
+  // their dotted component names (without the `.blade.php` / `/index.blade.php`
+  // suffix). Reuses the directory-walk shape of collectPhpLaravelViewTargets;
+  // re-checks the active workspace after each readDirectory await so a tab
+  // switch drops in-flight results (per-project isolation).
+  const collectBladeComponentNames = useCallback(async (): Promise<string[]> => {
+    const requestedRoot = workspaceRoot;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!requestedRoot) {
+      return [];
+    }
+
+    const componentsRoot = joinWorkspacePath(
+      requestedRoot,
+      "resources/views/components",
+    );
+    const names = new Set<string>();
+
+    const visitDirectory = async (directory: string): Promise<void> => {
+      let entries: FileEntry[];
+
+      try {
+        entries = await workspaceFiles.readDirectory(directory);
+      } catch {
+        return;
+      }
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      for (const entry of entries) {
+        if (!isRequestedRootActive()) {
+          return;
+        }
+
+        if (entry.kind === "directory") {
+          await visitDirectory(entry.path);
+          continue;
+        }
+
+        if (!entry.name.endsWith(".blade.php")) {
+          continue;
+        }
+
+        const relativePath = relativeWorkspacePath(componentsRoot, entry.path);
+        const componentName = bladeComponentNameFromRelativePath(relativePath);
+
+        if (componentName) {
+          names.add(componentName);
+        }
+      }
+    };
+
+    await visitDirectory(componentsRoot);
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    return Array.from(names).sort((left, right) => left.localeCompare(right));
+  }, [workspaceFiles, workspaceRoot]);
+
+  // Completion for `.blade.php` documents: `@directive` names (pure filter of
+  // BLADE_DIRECTIVES), view names for @include/@extends/… literals (reusing the
+  // resources/views scan), and `<x-...>` component names (components scan).
+  // Per-project isolation: capture the requested root and re-check after the
+  // directory scans before returning, so stale results drop on tab switch.
+  const provideBladeCompletions = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+    ): Promise<BladeCompletionItem[]> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return [];
+      }
+
+      const offset = bladeOffsetAtEditorPosition(source, position);
+      const directiveCompletion = detectBladeDirectiveCompletionAt(source, offset);
+
+      if (directiveCompletion) {
+        const normalizedPrefix = directiveCompletion.directivePrefix.toLowerCase();
+
+        return BLADE_DIRECTIVES.filter((directive) =>
+          directive.toLowerCase().startsWith(normalizedPrefix),
+        )
+          .slice(0, 100)
+          .map((directive) => ({
+            detail: "Blade directive",
+            insertText: directive,
+            kind: "directive",
+            label: `@${directive}`,
+            replaceEnd: offset,
+            replaceStart: directiveCompletion.start + 1,
+          }));
+      }
+
+      const reference = detectBladeReferenceAt(source, offset);
+
+      if (reference?.kind === "view") {
+        const targets = await collectPhpLaravelViewTargets();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const normalizedPrefix = reference.name.toLowerCase();
+
+        return targets
+          .filter((target) => target.name.toLowerCase().startsWith(normalizedPrefix))
+          .slice(0, 100)
+          .map((target) => ({
+            detail: target.relativePath,
+            insertText: target.name,
+            kind: "view",
+            label: target.name,
+            replaceEnd: reference.nameEnd,
+            replaceStart: reference.nameStart,
+          }));
+      }
+
+      if (reference?.kind === "component") {
+        const componentNames = await collectBladeComponentNames();
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const normalizedPrefix = reference.name.toLowerCase();
+
+        return componentNames
+          .filter((name) => name.toLowerCase().startsWith(normalizedPrefix))
+          .slice(0, 100)
+          .map((name) => ({
+            detail: "Blade component",
+            insertText: name,
+            kind: "component",
+            label: name,
+            replaceEnd: reference.nameEnd,
+            replaceStart: reference.nameStart,
+          }));
+      }
+
+      return [];
+    },
+    [collectBladeComponentNames, collectPhpLaravelViewTargets, workspaceRoot],
+  );
+
   const openPhpClassTarget = useCallback(
     async (className: string, label: string): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
@@ -21468,6 +21710,8 @@ export function useWorkbenchController(
     cancelFilePrefetch,
     previewFile,
     previewPath,
+    provideBladeCompletions,
+    provideBladeDefinition,
     providePhpCodeActions,
     providePhpLaravelDefinition,
     providePhpMethodCompletions,
@@ -21670,6 +21914,60 @@ function relativeWorkspacePath(workspaceRoot: string, path: string): string {
   }
 
   return path;
+}
+
+/**
+ * Maps a component blade file path relative to `resources/views/components` to
+ * its dotted component name — the inverse of bladeComponentCandidateRelativePaths.
+ * `forms/input.blade.php` → `forms.input`; `alert/index.blade.php` → `alert`.
+ * Returns null for paths that are not component blade files.
+ */
+function bladeComponentNameFromRelativePath(relativePath: string): string | null {
+  const normalized = relativePath.split("\\").join("/").replace(/^\/+/, "");
+
+  if (!normalized.endsWith(".blade.php")) {
+    return null;
+  }
+
+  const withoutExtension = normalized.slice(0, -".blade.php".length);
+  const segments = withoutExtension.split("/").filter(Boolean);
+
+  if (segments[segments.length - 1] === "index") {
+    segments.pop();
+  }
+
+  if (segments.length === 0) {
+    return null;
+  }
+
+  return segments.join(".");
+}
+
+/**
+ * Converts a 1-based editor position into a 0-based character offset into
+ * `source` (used to feed the offset-based Blade detection helpers). Lines beyond
+ * the source resolve to its end; columns beyond a line clamp to that line's end.
+ */
+function bladeOffsetAtEditorPosition(
+  source: string,
+  position: EditorPosition,
+): number {
+  const lines = source.split("\n");
+  const targetLine = Math.max(0, position.lineNumber - 1);
+
+  if (targetLine >= lines.length) {
+    return source.length;
+  }
+
+  let offset = 0;
+
+  for (let line = 0; line < targetLine; line += 1) {
+    offset += (lines[line]?.length ?? 0) + 1;
+  }
+
+  const column = Math.max(0, position.column - 1);
+
+  return offset + Math.min(column, lines[targetLine]?.length ?? 0);
 }
 
 function workspacePathBelongsToRoot(

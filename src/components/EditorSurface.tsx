@@ -65,6 +65,7 @@ import {
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
   registerLanguageServerMonacoProviders,
+  type BladeCompletion,
   type PhpCodeActionDescriptor,
   type PhpCodeActionRange,
   type PhpWorkspaceEditApplicationContext,
@@ -137,6 +138,14 @@ interface EditorSurfaceProps {
     source: string,
     range: PhpCodeActionRange,
   ): Promise<PhpCodeActionDescriptor[]>;
+  provideBladeCompletions?(
+    source: string,
+    position: EditorPosition,
+  ): Promise<BladeCompletion[]>;
+  provideBladeDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
   providePhpLaravelDefinition?(
     source: string,
     offset: number,
@@ -192,6 +201,8 @@ export function EditorSurface({
   onRevealTargetHandled,
   onRevertChangeHunk,
   phpSyntaxDiagnosticsGateway,
+  provideBladeCompletions = async () => [],
+  provideBladeDefinition = async () => false,
   providePhpCodeActions = async () => [],
   providePhpLaravelDefinition = async () => false,
   providePhpMethodCompletions,
@@ -220,6 +231,8 @@ export function EditorSurface({
   const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
+  const bladeCompletionsRef = useRef(provideBladeCompletions);
+  const bladeDefinitionRef = useRef(provideBladeDefinition);
   const phpLaravelDefinitionRef = useRef(providePhpLaravelDefinition);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
@@ -320,6 +333,14 @@ export function EditorSurface({
   }, [providePhpCodeActions]);
 
   useEffect(() => {
+    bladeCompletionsRef.current = provideBladeCompletions;
+  }, [provideBladeCompletions]);
+
+  useEffect(() => {
+    bladeDefinitionRef.current = provideBladeDefinition;
+  }, [provideBladeDefinition]);
+
+  useEffect(() => {
     phpLaravelDefinitionRef.current = providePhpLaravelDefinition;
   }, [providePhpLaravelDefinition]);
 
@@ -413,6 +434,10 @@ export function EditorSurface({
       getRuntimeStatus: () => runtimeStatusRef.current,
       getWorkspaceRoot: () => workspaceRoot,
       limitNavigationResultsToOpenModels: true,
+      provideBladeCompletions: (source, position) =>
+        bladeCompletionsRef.current(source, position),
+      provideBladeDefinition: (source, offset) =>
+        bladeDefinitionRef.current(source, offset),
       providePhpCodeActions: (source, range) =>
         phpCodeActionsRef.current(source, range),
       providePhpLaravelDefinition: (source, offset) =>

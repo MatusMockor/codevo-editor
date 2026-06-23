@@ -186,6 +186,29 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
   ],
 } satisfies Monaco.languages.SemanticTokensLegend;
 
+/**
+ * A single Blade completion item produced by the controller. Blade has no
+ * managed language server (its syntax is Shiki's job), so completions are pure
+ * data the Monaco provider maps to `Monaco.languages.CompletionItem`. The kind
+ * picks the Monaco icon (directive → keyword, view → file, component → field).
+ */
+export type BladeCompletionKind = "directive" | "view" | "component";
+
+export interface BladeCompletion {
+  detail?: string;
+  insertText: string;
+  kind: BladeCompletionKind;
+  label: string;
+  /**
+   * Optional 0-based character offset span the item replaces. When omitted the
+   * provider falls back to the word Monaco computed at the cursor. Used so a
+   * `@inc` directive completion replaces the whole `@inc` token (including the
+   * `@`) and a `<x-fo` component completion replaces the dotted component name.
+   */
+  replaceStart?: number;
+  replaceEnd?: number;
+}
+
 export interface LanguageServerMonacoProviderContext {
   applyWorkspaceEdit?: PhpWorkspaceEditApplier;
   featuresGateway: LanguageServerFeaturesGateway;
@@ -194,6 +217,27 @@ export interface LanguageServerMonacoProviderContext {
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
   limitNavigationResultsToOpenModels?: boolean;
+  /**
+   * Resolves and navigates to the Blade target (a view referenced by
+   * `@include`/`@extends`/…, or an `<x-...>` component) at `offset` inside a
+   * `.blade.php` document. Like {@link providePhpLaravelDefinition}, the
+   * controller performs the navigation itself and resolves `true` when it
+   * handled the request (so the Monaco provider returns `null`); it resolves
+   * `false` when the offset is not a resolvable Blade reference. Per-project
+   * isolation lives in the controller (requested-root capture + re-check after
+   * each file read), so a tab switch mid-resolution drops the result.
+   */
+  provideBladeDefinition?(source: string, offset: number): Promise<boolean>;
+  /**
+   * Produces Blade completions for the cursor at `position` inside a
+   * `.blade.php` document: `@directive` names, view names for
+   * `@include`/`@extends`/… literals, and `<x-...>` component names. Re-checks
+   * the active workspace after directory scans (per-project isolation).
+   */
+  provideBladeCompletions?(
+    source: string,
+    position: MonacoPosition,
+  ): Promise<BladeCompletion[]>;
   providePhpCodeActions?(
     source: string,
     range: PhpCodeActionRange,
@@ -575,6 +619,25 @@ export function registerLanguageServerMonacoProviders(
           provideDocumentRangeSemanticTokens(context, model, range),
       })
     : { dispose: () => undefined };
+  // Blade (`.blade.php`) has no managed language server — its syntax is owned by
+  // Shiki. We register exactly two Monaco providers for the "blade" language:
+  // go-to-definition (view / component navigation) and completion (directives,
+  // view names, component names). Both delegate the workspace-aware resolution
+  // to controller callbacks that carry the per-project isolation guards.
+  const bladeDefinition = monaco.languages.registerDefinitionProvider
+    ? monaco.languages.registerDefinitionProvider("blade", {
+        provideDefinition: (model, position) =>
+          provideBladeDefinition(context, model, position),
+      })
+    : { dispose: () => undefined };
+  const bladeCompletion = monaco.languages.registerCompletionItemProvider(
+    "blade",
+    {
+      triggerCharacters: ["@", "'", "\"", "-", "."],
+      provideCompletionItems: (model, position) =>
+        provideBladeCompletionItems(monaco, context, model, position),
+    },
+  );
 
   return {
     dispose: () => {
@@ -608,8 +671,229 @@ export function registerLanguageServerMonacoProviders(
       linkedEditingRange.dispose();
       semanticTokens.dispose();
       rangeSemanticTokens.dispose();
+      bladeDefinition.dispose();
+      bladeCompletion.dispose();
     },
   };
+}
+
+/**
+ * Go-to-definition for a `.blade.php` document: delegates to the controller's
+ * Blade resolver, which navigates to the view / component file and resolves
+ * `true` when it handled the offset (so Monaco does not also navigate). Returns
+ * `null` either way — Blade has no LSP locations to surface. The controller
+ * enforces per-project isolation; this wrapper additionally drops the result if
+ * the active workspace changed during the await.
+ */
+async function provideBladeDefinition(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  if (!context.provideBladeDefinition) {
+    return null;
+  }
+
+  const documentContext = activeBladeDocumentContext(context, model);
+
+  if (!documentContext) {
+    return null;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    await context.provideBladeDefinition(source, offset);
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+  }
+
+  return null;
+}
+
+async function provideBladeCompletionItems(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.CompletionList> {
+  if (!context.provideBladeCompletions) {
+    return { suggestions: [] };
+  }
+
+  const documentContext = activeBladeDocumentContext(context, model);
+
+  if (!documentContext) {
+    return { suggestions: [] };
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const word = model.getWordUntilPosition(position);
+  const fallbackRange = bladeCompletionFallbackRange(position, word);
+
+  try {
+    const completions = await context.provideBladeCompletions(source, position);
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return { suggestions: [] };
+    }
+
+    return {
+      suggestions: completions.map((completion, index) =>
+        toMonacoBladeCompletion(
+          monaco,
+          model,
+          source,
+          fallbackRange,
+          completion,
+          index,
+        ),
+      ),
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return { suggestions: [] };
+  }
+}
+
+function toMonacoBladeCompletion(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  source: string,
+  fallbackRange: Monaco.IRange,
+  completion: BladeCompletion,
+  index: number,
+): Monaco.languages.CompletionItem {
+  const range =
+    completion.replaceStart != null && completion.replaceEnd != null
+      ? bladeReplaceRange(
+          monaco,
+          model,
+          source,
+          completion.replaceStart,
+          completion.replaceEnd,
+        )
+      : fallbackRange;
+
+  return {
+    detail: completion.detail,
+    insertText: completion.insertText,
+    kind: monacoBladeCompletionKind(monaco, completion.kind),
+    label: completion.label,
+    range,
+    sortText: `0_${String(index).padStart(4, "0")}`,
+  };
+}
+
+function monacoBladeCompletionKind(
+  monaco: MonacoApi,
+  kind: BladeCompletionKind,
+): Monaco.languages.CompletionItemKind {
+  if (kind === "view") {
+    return monaco.languages.CompletionItemKind.File;
+  }
+
+  if (kind === "component") {
+    return monaco.languages.CompletionItemKind.Field;
+  }
+
+  return monaco.languages.CompletionItemKind.Keyword;
+}
+
+function bladeCompletionFallbackRange(
+  position: MonacoPosition,
+  word: { endColumn: number; startColumn: number },
+): Monaco.IRange {
+  return {
+    endColumn: word.endColumn,
+    endLineNumber: position.lineNumber,
+    startColumn: word.startColumn,
+    startLineNumber: position.lineNumber,
+  };
+}
+
+/**
+ * Converts a 0-based character offset span into a Monaco range using the model's
+ * own offset/position mapping when available, falling back to a manual scan of
+ * `source` so the provider stays testable with a stubbed model.
+ */
+function bladeReplaceRange(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  source: string,
+  startOffset: number,
+  endOffset: number,
+): Monaco.IRange {
+  const start = monacoPositionAtOffset(model, source, startOffset);
+  const end = monacoPositionAtOffset(model, source, endOffset);
+
+  return new monaco.Range(
+    start.lineNumber,
+    start.column,
+    end.lineNumber,
+    end.column,
+  );
+}
+
+function monacoPositionAtOffset(
+  model: MonacoModel,
+  source: string,
+  offset: number,
+): { column: number; lineNumber: number } {
+  const positionAt = (
+    model as MonacoModel & {
+      getPositionAt?: (value: number) => MonacoPosition;
+    }
+  ).getPositionAt;
+
+  if (typeof positionAt === "function") {
+    const position = positionAt.call(model, offset);
+
+    return { column: position.column, lineNumber: position.lineNumber };
+  }
+
+  const clamped = Math.max(0, Math.min(offset, source.length));
+  const before = source.slice(0, clamped);
+  const lineNumber = before.split("\n").length;
+  const lineStart = before.lastIndexOf("\n") + 1;
+
+  return { column: clamped - lineStart + 1, lineNumber };
+}
+
+/**
+ * Mirrors {@link activePhpDocumentContext} for the "blade" language. Blade has
+ * no language-server runtime, so no session is required: the context only needs
+ * the active document, the requested workspace root (for the post-await
+ * isolation re-check), and a confirmed model/document path match.
+ */
+function activeBladeDocumentContext(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+) {
+  const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (!activeDocument || !rootPath) {
+    return null;
+  }
+
+  if (activeDocument.language !== "blade") {
+    return null;
+  }
+
+  const path = modelPath(model);
+
+  if (!path || path !== activeDocument.path) {
+    return null;
+  }
+
+  return { activeDocument, path, rootPath };
 }
 
 async function prepareRename(

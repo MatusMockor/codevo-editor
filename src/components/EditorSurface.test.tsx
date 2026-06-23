@@ -78,6 +78,11 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   monaco: null as ReturnType<typeof createMonaco> | null,
   props: null as { options?: Record<string, unknown> } | null,
   registeredContext: null as {
+    provideBladeCompletions?: (
+      source: string,
+      position: { column: number; lineNumber: number },
+    ) => unknown;
+    provideBladeDefinition?: (source: string, offset: number) => unknown;
     providePhpCodeActions?: (
       source: string,
       range: { end: number; start: number },
@@ -96,6 +101,11 @@ vi.mock("./languageServerMonacoProviders", async () => {
     registerLanguageServerMonacoProviders: (
       monaco: unknown,
       context: {
+        provideBladeCompletions?: (
+          source: string,
+          position: { column: number; lineNumber: number },
+        ) => unknown;
+        provideBladeDefinition?: (source: string, offset: number) => unknown;
         providePhpCodeActions?: (source: string) => unknown;
         providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
       },
@@ -362,6 +372,87 @@ describe("EditorSurface", () => {
       "<?php\n$value = config('app.name');\n",
       24,
     );
+  });
+
+  it("forwards blade definition and completion callbacks into the provider context", async () => {
+    const bladeSource = "@include('partials.alert')\n";
+    const activeDocument: EditorDocument = {
+      content: bladeSource,
+      language: "blade",
+      name: "show.blade.php",
+      path: "/workspace/resources/views/show.blade.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const provideBladeDefinition = vi.fn(async () => true);
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        insertText: "include",
+        kind: "directive" as const,
+        label: "@include",
+      },
+    ]);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          provideBladeCompletions={provideBladeCompletions}
+          provideBladeDefinition={provideBladeDefinition}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const context = editorSurfaceMocks.registeredContext;
+
+    expect(context?.provideBladeDefinition).toEqual(expect.any(Function));
+    expect(context?.provideBladeCompletions).toEqual(expect.any(Function));
+
+    await context?.provideBladeDefinition?.(bladeSource, 12);
+    await context?.provideBladeCompletions?.(bladeSource, {
+      column: 12,
+      lineNumber: 1,
+    });
+
+    expect(provideBladeDefinition).toHaveBeenCalledWith(bladeSource, 12);
+    expect(provideBladeCompletions).toHaveBeenCalledWith(bladeSource, {
+      column: 12,
+      lineNumber: 1,
+    });
   });
 
   it("enables bracket pair colorization and sticky scroll like VS Code", async () => {

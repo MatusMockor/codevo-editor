@@ -830,6 +830,8 @@ function App() {
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
             onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
+            provideBladeCompletions={workbench.provideBladeCompletions}
+            provideBladeDefinition={workbench.provideBladeDefinition}
             providePhpCodeActions={workbench.providePhpCodeActions}
             providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
