@@ -659,6 +659,7 @@ impl LanguageServerRegistry {
         )
     }
 
+    #[cfg(test)]
     pub fn start_with_event_sinks(
         &self,
         root_path: &str,
@@ -678,6 +679,35 @@ impl LanguageServerRegistry {
             diagnostics_sink,
             workspace_edit_sink,
             refresh_sink,
+        )
+    }
+
+    /// Start (or re-create) the per-workspace supervisor with crash auto-restart
+    /// enabled. The `restart_controller` is owned per workspace, so a crash in
+    /// one workspace's server can only re-spawn that same workspace — restart
+    /// budgets never leak across open project tabs.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_auto_restart(
+        &self,
+        root_path: &str,
+        command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
+        spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        refresh_sink: Arc<dyn RefreshSink>,
+        restart_controller: Arc<RestartController>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        self.supervisor_for(root_path)?.start_with_auto_restart(
+            command,
+            initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+            restart_controller,
         )
     }
 
@@ -883,6 +913,7 @@ impl LanguageServerSupervisor {
         )
     }
 
+    #[cfg(test)]
     fn start_with_event_sinks(
         &self,
         command: &LanguageServerCommand,
@@ -917,8 +948,8 @@ impl LanguageServerSupervisor {
     ///
     /// Production opt-in: call this from the registry/`lib.rs` start path with a
     /// `ChildServerProcessSpawner` wrapped in `Arc` and `RestartController::default()`
-    /// to enable crash auto-restart. Currently exercised by the unit tests.
-    #[allow(dead_code)]
+    /// to enable crash auto-restart. Wired into both the PHP (phpactor) and
+    /// JavaScript/TypeScript start paths via the registry wrapper of the same name.
     pub fn start_with_auto_restart(
         self: &Arc<Self>,
         command: &LanguageServerCommand,
@@ -3100,6 +3131,106 @@ mod tests {
             message["method"] == "textDocument/didSave"
                 && message["params"]["textDocument"]["uri"] == "file:///tmp/workspace-b/src/App.ts"
         }));
+    }
+
+    #[test]
+    fn registry_start_with_auto_restart_recovers_crashed_workspace() {
+        let registry = LanguageServerRegistry::new_with_label("Test server");
+        let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, rx) = ChannelSink::new();
+
+        registry
+            .start_with_auto_restart(
+                "/tmp/auto-restart-workspace",
+                &command(),
+                &initialize_request(),
+                Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
+                sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start with auto restart");
+        wait_for(&rx, &running_status());
+
+        // Simulate an unexpected crash for this workspace's server.
+        *held.lock().expect("held writer lock") = None;
+
+        // The registry start path must re-spawn the *same* workspace's server and
+        // return it to running. A plain start path (no auto-restart) would leave
+        // the session permanently Crashed.
+        wait_for(
+            &rx,
+            &LanguageServerRuntimeStatus::Running {
+                session_id: 2,
+                capabilities: LanguageServerCapabilities::default(),
+            },
+        );
+    }
+
+    #[test]
+    fn registry_auto_restart_is_isolated_per_workspace() {
+        let registry = LanguageServerRegistry::new_with_label("Test server");
+        let spawner_a = Arc::new(FakeSpawner::new(ready_script(), true));
+        let spawner_b = Arc::new(FakeSpawner::new(ready_script(), true));
+        let held_a = Arc::clone(&spawner_a.held_writer);
+        let held_b = Arc::clone(&spawner_b.held_writer);
+        let (sink_a, rx_a) = ChannelSink::new();
+        let (sink_b, rx_b) = ChannelSink::new();
+
+        // Each workspace gets its OWN restart controller -> per-workspace
+        // isolation, no shared restart budget across open project tabs.
+        registry
+            .start_with_auto_restart(
+                "/tmp/auto-restart-a",
+                &command(),
+                &initialize_request(),
+                Arc::clone(&spawner_a) as Arc<dyn ServerProcessSpawner + Send + Sync>,
+                sink_a,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start workspace a");
+        registry
+            .start_with_auto_restart(
+                "/tmp/auto-restart-b",
+                &command(),
+                &initialize_request(),
+                Arc::clone(&spawner_b) as Arc<dyn ServerProcessSpawner + Send + Sync>,
+                sink_b,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start workspace b");
+        wait_for(&rx_a, &running_status());
+        wait_for(&rx_b, &running_status());
+
+        // Crash only workspace A's server. Its supervisor must auto-restart it.
+        *held_a.lock().expect("held writer a lock") = None;
+        wait_for(
+            &rx_a,
+            &LanguageServerRuntimeStatus::Running {
+                session_id: 2,
+                capabilities: LanguageServerCapabilities::default(),
+            },
+        );
+
+        // Workspace B is completely unaffected by A's crash/restart: it stays on
+        // its original session and never receives a spurious status event.
+        assert!(held_b.lock().expect("held writer b lock").is_some());
+        assert_eq!(
+            registry.status("/tmp/auto-restart-b"),
+            LanguageServerRuntimeStatus::Running {
+                session_id: 1,
+                capabilities: LanguageServerCapabilities::default(),
+            }
+        );
     }
 
     #[test]

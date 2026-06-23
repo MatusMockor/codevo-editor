@@ -86,7 +86,7 @@ use lsp_features::{
 use lsp_session::{
     language_server_status_payload, AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
     JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRuntimeStatus,
-    PhpLanguageServerRegistry, RefreshSink, StatusSink, WorkspaceEditSink,
+    PhpLanguageServerRegistry, RefreshSink, RestartController, StatusSink, WorkspaceEditSink,
 };
 use php_file_outline::{
     build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
@@ -1580,15 +1580,16 @@ fn start_php_language_server(
     let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
     let refresh_sink: Arc<dyn RefreshSink> = event_sink;
 
-    let status = registry.start_with_event_sinks(
+    let status = registry.start_with_auto_restart(
         &root_path,
         &command,
         &initialize_request,
-        &ChildServerProcessSpawner,
+        Arc::new(ChildServerProcessSpawner),
         status_sink,
         diagnostics_sink,
         workspace_edit_sink,
         refresh_sink,
+        Arc::new(RestartController::default()),
     )?;
 
     Ok(language_server_status_payload(&root_path, status))
@@ -1635,15 +1636,16 @@ fn start_javascript_typescript_language_server(
     let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
     let refresh_sink: Arc<dyn RefreshSink> = event_sink;
 
-    let status = registry.start_with_event_sinks(
+    let status = registry.start_with_auto_restart(
         &root_path,
         &command,
         &initialize_request,
-        &ChildServerProcessSpawner,
+        Arc::new(ChildServerProcessSpawner),
         status_sink,
         diagnostics_sink,
         workspace_edit_sink,
         refresh_sink,
+        Arc::new(RestartController::default()),
     )?;
 
     if matches!(status, LanguageServerRuntimeStatus::Running { .. }) {
