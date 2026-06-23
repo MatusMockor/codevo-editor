@@ -92,6 +92,19 @@ export interface PhpCodeActionDescriptor {
   kind?: string;
   title: string;
 }
+
+/**
+ * The cursor / selection that a PHP code-action request covers, expressed as
+ * 0-based character offsets into the source. `start === end` denotes an empty
+ * selection (a bare cursor); a non-empty selection has `start < end`. These
+ * power the position-aware actions ("Create method / property from usage" reads
+ * the cursor offset; "Extract variable" reads the selection span) while the
+ * existing class-level actions ignore it.
+ */
+export interface PhpCodeActionRange {
+  end: number;
+  start: number;
+}
 export type PhpWorkspaceEditApplier = (
   edit: LanguageServerWorkspaceEdit,
   context: PhpWorkspaceEditApplicationContext,
@@ -181,7 +194,10 @@ export interface LanguageServerMonacoProviderContext {
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
   limitNavigationResultsToOpenModels?: boolean;
-  providePhpCodeActions?(source: string): Promise<PhpCodeActionDescriptor[]>;
+  providePhpCodeActions?(
+    source: string,
+    range: PhpCodeActionRange,
+  ): Promise<PhpCodeActionDescriptor[]>;
   /**
    * Resolves and navigates to the target of a Laravel global string-helper
    * literal (`config`, `view`, `__`/`trans`, `env`) located at `offset`.
@@ -1563,10 +1579,11 @@ async function provideCodeActions(
   const request = featureDocumentRequestContext(context, model, "codeAction");
   const phpDocumentContext = activePhpDocumentContext(context, model);
   const phpActions = context.providePhpCodeActions
-    ? await providePhpImplementMethodsCodeActions(
+    ? await providePhpSourceCodeActions(
         monaco,
         context,
         model,
+        range,
         actionContext,
         phpDocumentContext,
       )
@@ -1620,10 +1637,11 @@ async function provideCodeActions(
   }
 }
 
-async function providePhpImplementMethodsCodeActions(
+async function providePhpSourceCodeActions(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
+  range: Monaco.Range,
   actionContext: Monaco.languages.CodeActionContext,
   documentContext: ReturnType<typeof activePhpDocumentContext>,
 ): Promise<Monaco.languages.CodeAction[]> {
@@ -1631,7 +1649,7 @@ async function providePhpImplementMethodsCodeActions(
     return [];
   }
 
-  if (actionContext.only && !actionContext.only.startsWith("quickfix")) {
+  if (!phpSourceCodeActionKindRequested(actionContext.only)) {
     return [];
   }
 
@@ -1640,9 +1658,10 @@ async function providePhpImplementMethodsCodeActions(
   }
 
   const source = modelSource(model, documentContext.activeDocument.content);
+  const offsetRange = phpCodeActionOffsetRange(source, range);
 
   try {
-    const descriptors = await context.providePhpCodeActions(source);
+    const descriptors = await context.providePhpCodeActions(source, offsetRange);
 
     if (!isPhpDocumentContextActive(context, documentContext)) {
       return [];
@@ -1658,6 +1677,43 @@ async function providePhpImplementMethodsCodeActions(
 
     return [];
   }
+}
+
+/**
+ * The synthesized PHP code actions are class-body refactors ("Implement
+ * methods", "Generate constructor/accessors", "Optimize imports", "Create
+ * method/property from usage") plus the "Extract variable" refactor. Honour
+ * Monaco's `only` filter: an unfiltered request and quickfix/refactor-scoped
+ * requests both qualify; any other narrow scope (e.g. `source.organizeImports`)
+ * is left to the language server so we never surface an off-context action.
+ */
+function phpSourceCodeActionKindRequested(only: string | undefined): boolean {
+  if (!only) {
+    return true;
+  }
+
+  return only.startsWith("quickfix") || only.startsWith("refactor");
+}
+
+/**
+ * Converts the Monaco selection range Monaco hands the code-action provider into
+ * the 0-based character offset span the controller's position-aware actions
+ * consume. An empty selection collapses to `start === end` (the bare cursor).
+ */
+function phpCodeActionOffsetRange(
+  source: string,
+  range: Monaco.Range,
+): PhpCodeActionRange {
+  const start = offsetAtMonacoPosition(source, {
+    column: range.startColumn,
+    lineNumber: range.startLineNumber,
+  } as MonacoPosition);
+  const end = offsetAtMonacoPosition(source, {
+    column: range.endColumn,
+    lineNumber: range.endLineNumber,
+  } as MonacoPosition);
+
+  return start <= end ? { end, start } : { end: start, start: end };
 }
 
 function toPhpCodeAction(

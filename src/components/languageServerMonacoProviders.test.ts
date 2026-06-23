@@ -4729,6 +4729,7 @@ function store($request): void
 
     expect(providePhpCodeActions).toHaveBeenCalledWith(
       "<?php\nclass Foo implements Bar\n{\n}\n",
+      { end: 6, start: 6 },
     );
     expect(actions.actions).toEqual([
       expect.objectContaining({ title: "Import User" }),
@@ -4781,6 +4782,96 @@ function store($request): void
 
     expect(providePhpCodeActions).toHaveBeenCalled();
     expect(actions.actions).toEqual([]);
+  });
+
+  it("passes the selection range to the PHP code action callback as character offsets", async () => {
+    const registered = createRegisteredProviders();
+    const content = "<?php\n$total = price() + tax();\n";
+    const providePhpCodeActions = vi.fn(async () => []);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await registered.codeActionProvider.provideCodeActions(
+      model({ content }),
+      // Line 2 columns 10..30 select `price() + tax()` within `$total = ...;`.
+      new registered.monaco.Range(2, 10, 2, 25),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(providePhpCodeActions).toHaveBeenCalledWith(content, {
+      end: content.indexOf("$total") + "$total = price() + tax()".length,
+      start: content.indexOf("price()"),
+    });
+  });
+
+  it("requests PHP code actions for a refactor-only request", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            range: {
+              endColumn: 1,
+              endLineNumber: 2,
+              startColumn: 1,
+              startLineNumber: 2,
+            },
+            text: "    $extracted = 1;\n",
+          },
+        ],
+        kind: "refactor.extract",
+        title: "Extract variable",
+      },
+    ]);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\necho 1;\n" }),
+      new registered.monaco.Range(2, 6, 2, 7),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(providePhpCodeActions).toHaveBeenCalled();
+    expect(actions.actions).toEqual([
+      expect.objectContaining({ kind: "refactor.extract", title: "Extract variable" }),
+    ]);
+  });
+
+  it("omits PHP code actions for an unrelated narrow `only` scope", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpCodeActions = vi.fn(async () => []);
+    const context = providerContext({
+      featuresGateway: featuresGateway(),
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    await registered.codeActionProvider.provideCodeActions(
+      model({ content: "<?php\nclass Foo\n{\n}\n" }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "source.organizeImports",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(providePhpCodeActions).not.toHaveBeenCalled();
   });
 
   it("drops in-flight PHP implement-methods code actions when the workspace switches", async () => {

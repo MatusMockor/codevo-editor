@@ -78,7 +78,10 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   monaco: null as ReturnType<typeof createMonaco> | null,
   props: null as { options?: Record<string, unknown> } | null,
   registeredContext: null as {
-    providePhpCodeActions?: (source: string) => unknown;
+    providePhpCodeActions?: (
+      source: string,
+      range: { end: number; start: number },
+    ) => unknown;
     providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
   } | null,
 }));
@@ -281,10 +284,14 @@ describe("EditorSurface", () => {
 
     expect(context?.providePhpCodeActions).toEqual(expect.any(Function));
 
-    await context?.providePhpCodeActions?.("<?php\nclass Example {}\n");
+    await context?.providePhpCodeActions?.("<?php\nclass Example {}\n", {
+      end: 7,
+      start: 7,
+    });
 
     expect(providePhpCodeActions).toHaveBeenCalledWith(
       "<?php\nclass Example {}\n",
+      { end: 7, start: 7 },
     );
   });
 

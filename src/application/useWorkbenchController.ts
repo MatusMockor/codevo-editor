@@ -393,6 +393,12 @@ import {
 } from "../domain/phpClassStructure";
 import { renderAccessors } from "../domain/phpAccessorCodeGen";
 import { renderConstructor } from "../domain/phpConstructorCodeGen";
+import {
+  detectMissingThisMember,
+  renderCreateMethodStub,
+  renderCreatePropertyStub,
+} from "../domain/phpCreateFromUsage";
+import { planExtractVariable } from "../domain/phpExtractVariable";
 import { organizePhpImports } from "../domain/phpImportsOrganizer";
 import {
   renderImplementMethodsStubs,
@@ -506,6 +512,18 @@ export interface PhpCodeActionDescriptor {
   edits: PhpCodeActionTextEdit[];
   kind?: string;
   title: string;
+}
+
+/**
+ * Cursor / selection that a PHP code-action request covers, expressed as 0-based
+ * character offsets into the source. `start === end` is a bare cursor; a
+ * non-empty selection has `start < end`. Position-aware actions consume it
+ * ("Create method / property from usage" reads the cursor; "Extract variable"
+ * reads the selection span); class-level actions ignore it.
+ */
+export interface PhpCodeActionRange {
+  end: number;
+  start: number;
 }
 
 interface PhpLaravelNamedRouteTarget extends PhpLaravelNamedRouteDefinition {
@@ -14357,7 +14375,10 @@ export function useWorkbenchController(
   );
 
   const providePhpCodeActions = useCallback(
-    async (source: string): Promise<PhpCodeActionDescriptor[]> => {
+    async (
+      source: string,
+      range: PhpCodeActionRange = { end: 0, start: 0 },
+    ): Promise<PhpCodeActionDescriptor[]> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -14366,12 +14387,31 @@ export function useWorkbenchController(
         return [];
       }
 
+      const actions: PhpCodeActionDescriptor[] = [];
+
+      // "Extract variable" is a pure single-file synthesis from the current
+      // selection and is valid anywhere a PHP expression sits (class body or a
+      // free function), so it runs before the class-only guard below.
+      const extractVariableAction = phpExtractVariableCodeAction(source, range);
+
+      if (extractVariableAction) {
+        actions.push(extractVariableAction);
+      }
+
       if (phpCurrentTypeKind(source) !== "class") {
-        return [];
+        return actions;
       }
 
       const structure = parsePhpClassStructure(source);
-      const actions: PhpCodeActionDescriptor[] = [];
+
+      // "Create method / property from usage" is a pure single-file synthesis
+      // from the cursor offset; offered only when the cursor sits on an
+      // unresolved `$this->member` usage inside the class.
+      const createFromUsageAction = phpCreateFromUsageCodeAction(source, range);
+
+      if (createFromUsageAction) {
+        actions.push(createFromUsageAction);
+      }
 
       const implementMethodsAction = await phpImplementMethodsCodeAction(
         source,
@@ -23216,6 +23256,87 @@ function phpClassBodyInsertionAction(
       },
     ],
     title,
+  };
+}
+
+/**
+ * Offers "Create method '<name>'" / "Create property '<name>'" when the cursor
+ * (the start of the request range) sits on a `$this->member(...)` call or a
+ * `$this->member` access whose member does not yet exist on the enclosing class.
+ * The member stub is synthesized from the usage (method parameter types inferred
+ * conservatively from the call arguments) and spliced into the class body via
+ * the same insertion point as the other class-body actions. Returns `null` when
+ * the cursor is not on an unresolved member (the conservative detector decides).
+ */
+function phpCreateFromUsageCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const member = detectMissingThisMember(source, range.start);
+
+  if (!member) {
+    return null;
+  }
+
+  if (member.kind === "method") {
+    return phpClassBodyInsertionAction(
+      source,
+      renderCreateMethodStub(member.name, member.argTypes ?? []),
+      `Create method '${member.name}'`,
+    );
+  }
+
+  return phpClassBodyInsertionAction(
+    source,
+    renderCreatePropertyStub(member.name),
+    `Create property '${member.name}'`,
+  );
+}
+
+/**
+ * Offers "Extract variable" when the request carries a non-empty selection that
+ * `planExtractVariable` confirms is a usable expression. The plan yields two
+ * non-overlapping edits applied against the original document: a declaration
+ * inserted on its own line before the enclosing statement, and a replacement of
+ * the selected expression with the new variable reference. Returns `null` for
+ * an empty selection or any selection the conservative planner rejects.
+ */
+function phpExtractVariableCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  if (range.start >= range.end) {
+    return null;
+  }
+
+  const plan = planExtractVariable(source, range.start, range.end);
+
+  if (!plan) {
+    return null;
+  }
+
+  const declarationPosition = offsetToPosition(source, plan.declarationOffset);
+  const replaceStartPosition = offsetToPosition(source, plan.replaceStart);
+  const replaceEndPosition = offsetToPosition(source, plan.replaceEnd);
+
+  return {
+    edits: [
+      {
+        range: zeroLengthPhpEditRange(declarationPosition),
+        text: plan.declarationText,
+      },
+      {
+        range: {
+          endColumn: replaceEndPosition.column + 1,
+          endLineNumber: replaceEndPosition.line + 1,
+          startColumn: replaceStartPosition.column + 1,
+          startLineNumber: replaceStartPosition.line + 1,
+        },
+        text: plan.replacementText,
+      },
+    ],
+    kind: "refactor.extract",
+    title: "Extract variable",
   };
 }
 

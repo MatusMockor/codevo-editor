@@ -66,6 +66,7 @@ import {
 import {
   registerLanguageServerMonacoProviders,
   type PhpCodeActionDescriptor,
+  type PhpCodeActionRange,
   type PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
 import {
@@ -132,7 +133,10 @@ interface EditorSurfaceProps {
   onRevealTargetHandled(): void;
   onRevertChangeHunk(hunk: EditorChangeHunk): void;
   phpSyntaxDiagnosticsGateway: PhpSyntaxDiagnosticsGateway;
-  providePhpCodeActions?(source: string): Promise<PhpCodeActionDescriptor[]>;
+  providePhpCodeActions?(
+    source: string,
+    range: PhpCodeActionRange,
+  ): Promise<PhpCodeActionDescriptor[]>;
   providePhpLaravelDefinition?(
     source: string,
     offset: number,
@@ -409,7 +413,8 @@ export function EditorSurface({
       getRuntimeStatus: () => runtimeStatusRef.current,
       getWorkspaceRoot: () => workspaceRoot,
       limitNavigationResultsToOpenModels: true,
-      providePhpCodeActions: (source) => phpCodeActionsRef.current(source),
+      providePhpCodeActions: (source, range) =>
+        phpCodeActionsRef.current(source, range),
       providePhpLaravelDefinition: (source, offset) =>
         phpLaravelDefinitionRef.current(source, offset),
       providePhpMethodCompletions: (source, position) =>

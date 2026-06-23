@@ -41509,6 +41509,224 @@ interface GreeterContract
     await expect(actionsPromise).resolves.toEqual([]);
   });
 
+  it("offers a create-method code action when the cursor is on a missing $this method", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $this->doWork(1, 'x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("doWork");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createMethod = actions.find(
+      (action) => action.title === "Create method 'doWork'",
+    );
+    expect(createMethod).toBeDefined();
+    const stubText = createMethod?.edits[0]?.text ?? "";
+    expect(stubText).toContain("private function doWork(int $arg0, string $arg1)");
+  });
+
+  it("offers a create-property code action when the cursor is on a missing $this property", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        echo $this->status;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("status");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createProperty = actions.find(
+      (action) => action.title === "Create property 'status'",
+    );
+    expect(createProperty).toBeDefined();
+    expect(createProperty?.edits[0]?.text ?? "").toContain("private $status;");
+  });
+
+  it("offers no create-method action when the $this method already exists", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $this->doWork();
+    }
+
+    private function doWork(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("doWork");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create method")),
+    ).toBe(false);
+  });
+
+  it("offers an extract-variable code action for a selected expression", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): int
+    {
+        return price() + tax();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const start = classSource.indexOf("price()");
+    const end = classSource.indexOf("tax()") + "tax()".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end,
+      start,
+    });
+
+    const extract = actions.find((action) => action.title === "Extract variable");
+    expect(extract).toBeDefined();
+    expect(extract?.edits).toHaveLength(2);
+    const declaration = extract?.edits.find((edit) =>
+      edit.text.includes("$extracted = price() + tax();"),
+    );
+    expect(declaration).toBeDefined();
+    const replacement = extract?.edits.find(
+      (edit) => edit.text === "$extracted",
+    );
+    expect(replacement).toBeDefined();
+  });
+
+  it("offers no extract-variable action when the selection is empty", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): int
+    {
+        return price() + tax();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("price()");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract variable"),
+    ).toBe(false);
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
