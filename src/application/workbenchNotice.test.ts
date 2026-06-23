@@ -22,6 +22,27 @@ describe("replaceWorkbenchNoticeGroup", () => {
   });
 });
 
+describe("createWorkbenchNotice", () => {
+  it("leaves kind undefined for ordinary notices", () => {
+    const notice = createWorkbenchNotice("error", "phpactor", "boom");
+
+    expect(notice.kind).toBeUndefined();
+  });
+
+  it("tags the notice with an overflow kind when requested", () => {
+    const notice = createWorkbenchNotice(
+      "info",
+      "phpactor",
+      "10 more",
+      "diagnostics:a",
+      undefined,
+      "overflow",
+    );
+
+    expect(notice.kind).toBe("overflow");
+  });
+});
+
 describe("capDiagnosticNotices", () => {
   const overflowNotice = (hidden: number) =>
     createWorkbenchNotice(
@@ -29,6 +50,8 @@ describe("capDiagnosticNotices", () => {
       "phpactor",
       `${hidden} more`,
       "diagnostics:a",
+      undefined,
+      "overflow",
     );
 
   it("returns the notices unchanged when at or below the limit", () => {
@@ -59,6 +82,8 @@ describe("capDiagnosticNotices", () => {
     // The overflow indicator must report the truthful hidden count (not lie).
     expect(capped[100].message).toBe("200 more");
     expect(capped[100].severity).toBe("info");
+    // The overflow indicator must be machine-recognizable (not text-matched).
+    expect(capped[100].kind).toBe("overflow");
   });
 
   it("does not append an overflow indicator when nothing is hidden", () => {

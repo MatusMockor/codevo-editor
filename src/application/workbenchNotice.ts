@@ -1,8 +1,18 @@
 export type WorkbenchNoticeSeverity = "info" | "warning" | "error";
 
+/**
+ * Distinguishes special notices that need bespoke presentation from ordinary
+ * diagnostics. `overflow` marks the indicator appended by
+ * `capDiagnosticNotices` when a document publishes more diagnostics than the
+ * panel renders, so the UI can highlight it instead of letting it blend into
+ * the regular `info` rows.
+ */
+export type WorkbenchNoticeKind = "overflow";
+
 export interface WorkbenchNotice {
   groupKey?: string;
   id: string;
+  kind?: WorkbenchNoticeKind;
   navigationTarget?: WorkbenchNoticeNavigationTarget;
   severity: WorkbenchNoticeSeverity;
   source: string;
@@ -28,10 +38,12 @@ export function createWorkbenchNotice(
   message: string,
   groupKey?: string,
   navigationTarget?: WorkbenchNoticeNavigationTarget,
+  kind?: WorkbenchNoticeKind,
 ): WorkbenchNotice {
   return {
     groupKey,
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    kind,
     message,
     navigationTarget,
     severity,

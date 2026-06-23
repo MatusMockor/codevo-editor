@@ -685,11 +685,15 @@ function buildDiagnosticOverflowNotice(
   groupKey: string,
   hiddenCount: number,
 ): WorkbenchNotice {
+  const shownCount = DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT;
+  const totalCount = shownCount + hiddenCount;
   return createWorkbenchNotice(
     "info",
     source,
-    `${hiddenCount} more diagnostic${hiddenCount === 1 ? "" : "s"} not shown (open the file to see all markers).`,
+    `Showing ${shownCount} of ${totalCount} diagnostics — ${hiddenCount} more hidden. Open the file to see all markers.`,
     groupKey,
+    undefined,
+    "overflow",
   );
 }
 
