@@ -33,6 +33,33 @@ describe("keymap", () => {
     });
   });
 
+  it("defaults the format document shortcut to Shift+Alt+F on every platform", () => {
+    expect(defaultShortcutForCommand("editor.formatDocument", "mac")).toBe(
+      "Shift+Alt+F",
+    );
+    expect(defaultShortcutForCommand("editor.formatDocument", "linux")).toBe(
+      "Shift+Alt+F",
+    );
+    expect(defaultShortcutForCommand("editor.formatDocument", "windows")).toBe(
+      "Shift+Alt+F",
+    );
+    expect(defaultKeymapSettings("mac")["editor.formatDocument"]).toBe(
+      "Shift+Alt+F",
+    );
+  });
+
+  it("matches the format document shortcut against Shift+Alt+F", () => {
+    expect(
+      matchesShortcut(
+        keyEvent({ key: "f", altKey: true, shiftKey: true }),
+        "Shift+Alt+F",
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(keyEvent({ key: "f", altKey: true }), "Shift+Alt+F"),
+    ).toBe(false);
+  });
+
   it("uses Ctrl defaults on non-Mac platforms", () => {
     expect(defaultShortcutForCommand("editor.save", "linux")).toBe("Ctrl+S");
     expect(defaultShortcutForCommand("editor.save", "windows")).toBe("Ctrl+S");

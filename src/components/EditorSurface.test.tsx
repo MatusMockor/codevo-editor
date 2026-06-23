@@ -1941,6 +1941,88 @@ interface ParserFactory
     );
   });
 
+  it("formats the active document through the formatting provider with Shift+Alt+F", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class UserService {}\n",
+      language: "typescript",
+      name: "UserService.ts",
+      path: "/workspace/src/UserService.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("linux")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const formatDocumentAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.formatDocument");
+
+    expect(formatDocumentAction).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+        ],
+        label: "Format Document",
+      }),
+    );
+
+    formatDocumentAction.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.formatDocument",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    editor.getModel.mockReturnValueOnce(null);
+
+    formatDocumentAction.run();
+
+    expect(editor.trigger).not.toHaveBeenCalled();
+  });
+
   it("notifies when the editor panel receives focus back", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
@@ -3043,6 +3125,7 @@ function createMonaco(model: FakeModel) {
       BracketRight: 6,
       Enter: 8,
       KeyB: 1,
+      KeyF: 10,
       KeyO: 2,
       KeyP: 3,
       KeyR: 4,

@@ -695,6 +695,20 @@ export function EditorSurface({
         run: onOpenFileStructure,
       }),
       editorApi.addAction({
+        id: "mockor.formatDocument",
+        label: "Format Document",
+        keybindings: keybinding("editor.formatDocument"),
+        run: () => {
+          const model = editorApi.getModel();
+
+          if (!model) {
+            return;
+          }
+
+          editorApi.trigger("keyboard", "editor.action.formatDocument", {});
+        },
+      }),
+      editorApi.addAction({
         id: "mockor.quickFix",
         label: "Show Context Actions",
         keybindings: keybinding("editor.quickFix"),

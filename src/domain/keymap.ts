@@ -55,6 +55,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Shift+Alt+F",
+    id: "editor.formatDocument",
+    label: "Format Document",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Alt+Enter",
     id: "editor.quickFix",
     label: "Context Actions",
