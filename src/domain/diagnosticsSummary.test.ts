@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isDiagnosticNotice,
   summarizeDiagnostics,
+  summarizeDiagnosticsByPath,
 } from "./diagnosticsSummary";
 
 describe("diagnosticsSummary", () => {
@@ -54,6 +55,28 @@ describe("diagnosticsSummary", () => {
 
   it("returns zero counts for empty input", () => {
     expect(summarizeDiagnostics([])).toEqual({ errors: 0, warnings: 0 });
+  });
+
+  it("counts errors and warnings across diagnostics keyed by path", () => {
+    // The status-bar count must reflect ALL diagnostics from the (uncapped)
+    // marker source, so it stays truthful even when the notices panel is
+    // capped. information/hint severities are not counted (parity with the
+    // notice severity mapping).
+    expect(
+      summarizeDiagnosticsByPath({
+        "/a.php": [
+          { severity: "error" },
+          { severity: "warning" },
+          { severity: "information" },
+          { severity: "hint" },
+        ],
+        "/b.ts": [{ severity: "error" }, { severity: "error" }],
+      }),
+    ).toEqual({ errors: 3, warnings: 1 });
+  });
+
+  it("returns zero counts for an empty diagnostics-by-path map", () => {
+    expect(summarizeDiagnosticsByPath({})).toEqual({ errors: 0, warnings: 0 });
   });
 
   it("recognizes diagnostic notices by their group key prefix", () => {

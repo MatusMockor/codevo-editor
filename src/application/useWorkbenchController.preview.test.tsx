@@ -2606,6 +2606,155 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("caps the per-document diagnostic notices without dropping markers", async () => {
+    // STABILITY: a single Laravel file can publish hundreds of diagnostics.
+    // Mapping every one to a notice and re-rendering the notices panel freezes
+    // the main thread, so notices are capped with a truthful "N more" indicator.
+    // Editor markers come from a separate, uncapped source and must keep ALL of
+    // them.
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 731,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const uri = fileUriFromPath(path);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    const diagnostics = Array.from({ length: 300 }, (_, index) => ({
+      character: 0,
+      line: index,
+      message: `Diagnostic ${index}`,
+      severity: "error" as const,
+      source: "phpactor",
+    }));
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics,
+        rootPath: "/workspace",
+        sessionId: 731,
+        uri,
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    const groupNotices = getWorkbench().notices.filter(
+      (notice) =>
+        notice.groupKey === `language-server-diagnostics:${uri}`,
+    );
+
+    // Notices are bounded: 100 diagnostics + 1 overflow indicator, never 300.
+    expect(groupNotices).toHaveLength(101);
+    const overflow = groupNotices[groupNotices.length - 1];
+    expect(overflow.severity).toBe("info");
+    // The hidden count is truthful (300 - 100 = 200), not a lie about "100".
+    expect(overflow.message).toContain("200 more");
+
+    // Markers (the separate, uncapped source) keep ALL 300 diagnostics so no
+    // squiggle is lost.
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(
+      300,
+    );
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 300,
+      warnings: 0,
+    });
+  });
+
+  it("does not send a debounced didChange after the document was closed", async () => {
+    // STABILITY: the 150ms didChange debounce timer can fire and enqueue its
+    // sync operation while an earlier sync (here a held didOpen) is still in
+    // flight. If closeDocument runs in the meantime, the document is removed
+    // from the synced set and a didClose is sent; the queued didChange must then
+    // be dropped so it never targets a closed document (UnknownDocument/desync).
+    const didOpen = createDeferred<void>();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 741,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    // Hold the didOpen sync so the per-document sync queue stays busy; any
+    // didChange enqueued afterwards is blocked behind it until we resolve it.
+    vi.mocked(dependencies.languageServerDocumentSyncGateway.didOpen).mockReturnValue(
+      didOpen.promise,
+    );
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    // Edit the document, then let the 150ms debounce elapse so the didChange
+    // timer fires and enqueues its (queued, blocked) sync operation.
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nclass User\n{\n}\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+
+    // Close the document: this removes it from the synced set and enqueues a
+    // didClose behind the still-blocked didChange.
+    act(() => {
+      getWorkbench().closeDocument(path);
+    });
+
+    // Release the held didOpen so the queue drains: didChange must be skipped.
+    act(() => {
+      didOpen.resolve(undefined);
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.languageServerDocumentSyncGateway.didChange,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.languageServerDocumentSyncGateway.didClose,
+    ).toHaveBeenCalledWith("/workspace", path);
+  });
+
   it("applies a phpactor clear carrying the analysis version after the document version advanced", async () => {
     // BUG 1: phpactor publishes diagnostics asynchronously keyed by the analysis
     // version. After a didChange bumps the live document version to 2, phpactor

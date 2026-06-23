@@ -5,6 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
 import {
+  capDiagnosticNotices,
   createWorkbenchNotice,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
@@ -120,7 +121,7 @@ import {
   type KeymapCommandId,
 } from "../domain/keymap";
 import {
-  summarizeDiagnostics,
+  summarizeDiagnosticsByPath,
   type DiagnosticsSummary,
 } from "../domain/diagnosticsSummary";
 import {
@@ -653,6 +654,28 @@ interface CachedWorkspaceWorkbenchState {
 const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
 const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
 const FILE_PREFETCH_HOVER_DELAY_MS = 80;
+
+// A single Laravel file can publish hundreds of diagnostics. Mapping every one
+// to a notice and re-rendering the notices panel freezes the main thread, so we
+// cap how many diagnostic notices a document contributes. Editor markers
+// (Monaco `setModelMarkers`) come from a separate, uncapped source, so this cap
+// never hides a squiggle — it only bounds the textual notices list. When the
+// cap trims notices, an `info` indicator carrying the truthful hidden count is
+// appended so diagnostics are never dropped silently.
+const DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT = 100;
+
+function buildDiagnosticOverflowNotice(
+  source: string,
+  groupKey: string,
+  hiddenCount: number,
+): WorkbenchNotice {
+  return createWorkbenchNotice(
+    "info",
+    source,
+    `${hiddenCount} more diagnostic${hiddenCount === 1 ? "" : "s"} not shown (open the file to see all markers).`,
+    groupKey,
+  );
+}
 
 // TODO-comment scan is conservative so it never blocks the UI on large trees:
 // it skips dependency / VCS / build directories, only reads source-like files,
@@ -1731,14 +1754,23 @@ export function useWorkbenchController(
             event.version;
         }
 
-        const diagnosticNotices = diagnostics.map((diagnostic) =>
-          createWorkbenchNotice(
-            languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-            diagnostic.source || "Language Server",
-            languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
-            groupKey,
-            diagnosticNoticeNavigationTarget(event.uri, diagnostic),
+        const diagnosticNotices = capDiagnosticNotices(
+          diagnostics.map((diagnostic) =>
+            createWorkbenchNotice(
+              languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+              diagnostic.source || "Language Server",
+              languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
+              groupKey,
+              diagnosticNoticeNavigationTarget(event.uri, diagnostic),
+            ),
           ),
+          DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+          (hiddenCount) =>
+            buildDiagnosticOverflowNotice(
+              "Language Server",
+              groupKey,
+              hiddenCount,
+            ),
         );
 
         if (isLatestActiveRoot) {
@@ -1861,14 +1893,19 @@ export function useWorkbenchController(
         return;
       }
 
-      const diagnosticNotices = event.diagnostics.map((diagnostic) =>
-        createWorkbenchNotice(
-          languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-          diagnostic.source || "TypeScript",
-          languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
-          groupKey,
-          diagnosticNoticeNavigationTarget(event.uri, diagnostic),
+      const diagnosticNotices = capDiagnosticNotices(
+        event.diagnostics.map((diagnostic) =>
+          createWorkbenchNotice(
+            languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+            diagnostic.source || "TypeScript",
+            languageServerDiagnosticNoticeMessage(diagnostic, event.uri),
+            groupKey,
+            diagnosticNoticeNavigationTarget(event.uri, diagnostic),
+          ),
         ),
+        DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+        (hiddenCount) =>
+          buildDiagnosticOverflowNotice("TypeScript", groupKey, hiddenCount),
       );
 
       if (isActiveRoot) {
@@ -3086,7 +3123,13 @@ export function useWorkbenchController(
         const requestedSyncGeneration = documentSyncGenerationRef.current;
 
         void enqueueDocumentSync(syncKey, async () => {
+          // The debounce timer can fire after closeDocument -> syncClosedDocument
+          // has already removed this document from the synced set (and sent
+          // didClose). Sending a didChange now would target a closed document
+          // (UnknownDocument / desync), so drop it if the document is no longer
+          // synced.
           if (
+            !syncedDocumentPathsRef.current.has(syncKey) ||
             documentSyncGenerationRef.current !== requestedSyncGeneration ||
             !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
             !isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
@@ -22424,8 +22467,8 @@ export function useWorkbenchController(
     [javaScriptTypeScriptDiagnosticsByPath, languageServerDiagnosticsByPath],
   );
   const diagnosticsSummary = useMemo<DiagnosticsSummary>(
-    () => summarizeDiagnostics(notices),
-    [notices],
+    () => summarizeDiagnosticsByPath(mergedLanguageServerDiagnosticsByPath),
+    [mergedLanguageServerDiagnosticsByPath],
   );
 
   return {
