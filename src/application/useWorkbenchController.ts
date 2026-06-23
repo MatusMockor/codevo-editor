@@ -420,6 +420,10 @@ import {
   renderCreatePropertyStub,
 } from "../domain/phpCreateFromUsage";
 import { planExtractVariable } from "../domain/phpExtractVariable";
+import {
+  planIntroduceConstant,
+  planIntroduceField,
+} from "../domain/phpIntroduceMember";
 import { organizePhpImports } from "../domain/phpImportsOrganizer";
 import {
   renderImplementMethodsStubs,
@@ -15205,6 +15209,24 @@ export function useWorkbenchController(
         actions.push(createFromUsageAction);
       }
 
+      // "Introduce constant / field" are pure single-file syntheses keyed off the
+      // cursor offset on a scalar literal (or a local variable for the field).
+      // Both insert at the top of the class body and replace the original token.
+      const introduceConstantAction = phpIntroduceConstantCodeAction(
+        source,
+        range,
+      );
+
+      if (introduceConstantAction) {
+        actions.push(introduceConstantAction);
+      }
+
+      const introduceFieldAction = phpIntroduceFieldCodeAction(source, range);
+
+      if (introduceFieldAction) {
+        actions.push(introduceFieldAction);
+      }
+
       const implementMethodsAction = await phpImplementMethodsCodeAction(
         source,
         structure,
@@ -25098,6 +25120,93 @@ function phpExtractVariableCodeAction(
     kind: "refactor.extract",
     title: "Extract variable",
   };
+}
+
+/**
+ * Offers "Introduce constant" when the request's cursor (the start offset) sits
+ * on a scalar literal inside a class body. The plan yields two non-overlapping
+ * edits against the original document: a `private const NAME = <literal>;`
+ * declaration inserted at the top of the class body, and a replacement of the
+ * literal with `self::NAME`. Returns `null` when the conservative planner
+ * rejects the position (no literal, outside a class).
+ */
+function phpIntroduceConstantCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planIntroduceConstant(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  return {
+    edits: phpIntroduceMemberEdits(source, plan),
+    kind: "refactor.extract",
+    title: "Introduce constant",
+  };
+}
+
+/**
+ * Offers "Introduce field" when the request's cursor sits on a scalar literal
+ * (lifted to a `private <type?> $name = <literal>;` property) or on a local
+ * variable assignment (promoted to a `private <type?> $name;` property with the
+ * assignment target rewritten). The plan yields a declaration inserted at the
+ * top of the class body and a replacement of the literal / variable with
+ * `$this->name`. Returns `null` when the conservative planner rejects the
+ * position.
+ */
+function phpIntroduceFieldCodeAction(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor | null {
+  const plan = planIntroduceField(source, range.start);
+
+  if (!plan) {
+    return null;
+  }
+
+  return {
+    edits: phpIntroduceMemberEdits(source, plan),
+    kind: "refactor.extract",
+    title: "Introduce field",
+  };
+}
+
+/**
+ * Translates an introduce-member plan (shared shape between constant and field)
+ * into the two Monaco text edits: a zero-length declaration insert at the top of
+ * the class body and a span replacement of the original literal / variable.
+ */
+function phpIntroduceMemberEdits(
+  source: string,
+  plan: {
+    declarationOffset: number;
+    declarationText: string;
+    replaceStart: number;
+    replaceEnd: number;
+    replacementText: string;
+  },
+): PhpCodeActionTextEdit[] {
+  const declarationPosition = offsetToPosition(source, plan.declarationOffset);
+  const replaceStartPosition = offsetToPosition(source, plan.replaceStart);
+  const replaceEndPosition = offsetToPosition(source, plan.replaceEnd);
+
+  return [
+    {
+      range: zeroLengthPhpEditRange(declarationPosition),
+      text: plan.declarationText,
+    },
+    {
+      range: {
+        endColumn: replaceEndPosition.column + 1,
+        endLineNumber: replaceEndPosition.line + 1,
+        startColumn: replaceStartPosition.column + 1,
+        startLineNumber: replaceStartPosition.line + 1,
+      },
+      text: plan.replacementText,
+    },
+  ];
 }
 
 /**

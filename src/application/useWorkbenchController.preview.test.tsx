@@ -44789,6 +44789,219 @@ class Greeter
     ).toBe(false);
   });
 
+  it("offers an introduce-constant code action when the cursor is on a literal", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): string
+    {
+        return 'Hello world';
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("'Hello world'") + 2;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const introduce = actions.find(
+      (action) => action.title === "Introduce constant",
+    );
+    expect(introduce).toBeDefined();
+    expect(introduce?.edits).toHaveLength(2);
+    const declaration = introduce?.edits.find((edit) =>
+      edit.text.includes("private const HELLO_WORLD = 'Hello world';"),
+    );
+    expect(declaration).toBeDefined();
+    const replacement = introduce?.edits.find(
+      (edit) => edit.text === "self::HELLO_WORLD",
+    );
+    expect(replacement).toBeDefined();
+  });
+
+  it("offers an introduce-field code action when the cursor is on a literal", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): string
+    {
+        return 'Hello world';
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("'Hello world'") + 2;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const introduce = actions.find(
+      (action) => action.title === "Introduce field",
+    );
+    expect(introduce).toBeDefined();
+    expect(introduce?.edits).toHaveLength(2);
+    const declaration = introduce?.edits.find((edit) =>
+      edit.text.includes("private string $helloWorld = 'Hello world';"),
+    );
+    expect(declaration).toBeDefined();
+    const replacement = introduce?.edits.find(
+      (edit) => edit.text === "$this->helloWorld",
+    );
+    expect(replacement).toBeDefined();
+  });
+
+  it("offers no introduce-constant or introduce-field action outside a class", async () => {
+    const filePath = "/workspace/script.php";
+    const fileSource = `<?php
+
+$greeting = 'Hello world';
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === filePath ? fileSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(filePath, "script.php"));
+    });
+
+    const offset = fileSource.indexOf("'Hello world'") + 2;
+    const actions = await getWorkbench().providePhpCodeActions(fileSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some(
+        (action) =>
+          action.title === "Introduce constant" ||
+          action.title === "Introduce field",
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale introduce-constant code actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Greeter.php";
+    const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+    public function greet(): string
+    {
+        return 'Hello world';
+    }
+}
+`;
+    const interfaceRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === interfacePath) {
+        return interfaceRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("'Hello world'") + 2;
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource, {
+        end: offset,
+        start: offset,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(interfacePath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    interfaceRead.resolve(`<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(): string;
+}
+`);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
   it("aggregates TODO comments across workspace source files and skips dependency directories", async () => {
     const readDirectory = vi.fn(async (path: string) => {
       if (path === "/workspace") {
