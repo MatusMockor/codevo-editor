@@ -2606,6 +2606,197 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("applies a phpactor clear carrying the analysis version after the document version advanced", async () => {
+    // BUG 1: phpactor publishes diagnostics asynchronously keyed by the analysis
+    // version. After a didChange bumps the live document version to 2, phpactor
+    // can still publish the clear (count=0) for its in-flight analysis at the
+    // older analysis version (1). Comparing against the document version dropped
+    // that clear, leaving the stale "1 error" marker visible. Comparing against
+    // the last APPLIED diagnostic version instead lets the clear through.
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 711,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    // phpactor analysed the opened document (version 1) and reported one error.
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Invalid class",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 711,
+        uri: fileUriFromPath(path),
+        version: 1,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+
+    // The user edits the document; the live document version advances to 2 via a
+    // debounced didChange.
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nclass User\n{\n}\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+    await flushAsyncTurns(24);
+
+    // phpactor finishes the in-flight analysis it started for version 1 and
+    // publishes the clear at that analysis version, even though the live
+    // document is now at version 2.
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [],
+        rootPath: "/workspace",
+        sessionId: 711,
+        uri: fileUriFromPath(path),
+        version: 1,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(0);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "phpactor" &&
+          notice.message.includes("Invalid class"),
+      ),
+    ).toBe(false);
+  });
+
+  it("drops a phpactor publication older than the last applied diagnostic", async () => {
+    // BUG 1 protection: once a newer analysis version has been applied, a late
+    // publication carrying an older analysis version must be dropped so it
+    // cannot resurrect stale diagnostics.
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 712,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Newer analysis error",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 712,
+        uri: fileUriFromPath(path),
+        version: 5,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+
+    // A late publication from an older analysis version must be ignored.
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [],
+        rootPath: "/workspace",
+        sessionId: 712,
+        uri: fileUriFromPath(path),
+        version: 3,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+  });
+
   it("clears stale diagnostics for the old path when renaming a PHP document", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)

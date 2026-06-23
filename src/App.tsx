@@ -800,6 +800,9 @@ function App() {
               workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
             }
             formatOnPaste={workbench.workspaceSettings.formatOnPaste}
+            isLanguageServerDocumentSynced={
+              workbench.isLanguageServerDocumentSynced
+            }
             javaScriptTypeScriptLanguageServerFeaturesGateway={
               javaScriptTypeScriptLanguageServerFeaturesGateway
             }

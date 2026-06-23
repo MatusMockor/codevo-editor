@@ -104,6 +104,7 @@ interface EditorSurfaceProps {
   ): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
   formatOnPaste?: boolean;
+  isLanguageServerDocumentSynced?(path: string): boolean;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRefreshGateway?: LanguageServerRefreshGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus?: LanguageServerRuntimeStatus | null;
@@ -171,6 +172,7 @@ export function EditorSurface({
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
   formatOnPaste = false,
+  isLanguageServerDocumentSynced,
   languageServerDiagnosticsByPath,
   languageServerFeaturesGateway,
   languageServerRefreshGateway,
@@ -225,6 +227,9 @@ export function EditorSurface({
   );
   const applyPhpWorkspaceEditRef = useRef(applyPhpLanguageServerWorkspaceEdit);
   const errorReporterRef = useRef(onLanguageServerError);
+  const isLanguageServerDocumentSyncedRef = useRef(
+    isLanguageServerDocumentSynced,
+  );
   const changeDecorationIdsRef = useRef<string[]>([]);
   const changeHunksRef = useRef(changeHunks);
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
@@ -327,6 +332,10 @@ export function EditorSurface({
   useEffect(() => {
     errorReporterRef.current = onLanguageServerError;
   }, [onLanguageServerError]);
+
+  useEffect(() => {
+    isLanguageServerDocumentSyncedRef.current = isLanguageServerDocumentSynced;
+  }, [isLanguageServerDocumentSynced]);
 
   useEffect(() => {
     phpCodeActionsRef.current = providePhpCodeActions;
@@ -433,6 +442,9 @@ export function EditorSurface({
       getActiveDocument: () => activeDocumentRef.current,
       getRuntimeStatus: () => runtimeStatusRef.current,
       getWorkspaceRoot: () => workspaceRoot,
+      isDocumentSynced: (rootPath, path) =>
+        workspaceRootKeysEqual(rootPath, workspaceRoot) &&
+        Boolean(isLanguageServerDocumentSyncedRef.current?.(path)),
       limitNavigationResultsToOpenModels: true,
       provideBladeCompletions: (source, position) =>
         bladeCompletionsRef.current(source, position),
@@ -537,12 +549,19 @@ export function EditorSurface({
       return;
     }
 
+    const requestedRoot = workspaceRoot;
     const requestedPath = activeDocument.path;
+    // The synced gate only applies to PHP documents: phpactor answers a
+    // DocumentSymbol request that races ahead of the document's `didOpen` with
+    // UnknownDocument, and `isLanguageServerDocumentSynced` tracks exactly the
+    // PHP synced set. JS/TS breadcrumbs keep their prior on-demand behaviour.
+    const requiresSync = isLanguageServerDocument(activeDocument);
     let active = true;
+    let timeout: number | null = null;
 
-    const loadBreadcrumbSymbols = () => {
+    const fetchBreadcrumbSymbols = () => {
       breadcrumbGateway
-        .documentSymbols(workspaceRoot, requestedPath)
+        .documentSymbols(requestedRoot, requestedPath)
         .then((symbols) => {
           if (!active) {
             return;
@@ -556,12 +575,39 @@ export function EditorSurface({
         .catch((error) => errorReporterRef.current(error));
     };
 
-    const timeout = window.setTimeout(loadBreadcrumbSymbols, 160);
+    const loadBreadcrumbSymbols = () => {
+      if (!active) {
+        return;
+      }
+
+      // Skip until the document's `didOpen` has been sent; otherwise the
+      // outline / breadcrumb fetch races ahead of the document sync and
+      // phpactor answers with UnknownDocument. Re-arm so the breadcrumbs are
+      // populated as soon as the document is synced (the sync state lives in a
+      // ref, so polling is the re-trigger that survives the await-less sync).
+      if (
+        requiresSync &&
+        !isLanguageServerDocumentSyncedRef.current?.(requestedPath)
+      ) {
+        timeout = window.setTimeout(loadBreadcrumbSymbols, 160);
+        return;
+      }
+
+      fetchBreadcrumbSymbols();
+    };
+
+    timeout = window.setTimeout(loadBreadcrumbSymbols, 160);
 
     return () => {
       active = false;
-      window.clearTimeout(timeout);
+
+      if (timeout !== null) {
+        window.clearTimeout(timeout);
+      }
     };
+    // `isLanguageServerDocumentSynced` is read through a ref inside the poll, so
+    // it is intentionally omitted here: the re-arming timeout re-reads the fresh
+    // synced state each tick (the re-trigger) without restarting the effect.
   }, [
     activeDocument,
     javaScriptTypeScriptLanguageServerFeaturesGateway,

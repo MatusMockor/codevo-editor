@@ -75,10 +75,27 @@ export function languageServerDiagnosticNoticeMessage(
   return `${uri} ${diagnostic.line + 1}:${diagnostic.character + 1} ${diagnostic.message}`;
 }
 
+/**
+ * Decides whether a `publishDiagnostics` event should be applied.
+ *
+ * phpactor (and the JS/TS server) publish diagnostics asynchronously, keyed by
+ * the version of the document snapshot they *analysed* — NOT the live document
+ * version. After a `didChange` advances the live document version, the server
+ * can still publish results (including a clear, `count=0`) for the analysis it
+ * had already started at an older version. Comparing against the live document
+ * version therefore discards valid, in-order publications and leaves stale
+ * markers on screen.
+ *
+ * We instead compare against the version of the LAST diagnostic we actually
+ * APPLIED for this document (`lastAppliedDiagnosticVersion`). Because the server
+ * publishes monotonically, this lets every fresh publication through (including
+ * the clear) while still dropping a genuinely out-of-order publication whose
+ * analysis version is older than one we have already applied.
+ */
 export function shouldApplyLanguageServerDiagnostics(
   event: LanguageServerDiagnosticEvent,
   currentSessionId: number | null,
-  currentVersion: number | undefined,
+  lastAppliedDiagnosticVersion: number | undefined,
   currentWorkspaceRoot?: string | null,
 ): boolean {
   if (
@@ -97,9 +114,9 @@ export function shouldApplyLanguageServerDiagnostics(
     return true;
   }
 
-  if (typeof currentVersion !== "number") {
+  if (typeof lastAppliedDiagnosticVersion !== "number") {
     return true;
   }
 
-  return event.version >= currentVersion;
+  return event.version >= lastAppliedDiagnosticVersion;
 }

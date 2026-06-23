@@ -956,6 +956,16 @@ export function useWorkbenchController(
   const intelligenceModeRef = useRef<IntelligenceMode>("basic");
   const documentVersionsRef = useRef<Record<string, number>>({});
   const documentVersionsByUriRef = useRef<Record<string, number>>({});
+  // Tracks the analysis version of the LAST diagnostic we actually APPLIED, per
+  // root/uri sync key. phpactor publishes diagnostics keyed by the version it
+  // analysed (not the live document version), so a clear (count=0) can carry an
+  // older version than the live document after a didChange. Comparing fresh
+  // publications against this monotonic per-uri value (instead of the live
+  // document version) lets in-order clears through while still dropping genuinely
+  // out-of-order publications. Isolated per workspace root via the sync key.
+  const lastAppliedDiagnosticVersionByUriRef = useRef<Record<string, number>>(
+    {},
+  );
   const syncedDocumentPathsRef = useRef<Set<string>>(new Set());
   const syncedDocumentContentRef = useRef<Record<string, string>>({});
   const pendingDocumentChangesRef = useRef<
@@ -977,6 +987,11 @@ export function useWorkbenchController(
     {},
   );
   const javaScriptTypeScriptDocumentVersionsByUriRef = useRef<
+    Record<string, number>
+  >({});
+  // JS/TS counterpart of {@link lastAppliedDiagnosticVersionByUriRef}: the
+  // analysis version of the last diagnostic applied per root/uri sync key.
+  const javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef = useRef<
     Record<string, number>
   >({});
   const javaScriptTypeScriptSyncedDocumentPathsRef = useRef<Set<string>>(
@@ -1651,17 +1666,18 @@ export function useWorkbenchController(
         return;
       }
 
-      const currentVersion = diagnosticsRootPath
-        ? documentVersionsByUriRef.current[
-            languageServerUriSyncKey(diagnosticsRootPath, event.uri)
-          ]
-        : undefined;
+      const diagnosticUriSyncKey = languageServerUriSyncKey(
+        diagnosticsRootPath,
+        event.uri,
+      );
+      const lastAppliedDiagnosticVersion =
+        lastAppliedDiagnosticVersionByUriRef.current[diagnosticUriSyncKey];
 
       if (
         !shouldApplyLanguageServerDiagnostics(
           event,
           currentSessionId,
-          currentVersion,
+          lastAppliedDiagnosticVersion,
           diagnosticsRootPath,
         )
       ) {
@@ -1683,17 +1699,14 @@ export function useWorkbenchController(
                 event.diagnostics,
               )
             : event.diagnostics;
-        const latestVersion = diagnosticsRootPath
-          ? documentVersionsByUriRef.current[
-              languageServerUriSyncKey(diagnosticsRootPath, event.uri)
-            ]
-          : undefined;
+        const latestAppliedDiagnosticVersion =
+          lastAppliedDiagnosticVersionByUriRef.current[diagnosticUriSyncKey];
 
         if (
           !shouldApplyLanguageServerDiagnostics(
             event,
             currentSessionId,
-            latestVersion,
+            latestAppliedDiagnosticVersion,
             diagnosticsRootPath,
           )
         ) {
@@ -1711,6 +1724,11 @@ export function useWorkbenchController(
           )
         ) {
           return;
+        }
+
+        if (typeof event.version === "number") {
+          lastAppliedDiagnosticVersionByUriRef.current[diagnosticUriSyncKey] =
+            event.version;
         }
 
         const diagnosticNotices = diagnostics.map((diagnostic) =>
@@ -1792,21 +1810,30 @@ export function useWorkbenchController(
         return;
       }
 
-      const currentVersion = diagnosticsRootPath
-        ? javaScriptTypeScriptDocumentVersionsByUriRef.current[
-            languageServerUriSyncKey(diagnosticsRootPath, event.uri)
-          ]
-        : undefined;
+      const diagnosticUriSyncKey = languageServerUriSyncKey(
+        diagnosticsRootPath,
+        event.uri,
+      );
+      const lastAppliedDiagnosticVersion =
+        javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
+          diagnosticUriSyncKey
+        ];
 
       if (
         !shouldApplyLanguageServerDiagnostics(
           event,
           currentSessionId,
-          currentVersion,
+          lastAppliedDiagnosticVersion,
           diagnosticsRootPath,
         )
       ) {
         return;
+      }
+
+      if (typeof event.version === "number") {
+        javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
+          diagnosticUriSyncKey
+        ] = event.version;
       }
 
       const groupKey = javaScriptTypeScriptDiagnosticNoticeGroup(event.uri);
@@ -2475,6 +2502,7 @@ export function useWorkbenchController(
     pendingDocumentOpenSyncAttemptsRef.current = {};
     documentVersionsRef.current = {};
     documentVersionsByUriRef.current = {};
+    lastAppliedDiagnosticVersionByUriRef.current = {};
     documentSyncQueuesRef.current = {};
   }, [clearDocumentChangeTimer]);
 
@@ -2490,6 +2518,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptPendingDocumentOpenSyncAttemptsRef.current = {};
     javaScriptTypeScriptDocumentVersionsRef.current = {};
     javaScriptTypeScriptDocumentVersionsByUriRef.current = {};
+    javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current = {};
     javaScriptTypeScriptDocumentSyncQueuesRef.current = {};
   }, [clearJavaScriptTypeScriptDocumentChangeTimer]);
 
@@ -2712,6 +2741,9 @@ export function useWorkbenchController(
         delete documentVersionsByUriRef.current[
           languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
         ];
+        delete lastAppliedDiagnosticVersionByUriRef.current[
+          languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
+        ];
       };
       const clearPendingOpenSyncAttempt = () => {
         if (
@@ -2811,6 +2843,9 @@ export function useWorkbenchController(
         ];
         delete javaScriptTypeScriptDocumentVersionsRef.current[syncKey];
         delete javaScriptTypeScriptDocumentVersionsByUriRef.current[
+          languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
+        ];
+        delete javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
           languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
         ];
       };
@@ -3300,6 +3335,23 @@ export function useWorkbenchController(
     ],
   );
 
+  // BUG 2 gate: reports whether a PHP document has already been opened
+  // (`didOpen` sent) on the active workspace's language server. Outline /
+  // breadcrumb DocumentSymbol fetches consult this so they never race ahead of
+  // the document sync and trigger an UnknownDocument error. Isolated per
+  // workspace via the active-root sync key.
+  const isLanguageServerDocumentSynced = useCallback((path: string): boolean => {
+    const rootPath = currentWorkspaceRootRef.current;
+
+    if (!rootPath) {
+      return false;
+    }
+
+    return syncedDocumentPathsRef.current.has(
+      languageServerDocumentSyncKey(rootPath, path),
+    );
+  }, []);
+
   const flushPendingJavaScriptTypeScriptDocumentChange = useCallback(
     async (path: string) => {
       const rootPath = currentWorkspaceRootRef.current;
@@ -3604,6 +3656,9 @@ export function useWorkbenchController(
       delete documentVersionsByUriRef.current[
         languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
       ];
+      delete lastAppliedDiagnosticVersionByUriRef.current[
+        languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
+      ];
 
       try {
         await enqueueDocumentSync(syncKey, () =>
@@ -3663,6 +3718,9 @@ export function useWorkbenchController(
       ];
       delete javaScriptTypeScriptDocumentVersionsRef.current[syncKey];
       delete javaScriptTypeScriptDocumentVersionsByUriRef.current[
+        languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
+      ];
+      delete javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
         languageServerUriSyncKey(rootPath, fileUriFromPath(document.path))
       ];
 
@@ -3739,6 +3797,9 @@ export function useWorkbenchController(
           delete pendingDocumentOpenSyncAttemptsRef.current[key];
           delete documentVersionsRef.current[key];
           delete documentVersionsByUriRef.current[
+            languageServerUriSyncKey(rootPath, fileUriFromPath(path))
+          ];
+          delete lastAppliedDiagnosticVersionByUriRef.current[
             languageServerUriSyncKey(rootPath, fileUriFromPath(path))
           ];
 
@@ -3822,6 +3883,8 @@ export function useWorkbenchController(
           delete javaScriptTypeScriptDocumentVersionsByUriRef.current[
             languageServerUriSyncKey(rootPath, fileUriFromPath(path))
           ];
+          delete javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef
+            .current[languageServerUriSyncKey(rootPath, fileUriFromPath(path))];
 
           try {
             await enqueueJavaScriptTypeScriptDocumentSync(key, () =>
@@ -22411,6 +22474,7 @@ export function useWorkbenchController(
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
     flushPendingJavaScriptTypeScriptLanguageServerDocument:
       flushPendingJavaScriptTypeScriptDocumentChange,
+    isLanguageServerDocumentSynced,
     goToDefinition,
     goToImplementationAt,
     goToNextProblem,

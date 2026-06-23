@@ -2928,6 +2928,87 @@ function store($request): void
     expect(mismatchedGateway.documentSymbols).not.toHaveBeenCalled();
   });
 
+  it("does not request PHP DocumentSymbol before the document is synced (didOpen)", async () => {
+    // BUG 2: an outline / breadcrumb DocumentSymbol request that fires before
+    // the document has been opened on the server produces an UnknownDocument
+    // error. When an isDocumentSynced gate is supplied and reports the document
+    // is not yet open, the provider must skip the request entirely.
+    const unsyncedRegistered = createRegisteredProviders();
+    const unsyncedGateway = featuresGateway({
+      documentSymbols: [
+        {
+          children: [],
+          containerName: null,
+          detail: null,
+          kind: 5,
+          name: "User",
+          range: range(2, 0, 12, 1),
+          selectionRange: range(2, 6, 2, 10),
+        },
+      ],
+    });
+    const unsyncedFlush = vi.fn(async () => undefined);
+    registerLanguageServerMonacoProviders(
+      unsyncedRegistered.monaco,
+      providerContext({
+        featuresGateway: unsyncedGateway,
+        flushPendingDocumentChange: unsyncedFlush,
+        isDocumentSynced: () => false,
+      }),
+    );
+
+    await expect(
+      unsyncedRegistered.documentSymbolProvider.provideDocumentSymbols(model()),
+    ).resolves.toBeNull();
+    expect(unsyncedFlush).not.toHaveBeenCalled();
+    expect(unsyncedGateway.documentSymbols).not.toHaveBeenCalled();
+
+    // Once the document is synced, the request proceeds for the same root/path.
+    const syncedRegistered = createRegisteredProviders();
+    const syncedGateway = featuresGateway({
+      documentSymbols: [
+        {
+          children: [],
+          containerName: null,
+          detail: null,
+          kind: 5,
+          name: "User",
+          range: range(2, 0, 12, 1),
+          selectionRange: range(2, 6, 2, 10),
+        },
+      ],
+    });
+    const syncedFlush = vi.fn(async () => undefined);
+    const syncedSeen: Array<{ path: string; rootPath: string }> = [];
+    registerLanguageServerMonacoProviders(
+      syncedRegistered.monaco,
+      providerContext({
+        featuresGateway: syncedGateway,
+        flushPendingDocumentChange: syncedFlush,
+        isDocumentSynced: (rootPath, path) => {
+          syncedSeen.push({ path, rootPath });
+          return true;
+        },
+      }),
+    );
+
+    const syncedResult =
+      await syncedRegistered.documentSymbolProvider.provideDocumentSymbols(
+        model(),
+      );
+
+    expect(syncedResult).not.toBeNull();
+    expect(syncedFlush).toHaveBeenCalledWith("/project/src/User.php");
+    expect(syncedGateway.documentSymbols).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+    );
+    expect(syncedSeen).toContainEqual({
+      path: "/project/src/User.php",
+      rootPath: "/project",
+    });
+  });
+
   it("drops stale PHP DocumentSymbol results after session or root changes", async () => {
     const sessionRegistered = createRegisteredProviders();
     let activeSessionId = 1;
@@ -8532,6 +8613,7 @@ function providerContext(
     flushPendingDocumentChange(path: string): Promise<void>;
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
+    isDocumentSynced(rootPath: string, path: string): boolean;
     limitNavigationResultsToOpenModels: boolean;
     provideBladeCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeCompletions"]
@@ -8568,6 +8650,7 @@ function providerContext(
     getActiveDocument: () => activeDocument,
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
+    isDocumentSynced: overrides.isDocumentSynced,
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
     provideBladeCompletions: overrides.provideBladeCompletions,

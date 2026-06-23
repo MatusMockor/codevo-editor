@@ -216,6 +216,15 @@ export interface LanguageServerMonacoProviderContext {
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
+  /**
+   * Reports whether `path` has already been opened on the language server (its
+   * `didOpen` was sent) for `rootPath`. Used to gate the `documentSymbol`
+   * request so an outline / breadcrumb fetch never races ahead of the document
+   * sync and triggers an `UnknownDocument` error. When omitted the provider
+   * does not gate (the controller's `flushPendingDocumentChange` still opens the
+   * document on demand for interactive requests).
+   */
+  isDocumentSynced?(rootPath: string, path: string): boolean;
   limitNavigationResultsToOpenModels?: boolean;
   /**
    * Resolves and navigates to the Blade target (a view referenced by
@@ -1337,6 +1346,16 @@ async function provideDocumentSymbols(
   const request = featureDocumentRequestContext(context, model, "documentSymbol");
 
   if (!request) {
+    return null;
+  }
+
+  // BUG 2: skip the request until the document has been opened on the server.
+  // An outline / breadcrumb DocumentSymbol fetch can otherwise fire before the
+  // document's `didOpen` is sent, which phpactor answers with UnknownDocument.
+  if (
+    context.isDocumentSynced &&
+    !context.isDocumentSynced(request.rootPath, request.path)
+  ) {
     return null;
   }
 
