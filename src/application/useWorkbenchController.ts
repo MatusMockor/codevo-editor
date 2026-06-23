@@ -966,6 +966,7 @@ export function useWorkbenchController(
   const documentChangeTimersRef = useRef<Record<string, number>>({});
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
   const documentSyncGenerationRef = useRef(0);
+  const documentSyncRuntimeSignatureRef = useRef<string | null>(null);
   const languageServerRuntimeStatusByRootRef = useRef<
     Record<string, LanguageServerRuntimeStatus>
   >({});
@@ -2387,6 +2388,7 @@ export function useWorkbenchController(
   const resetLanguageServerDocuments = useCallback(() => {
     documentSyncGenerationRef.current += 1;
     Object.keys(documentChangeTimersRef.current).forEach(clearDocumentChangeTimer);
+    documentSyncRuntimeSignatureRef.current = null;
     syncedDocumentPathsRef.current.clear();
     syncedDocumentContentRef.current = {};
     pendingDocumentChangesRef.current = {};
@@ -22032,6 +22034,20 @@ export function useWorkbenchController(
     ) {
       resetLanguageServerDocuments();
       return;
+    }
+
+    const runtimeRoot =
+      languageServerRuntimeStatus.rootPath ??
+      languageServerRuntimeStatusRoot ??
+      workspaceRoot;
+    const runtimeSignature = [
+      normalizedWorkspaceRootKey(runtimeRoot),
+      languageServerRuntimeStatus.sessionId,
+    ].join(":");
+
+    if (documentSyncRuntimeSignatureRef.current !== runtimeSignature) {
+      resetLanguageServerDocuments();
+      documentSyncRuntimeSignatureRef.current = runtimeSignature;
     }
 
     const documentsToSync = openDocumentPaths

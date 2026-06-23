@@ -5304,6 +5304,298 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("re-opens open PHP documents after the phpactor runtime restarts with a new session", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(61)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus(61)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus(61),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    vi.mocked(syncGateway.didOpen).mockClear();
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(62));
+    });
+    await flushAsyncTurns(24);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+  });
+
+  it("re-opens then changes a PHP document edited after the phpactor runtime restarts", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(63)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus(63)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus(63),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    vi.mocked(syncGateway.didOpen).mockClear();
+    vi.mocked(syncGateway.didChange).mockClear();
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(64));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n$comment->forceDelete();\n");
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().flushPendingLanguageServerDocument(path);
+    });
+    await flushAsyncTurns(4);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+    expect(syncGateway.didChange).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path,
+        text: "<?php\n$comment->forceDelete();\n",
+      }),
+    );
+    expect(
+      vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(syncGateway.didChange).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("re-opens then saves a PHP document saved after the phpactor runtime restarts", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(65)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus(65)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus(65),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    vi.mocked(syncGateway.didOpen).mockClear();
+    vi.mocked(syncGateway.didSave).mockClear();
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(66));
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns(24);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+    expect(syncGateway.didSave).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+    expect(
+      vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(syncGateway.didSave).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not re-open a PHP document for a project tab left before the phpactor restart", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 67)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, 67)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const path = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".php") ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus("/workspace-a", 67),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+
+    vi.mocked(syncGateway.didOpen).mockClear();
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-a", 68));
+    });
+    await flushAsyncTurns(24);
+
+    expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
+      "/workspace-a",
+      expect.objectContaining({ path }),
+    );
+  });
+
   it("does not flush queued PHP edits after switching project tabs while didOpen is pending", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),
