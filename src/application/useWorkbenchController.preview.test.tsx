@@ -702,6 +702,153 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().phpTools).toBeNull();
   });
 
+  it("warms up the PHP probe at open before the directory load resolves in IDE mode", async () => {
+    // Warmup: in IDE mode for a PHP project, the phpactor handshake latency
+    // (composer/autoload scan) dominates time-to-ready. The open-time probe
+    // (detectPhpTools -> plan -> autostart) only needs the workspace descriptor
+    // to know the project is PHP; it must NOT be serialized behind the
+    // directory load / session restore. Firing it as soon as detection
+    // confirms a PHP project lets the handshake run in the background while the
+    // user navigates.
+    const workspaceDirectory = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace") {
+        return workspaceDirectory.promise;
+      }
+
+      return [];
+    });
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(
+        async (rootPath) =>
+          ({
+            ...phpactorLanguageServerPlan(),
+            message: `PHPactor ${rootPath} ready`,
+          }) satisfies LanguageServerPlan,
+      ),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      phpToolGateway,
+      readDirectory,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+
+    // The directory load is still pending, but the PHP probe must already have
+    // fired so the phpactor handshake starts warming up immediately.
+    await vi.waitFor(() => {
+      expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace");
+    });
+    await vi.waitFor(() => {
+      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace",
+        defaultPhpLanguageServerOptions(),
+      );
+    });
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().intelligenceMode).toBe("fullSmart");
+
+    // Let the deferred directory load settle so teardown is clean.
+    await act(async () => {
+      workspaceDirectory.resolve([]);
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+  });
+
+  it("does not warm up the PHP probe at open for a PHP project in basic mode", async () => {
+    // The basic-mode defer (P2b) must be preserved: warmup only applies when
+    // IDE mode is on. In basic mode the probe stays deferred even though
+    // detection confirms a PHP project.
+    const workspaceDirectory = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace") {
+        return workspaceDirectory.promise;
+      }
+
+      return [];
+    });
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(
+        async (rootPath) =>
+          ({
+            ...phpactorLanguageServerPlan(),
+            message: `PHPactor ${rootPath} ready`,
+          }) satisfies LanguageServerPlan,
+      ),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      phpToolGateway,
+      readDirectory,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+
+    await vi.waitFor(() => {
+      expect(getWorkbench().intelligenceMode).toBe("basic");
+    });
+    await flushAsyncTurns(24);
+
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
+    expect(languageServerGateway.planPhpLanguageServer).not.toHaveBeenCalled();
+
+    await act(async () => {
+      workspaceDirectory.resolve([]);
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
+  });
+
   it("runs the deferred PHP probe and surfaces the IDE engine notice when switching a PHP project to IDE mode", async () => {
     const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
       detectPhpTools: vi.fn(async () => ({

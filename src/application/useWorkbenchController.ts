@@ -4338,6 +4338,18 @@ export function useWorkbenchController(
         }
       };
 
+      // Warmup: the phpactor handshake (composer/autoload scan) is the
+      // dominant time-to-ready cost and is phpactor-internal, so the only safe
+      // win is to start it sooner. The PHP probe (detectPhpTools -> plan ->
+      // autostart) only needs the workspace descriptor to know the project is
+      // PHP, so as soon as detection confirms a PHP project in IDE (full smart)
+      // mode we fire the probe in parallel with the directory load and session
+      // restore instead of serializing it behind them. The handshake then warms
+      // up in the background while the user navigates. This is gated to IDE mode
+      // (preserving the basic/light-mode defer) and is per-root isolated: the
+      // probe captures `path` and re-checks the active root after its own
+      // awaits, and detection itself drops stale results before triggering it.
+      let warmedUpPhpProbe = false;
       const detectWorkspaceTask =
         async (): Promise<WorkspaceDescriptor | null> => {
           try {
@@ -4352,6 +4364,15 @@ export function useWorkbenchController(
             }
 
             setWorkspaceDescriptor(detected);
+
+            if (
+              detected?.php &&
+              shouldStartLanguageServer(resolvedIntelligenceMode)
+            ) {
+              warmedUpPhpProbe = true;
+              void runPhpWorkspaceProbe(path);
+            }
+
             return detected;
           } catch (error) {
             reportErrorForActiveWorkspaceRoot(
@@ -4414,6 +4435,12 @@ export function useWorkbenchController(
         setNotices((current) =>
           replaceWorkbenchNoticeGroup(current, `phpactor-setup:${path}`, []),
         );
+        return;
+      }
+
+      // The probe is fired eagerly during detection (warmup) for IDE-mode PHP
+      // projects, so once it has warmed up there is nothing left to do here.
+      if (warmedUpPhpProbe) {
         return;
       }
 
