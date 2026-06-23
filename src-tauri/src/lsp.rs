@@ -230,6 +230,15 @@ impl InitializeRequestFactory for PhpactorInitializeRequestFactory {
                         "name": workspace_name,
                     }
                 ],
+                // Phpactor reads `initializationOptions` as a flat map of dotted
+                // config keys. Run diagnostics in-process so we avoid the per-run
+                // `php` subprocess that fails in the Tauri GUI environment (reduced
+                // PATH / missing env) and therefore never publishes diagnostics, and
+                // shorten the diagnostics grace window to reduce the publish race.
+                "initializationOptions": {
+                    "language_server.diagnostic_outsource": false,
+                    "language_server.diagnostic_sleep_time": 150,
+                },
             }),
         }
     }
@@ -771,16 +780,17 @@ fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        file_uri, JavaScriptTypeScriptLanguageServerPlanner, LanguageServerPlanStatus,
-        LanguageServerPlanner, LanguageServerProvider, PhpBackendPreference,
-        PhpLanguageServerSettings, PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
+        file_uri, InitializeRequestFactory, JavaScriptTypeScriptLanguageServerPlanner,
+        LanguageServerPlanStatus, LanguageServerPlanner, LanguageServerProvider,
+        PhpBackendPreference, PhpLanguageServerSettings, PhpactorInitializeRequestFactory,
+        PhpactorLanguageServerPlanner, TypeScriptLanguageServerPlanner,
         TypeScriptLanguageServerSettings,
     };
     use crate::project::{PhpProjectDescriptor, WorkspaceDescriptor};
     use crate::tools::{
         JavaScriptTypeScriptToolAvailability, PhpToolAvailability, ToolLocation, ToolSource,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::{fs, path::Path, time::SystemTime};
 
     #[test]
@@ -821,6 +831,33 @@ mod tests {
         let request = plan.initialize_request.expect("initialize request");
         assert_eq!(request.method, "initialize");
         assert_eq!(request.params["rootUri"], file_uri(&root));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn phpactor_initialize_request_disables_outsourced_diagnostics() {
+        let root = create_temp_dir("lsp-phpactor-diagnostics");
+        let request = PhpactorInitializeRequestFactory.create(&root);
+
+        // Existing initialize fields must be preserved.
+        assert_eq!(request.method, "initialize");
+        assert_eq!(request.params["rootUri"], file_uri(&root));
+        assert_eq!(request.params["processId"], Value::Null);
+        assert!(request.params["capabilities"].is_object());
+        assert!(request.params["workspaceFolders"].is_array());
+
+        // In-process diagnostics avoid the per-run `php` subprocess that fails in
+        // the Tauri GUI environment, and a shorter sleep time shrinks the
+        // diagnostics grace-period race window.
+        assert_eq!(
+            request.params["initializationOptions"]["language_server.diagnostic_outsource"],
+            Value::Bool(false)
+        );
+        assert_eq!(
+            request.params["initializationOptions"]["language_server.diagnostic_sleep_time"],
+            json!(150)
+        );
+
         fs::remove_dir_all(root).expect("cleanup");
     }
 
