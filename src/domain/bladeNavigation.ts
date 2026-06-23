@@ -231,8 +231,8 @@ export function bladeViewCandidateRelativePaths(name: string): string[] {
 
 /**
  * Maps an `<x-...>` / `@component` component name to its candidate blade file
- * paths under `resources/views/components`. The class-based component target
- * (e.g. `app/View/Components/...`) is resolved by the integration layer.
+ * paths under `resources/views/components` (anonymous components). Class-based
+ * component targets are produced separately by `bladeComponentClassCandidatePaths`.
  */
 export function bladeComponentCandidateRelativePaths(name: string): string[] {
   if (!isUsableName(name)) {
@@ -245,6 +245,37 @@ export function bladeComponentCandidateRelativePaths(name: string): string[] {
     `resources/views/components/${relativePath}.blade.php`,
     `resources/views/components/${relativePath}/index.blade.php`,
   ];
+}
+
+/**
+ * Maps an `<x-...>` / `@component` component name to its candidate class-based
+ * component PHP paths under `app/View/Components` (Laravel 11+ convention).
+ *
+ * Each dotted segment becomes a directory and the final segment the class file;
+ * every segment is PascalCased (kebab-case `my-alert` → `MyAlert`,
+ * `forms.text-input` → `Forms/TextInput`). Stays CONSERVATIVE: an unusable name
+ * (blank, namespaced, dot-edged, double-dotted) resolves to `[]`.
+ */
+export function bladeComponentClassCandidatePaths(name: string): string[] {
+  if (!isUsableName(name)) {
+    return [];
+  }
+
+  const classPath = name.split(".").map(pascalCaseSegment).join("/");
+
+  return [`app/View/Components/${classPath}.php`];
+}
+
+/**
+ * Converts a single component-name segment to PascalCase, splitting on hyphens
+ * and underscores (`text-input` / `text_input` → `TextInput`).
+ */
+function pascalCaseSegment(segment: string): string {
+  return segment
+    .split(/[-_]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("");
 }
 
 /**

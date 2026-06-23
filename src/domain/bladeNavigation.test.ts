@@ -4,6 +4,7 @@ import {
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
   bladeComponentCandidateRelativePaths,
+  bladeComponentClassCandidatePaths,
   bladeViewCandidateRelativePaths,
 } from "./bladeNavigation";
 
@@ -319,5 +320,51 @@ describe("bladeComponentCandidateRelativePaths", () => {
 
   it("returns an empty list for an unusable component name", () => {
     expect(bladeComponentCandidateRelativePaths("")).toEqual([]);
+  });
+
+  it("still returns only blade candidates (no PHP class paths)", () => {
+    expect(bladeComponentCandidateRelativePaths("alert")).toEqual([
+      "resources/views/components/alert.blade.php",
+      "resources/views/components/alert/index.blade.php",
+    ]);
+  });
+});
+
+describe("bladeComponentClassCandidatePaths", () => {
+  it("maps a single-segment name to a View/Components class path", () => {
+    expect(bladeComponentClassCandidatePaths("alert")).toEqual([
+      "app/View/Components/Alert.php",
+    ]);
+  });
+
+  it("maps a dotted name to nested PascalCase directories and class", () => {
+    expect(bladeComponentClassCandidatePaths("forms.input")).toEqual([
+      "app/View/Components/Forms/Input.php",
+    ]);
+  });
+
+  it("PascalCases kebab-case segments", () => {
+    expect(bladeComponentClassCandidatePaths("my-alert")).toEqual([
+      "app/View/Components/MyAlert.php",
+    ]);
+  });
+
+  it("PascalCases kebab-case segments in a dotted name", () => {
+    expect(bladeComponentClassCandidatePaths("forms.text-input")).toEqual([
+      "app/View/Components/Forms/TextInput.php",
+    ]);
+  });
+
+  it("PascalCases underscore-separated segments", () => {
+    expect(bladeComponentClassCandidatePaths("forms.text_input")).toEqual([
+      "app/View/Components/Forms/TextInput.php",
+    ]);
+  });
+
+  it("returns an empty list for an unusable component name", () => {
+    expect(bladeComponentClassCandidatePaths("")).toEqual([]);
+    expect(bladeComponentClassCandidatePaths("package::alert")).toEqual([]);
+    expect(bladeComponentClassCandidatePaths(".alert")).toEqual([]);
+    expect(bladeComponentClassCandidatePaths("forms..input")).toEqual([]);
   });
 });
