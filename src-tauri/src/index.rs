@@ -178,6 +178,14 @@ pub fn commit_index_db_write(
     }
 }
 
+/// Result of a guarded batch transaction: either the batch committed (carrying the action's value)
+/// or it was rolled back because the workspace was cancelled before the commit.
+#[derive(Debug)]
+pub enum BatchOutcome<T> {
+    Committed(T),
+    RolledBack,
+}
+
 pub struct SqliteWorkspaceIndex {
     connection: Connection,
     database_path: PathBuf,
@@ -197,6 +205,53 @@ impl SqliteWorkspaceIndex {
             connection,
             database_path: database_path.to_path_buf(),
         })
+    }
+
+    /// Runs `action` inside a single SQLite transaction so that many per-file writes
+    /// (`upsert_file` / `replace_file_symbols`) share one commit instead of fsyncing per file.
+    ///
+    /// The transaction commits only when `action` returns `Ok`; any error rolls the whole batch
+    /// back (the `Transaction` guard rolls back on drop). Callers must keep batches bounded and
+    /// re-check the workspace lifecycle token BETWEEN batches — never holding a batch open across a
+    /// cancellation point — so that committed batches form a safe partial index and an aborted run
+    /// simply stops starting new batches.
+    pub fn with_batch_transaction<T>(
+        &self,
+        action: impl FnOnce(&Self) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        self.with_guarded_batch_transaction(action, |commit| Some(commit()))
+            .map(|outcome| match outcome {
+                BatchOutcome::Committed(value) => value,
+                BatchOutcome::RolledBack => unreachable!("unguarded batch always commits"),
+            })
+    }
+
+    /// Like [`with_batch_transaction`], but the actual `COMMIT` is performed inside `commit_guard`
+    /// so callers can keep the commit atomic with a lifecycle check (e.g. `token.run_if_current`).
+    ///
+    /// `commit_guard` receives the commit closure and decides whether to run it: returning
+    /// `Some(result)` commits (result is the commit's own SQL result); returning `None` means the
+    /// workspace was cancelled, so the transaction is dropped and rolled back. This restores the
+    /// "no write lands after a workspace cancel" guarantee while only holding the lifecycle lock for
+    /// the duration of a single batch's commit (one bounded fsync), never the whole run.
+    pub fn with_guarded_batch_transaction<T>(
+        &self,
+        action: impl FnOnce(&Self) -> rusqlite::Result<T>,
+        commit_guard: impl FnOnce(&mut dyn FnMut() -> rusqlite::Result<()>) -> Option<rusqlite::Result<()>>,
+    ) -> rusqlite::Result<BatchOutcome<T>> {
+        let transaction = self.connection.unchecked_transaction()?;
+        let result = action(self)?;
+        let mut transaction = Some(transaction);
+        let mut commit = move || transaction.take().expect("commit runs once").commit();
+
+        match commit_guard(&mut commit) {
+            Some(commit_result) => {
+                commit_result?;
+                Ok(BatchOutcome::Committed(result))
+            }
+            // Cancelled before commit: the transaction guard rolls back on drop.
+            None => Ok(BatchOutcome::RolledBack),
+        }
     }
 
     #[cfg(test)]
@@ -288,52 +343,16 @@ impl WorkspaceSymbolStore for SqliteWorkspaceIndex {
     }
 
     fn replace_file_symbols(&self, file_symbols: &WorkspaceFileSymbols) -> rusqlite::Result<()> {
-        let transaction = self.connection.unchecked_transaction()?;
-        transaction.execute(
-            "DELETE FROM workspace_symbols WHERE file_path = ?1",
-            [&file_symbols.file_path],
-        )?;
-
-        for (ordinal, symbol) in file_symbols.symbols.iter().enumerate() {
-            transaction.execute(
-                "
-                INSERT INTO workspace_symbols (
-                    file_path,
-                    file_relative_path,
-                    ordinal,
-                    kind,
-                    name,
-                    fully_qualified_name,
-                    container_name,
-                    start_byte,
-                    end_byte,
-                    start_line,
-                    start_column,
-                    end_line,
-                    end_column,
-                    indexed_at_unix
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, strftime('%s', 'now'))
-                ",
-                params![
-                    file_symbols.file_path,
-                    file_symbols.relative_path,
-                    ordinal as i64,
-                    symbol.kind.as_storage_value(),
-                    symbol.name,
-                    symbol.fully_qualified_name,
-                    symbol.container_name,
-                    symbol.range.start_byte,
-                    symbol.range.end_byte,
-                    symbol.range.start_line,
-                    symbol.range.start_column,
-                    symbol.range.end_line,
-                    symbol.range.end_column,
-                ],
-            )?;
+        // When this call is already running inside an outer batch transaction we must NOT open a
+        // nested transaction (SQLite forbids it); the outer batch provides atomicity and a single
+        // commit. Only wrap in a dedicated transaction for standalone (single-file) calls.
+        if self.connection.is_autocommit() {
+            let transaction = self.connection.unchecked_transaction()?;
+            write_file_symbols(&transaction, file_symbols)?;
+            return transaction.commit();
         }
 
-        transaction.commit()
+        write_file_symbols(&self.connection, file_symbols)
     }
 }
 
@@ -541,6 +560,11 @@ fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
     connection.busy_timeout(Duration::from_secs(5))?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     connection.pragma_update(None, "journal_mode", "WAL")?;
+    // synchronous = NORMAL is safe under WAL: it drops the per-commit fsync of the WAL file
+    // (the database is only fsynced on checkpoint). The workspace index is a rebuildable cache,
+    // so the at-most-last-transaction durability trade-off is acceptable and removes a large
+    // share of the fsync cost incurred while indexing large workspaces.
+    connection.pragma_update(None, "synchronous", "NORMAL")?;
     Ok(())
 }
 
@@ -609,6 +633,60 @@ fn apply_migrations(connection: &Connection) -> rusqlite::Result<()> {
 
 fn to_sqlite_error(error: std::io::Error) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
+/// Replaces all symbols for a file using the supplied connection/transaction. This contains no
+/// transaction control so it can be reused both standalone (wrapped in its own transaction) and
+/// inside an outer batch transaction (sharing that transaction's single commit).
+fn write_file_symbols(
+    connection: &Connection,
+    file_symbols: &WorkspaceFileSymbols,
+) -> rusqlite::Result<()> {
+    connection.execute(
+        "DELETE FROM workspace_symbols WHERE file_path = ?1",
+        [&file_symbols.file_path],
+    )?;
+
+    for (ordinal, symbol) in file_symbols.symbols.iter().enumerate() {
+        connection.execute(
+            "
+            INSERT INTO workspace_symbols (
+                file_path,
+                file_relative_path,
+                ordinal,
+                kind,
+                name,
+                fully_qualified_name,
+                container_name,
+                start_byte,
+                end_byte,
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+                indexed_at_unix
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, strftime('%s', 'now'))
+            ",
+            params![
+                file_symbols.file_path,
+                file_symbols.relative_path,
+                ordinal as i64,
+                symbol.kind.as_storage_value(),
+                symbol.name,
+                symbol.fully_qualified_name,
+                symbol.container_name,
+                symbol.range.start_byte,
+                symbol.range.end_byte,
+                symbol.range.start_line,
+                symbol.range.start_column,
+                symbol.range.end_line,
+                symbol.range.end_column,
+            ],
+        )?;
+    }
+
+    Ok(())
 }
 
 fn apply_index_db_write(
@@ -948,6 +1026,10 @@ mod tests {
             .connection()
             .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
             .expect("busy timeout");
+        let synchronous: i64 = index
+            .connection()
+            .query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .expect("synchronous");
         let migration_count: i64 = index
             .connection()
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
@@ -957,6 +1039,8 @@ mod tests {
 
         assert_eq!(journal_mode.to_lowercase(), "wal");
         assert_eq!(busy_timeout, 5_000);
+        // synchronous = NORMAL (1) keeps WAL safe while removing a per-commit fsync.
+        assert_eq!(synchronous, 1);
         assert_eq!(migration_count, 2);
         assert_eq!(index.summary().expect("summary").schema_version, 2);
     }
@@ -1035,6 +1119,99 @@ mod tests {
             replaced_symbols[0].fully_qualified_name,
             "App\\UserRepository"
         );
+    }
+
+    #[test]
+    fn batch_transaction_groups_writes_into_single_transaction() {
+        let database_path = temp_database_path("batch-single-transaction");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        // Inside the batch the connection must NOT be in autocommit mode, proving the
+        // writes share one transaction (one commit / one WAL fsync) instead of one per file.
+        assert!(index.connection().is_autocommit());
+        index
+            .with_batch_transaction(|store| {
+                assert!(!store.connection().is_autocommit());
+                store.upsert_file(&file_record("/project/src/A.php", 1))?;
+                store.upsert_file(&file_record("/project/src/B.php", 2))?;
+                store.replace_file_symbols(&file_symbols(
+                    "/project/src/A.php",
+                    vec![symbol("A", "App\\A", WorkspaceSymbolKind::Class, 1)],
+                ))?;
+                Ok(())
+            })
+            .expect("batch transaction");
+
+        assert!(index.connection().is_autocommit());
+        assert_eq!(index.summary().expect("summary").file_count, 2);
+        assert_eq!(
+            index
+                .list_file_symbols("/project/src/A.php")
+                .expect("symbols")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn guarded_batch_transaction_rolls_back_when_commit_is_blocked() {
+        // Simulates a workspace cancellation observed at commit time: the guard declines to run the
+        // commit, so the whole batch is rolled back and nothing is persisted.
+        let database_path = temp_database_path("guarded-batch-cancel");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        let outcome = index
+            .with_guarded_batch_transaction(
+                |store| {
+                    store.upsert_file(&file_record("/project/src/A.php", 1))?;
+                    Ok(())
+                },
+                // Cancelled: never invoke the commit closure.
+                |_commit| None,
+            )
+            .expect("guarded batch");
+
+        assert!(matches!(outcome, super::BatchOutcome::RolledBack));
+        assert_eq!(index.summary().expect("summary").file_count, 0);
+        assert!(index.connection().is_autocommit());
+    }
+
+    #[test]
+    fn guarded_batch_transaction_commits_when_guard_allows() {
+        let database_path = temp_database_path("guarded-batch-commit");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        let outcome = index
+            .with_guarded_batch_transaction(
+                |store| {
+                    store.upsert_file(&file_record("/project/src/A.php", 1))?;
+                    store.upsert_file(&file_record("/project/src/B.php", 2))?;
+                    Ok(())
+                },
+                |commit| Some(commit()),
+            )
+            .expect("guarded batch");
+
+        assert!(matches!(outcome, super::BatchOutcome::Committed(())));
+        assert_eq!(index.summary().expect("summary").file_count, 2);
+        assert!(index.connection().is_autocommit());
+    }
+
+    #[test]
+    fn batch_transaction_rolls_back_on_error() {
+        let database_path = temp_database_path("batch-rollback");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        let outcome: rusqlite::Result<()> = index.with_batch_transaction(|store| {
+            store.upsert_file(&file_record("/project/src/A.php", 1))?;
+            // Force a failure mid-batch.
+            Err(rusqlite::Error::ExecuteReturnedResults)
+        });
+
+        assert!(outcome.is_err());
+        // Nothing from the aborted batch is persisted.
+        assert_eq!(index.summary().expect("summary").file_count, 0);
+        assert!(index.connection().is_autocommit());
     }
 
     #[test]

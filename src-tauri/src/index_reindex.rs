@@ -1,5 +1,5 @@
 use crate::index::{
-    SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceFileSymbols,
+    BatchOutcome, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceFileSymbols,
     WorkspaceIndexMaintenanceStore, WorkspaceIndexStore, WorkspaceSymbolKind, WorkspaceSymbolRange,
     WorkspaceSymbolRecord, WorkspaceSymbolStore,
 };
@@ -25,6 +25,11 @@ use std::{
     sync::Arc,
     thread,
 };
+
+/// Number of file rows / parsed files written per batched SQLite transaction during reindex.
+/// Batching turns one commit (one WAL fsync) per file into one per batch — the dominant indexing
+/// speedup — while staying small enough to re-check the lifecycle token between batches.
+const REINDEX_WRITE_BATCH_SIZE: usize = 500;
 
 pub trait WorkspaceReindexStarter {
     fn start(
@@ -306,11 +311,44 @@ fn upsert_records(
     lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
     records: &[WorkspaceFileRecord],
 ) -> Result<(), WorkspaceReindexError> {
-    for record in records {
-        guarded_reindex_write(lifecycle_token, || index.upsert_file(record))?;
+    for batch in records.chunks(REINDEX_WRITE_BATCH_SIZE) {
+        // Re-check the lifecycle token BEFORE each batch so a workspace switch cancels the reindex
+        // promptly; committed batches remain a valid partial index and no transaction is opened
+        // past a cancellation point.
+        ensure_reindex_current(lifecycle_token)?;
+        guarded_reindex_batch(index, lifecycle_token, |store| {
+            for record in batch {
+                store.upsert_file(record)?;
+            }
+            Ok(())
+        })?;
     }
 
     Ok(())
+}
+
+/// Writes one batch in a single transaction whose COMMIT is gated by the lifecycle token so the
+/// commit is atomic with the current-generation check (no batch lands after a workspace cancel).
+/// A cancelled batch rolls back and surfaces as `Cancelled`.
+fn guarded_reindex_batch(
+    index: &SqliteWorkspaceIndex,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    action: impl FnOnce(&SqliteWorkspaceIndex) -> rusqlite::Result<()>,
+) -> Result<(), WorkspaceReindexError> {
+    let Some(token) = lifecycle_token else {
+        return index
+            .with_batch_transaction(action)
+            .map_err(WorkspaceReindexError::Store);
+    };
+
+    let outcome = index
+        .with_guarded_batch_transaction(action, |commit| token.run_if_current(commit))
+        .map_err(WorkspaceReindexError::Store)?;
+
+    match outcome {
+        BatchOutcome::Committed(()) => Ok(()),
+        BatchOutcome::RolledBack => Err(WorkspaceReindexError::Cancelled),
+    }
 }
 
 fn changed_records(
@@ -372,6 +410,14 @@ fn records_for_language(
         .collect()
 }
 
+/// A file that parsed successfully and is ready to have its symbols written to the index.
+struct ParsedFileSymbols {
+    file_symbols: WorkspaceFileSymbols,
+    relative_path: String,
+    symbols_indexed: usize,
+    write_error_message: &'static str,
+}
+
 fn parse_records(
     index: &SqliteWorkspaceIndex,
     lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
@@ -382,8 +428,15 @@ fn parse_records(
     if language == "javascript" || language == "typescript" {
         let extractor = TextJsTsSymbolExtractor;
 
-        for record in records {
-            parse_js_ts_record(index, lifecycle_token, record, &extractor, report)?;
+        for batch in records.chunks(REINDEX_WRITE_BATCH_SIZE) {
+            // Re-check the lifecycle token BEFORE parsing/writing each batch so a workspace switch
+            // cancels the reindex promptly; already-written batches stay a valid partial index.
+            ensure_reindex_current(lifecycle_token)?;
+            let parsed: Vec<ParsedFileSymbols> = batch
+                .iter()
+                .filter_map(|record| parse_js_ts_record(record, &extractor, report))
+                .collect();
+            write_parsed_batch(index, lifecycle_token, parsed, report)?;
         }
 
         return Ok(());
@@ -399,27 +452,80 @@ fn parse_records(
         .map_err(|error| WorkspaceReindexError::Parser(error.to_string()))?;
     let extractor = TreeSitterPhpSymbolExtractor;
 
-    for record in records {
-        parse_record(
-            index,
-            lifecycle_token,
-            record,
-            &mut parser,
-            &extractor,
-            report,
-        )?;
+    for batch in records.chunks(REINDEX_WRITE_BATCH_SIZE) {
+        ensure_reindex_current(lifecycle_token)?;
+        let parsed: Vec<ParsedFileSymbols> = batch
+            .iter()
+            .filter_map(|record| parse_record(record, &mut parser, &extractor, report))
+            .collect();
+        write_parsed_batch(index, lifecycle_token, parsed, report)?;
     }
 
     Ok(())
 }
 
-fn parse_js_ts_record(
+/// Writes a batch of parsed files in a single transaction (one commit / one WAL fsync per batch).
+/// If the batched write fails it is retried per file so a single DB error degrades to per-file
+/// error reporting (matching the previous behaviour) instead of aborting the whole reindex.
+fn write_parsed_batch(
     index: &SqliteWorkspaceIndex,
     lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    parsed: Vec<ParsedFileSymbols>,
+    report: &mut MetadataScanReport,
+) -> Result<(), WorkspaceReindexError> {
+    if parsed.is_empty() {
+        return Ok(());
+    }
+
+    let batch_result = guarded_reindex_batch(index, lifecycle_token, |store| {
+        for entry in &parsed {
+            store.replace_file_symbols(&entry.file_symbols)?;
+        }
+        Ok(())
+    });
+
+    match batch_result {
+        Ok(()) => {
+            for entry in &parsed {
+                report.parsed_files += 1;
+                report.symbols_indexed += entry.symbols_indexed;
+            }
+            Ok(())
+        }
+        // A cancellation must abort the whole reindex (no per-file retry past a workspace switch).
+        Err(WorkspaceReindexError::Cancelled) => Err(WorkspaceReindexError::Cancelled),
+        // A real DB error rolled the batch back; retry per file so healthy files are still indexed
+        // and only the genuinely failing ones are reported (matching the previous behaviour). Each
+        // retry write stays gated by the lifecycle token so a workspace switch during the retry
+        // loop still aborts without landing further writes.
+        Err(WorkspaceReindexError::Store(_)) => {
+            for entry in parsed {
+                match guarded_reindex_write(lifecycle_token, || {
+                    index.replace_file_symbols(&entry.file_symbols)
+                }) {
+                    Ok(()) => {
+                        report.parsed_files += 1;
+                        report.symbols_indexed += entry.symbols_indexed;
+                    }
+                    Err(WorkspaceReindexError::Cancelled) => {
+                        return Err(WorkspaceReindexError::Cancelled);
+                    }
+                    Err(_) => {
+                        report.record_error(entry.relative_path, entry.write_error_message);
+                    }
+                }
+            }
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn parse_js_ts_record(
     record: &WorkspaceFileRecord,
     extractor: &dyn JsTsSymbolExtractor,
     report: &mut MetadataScanReport,
-) -> Result<(), WorkspaceReindexError> {
+) -> Option<ParsedFileSymbols> {
     let source = match fs::read_to_string(&record.path) {
         Ok(source) => source,
         Err(_) => {
@@ -427,7 +533,7 @@ fn parse_js_ts_record(
                 record.relative_path.clone(),
                 "JavaScript/TypeScript source could not be read.",
             );
-            return Ok(());
+            return None;
         }
     };
     let symbols = extractor.extract(&source);
@@ -441,34 +547,20 @@ fn parse_js_ts_record(
             .collect(),
     };
 
-    match guarded_reindex_write(lifecycle_token, || {
-        index.replace_file_symbols(&file_symbols)
-    }) {
-        Ok(()) => {}
-        Err(WorkspaceReindexError::Store(_)) => {
-            report.record_error(
-                record.relative_path.clone(),
-                "JavaScript/TypeScript symbols could not be written.",
-            );
-            return Ok(());
-        }
-        Err(error) => return Err(error),
-    }
-
-    report.parsed_files += 1;
-    report.symbols_indexed += symbols_indexed;
-
-    Ok(())
+    Some(ParsedFileSymbols {
+        file_symbols,
+        relative_path: record.relative_path.clone(),
+        symbols_indexed,
+        write_error_message: "JavaScript/TypeScript symbols could not be written.",
+    })
 }
 
 fn parse_record(
-    index: &SqliteWorkspaceIndex,
-    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
     record: &WorkspaceFileRecord,
     parser: &mut dyn PhpSyntaxParser,
     extractor: &dyn PhpSymbolExtractor,
     report: &mut MetadataScanReport,
-) -> Result<(), WorkspaceReindexError> {
+) -> Option<ParsedFileSymbols> {
     let source = match fs::read_to_string(&record.path) {
         Ok(source) => source,
         Err(_) => {
@@ -476,7 +568,7 @@ fn parse_record(
                 record.relative_path.clone(),
                 "PHP source could not be read.",
             );
-            return Ok(());
+            return None;
         }
     };
     let tree = match parser.parse(&source) {
@@ -486,7 +578,7 @@ fn parse_record(
                 record.relative_path.clone(),
                 "PHP source could not be parsed.",
             );
-            return Ok(());
+            return None;
         }
     };
     let symbols = extractor.extract(&tree, &source);
@@ -497,24 +589,12 @@ fn parse_record(
         symbols: symbols.into_iter().map(workspace_symbol_record).collect(),
     };
 
-    match guarded_reindex_write(lifecycle_token, || {
-        index.replace_file_symbols(&file_symbols)
-    }) {
-        Ok(()) => {}
-        Err(WorkspaceReindexError::Store(_)) => {
-            report.record_error(
-                record.relative_path.clone(),
-                "PHP symbols could not be written.",
-            );
-            return Ok(());
-        }
-        Err(error) => return Err(error),
-    }
-
-    report.parsed_files += 1;
-    report.symbols_indexed += symbols_indexed;
-
-    Ok(())
+    Some(ParsedFileSymbols {
+        file_symbols,
+        relative_path: record.relative_path.clone(),
+        symbols_indexed,
+        write_error_message: "PHP symbols could not be written.",
+    })
 }
 
 fn workspace_symbol_record(symbol: PhpSymbol) -> WorkspaceSymbolRecord {
@@ -767,6 +847,77 @@ mod tests {
 
         assert!(matches!(error, WorkspaceReindexError::Cancelled));
         assert_eq!(index.summary().expect("summary").file_count, 0);
+    }
+
+    #[test]
+    fn reindex_writes_all_files_across_batch_boundaries() {
+        // More files than one write batch (REINDEX_WRITE_BATCH_SIZE) to prove that batched
+        // transactions persist every file/symbol across batch boundaries (correctness unchanged,
+        // only fewer commits).
+        let file_count = super::REINDEX_WRITE_BATCH_SIZE + 25;
+        let root = temp_workspace("batch-boundary");
+        let database_path = temp_database_path("batch-boundary");
+        for index in 0..file_count {
+            let class_name = format!("Model{index}");
+            fs::write(root.join(format!("{class_name}.php")), php_fixture(&class_name))
+                .expect("php file");
+        }
+
+        let report = run_workspace_reindex(&WorkspaceReindexRequest {
+            database_path: database_path.clone(),
+            language: None,
+            lifecycle_token: None,
+            mode: WorkspaceReindexMode::Hard,
+            root_path: root.clone(),
+        })
+        .expect("hard reindex");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        assert_eq!(index.summary().expect("summary").file_count as usize, file_count);
+        assert_eq!(report.parsed_files, file_count);
+        // First and last files (different batches) are both fully indexed.
+        assert!(!index
+            .list_file_symbols(&path_string(root.join("Model0.php")))
+            .expect("first symbols")
+            .is_empty());
+        assert!(!index
+            .list_file_symbols(&path_string(root.join(format!("Model{}.php", file_count - 1))))
+            .expect("last symbols")
+            .is_empty());
+    }
+
+    #[test]
+    fn cancelling_a_multi_batch_reindex_stops_safely() {
+        // A cancelled multi-batch reindex must stop with Cancelled and leave the database in a
+        // consistent, lock-free state (an aborted batch rolls back via the transaction guard; no
+        // batch is opened past the cancellation point because the token is re-checked per batch).
+        let file_count = super::REINDEX_WRITE_BATCH_SIZE + 10;
+        let root = temp_workspace("cancel-multi-batch");
+        let database_path = temp_database_path("cancel-multi-batch");
+        for index in 0..file_count {
+            let class_name = format!("Model{index}");
+            fs::write(root.join(format!("{class_name}.php")), php_fixture(&class_name))
+                .expect("php file");
+        }
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let token = lifecycle.begin_workspace_run(&path_string(root.clone()));
+        // Switch workspace before the reindex runs: every per-batch lifecycle check observes the
+        // bumped generation, so the batched write loops stop at the first boundary.
+        lifecycle.cancel_workspace(token.workspace_root());
+
+        let error = run_workspace_reindex(&WorkspaceReindexRequest {
+            database_path: database_path.clone(),
+            language: None,
+            lifecycle_token: Some(token),
+            mode: WorkspaceReindexMode::Hard,
+            root_path: root,
+        })
+        .expect_err("cancelled reindex");
+        // The database is still openable/queryable (no lock or half-written transaction left).
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("reopen index");
+        let _ = index.summary().expect("summary after cancel");
+
+        assert!(matches!(error, WorkspaceReindexError::Cancelled));
     }
 
     #[test]
