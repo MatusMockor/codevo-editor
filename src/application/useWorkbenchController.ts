@@ -412,6 +412,10 @@ import {
   type PhpMethodMember,
   type PhpPropertyMember,
 } from "../domain/phpClassStructure";
+import {
+  phpTestClassPlan,
+  renderPhpTestSkeleton,
+} from "../domain/phpTestGen";
 import { renderAccessors } from "../domain/phpAccessorCodeGen";
 import { renderConstructor } from "../domain/phpConstructorCodeGen";
 import {
@@ -7436,6 +7440,121 @@ export function useWorkbenchController(
     prompter,
     refreshDirectory,
     reportErrorForActiveWorkspaceRoot,
+    workspaceFiles,
+    workspaceRoot,
+  ]);
+
+  // Returns the test file's content when it already exists, otherwise `null`.
+  // Existence is probed by reading the file (the gateway rejects for a missing
+  // path), so a successful read means "do not overwrite — open the existing one".
+  const readTestFileIfExists = useCallback(
+    async (path: string): Promise<string | null> => {
+      try {
+        return await workspaceFiles.readTextFile(path);
+      } catch {
+        return null;
+      }
+    },
+    [workspaceFiles],
+  );
+
+  // PhpStorm-style "Create Test" (Ctrl+Shift+T): from the active PHP class,
+  // derive the matching PHPUnit test path/namespace via PSR-4, render a skeleton
+  // (one `test<Method>()` per public instance method) and open it. Conservative:
+  // an existing test is opened, never overwritten; non-class sources / classes
+  // without public instance methods produce no file. Per-workspace isolation:
+  // the requested root is captured up front and re-checked after every await so
+  // a tab switch mid-flight drops the (now stale) generation.
+  const generateTestForActiveDocument = useCallback(async () => {
+    const requestedRoot = workspaceRoot;
+    const requestedDescriptor = workspaceDescriptor;
+    const requestedDocument = activeDocument;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!requestedRoot || !requestedDescriptor?.php || !requestedDocument) {
+      return;
+    }
+
+    if (requestedDocument.language !== "php") {
+      return;
+    }
+
+    const plan = phpTestClassPlan({
+      psr4Roots: requestedDescriptor.php.psr4Roots,
+      source: requestedDocument.content,
+    });
+
+    if (!plan) {
+      setMessage("Generate test: no testable class in the active file.");
+      return;
+    }
+
+    const testPath = joinWorkspacePath(requestedRoot, plan.relativePath);
+
+    try {
+      const existingTest = await readTestFileIfExists(testPath);
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      if (existingTest !== null) {
+        await openFile({
+          kind: "file",
+          name: getFileName(testPath),
+          path: testPath,
+        });
+        return;
+      }
+
+      const parentPath = getParentPath(testPath);
+      await workspaceFiles.createDirectory(parentPath);
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      await workspaceFiles.writeTextFile(testPath, renderPhpTestSkeleton(plan));
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      await notifyJavaScriptTypeScriptWatchedFilesChanged([
+        {
+          changeType: "created",
+          path: testPath,
+        },
+      ]);
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      setExpandedDirectories((current) => new Set(current).add(parentPath));
+      await refreshDirectory(parentPath);
+
+      if (!isRequestedRootActive()) {
+        return;
+      }
+
+      await openFile({
+        kind: "file",
+        name: getFileName(testPath),
+        path: testPath,
+      });
+    } catch (error) {
+      reportErrorForActiveWorkspaceRoot(requestedRoot, "Generate Test", error);
+    }
+  }, [
+    activeDocument,
+    notifyJavaScriptTypeScriptWatchedFilesChanged,
+    openFile,
+    readTestFileIfExists,
+    refreshDirectory,
+    reportErrorForActiveWorkspaceRoot,
+    workspaceDescriptor,
     workspaceFiles,
     workspaceRoot,
   ]);
@@ -20421,6 +20540,17 @@ export function useWorkbenchController(
     });
 
     registry.register({
+      id: "php.generateTest",
+      title: "Generate Test",
+      category: "PHP",
+      isEnabled: (context) =>
+        context.hasWorkspace &&
+        context.hasActiveDocument &&
+        activeDocument?.language === "php",
+      run: generateTestForActiveDocument,
+    });
+
+    registry.register({
       id: "file.quickOpen",
       title: "Quick Open File",
       category: "File",
@@ -21056,6 +21186,7 @@ export function useWorkbenchController(
     createDirectory,
     createFile,
     deleteActiveDocument,
+    generateTestForActiveDocument,
     goToDeclaration,
     canSearchClassOpenSymbols,
     goToDefinition,
