@@ -496,6 +496,25 @@ interface PhpClassMemberCacheEntry {
   sourceSignature: string;
 }
 
+interface PhpLaravelTargetCacheEntry<T> {
+  expiresAt: number;
+  targets: T[];
+}
+
+interface PhpLaravelTargetCacheBucket {
+  config?: PhpLaravelTargetCacheEntry<PhpLaravelConfigTarget>;
+  translations?: PhpLaravelTargetCacheEntry<PhpLaravelTranslationTarget>;
+  views?: PhpLaravelTargetCacheEntry<PhpLaravelViewTarget>;
+}
+
+// Laravel config/view/translation completions previously triggered a full
+// directory scan on every keystroke (recursive resources/views walk, reads of
+// every config/*.php and lang file). The targets only change when files change,
+// so they are memoized per workspace root with a short TTL. The cache is keyed
+// by workspace root and reset on workspace switch and on index reindex so it
+// can never leak across project tabs or serve stale targets after a reindex.
+const PHP_LARAVEL_TARGET_CACHE_TTL_MS = 30_000;
+
 interface PhpClassMemberReadResult {
   content: string;
   members: PhpMethodCompletion[];
@@ -1001,6 +1020,9 @@ export function useWorkbenchController(
   const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
   const phpLaravelMorphMapModelTypeCacheRef = useRef<
     Record<string, string | null>
+  >({});
+  const phpLaravelTargetCacheRef = useRef<
+    Record<string, PhpLaravelTargetCacheBucket>
   >({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
@@ -2137,6 +2159,7 @@ export function useWorkbenchController(
       phpClassMemberCacheRef.current = {};
       phpFrameworkBindingCacheRef.current = {};
       phpLaravelMorphMapModelTypeCacheRef.current = {};
+      phpLaravelTargetCacheRef.current = {};
       setIndexProgress((current) =>
         applyMetadataScanCompletion(current, event),
       );
@@ -2226,6 +2249,7 @@ export function useWorkbenchController(
     phpClassMemberCacheRef.current = {};
     phpFrameworkBindingCacheRef.current = {};
     phpLaravelMorphMapModelTypeCacheRef.current = {};
+    phpLaravelTargetCacheRef.current = {};
     setIndexProgress(initialIndexProgress());
     setIndexHealthLogs([]);
     setPhpTree(emptyPhpTree());
@@ -4026,6 +4050,7 @@ export function useWorkbenchController(
       phpClassMemberCacheRef.current = {};
       phpFrameworkBindingCacheRef.current = {};
       phpLaravelMorphMapModelTypeCacheRef.current = {};
+      phpLaravelTargetCacheRef.current = {};
       setPhpIdeReadinessVersion(0);
       activeIndexRootRef.current = null;
       pendingIndexScanRef.current = false;
@@ -8881,6 +8906,55 @@ export function useWorkbenchController(
     ],
   );
 
+  const readPhpLaravelTargetCache = useCallback(
+    <Kind extends keyof PhpLaravelTargetCacheBucket>(
+      requestedRoot: string,
+      kind: Kind,
+    ): NonNullable<PhpLaravelTargetCacheBucket[Kind]>["targets"] | null => {
+      // Only serve cached targets while the requested root is still the active
+      // workspace; never let a stale tab's cache satisfy another tab's request.
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return null;
+      }
+
+      const entry = phpLaravelTargetCacheRef.current[requestedRoot]?.[kind];
+
+      if (!entry || entry.expiresAt <= Date.now()) {
+        return null;
+      }
+
+      return entry.targets as NonNullable<
+        PhpLaravelTargetCacheBucket[Kind]
+      >["targets"];
+    },
+    [],
+  );
+
+  const writePhpLaravelTargetCache = useCallback(
+    <Kind extends keyof PhpLaravelTargetCacheBucket>(
+      requestedRoot: string,
+      kind: Kind,
+      targets: NonNullable<PhpLaravelTargetCacheBucket[Kind]>["targets"],
+    ): void => {
+      // Drop results computed for a root that is no longer active so the cache
+      // can never be populated with another tab's targets.
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      const bucket = phpLaravelTargetCacheRef.current[requestedRoot] ?? {};
+
+      phpLaravelTargetCacheRef.current[requestedRoot] = {
+        ...bucket,
+        [kind]: {
+          expiresAt: Date.now() + PHP_LARAVEL_TARGET_CACHE_TTL_MS,
+          targets,
+        },
+      };
+    },
+    [],
+  );
+
   const findPhpLaravelViewTarget = useCallback(
     async (viewName: string): Promise<PhpLaravelViewNavigationTarget | null> => {
       const requestedRoot = workspaceRoot;
@@ -8938,6 +9012,12 @@ export function useWorkbenchController(
       return [];
     }
 
+    const cachedViews = readPhpLaravelTargetCache(requestedRoot, "views");
+
+    if (cachedViews) {
+      return cachedViews;
+    }
+
     const targets = new Map<string, PhpLaravelViewTarget>();
     const viewsRoot = joinWorkspacePath(requestedRoot, "resources/views");
 
@@ -8989,13 +9069,19 @@ export function useWorkbenchController(
       return [];
     }
 
-    return Array.from(targets.values()).sort((left, right) =>
+    const result = Array.from(targets.values()).sort((left, right) =>
       left.name.localeCompare(right.name),
     );
+
+    writePhpLaravelTargetCache(requestedRoot, "views", result);
+
+    return result;
   }, [
     isLaravelFrameworkActive,
+    readPhpLaravelTargetCache,
     workspaceFiles,
     workspaceRoot,
+    writePhpLaravelTargetCache,
   ]);
 
   const findPhpLaravelConfigTarget = useCallback(
@@ -9070,6 +9156,12 @@ export function useWorkbenchController(
 
     if (!isLaravelFrameworkActive || !requestedRoot) {
       return [];
+    }
+
+    const cachedConfig = readPhpLaravelTargetCache(requestedRoot, "config");
+
+    if (cachedConfig) {
+      return cachedConfig;
     }
 
     const targets = new Map<string, PhpLaravelConfigTarget>();
@@ -9147,14 +9239,20 @@ export function useWorkbenchController(
       return [];
     }
 
-    return Array.from(targets.values()).sort((left, right) =>
+    const result = Array.from(targets.values()).sort((left, right) =>
       left.key.localeCompare(right.key),
     );
+
+    writePhpLaravelTargetCache(requestedRoot, "config", result);
+
+    return result;
   }, [
     isLaravelFrameworkActive,
     readNavigationFileContent,
+    readPhpLaravelTargetCache,
     workspaceFiles,
     workspaceRoot,
+    writePhpLaravelTargetCache,
   ]);
 
   const collectPhpLaravelAuthGuardTargets = useCallback(async (): Promise<
@@ -9984,6 +10082,15 @@ export function useWorkbenchController(
       return [];
     }
 
+    const cachedTranslations = readPhpLaravelTargetCache(
+      requestedRoot,
+      "translations",
+    );
+
+    if (cachedTranslations) {
+      return cachedTranslations;
+    }
+
     const targets = new Map<string, PhpLaravelTranslationTarget>();
 
     const translationRoots = await collectPhpLaravelTranslationLocaleRoots();
@@ -10106,16 +10213,22 @@ export function useWorkbenchController(
       return [];
     }
 
-    return Array.from(targets.values()).sort((left, right) =>
+    const result = Array.from(targets.values()).sort((left, right) =>
       left.key.localeCompare(right.key),
     );
+
+    writePhpLaravelTargetCache(requestedRoot, "translations", result);
+
+    return result;
   }, [
     collectPhpLaravelJsonTranslationFiles,
     collectPhpLaravelTranslationLocaleRoots,
     isLaravelFrameworkActive,
     readNavigationFileContent,
+    readPhpLaravelTargetCache,
     workspaceFiles,
     workspaceRoot,
+    writePhpLaravelTargetCache,
   ]);
 
   const phpClassHasLaravelDynamicWhere = useCallback(

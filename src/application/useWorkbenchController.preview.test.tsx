@@ -33679,6 +33679,309 @@ return [
     ]);
   });
 
+  it("reuses cached Laravel config targets across repeated completions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const configRoot = "/workspace/config";
+    const appConfigPath = "/workspace/config/app.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.na');
+    }
+}
+`;
+    const appConfigSource = `<?php
+
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+];
+`;
+    const readDirectory = vi.fn(async (path: string) =>
+      path === configRoot ? [fileEntry(appConfigPath, "app.php")] : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === appConfigPath) {
+        return appConfigSource;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    const expected = [
+      {
+        declaringClassName: "config/app.php",
+        insertText: "name",
+        kind: "config",
+        name: "app.name",
+        parameters: "",
+        returnType: null,
+      },
+    ];
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "app.na"),
+      ),
+    ).resolves.toEqual(expected);
+
+    const configDirectoryReadsAfterFirst = readDirectory.mock.calls.filter(
+      ([path]) => path === configRoot,
+    ).length;
+    const configFileReadsAfterFirst = readTextFile.mock.calls.filter(
+      ([path]) => path === appConfigPath,
+    ).length;
+    expect(configDirectoryReadsAfterFirst).toBeGreaterThan(0);
+    expect(configFileReadsAfterFirst).toBeGreaterThan(0);
+
+    // Second completion for the same workspace must serve cached targets and
+    // never re-scan the config directory or re-read config files.
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "app.na"),
+      ),
+    ).resolves.toEqual(expected);
+
+    expect(
+      readDirectory.mock.calls.filter(([path]) => path === configRoot).length,
+    ).toBe(configDirectoryReadsAfterFirst);
+    expect(
+      readTextFile.mock.calls.filter(([path]) => path === appConfigPath).length,
+    ).toBe(configFileReadsAfterFirst);
+  });
+
+  it("reuses cached Laravel view targets across repeated completions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const viewsRoot = "/workspace/resources/views";
+    const commentsDirectory = "/workspace/resources/views/comments";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        return view('comments.sh');
+    }
+}
+`;
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === viewsRoot) {
+        return [directoryEntry(commentsDirectory, "comments")];
+      }
+
+      if (path === commentsDirectory) {
+        return [
+          fileEntry(
+            "/workspace/resources/views/comments/show.blade.php",
+            "show.blade.php",
+          ),
+        ];
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      readTextFile: vi.fn(async (path: string) =>
+        path === controllerPath ? controllerSource : "",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    const expected = [
+      {
+        declaringClassName: "resources/views/comments/show.blade.php",
+        insertText: "show",
+        kind: "view",
+        name: "comments.show",
+        parameters: "",
+        returnType: null,
+      },
+    ];
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.sh"),
+      ),
+    ).resolves.toEqual(expected);
+
+    const viewsRootReadsAfterFirst = readDirectory.mock.calls.filter(
+      ([path]) => path === viewsRoot,
+    ).length;
+    expect(viewsRootReadsAfterFirst).toBeGreaterThan(0);
+
+    // Second completion for the same workspace must serve cached targets and
+    // never re-walk the resources/views directory tree.
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.sh"),
+      ),
+    ).resolves.toEqual(expected);
+
+    expect(
+      readDirectory.mock.calls.filter(([path]) => path === viewsRoot).length,
+    ).toBe(viewsRootReadsAfterFirst);
+  });
+
+  it("rescans Laravel config targets after switching project tabs", async () => {
+    const controllerPathA =
+      "/workspace-a/app/Http/Controllers/AppController.php";
+    const controllerPathB =
+      "/workspace-b/app/Http/Controllers/AppController.php";
+    const configRootA = "/workspace-a/config";
+    const configRootB = "/workspace-b/config";
+    const appConfigPathA = "/workspace-a/config/alpha.php";
+    const appConfigPathB = "/workspace-b/config/beta.php";
+    const controllerSource = (workspace: string) => `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('${workspace}.na');
+    }
+}
+`;
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === configRootA) {
+        return [fileEntry(appConfigPathA, "alpha.php")];
+      }
+
+      if (path === configRootB) {
+        return [fileEntry(appConfigPathB, "beta.php")];
+      }
+
+      return [];
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPathA) {
+        return controllerSource("alpha");
+      }
+
+      if (path === controllerPathB) {
+        return controllerSource("beta");
+      }
+
+      if (path === appConfigPathA) {
+        return `<?php\n\nreturn [\n    'name' => 'Alpha',\n];\n`;
+      }
+
+      if (path === appConfigPathB) {
+        return `<?php\n\nreturn [\n    'name' => 'Beta',\n];\n`;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory,
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPathA, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource("alpha"),
+        positionAfter(controllerSource("alpha"), "alpha.na"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/alpha.php",
+        insertText: "name",
+        kind: "config",
+        name: "alpha.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPathB, "AppController.php"),
+      );
+    });
+
+    // The cache is keyed by workspace root and reset on switch, so workspace B
+    // must scan its own config and never serve workspace A's cached targets.
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource("beta"),
+        positionAfter(controllerSource("beta"), "beta.na"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/beta.php",
+        insertText: "name",
+        kind: "config",
+        name: "beta.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      readDirectory.mock.calls.some(([path]) => path === configRootB),
+    ).toBe(true);
+  });
+
   it("suggests Laravel config repository keys", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const configRoot = "/workspace/config";
