@@ -1790,19 +1790,58 @@ struct RestartContext {
     controller: Arc<RestartController>,
 }
 
+/// Step size for the cancellable backoff. The backoff total can be as long as
+/// [`RESTART_MAX_DELAY`] (30s); waking this often keeps a closing workspace's
+/// restart thread responsive without busy-spinning.
+const RESTART_BACKOFF_STEP: Duration = Duration::from_millis(100);
+
+/// Sleep out `delay` in short steps, re-checking after each step whether the
+/// owning workspace is still open. The only strong reference to a supervisor
+/// lives in the registry map, so a failed [`Weak::upgrade`] is the canonical
+/// "workspace closed" signal (registry `stop`/`stop_all` dropped it). When that
+/// happens we bail immediately instead of lingering for the full backoff,
+/// dropping the captured restart context (and its sinks) promptly.
+///
+/// Returns the live supervisor only if the workspace stayed open for the whole
+/// backoff; `None` means the restart must be abandoned.
+fn cancellable_backoff(
+    supervisor: &std::sync::Weak<LanguageServerSupervisor>,
+    delay: Duration,
+    step: Duration,
+) -> Option<Arc<LanguageServerSupervisor>> {
+    let deadline = Instant::now() + delay;
+
+    loop {
+        // Re-check liveness before every sleep (and once before the first one) so
+        // a workspace that closes during backoff cancels within a single step.
+        let alive = supervisor.upgrade()?;
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Some(alive);
+        }
+
+        // Drop the strong reference while sleeping so the backoff itself never
+        // keeps a closing workspace's supervisor alive.
+        drop(alive);
+        std::thread::sleep(remaining.min(step));
+    }
+}
+
 impl RestartContext {
     /// Re-spawn the session after `delay`. Returns silently if the workspace was
     /// closed in the meantime (the supervisor was dropped or a stop/start raced
-    /// in), preserving per-workspace isolation.
+    /// in), preserving per-workspace isolation. The backoff is cancellable: if
+    /// the workspace closes (registry `stop`/`stop_all`, app quit) while we are
+    /// waiting, the thread bails promptly without re-spawning.
     fn restart_after(self: Arc<Self>, delay: Duration) {
         std::thread::spawn(move || {
-            if delay > Duration::ZERO {
-                std::thread::sleep(delay);
-            }
-
-            // The workspace may have been fully closed while we were backing off
-            // (supervisor dropped from the registry). Skip the work entirely.
-            let Some(supervisor) = self.supervisor.upgrade() else {
+            // The workspace may close while we back off (supervisor dropped from
+            // the registry). Sleep in cancellable steps and skip the work entirely
+            // the moment that happens.
+            let Some(supervisor) =
+                cancellable_backoff(&self.supervisor, delay, RESTART_BACKOFF_STEP)
+            else {
                 return;
             };
 
@@ -2740,7 +2779,7 @@ fn is_capability_enabled(value: Option<&Value>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_capabilities, DiagnosticsSink, LanguageServerCapabilities,
+        cancellable_backoff, parse_capabilities, DiagnosticsSink, LanguageServerCapabilities,
         LanguageServerRefreshEvent, LanguageServerRefreshFeature, LanguageServerRegistry,
         LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
         NoopRefreshSink, NoopWorkspaceEditSink, ProcessKiller, RefreshSink, RestartController,
@@ -5033,6 +5072,57 @@ mod tests {
                 session_id: 2,
                 capabilities: LanguageServerCapabilities::default(),
             },
+        );
+    }
+
+    #[test]
+    fn cancellable_backoff_returns_supervisor_when_workspace_stays_open() {
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+        let weak = Arc::downgrade(&supervisor);
+
+        // A short backoff over a workspace that stays open must run to completion
+        // and hand back the live supervisor so the restart can proceed.
+        let upgraded = cancellable_backoff(
+            &weak,
+            Duration::from_millis(20),
+            Duration::from_millis(5),
+        );
+
+        assert!(
+            upgraded.is_some(),
+            "an open workspace must yield its supervisor after the backoff"
+        );
+    }
+
+    #[test]
+    fn cancellable_backoff_bails_immediately_when_workspace_closes() {
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+        let weak = Arc::downgrade(&supervisor);
+
+        // Simulate a workspace close (registry stop_all / stop) dropping the only
+        // strong reference shortly after the backoff begins.
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            drop(supervisor);
+        });
+
+        let started = Instant::now();
+        // Backoff total is multiple seconds; if cancellation works the call must
+        // return promptly after the supervisor is dropped, never near the full delay.
+        let upgraded = cancellable_backoff(
+            &weak,
+            Duration::from_secs(30),
+            Duration::from_millis(5),
+        );
+        let elapsed = started.elapsed();
+
+        assert!(
+            upgraded.is_none(),
+            "a closed workspace must not yield a supervisor to restart"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "backoff must cancel promptly when the workspace closes, took {elapsed:?}"
         );
     }
 
