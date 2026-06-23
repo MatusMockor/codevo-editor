@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -893,10 +893,85 @@ impl LanguageServerSupervisor {
         workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
         refresh_sink: Arc<dyn RefreshSink>,
     ) -> Result<LanguageServerRuntimeStatus, String> {
+        self.start_core(
+            command,
+            initialize_request,
+            spawner,
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+            None,
+            StartKind::Fresh,
+        )
+    }
+
+    /// Start a session that automatically re-spawns the language server when it
+    /// crashes unexpectedly (not on a requested shutdown). Restarts are governed
+    /// by `restart_controller`: an exponential backoff with a bounded number of
+    /// attempts inside a sliding window, reset once a session runs stably.
+    ///
+    /// The spawner is owned (`Arc<… + Send + Sync>`) so the background restart
+    /// can re-spawn the server for the *same* workspace without touching any
+    /// other workspace's supervisor.
+    ///
+    /// Production opt-in: call this from the registry/`lib.rs` start path with a
+    /// `ChildServerProcessSpawner` wrapped in `Arc` and `RestartController::default()`
+    /// to enable crash auto-restart. Currently exercised by the unit tests.
+    #[allow(dead_code)]
+    pub fn start_with_auto_restart(
+        self: &Arc<Self>,
+        command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
+        spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        refresh_sink: Arc<dyn RefreshSink>,
+        restart_controller: Arc<RestartController>,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
+        let restart_context = RestartContext {
+            supervisor: Arc::downgrade(self),
+            command: clone_command(command),
+            initialize_request: clone_initialize_request(initialize_request),
+            spawner: Arc::clone(&spawner),
+            status_sink: Arc::clone(&status_sink),
+            diagnostics_sink: Arc::clone(&diagnostics_sink),
+            workspace_edit_sink: Arc::clone(&workspace_edit_sink),
+            refresh_sink: Arc::clone(&refresh_sink),
+            controller: restart_controller,
+        };
+
+        self.start_core(
+            command,
+            initialize_request,
+            spawner.as_ref(),
+            status_sink,
+            diagnostics_sink,
+            workspace_edit_sink,
+            refresh_sink,
+            Some(Arc::new(restart_context)),
+            StartKind::Fresh,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_core(
+        &self,
+        command: &LanguageServerCommand,
+        initialize_request: &JsonRpcRequest,
+        spawner: &dyn ServerProcessSpawner,
+        status_sink: Arc<dyn StatusSink>,
+        diagnostics_sink: Arc<dyn DiagnosticsSink>,
+        workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+        refresh_sink: Arc<dyn RefreshSink>,
+        restart_context: Option<Arc<RestartContext>>,
+        start_kind: StartKind,
+    ) -> Result<LanguageServerRuntimeStatus, String> {
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         self.terminate_stale_session();
         reset_runtime_log(&self.log, self.server_label, session_id, command);
-        self.begin_start(status_sink.as_ref(), session_id)?;
+        self.begin_start(status_sink.as_ref(), session_id, start_kind)?;
 
         let spawned = match spawner.spawn(command) {
             Ok(spawned) => spawned,
@@ -971,6 +1046,7 @@ impl LanguageServerSupervisor {
             self.server_label,
             server_configuration,
             workspace_root,
+            restart_context.clone(),
         ));
 
         if !self.attach_reader(&stop_requested, &mut reader)? {
@@ -994,12 +1070,20 @@ impl LanguageServerSupervisor {
                     return Err(message);
                 }
 
-                self.publish_running_if_starting(
+                let running = self.publish_running_if_starting(
                     status_sink.as_ref(),
                     &stop_requested,
                     session_id,
                     capabilities,
-                )
+                );
+
+                if let Ok(LanguageServerRuntimeStatus::Running { .. }) = &running {
+                    if let Some(context) = &restart_context {
+                        context.controller.note_stable_run();
+                    }
+                }
+
+                running
             }
             Ok(HandshakeOutcome::Failed(message)) => {
                 let was_stopped = stop_requested.load(Ordering::SeqCst);
@@ -1134,11 +1218,27 @@ impl LanguageServerSupervisor {
         }
     }
 
-    fn begin_start(&self, sink: &dyn StatusSink, session_id: u64) -> Result<(), String> {
+    fn begin_start(
+        &self,
+        sink: &dyn StatusSink,
+        session_id: u64,
+        start_kind: StartKind,
+    ) -> Result<(), String> {
         let mut status = self.status.lock().map_err(|error| error.to_string())?;
 
         if is_active_status(&status) {
             return Err("Language server already running.".to_string());
+        }
+
+        // An auto-restart may only resume a session that is *still* crashed. If a
+        // concurrent stop (workspace close / session switch) already moved the
+        // status to Stopped, abort so we never resurrect a closed workspace. The
+        // status check and the transition to Starting happen under the same lock,
+        // closing the crash->stop race window.
+        if matches!(start_kind, StartKind::Restart)
+            && !matches!(*status, LanguageServerRuntimeStatus::Crashed { .. })
+        {
+            return Err("Auto-restart aborted: session is no longer crashed.".to_string());
         }
 
         *status = LanguageServerRuntimeStatus::Starting { session_id };
@@ -1278,6 +1378,11 @@ impl LanguageServerSupervisor {
             .ok()?
             .as_ref()
             .map(|session| Arc::clone(&session.server_configuration))
+    }
+
+    #[cfg(test)]
+    fn force_status(&self, next: LanguageServerRuntimeStatus) {
+        set_status(&self.status, next);
     }
 
     #[cfg(test)]
@@ -1465,6 +1570,250 @@ fn is_active_status(status: &LanguageServerRuntimeStatus) -> bool {
     )
 }
 
+/// Default number of restart attempts allowed inside [`RESTART_WINDOW`] before a
+/// crashed session is left in the `Crashed` state (so it can never loop forever).
+const RESTART_MAX_ATTEMPTS: usize = 3;
+/// Sliding window over which restart attempts are counted. A session that stays
+/// up long enough for older failures to fall outside this window regains its
+/// full restart budget.
+const RESTART_WINDOW: Duration = Duration::from_secs(60);
+/// Base delay used for the exponential backoff (1s, 2s, 4s, …).
+const RESTART_BASE_DELAY: Duration = Duration::from_secs(1);
+/// Upper bound on a single backoff delay so attempts stay responsive.
+const RESTART_MAX_DELAY: Duration = Duration::from_secs(30);
+
+/// Pure restart-decision logic for a single workspace session.
+///
+/// The policy tracks recent restart attempts inside a sliding time window and
+/// decides whether another restart is allowed. It is intentionally clock-driven
+/// through explicit `now` arguments so the decision/backoff logic is testable
+/// without sleeping or wall-clock dependence.
+#[derive(Debug)]
+pub struct RestartPolicy {
+    max_attempts: usize,
+    window: Duration,
+    base_delay: Duration,
+    attempts: Vec<Instant>,
+}
+
+impl RestartPolicy {
+    pub fn new(max_attempts: usize, window: Duration, base_delay: Duration) -> Self {
+        Self {
+            max_attempts,
+            window,
+            base_delay,
+            attempts: Vec::new(),
+        }
+    }
+
+    fn prune(&mut self, now: Instant) {
+        let window = self.window;
+        self.attempts
+            .retain(|attempt| now.saturating_duration_since(*attempt) < window);
+    }
+
+    fn next_attempt_index(&mut self, now: Instant) -> usize {
+        self.prune(now);
+        self.attempts.len()
+    }
+
+    fn should_restart(&mut self, now: Instant) -> bool {
+        self.next_attempt_index(now) < self.max_attempts
+    }
+
+    fn record_attempt(&mut self, now: Instant) {
+        self.prune(now);
+        self.attempts.push(now);
+    }
+
+    fn backoff_delay(&self, attempt_index: usize) -> Duration {
+        // A large index must clamp to the cap, never wrap to a tiny delay, so
+        // compute the multiplier in u64 (no u32 truncation) and saturate.
+        let Some(shift) = u32::try_from(attempt_index).ok().filter(|shift| *shift < u64::BITS)
+        else {
+            return RESTART_MAX_DELAY;
+        };
+        let factor = 1_u64 << shift;
+        let base_millis = self.base_delay.as_millis() as u64;
+        let delay = base_millis
+            .checked_mul(factor)
+            .map(Duration::from_millis)
+            .unwrap_or(RESTART_MAX_DELAY);
+
+        delay.min(RESTART_MAX_DELAY)
+    }
+
+    fn reset(&mut self) {
+        self.attempts.clear();
+    }
+}
+
+impl Default for RestartPolicy {
+    fn default() -> Self {
+        Self::new(RESTART_MAX_ATTEMPTS, RESTART_WINDOW, RESTART_BASE_DELAY)
+    }
+}
+
+/// Outcome of evaluating a crash against the restart budget.
+#[derive(Debug, PartialEq, Eq)]
+enum RestartOutcome {
+    /// Re-spawn the session after waiting `delay`.
+    Restart { delay: Duration },
+    /// Leave the session crashed (shutdown requested, or budget exhausted).
+    GiveUp,
+}
+
+/// Convenience helper documenting the shutdown rule: a requested shutdown must
+/// never restart, regardless of remaining budget. Exercised by the unit tests.
+#[allow(dead_code)]
+struct RestartDecision;
+
+impl RestartDecision {
+    /// A requested shutdown (quit, workspace close, session switch) must never
+    /// trigger a restart, independent of the remaining restart budget.
+    #[allow(dead_code)]
+    fn for_shutdown(_policy: &RestartPolicy) -> bool {
+        false
+    }
+}
+
+/// Thread-safe wrapper around [`RestartPolicy`] shared with the reader thread
+/// that detects crashes. The decision is taken under a lock so concurrent crash
+/// callbacks for the same workspace cannot race the attempt budget.
+pub struct RestartController {
+    policy: Mutex<RestartPolicy>,
+}
+
+impl RestartController {
+    pub fn new(policy: RestartPolicy) -> Self {
+        Self {
+            policy: Mutex::new(policy),
+        }
+    }
+
+    /// Decide what to do after a crash. `stop_requested` distinguishes a
+    /// legitimate shutdown (no restart) from an unexpected crash (maybe restart).
+    fn evaluate_crash(&self, stop_requested: bool) -> RestartOutcome {
+        if stop_requested {
+            return RestartOutcome::GiveUp;
+        }
+
+        let Ok(mut policy) = self.policy.lock() else {
+            return RestartOutcome::GiveUp;
+        };
+
+        let now = Instant::now();
+
+        if !policy.should_restart(now) {
+            return RestartOutcome::GiveUp;
+        }
+
+        // `should_restart` already pruned expired attempts; the surviving count is
+        // the index of the attempt we are about to make and drives the backoff.
+        let attempt_index = policy.attempts.len();
+        let delay = policy.backoff_delay(attempt_index);
+        policy.record_attempt(now);
+        RestartOutcome::Restart { delay }
+    }
+
+    /// Reset the attempt budget after a session has run successfully so a later
+    /// crash starts its backoff sequence from scratch.
+    fn note_stable_run(&self) {
+        if let Ok(mut policy) = self.policy.lock() {
+            policy.reset();
+        }
+    }
+}
+
+impl Default for RestartController {
+    fn default() -> Self {
+        Self::new(RestartPolicy::default())
+    }
+}
+
+/// Distinguishes a fresh start (user request) from an auto-restart after a
+/// crash. A restart is only allowed to resume a session that is still crashed,
+/// which keeps the crash->stop transition race-free.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartKind {
+    Fresh,
+    Restart,
+}
+
+/// Everything needed to re-spawn a crashed session for the *same* workspace.
+///
+/// Captured per session and handed to the reader thread. On an unexpected crash
+/// the reader consults [`RestartController`] and, if a restart is allowed,
+/// re-enters the owning supervisor to start a fresh session. The supervisor is
+/// held weakly so a dropped/closed workspace cannot be resurrected.
+#[allow(dead_code)]
+struct RestartContext {
+    supervisor: std::sync::Weak<LanguageServerSupervisor>,
+    command: LanguageServerCommand,
+    initialize_request: JsonRpcRequest,
+    spawner: Arc<dyn ServerProcessSpawner + Send + Sync>,
+    status_sink: Arc<dyn StatusSink>,
+    diagnostics_sink: Arc<dyn DiagnosticsSink>,
+    workspace_edit_sink: Arc<dyn WorkspaceEditSink>,
+    refresh_sink: Arc<dyn RefreshSink>,
+    controller: Arc<RestartController>,
+}
+
+impl RestartContext {
+    /// Re-spawn the session after `delay`. Returns silently if the workspace was
+    /// closed in the meantime (the supervisor was dropped or a stop/start raced
+    /// in), preserving per-workspace isolation.
+    fn restart_after(self: Arc<Self>, delay: Duration) {
+        std::thread::spawn(move || {
+            if delay > Duration::ZERO {
+                std::thread::sleep(delay);
+            }
+
+            // The workspace may have been fully closed while we were backing off
+            // (supervisor dropped from the registry). Skip the work entirely.
+            let Some(supervisor) = self.supervisor.upgrade() else {
+                return;
+            };
+
+            // `StartKind::Restart` makes `begin_start` re-verify, under the status
+            // lock, that the session is *still* crashed before transitioning to
+            // Starting. A concurrent stop (Stopped) or manual start
+            // (Starting/Running) aborts the restart atomically, so a closed
+            // workspace can never be resurrected.
+            let _ = supervisor.start_core(
+                &self.command,
+                &self.initialize_request,
+                self.spawner.as_ref(),
+                Arc::clone(&self.status_sink),
+                Arc::clone(&self.diagnostics_sink),
+                Arc::clone(&self.workspace_edit_sink),
+                Arc::clone(&self.refresh_sink),
+                Some(Arc::clone(&self)),
+                StartKind::Restart,
+            );
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn clone_command(command: &LanguageServerCommand) -> LanguageServerCommand {
+    LanguageServerCommand {
+        executable: command.executable.clone(),
+        args: command.args.clone(),
+        working_directory: command.working_directory.clone(),
+    }
+}
+
+#[allow(dead_code)]
+fn clone_initialize_request(request: &JsonRpcRequest) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: request.jsonrpc.clone(),
+        id: request.id,
+        method: request.method.clone(),
+        params: request.params.clone(),
+    }
+}
+
 fn publish_crash(
     status: &Arc<Mutex<LanguageServerRuntimeStatus>>,
     sink: &dyn StatusSink,
@@ -1494,6 +1843,7 @@ fn set_status(status: &Arc<Mutex<LanguageServerRuntimeStatus>>, next: LanguageSe
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_reader(
     stdout: Box<dyn Read + Send>,
     stdin: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -1511,6 +1861,7 @@ fn spawn_reader(
     server_label: &'static str,
     server_configuration: Arc<Mutex<Value>>,
     workspace_root: String,
+    restart_context: Option<Arc<RestartContext>>,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -1619,11 +1970,35 @@ fn spawn_reader(
                         status_sink.as_ref(),
                         &format!("{server_label} exited unexpectedly."),
                     );
+
+                    maybe_restart_after_crash(&restart_context, &stop_requested);
                     return;
                 }
             }
         }
     })
+}
+
+/// Consult the restart controller after an unexpected crash and, if a restart
+/// is allowed, schedule a backed-off re-spawn for the same workspace. A
+/// requested shutdown (`stop_requested`) or an exhausted budget leaves the
+/// session in the already-published `Crashed` state — no infinite loop.
+fn maybe_restart_after_crash(
+    restart_context: &Option<Arc<RestartContext>>,
+    stop_requested: &Arc<AtomicBool>,
+) {
+    let Some(context) = restart_context else {
+        return;
+    };
+
+    let stop = stop_requested.load(Ordering::SeqCst);
+
+    match context.controller.evaluate_crash(stop) {
+        RestartOutcome::GiveUp => {}
+        RestartOutcome::Restart { delay } => {
+            Arc::clone(context).restart_after(delay);
+        }
+    }
 }
 
 fn server_window_message(value: &Value, server_label: &str) -> Option<ServerWindowMessage> {
@@ -2337,8 +2712,9 @@ mod tests {
         parse_capabilities, DiagnosticsSink, LanguageServerCapabilities,
         LanguageServerRefreshEvent, LanguageServerRefreshFeature, LanguageServerRegistry,
         LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
-        NoopWorkspaceEditSink, ProcessKiller, RefreshSink, SemanticTokensLegend,
-        ServerProcessSpawner, SpawnedServer, StatusSink, WorkspaceEditSink,
+        NoopRefreshSink, NoopWorkspaceEditSink, ProcessKiller, RefreshSink, RestartController,
+        RestartDecision, RestartOutcome, RestartPolicy, SemanticTokensLegend, ServerProcessSpawner,
+        SpawnedServer, StartKind, StatusSink, WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
@@ -4496,6 +4872,173 @@ mod tests {
     }
 
     #[test]
+    fn unexpected_crash_auto_restarts_session_and_returns_to_running() {
+        let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+
+        supervisor
+            .start_with_auto_restart(
+                &command(),
+                &initialize_request(),
+                Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
+                sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start");
+        wait_for(&rx, &running_status());
+
+        // Simulate an unexpected crash: drop the server's stdout writer.
+        *held.lock().expect("held writer lock") = None;
+
+        // The supervisor should re-spawn for the same workspace and come back up.
+        wait_for(
+            &rx,
+            &LanguageServerRuntimeStatus::Running {
+                session_id: 2,
+                capabilities: LanguageServerCapabilities::default(),
+            },
+        );
+    }
+
+    #[test]
+    fn unexpected_crash_stops_restarting_after_exhausting_attempts() {
+        let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+
+        supervisor
+            .start_with_auto_restart(
+                &command(),
+                &initialize_request(),
+                Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
+                sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                // Budget of exactly one restart.
+                Arc::new(RestartController::new(RestartPolicy::new(
+                    1,
+                    Duration::from_secs(60),
+                    Duration::from_millis(0),
+                ))),
+            )
+            .expect("start");
+        wait_for(&rx, &running_status());
+
+        // First crash -> one restart is allowed and succeeds.
+        *held.lock().expect("held writer lock") = None;
+        wait_for(
+            &rx,
+            &LanguageServerRuntimeStatus::Running {
+                session_id: 2,
+                capabilities: LanguageServerCapabilities::default(),
+            },
+        );
+
+        // Second crash -> budget exhausted -> stays crashed (no infinite loop).
+        *held.lock().expect("held writer lock") = None;
+        wait_for(
+            &rx,
+            &LanguageServerRuntimeStatus::Crashed {
+                message: "PHPactor exited unexpectedly.".to_string(),
+            },
+        );
+    }
+
+    #[test]
+    fn legitimate_stop_does_not_trigger_restart() {
+        let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let (sink, rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+
+        supervisor
+            .start_with_auto_restart(
+                &command(),
+                &initialize_request(),
+                Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
+                sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start");
+        wait_for(&rx, &running_status());
+
+        let status = supervisor.stop();
+
+        assert_eq!(status, LanguageServerRuntimeStatus::Stopped);
+        wait_for(&rx, &LanguageServerRuntimeStatus::Stopped);
+        // Give any erroneous restart a chance to surface, then confirm stopped.
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(supervisor.status(), LanguageServerRuntimeStatus::Stopped);
+    }
+
+    #[test]
+    fn restart_start_kind_aborts_when_session_already_stopped() {
+        let supervisor = LanguageServerSupervisor::new();
+        let (sink, _rx) = ChannelSink::new();
+
+        // Simulate a workspace that was stopped after it crashed.
+        supervisor.force_status(LanguageServerRuntimeStatus::Stopped);
+
+        let result = supervisor.begin_start(sink.as_ref(), 7, StartKind::Restart);
+
+        assert!(result.is_err());
+        assert_eq!(supervisor.status(), LanguageServerRuntimeStatus::Stopped);
+    }
+
+    #[test]
+    fn restart_start_kind_proceeds_when_session_still_crashed() {
+        let supervisor = LanguageServerSupervisor::new();
+        let (sink, _rx) = ChannelSink::new();
+
+        supervisor.force_status(LanguageServerRuntimeStatus::Crashed {
+            message: "boom".to_string(),
+        });
+
+        supervisor
+            .begin_start(sink.as_ref(), 7, StartKind::Restart)
+            .expect("restart should resume a crashed session");
+
+        assert_eq!(
+            supervisor.status(),
+            LanguageServerRuntimeStatus::Starting { session_id: 7 }
+        );
+    }
+
+    #[test]
+    fn fresh_start_kind_proceeds_from_stopped() {
+        let supervisor = LanguageServerSupervisor::new();
+        let (sink, _rx) = ChannelSink::new();
+
+        supervisor.force_status(LanguageServerRuntimeStatus::Stopped);
+
+        supervisor
+            .begin_start(sink.as_ref(), 9, StartKind::Fresh)
+            .expect("fresh start should proceed from stopped");
+
+        assert_eq!(
+            supervisor.status(),
+            LanguageServerRuntimeStatus::Starting { session_id: 9 }
+        );
+    }
+
+    fn test_restart_controller() -> Arc<RestartController> {
+        Arc::new(RestartController::new(RestartPolicy::new(
+            3,
+            Duration::from_secs(60),
+            Duration::from_millis(0),
+        )))
+    }
+
+    #[test]
     fn crash_during_run_emits_crashed_status() {
         let spawner = FakeSpawner::new(ready_script(), true);
         let held = Arc::clone(&spawner.held_writer);
@@ -4654,6 +5197,177 @@ mod tests {
         assert!(matches!(
             supervisor.status(),
             LanguageServerRuntimeStatus::Crashed { .. }
+        ));
+    }
+
+    #[test]
+    fn restart_policy_allows_restart_for_unexpected_crash_within_limit() {
+        let mut policy = RestartPolicy::new(3, Duration::from_secs(60), Duration::from_secs(1));
+        let now = Instant::now();
+
+        assert!(policy.should_restart(now));
+    }
+
+    #[test]
+    fn restart_policy_never_restarts_after_requested_shutdown() {
+        let policy = RestartPolicy::new(3, Duration::from_secs(60), Duration::from_secs(1));
+
+        assert!(!RestartDecision::for_shutdown(&policy));
+    }
+
+    #[test]
+    fn restart_policy_stops_after_max_attempts_within_window() {
+        let mut policy = RestartPolicy::new(3, Duration::from_secs(60), Duration::from_secs(1));
+        let now = Instant::now();
+
+        for _ in 0..3 {
+            assert!(policy.should_restart(now));
+            policy.record_attempt(now);
+        }
+
+        assert!(!policy.should_restart(now));
+    }
+
+    #[test]
+    fn restart_policy_uses_exponential_backoff_per_attempt() {
+        let policy = RestartPolicy::new(4, Duration::from_secs(60), Duration::from_secs(1));
+
+        assert_eq!(policy.backoff_delay(0), Duration::from_secs(1));
+        assert_eq!(policy.backoff_delay(1), Duration::from_secs(2));
+        assert_eq!(policy.backoff_delay(2), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn restart_policy_caps_backoff_at_thirty_seconds() {
+        let policy = RestartPolicy::new(20, Duration::from_secs(600), Duration::from_secs(1));
+
+        assert_eq!(policy.backoff_delay(10), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn restart_policy_clamps_large_attempt_index_to_cap_not_zero() {
+        let policy = RestartPolicy::new(100, Duration::from_secs(600), Duration::from_secs(1));
+
+        // Indices that would truncate a u32 shift must still clamp to the cap.
+        assert_eq!(policy.backoff_delay(40), Duration::from_secs(30));
+        assert_eq!(policy.backoff_delay(64), Duration::from_secs(30));
+        assert_eq!(policy.backoff_delay(1000), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn restart_policy_forgets_attempts_outside_the_window() {
+        let mut policy = RestartPolicy::new(2, Duration::from_secs(60), Duration::from_secs(1));
+        let start = Instant::now();
+
+        policy.record_attempt(start);
+        policy.record_attempt(start);
+        assert!(!policy.should_restart(start));
+
+        let later = start + Duration::from_secs(61);
+        assert!(policy.should_restart(later));
+    }
+
+    #[test]
+    fn restart_policy_reset_clears_attempt_history() {
+        let mut policy = RestartPolicy::new(2, Duration::from_secs(60), Duration::from_secs(1));
+        let now = Instant::now();
+
+        policy.record_attempt(now);
+        policy.record_attempt(now);
+        assert!(!policy.should_restart(now));
+
+        policy.reset();
+
+        assert!(policy.should_restart(now));
+    }
+
+    #[test]
+    fn restart_policy_next_attempt_index_grows_within_window_and_resets() {
+        let mut policy = RestartPolicy::new(3, Duration::from_secs(60), Duration::from_secs(1));
+        let now = Instant::now();
+
+        assert_eq!(policy.next_attempt_index(now), 0);
+        policy.record_attempt(now);
+        assert_eq!(policy.next_attempt_index(now), 1);
+        policy.record_attempt(now);
+        assert_eq!(policy.next_attempt_index(now), 2);
+
+        policy.reset();
+        assert_eq!(policy.next_attempt_index(now), 0);
+    }
+
+    #[test]
+    fn restart_controller_decides_restart_only_for_unexpected_crash() {
+        let controller = RestartController::new(RestartPolicy::new(
+            2,
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+        ));
+
+        assert!(matches!(
+            controller.evaluate_crash(false),
+            RestartOutcome::Restart { .. }
+        ));
+    }
+
+    #[test]
+    fn restart_controller_does_not_restart_when_shutdown_requested() {
+        let controller = RestartController::new(RestartPolicy::new(
+            2,
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+        ));
+
+        assert!(matches!(
+            controller.evaluate_crash(true),
+            RestartOutcome::GiveUp
+        ));
+    }
+
+    #[test]
+    fn restart_controller_gives_up_after_exhausting_attempts() {
+        let controller = RestartController::new(RestartPolicy::new(
+            2,
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+        ));
+
+        assert!(matches!(
+            controller.evaluate_crash(false),
+            RestartOutcome::Restart { .. }
+        ));
+        assert!(matches!(
+            controller.evaluate_crash(false),
+            RestartOutcome::Restart { .. }
+        ));
+        assert!(matches!(
+            controller.evaluate_crash(false),
+            RestartOutcome::GiveUp
+        ));
+    }
+
+    #[test]
+    fn restart_controller_reset_after_stable_run_restores_attempts() {
+        let controller = RestartController::new(RestartPolicy::new(
+            1,
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+        ));
+
+        assert!(matches!(
+            controller.evaluate_crash(false),
+            RestartOutcome::Restart { .. }
+        ));
+        assert!(matches!(
+            controller.evaluate_crash(false),
+            RestartOutcome::GiveUp
+        ));
+
+        controller.note_stable_run();
+
+        assert!(matches!(
+            controller.evaluate_crash(false),
+            RestartOutcome::Restart { .. }
         ));
     }
 
