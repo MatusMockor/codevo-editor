@@ -228,6 +228,7 @@ import {
 import {
   BLADE_DIRECTIVES,
   bladeComponentCandidateRelativePaths,
+  bladeComponentClassCandidatePaths,
   bladeViewCandidateRelativePaths,
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
@@ -14815,6 +14816,13 @@ export function useWorkbenchController(
         actions.push(constructorAction);
       }
 
+      const constructorWithPromotionAction =
+        phpGenerateConstructorWithPromotionCodeAction(source, structure);
+
+      if (constructorWithPromotionAction) {
+        actions.push(constructorWithPromotionAction);
+      }
+
       const optimizeImportsAction = phpOptimizeImportsCodeAction(source);
 
       if (optimizeImportsAction) {
@@ -14983,9 +14991,17 @@ export function useWorkbenchController(
         return false;
       }
 
+      // Component references resolve to anonymous blade views first (PhpStorm:
+      // `<x-...>` prefers a `resources/views/components` blade) then fall through
+      // to the class-based component PHP file (`app/View/Components`). The shared
+      // loop below picks the FIRST candidate that exists, so ordering here
+      // encodes the preference; class candidates come from the domain helper.
       const candidateRelativePaths =
         reference.kind === "component"
-          ? bladeComponentCandidateRelativePaths(reference.name)
+          ? [
+              ...bladeComponentCandidateRelativePaths(reference.name),
+              ...bladeComponentClassCandidatePaths(reference.name),
+            ]
           : reference.kind === "view"
             ? bladeViewCandidateRelativePaths(reference.name)
             : [];
@@ -24179,6 +24195,42 @@ function phpGenerateConstructorCodeAction(
     source,
     renderConstructor(instanceProperties),
     "Generate constructor",
+  );
+}
+
+/**
+ * Sibling of `phpGenerateConstructorCodeAction` that renders a PHP 8 constructor
+ * with property promotion (each parameter carries the property's visibility /
+ * `readonly` so the body stays empty). Offered under the SAME guard as the
+ * classic action — a class with instance properties and no `__construct` — so
+ * both variants appear together and the user picks the style. Conservative: a
+ * class with no instance properties, or one that already declares a constructor,
+ * yields no action.
+ */
+function phpGenerateConstructorWithPromotionCodeAction(
+  source: string,
+  structure: PhpClassStructure,
+): PhpCodeActionDescriptor | null {
+  const instanceProperties = structure.properties.filter(
+    (property) => !property.isStatic,
+  );
+
+  if (instanceProperties.length === 0) {
+    return null;
+  }
+
+  const hasConstructor = structure.methods.some(
+    (method) => method.name.toLowerCase() === "__construct",
+  );
+
+  if (hasConstructor) {
+    return null;
+  }
+
+  return phpClassBodyInsertionAction(
+    source,
+    renderConstructor(instanceProperties, { promotion: true }),
+    "Generate constructor with promotion",
   );
 }
 

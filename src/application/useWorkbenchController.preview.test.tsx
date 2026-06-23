@@ -39577,6 +39577,136 @@ class DashboardController
       expect(getWorkbench().activePath).toBe(componentPath);
     });
 
+    it("navigates an <x-...> component to its class-based PHP file when no blade view exists", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      // Only the class-based component file exists; the anonymous blade
+      // candidates are absent so the resolver must fall through to the PHP class.
+      const componentClassPath = "/workspace/app/View/Components/Alert.php";
+      const bladeSource = "<x-alert />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === componentClassPath) {
+            return "<?php\n\nnamespace App\\View\\Components;\n\nclass Alert {}\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("alert") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(componentClassPath);
+    });
+
+    it("prefers the anonymous blade view over the class-based PHP file when both exist", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const componentBladePath =
+        "/workspace/resources/views/components/alert.blade.php";
+      const componentClassPath = "/workspace/app/View/Components/Alert.php";
+      const bladeSource = "<x-alert />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === componentBladePath) {
+            return "<div>Alert</div>\n";
+          }
+
+          if (path === componentClassPath) {
+            return "<?php\n\nnamespace App\\View\\Components;\n\nclass Alert {}\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("alert") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(componentBladePath);
+    });
+
+    it("does not navigate an <x-...> component when neither blade nor class file exists", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const bladeSource = "<x-alert />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("alert") + 1,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
     it("does not navigate when the referenced Blade view does not exist", async () => {
       const bladePath = "/workspace/resources/views/show.blade.php";
       const bladeSource = "@include('partials.missing')\n";
@@ -42091,6 +42221,100 @@ class Account
     );
     expect(constructorText).toContain("$this->name = $name;");
     expect(constructorText).toContain("$this->balance = $balance;");
+  });
+
+  it("offers both classic and promoted constructor actions for a class with properties and no constructor", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    private int $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const classicAction = actions.find(
+      (action) => action.title === "Generate constructor",
+    );
+    expect(classicAction).toBeDefined();
+
+    const promotedAction = actions.find(
+      (action) => action.title === "Generate constructor with promotion",
+    );
+    expect(promotedAction).toBeDefined();
+    const promotedText = promotedAction?.edits[0]?.text ?? "";
+    expect(promotedText).toContain("private string $name,");
+    expect(promotedText).toContain("private int $balance,");
+    // Promotion keeps the body empty (no `$this->` assignments).
+    expect(promotedText).not.toContain("$this->name = $name;");
+  });
+
+  it("offers no promoted constructor action when the class already has a constructor", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    public function __construct(string $name)
+    {
+        $this->name = $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(
+      actions.some(
+        (action) => action.title === "Generate constructor with promotion",
+      ),
+    ).toBe(false);
   });
 
   it("offers no generate constructor action when the class already has a constructor", async () => {
