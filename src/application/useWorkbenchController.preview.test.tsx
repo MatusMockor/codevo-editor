@@ -8,6 +8,7 @@ import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { emptyGitStatus, gitChangeKey, type GitGateway } from "../domain/git";
 import { callHierarchyRows } from "../domain/callHierarchy";
 import { typeHierarchyRows } from "../domain/typeHierarchy";
+import { referenceRows } from "../domain/referencesView";
 import {
   useWorkbenchController,
   type WorkbenchWorkspaceGateways,
@@ -13085,6 +13086,230 @@ describe("useWorkbenchController preview tabs", () => {
         lineNumber: 10,
       },
     });
+  });
+
+  it("aggregates PHP references into the panel and navigates a clicked row", async () => {
+    const path = "/workspace/app/Services/UserService.php";
+    const callerPath = "/workspace/app/Http/Controllers/UserController.php";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        references: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 220,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.references).mockResolvedValue([
+      {
+        uri: fileUriFromPath(path),
+        range: range(6, 20, 6, 28),
+      },
+      {
+        uri: fileUriFromPath(callerPath),
+        range: range(9, 15, 9, 23),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === callerPath) {
+          return "<?php\n\n$user = $service->loadUser();\n";
+        }
+
+        return "<?php\n\nclass UserService\n{\n    public function loadUser(): string\n    {\n        return 'Ada';\n    }\n}\n";
+      }),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 5,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.findReferences",
+    );
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(languageServerFeaturesGateway.references).toHaveBeenCalledWith(
+      "/workspace",
+      {
+        character: 24,
+        line: 4,
+        path,
+      },
+    );
+    expect(getWorkbench().referencesView?.symbol).toBe("loadUser");
+    expect(getWorkbench().referencesView?.locations).toHaveLength(2);
+
+    const rows = referenceRows(getWorkbench().referencesView!, "/workspace");
+    const callerRow = rows.find((row) => row.path === callerPath);
+    expect(callerRow).toBeDefined();
+
+    await act(async () => {
+      await getWorkbench().openReferenceRow(callerRow!);
+    });
+
+    expect(getWorkbench().referencesView).toBeNull();
+    expect(getWorkbench().activePath).toBe(callerPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: callerPath,
+      position: {
+        column: 16,
+        lineNumber: 10,
+      },
+    });
+  });
+
+  it("shows an empty PHP references panel when the symbol has no references", async () => {
+    const path = "/workspace/app/Services/UserService.php";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        references: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 221,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.references).mockResolvedValue([]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(
+        async () =>
+          "<?php\n\nclass UserService\n{\n    public function loadUser(): string\n    {\n        return 'Ada';\n    }\n}\n",
+      ),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 5,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.findReferences")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().referencesView?.symbol).toBe("loadUser");
+    expect(getWorkbench().referencesView?.locations).toHaveLength(0);
+  });
+
+  it("drops stale PHP references results after switching project tabs", async () => {
+    const path = "/workspace-a/app/Services/UserService.php";
+    const references =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        references: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 222,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.references).mockImplementationOnce(
+      async () => references.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass UserService {}\n"),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.findReferences")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await flushAsyncTurns(4);
+
+    expect(languageServerFeaturesGateway.references).toHaveBeenCalledWith(
+      "/workspace-a",
+      {
+        character: 24,
+        line: 0,
+        path,
+      },
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    references.resolve([
+      {
+        uri: fileUriFromPath(path),
+        range: range(0, 6, 0, 17),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().referencesView).toBeNull();
   });
 
   it("keeps PHP call hierarchy open for rows from inactive project tabs", async () => {

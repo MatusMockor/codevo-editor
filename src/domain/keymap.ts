@@ -43,6 +43,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Shift+F12",
+    id: "editor.findReferences",
+    label: "Find All References",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+R",
     id: "editor.fileStructure",
     label: "File Structure",

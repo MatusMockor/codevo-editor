@@ -33,6 +33,7 @@ import { QuickOpen } from "./components/QuickOpen";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
+import { ReferencesPanel } from "./components/ReferencesPanel";
 import { TodoPanel } from "./components/TodoPanel";
 import { TypeHierarchy } from "./components/TypeHierarchy";
 import { WindowChrome } from "./components/WindowChrome";
@@ -983,6 +984,14 @@ function App() {
         onClose={workbench.closeTypeHierarchy}
         onOpen={workbench.openTypeHierarchyRow}
         view={workbench.typeHierarchyView}
+      />
+
+      <ReferencesPanel
+        isOpen={Boolean(workbench.referencesView)}
+        onClose={workbench.closeReferencesPanel}
+        onOpen={workbench.openReferenceRow}
+        view={workbench.referencesView}
+        workspaceRoot={workbench.workspaceRoot}
       />
 
       <TodoPanel

@@ -45,6 +45,21 @@ describe("keymap", () => {
     );
   });
 
+  it("defaults find all references to Shift+F12 on every platform", () => {
+    expect(defaultShortcutForCommand("editor.findReferences", "mac")).toBe(
+      "Shift+F12",
+    );
+    expect(defaultShortcutForCommand("editor.findReferences", "linux")).toBe(
+      "Shift+F12",
+    );
+    expect(defaultShortcutForCommand("editor.findReferences", "windows")).toBe(
+      "Shift+F12",
+    );
+    expect(defaultKeymapSettings("mac")["editor.findReferences"]).toBe(
+      "Shift+F12",
+    );
+  });
+
   it("defaults the format document shortcut to Shift+Alt+F on every platform", () => {
     expect(defaultShortcutForCommand("editor.formatDocument", "mac")).toBe(
       "Shift+Alt+F",
