@@ -4846,6 +4846,15 @@ export function useWorkbenchController(
       const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
       const shouldRecordNavigation = options.recordNavigation !== false;
       const shouldPin = options.pin === true;
+      const readTextFileForEmptyDocumentRefresh = async (
+        targetPath: string,
+      ): Promise<string | null> => {
+        try {
+          return await workspaceFiles.readTextFile(targetPath);
+        } catch {
+          return null;
+        }
+      };
       const belongsToInactiveWorkspaceTab = appSettingsRef.current.workspaceTabs.some(
         (tabPath) =>
           !workspaceRootKeysEqual(tabPath, requestedRoot) &&
@@ -4857,9 +4866,62 @@ export function useWorkbenchController(
       }
 
       if (documents[entry.path]) {
-        if (options.readOnly === true && !documents[entry.path].readOnly) {
+        const openedDocument = documents[entry.path];
+        const hasEmptySavedContentWithoutUnsavedEdits =
+          openedDocument.savedContent === "" && openedDocument.content === "";
+
+        const refreshedContent = hasEmptySavedContentWithoutUnsavedEdits
+          ? await readTextFileForEmptyDocumentRefresh(entry.path)
+          : null;
+
+        if (refreshedContent !== null) {
+          const requestStillActive =
+            openFileRequestTokenRef.current === requestToken &&
+            (requestedRoot === null ||
+              workspaceRootKeysEqual(
+                currentWorkspaceRootRef.current,
+                requestedRoot,
+              ));
+
+          if (!requestStillActive) {
+            return false;
+          }
+
+          const stillEmptyAndUnedited =
+            documentsRef.current[entry.path]?.savedContent === "" &&
+            documentsRef.current[entry.path]?.content === "";
+
+          if (refreshedContent !== "" && stillEmptyAndUnedited) {
+            const refreshedDocument: EditorDocument = {
+              ...documentsRef.current[entry.path],
+              content: refreshedContent,
+              savedContent: refreshedContent,
+            };
+            activeDocumentRef.current =
+              activeDocumentRef.current?.path === entry.path
+                ? refreshedDocument
+                : activeDocumentRef.current;
+            documentsRef.current = {
+              ...documentsRef.current,
+              [entry.path]: refreshedDocument,
+            };
+            setDocuments((current) => ({
+              ...current,
+              [entry.path]: {
+                ...(current[entry.path] ?? refreshedDocument),
+                content: refreshedContent,
+                savedContent: refreshedContent,
+              },
+            }));
+          }
+        }
+
+        const documentToMakeReadOnly =
+          documentsRef.current[entry.path] ?? documents[entry.path];
+
+        if (options.readOnly === true && !documentToMakeReadOnly.readOnly) {
           const readOnlyDocument = {
-            ...documents[entry.path],
+            ...documentToMakeReadOnly,
             readOnly: true,
           };
           activeDocumentRef.current =
@@ -4873,7 +4935,7 @@ export function useWorkbenchController(
           setDocuments((current) => ({
             ...current,
             [entry.path]: {
-              ...(current[entry.path] ?? documents[entry.path]),
+              ...(current[entry.path] ?? readOnlyDocument),
               readOnly: true,
             },
           }));

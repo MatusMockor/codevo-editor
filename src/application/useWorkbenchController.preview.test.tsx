@@ -1905,6 +1905,224 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().isOpeningFile).toBe(false);
   });
 
+  it("re-reads disk when re-opening a document whose saved content is empty", async () => {
+    const path = "/workspace/src/User.php";
+    const contentsByPath: Record<string, string> = {
+      [path]: "",
+    };
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toBe("");
+    expect(getWorkbench().activeDocument?.savedContent).toBe("");
+
+    contentsByPath[path] = "<?php\nclass User {}\n";
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\nclass User {}\n",
+    );
+    expect(getWorkbench().activeDocument?.savedContent).toBe(
+      "<?php\nclass User {}\n",
+    );
+  });
+
+  it("keeps unsaved edits when re-opening a document with an empty saved content", async () => {
+    const path = "/workspace/src/Draft.php";
+    const contentsByPath: Record<string, string> = {
+      [path]: "",
+    };
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "Draft.php",
+        path,
+        relativePath: "src/Draft.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      getWorkbench().updateActiveDocument("<?php\n// work in progress\n");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\n// work in progress\n",
+    );
+
+    readTextFile.mockClear();
+    contentsByPath[path] = "<?php\n// disk would overwrite\n";
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "Draft.php",
+        path,
+        relativePath: "src/Draft.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(readTextFile).not.toHaveBeenCalled();
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\n// work in progress\n",
+    );
+  });
+
+  it("drops an empty-document re-read after switching project tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const read = createDeferred<string>();
+    const contentsByPath: Record<string, string> = {
+      [path]: "",
+    };
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath !== path) {
+        return `<?php\n// ${requestedPath}\n`;
+      }
+
+      if (contentsByPath[path] === "") {
+        return "";
+      }
+
+      return read.promise;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    contentsByPath[path] = "<?php\nclass User {}\n";
+
+    let reopen: Promise<void> = Promise.resolve();
+    await act(async () => {
+      reopen = getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      read.resolve("<?php\nclass User {}\n");
+      await reopen;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activeDocument?.path).not.toBe(path);
+  });
+
+  it("keeps an empty document open when the re-read fails", async () => {
+    const path = "/workspace/src/User.php";
+    let failNextRead = false;
+    const readTextFile = vi.fn(async () => {
+      if (failNextRead) {
+        throw new Error("EBUSY: file is locked");
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    failNextRead = true;
+
+    let opened: boolean | undefined;
+    await act(async () => {
+      opened = await getWorkbench().openFile({
+        kind: "file",
+        name: "User.php",
+        path,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(opened).toBe(true);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+  });
+
   it("cancels pending file opens while closing the active project tab", async () => {
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
