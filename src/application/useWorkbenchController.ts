@@ -1515,6 +1515,86 @@ export function useWorkbenchController(
     [clearJavaScriptTypeScriptLanguageServerDiagnostics],
   );
 
+  const clearLanguageServerDiagnosticsForPath = useCallback(
+    (rootPath: string | null | undefined, diagnosticPath: string) => {
+      const rootKey = normalizedWorkspaceRootKey(rootPath);
+      const isActiveRoot = workspaceRootKeysEqual(
+        currentWorkspaceRootRef.current,
+        rootPath,
+      );
+
+      const removePathFromRootCache = (
+        cache: Record<string, Record<string, LanguageServerDiagnostic[]>>,
+      ) => {
+        const currentByPath = rootKey ? cache[rootKey] : undefined;
+
+        if (!currentByPath || !(diagnosticPath in currentByPath)) {
+          return false;
+        }
+
+        const nextByPath = { ...currentByPath };
+        delete nextByPath[diagnosticPath];
+
+        if (Object.keys(nextByPath).length === 0) {
+          delete cache[rootKey];
+          return true;
+        }
+
+        cache[rootKey] = nextByPath;
+        return true;
+      };
+
+      const phpChanged = removePathFromRootCache(
+        languageServerDiagnosticsByRootRef.current,
+      );
+      const javaScriptTypeScriptChanged = removePathFromRootCache(
+        javaScriptTypeScriptDiagnosticsByRootRef.current,
+      );
+
+      if (!isActiveRoot) {
+        return;
+      }
+
+      if (phpChanged) {
+        setLanguageServerDiagnosticsByPath((current) => {
+          if (!(diagnosticPath in current)) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[diagnosticPath];
+          return next;
+        });
+      }
+
+      if (javaScriptTypeScriptChanged) {
+        setJavaScriptTypeScriptDiagnosticsByPath((current) => {
+          if (!(diagnosticPath in current)) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[diagnosticPath];
+          return next;
+        });
+      }
+
+      const uri = fileUriFromPath(diagnosticPath);
+      const phpGroupKey = languageServerDiagnosticNoticeGroup(uri);
+      const javaScriptTypeScriptGroupKey =
+        javaScriptTypeScriptDiagnosticNoticeGroup(uri);
+
+      setNotices((current) =>
+        current.filter(
+          (notice) =>
+            notice.groupKey !== phpGroupKey &&
+            notice.groupKey !== javaScriptTypeScriptGroupKey,
+        ),
+      );
+    },
+    [],
+  );
+
   const isLanguageServerSessionCurrentForRoot = useCallback(
     (rootPath: string, sessionId: number) => {
       const currentRuntimeStatus =
@@ -18909,10 +18989,11 @@ export function useWorkbenchController(
     }
 
     const parentPath = getParentPath(activeDocument.path);
+    const deletedPath = activeDocument.path;
 
     try {
-      await workspaceFiles.deletePath(activeDocument.path);
-      filePrefetchCacheRef.current.invalidate(activeDocument.path);
+      await workspaceFiles.deletePath(deletedPath);
+      filePrefetchCacheRef.current.invalidate(deletedPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -18923,14 +19004,15 @@ export function useWorkbenchController(
       await notifyJavaScriptTypeScriptWatchedFilesChanged([
         {
           changeType: "deleted",
-          path: activeDocument.path,
+          path: deletedPath,
         },
       ]);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
-      closeDocument(activeDocument.path);
+      closeDocument(deletedPath);
+      clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
       await refreshDirectory(parentPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
@@ -18942,6 +19024,7 @@ export function useWorkbenchController(
     }
   }, [
     activeDocument,
+    clearLanguageServerDiagnosticsForPath,
     closeActiveSurface,
     closeDocument,
     notifyJavaScriptTypeScriptWatchedFilesChanged,

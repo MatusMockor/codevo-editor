@@ -2518,6 +2518,283 @@ describe("useWorkbenchController preview tabs", () => {
     });
   });
 
+  it("clears diagnostics for a deleted PHP document and sends didClose", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 701,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Undefined variable",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 701,
+        uri: fileUriFromPath(path),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(
+      path,
+    );
+    expect(
+      dependencies.languageServerDocumentSyncGateway.didClose,
+    ).toHaveBeenCalledWith("/workspace", path);
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
+  it("clears diagnostics for a deleted TypeScript document and sends didClose", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 702,
+    };
+    const path = "/workspace/src/User.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "export class User {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Type mismatch",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 702,
+        uri: fileUriFromPath(path),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(
+      path,
+    );
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      path,
+    );
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
+  it("does not clear another project tab's cached diagnostics when deleting a file in the active tab", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 801)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, 801)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const activePath = "/workspace-a/app/Models/User.php";
+    const inactivePath = "/workspace-b/app/Models/Post.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(activePath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-b", 802));
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Active error",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 801,
+        uri: fileUriFromPath(activePath),
+        version: null,
+      });
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Background error",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-b",
+        sessionId: 802,
+        uri: fileUriFromPath(inactivePath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[activePath],
+    ).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[inactivePath],
+    ).toHaveLength(1);
+  });
+
   it("navigates next and previous through active workspace problems with wrap-around", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)
