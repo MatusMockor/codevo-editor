@@ -57,6 +57,7 @@ import {
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
+import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import type {
   FileEntry,
   FileSearchResult,
@@ -44924,6 +44925,152 @@ class Greeter
     expect(getWorkbench().workspaceTodos).toEqual([]);
   });
 
+  it("closes the tab, clears diagnostics and refreshes the tree on an external delete", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const readDirectory = vi.fn(async () => []);
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    readDirectory.mockClear();
+    expect(publishFileChange).not.toBeNull();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "deleted",
+        path: "/workspace/src/User.php",
+        relativePath: "src/User.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    await flushWorkspaceDirectoryRefresh();
+
+    expect(getWorkbench().openDocuments).toHaveLength(0);
+    expect(readDirectory).toHaveBeenCalledWith("/workspace/src");
+  });
+
+  it("ignores external file changes from a workspace that is not active", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const readDirectory = vi.fn(async () => []);
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    readDirectory.mockClear();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "deleted",
+        path: "/other/src/User.php",
+        relativePath: "src/User.php",
+        rootPath: "/other",
+      });
+      await flushAsyncTurns();
+    });
+
+    // The tab for the active workspace must stay open and the active tree must
+    // not be refreshed for an inactive workspace's change.
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+    expect(readDirectory).not.toHaveBeenCalled();
+  });
+
+  it("closes the tab for the previous path on an external rename", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const readDirectory = vi.fn(async () => []);
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    readDirectory.mockClear();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "renamed",
+        path: "/workspace/src/Account.php",
+        previousPath: "/workspace/src/User.php",
+        previousRelativePath: "src/User.php",
+        relativePath: "src/Account.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    await flushWorkspaceDirectoryRefresh();
+
+    expect(getWorkbench().openDocuments).toHaveLength(0);
+    expect(readDirectory).toHaveBeenCalledWith("/workspace/src");
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,
@@ -44950,6 +45097,7 @@ class Greeter
     smartModeGateway,
     workspaceDetectionGateway,
     workspaceDescriptor,
+    workspaceFileChangeGateway,
     workspaceRuntimeLifecycleGateway,
     workspaceSettings = defaultWorkspaceSettings(),
     workspaceTrustGateway,
@@ -44987,6 +45135,7 @@ class Greeter
     smartModeGateway?: SmartModeGateway;
     workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
     workspaceDescriptor?: WorkspaceDescriptor;
+    workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
     workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
     workspaceTrustGateway?: WorkspaceTrustGateway;
@@ -45018,6 +45167,7 @@ class Greeter
       smartModeGateway,
       workspaceDetectionGateway,
       workspaceDescriptor,
+      workspaceFileChangeGateway,
       workspaceRuntimeLifecycleGateway,
       workspaceSettings,
       workspaceTrustGateway,
@@ -45108,6 +45258,7 @@ function createControllerDependencies({
   smartModeGateway,
   workspaceDetectionGateway,
   workspaceDescriptor,
+  workspaceFileChangeGateway,
   workspaceRuntimeLifecycleGateway,
   workspaceSettings,
   workspaceTrustGateway,
@@ -45145,6 +45296,7 @@ function createControllerDependencies({
   smartModeGateway?: SmartModeGateway;
   workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
   workspaceDescriptor?: WorkspaceDescriptor;
+  workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
   workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
   workspaceTrustGateway?: WorkspaceTrustGateway;
@@ -45164,6 +45316,11 @@ function createControllerDependencies({
           php: workspaceDescriptor?.php ?? null,
           rootPath: path,
         })),
+      },
+    fileChanges:
+      workspaceFileChangeGateway ?? {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async () => () => undefined),
       },
     fileSearch: {
       searchFiles,
@@ -45463,6 +45620,15 @@ async function flushAsyncTurns(count = 12): Promise<void> {
       await Promise.resolve();
     }
   });
+}
+
+async function flushWorkspaceDirectoryRefresh(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 150);
+    });
+  });
+  await flushAsyncTurns();
 }
 
 async function flushFilePrefetch(): Promise<void> {

@@ -2,6 +2,7 @@ use crate::job_scheduler::WorkspaceIndexLifecycle;
 use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
 use crate::lsp_session::{JavaScriptTypeScriptLanguageServerRegistry, PhpLanguageServerRegistry};
 use crate::terminal_session::TerminalSupervisor;
+use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use std::{
     ffi::OsString,
     path::{Component, Path, PathBuf},
@@ -27,6 +28,7 @@ pub struct WorkspaceRuntimeDisposal<'a> {
     pub index_lifecycle: &'a dyn WorkspaceIndexLifecycleDisposer,
     pub javascript_typescript_language_servers: &'a dyn LanguageServerDisposer,
     pub javascript_typescript_watch_registry: &'a dyn WorkspaceWatchDisposer,
+    pub workspace_file_change_watch_registry: &'a dyn WorkspaceWatchDisposer,
     pub php_language_servers: &'a dyn LanguageServerDisposer,
     pub terminal_sessions: &'a dyn TerminalSessionDisposer,
 }
@@ -42,6 +44,9 @@ pub fn dispose_workspace_root(
         .cancel_workspace_index_lifecycle(&root_key);
     runtime
         .javascript_typescript_watch_registry
+        .stop_workspace_watch(&root_key);
+    runtime
+        .workspace_file_change_watch_registry
         .stop_workspace_watch(&root_key);
     runtime
         .javascript_typescript_language_servers
@@ -118,6 +123,12 @@ impl WorkspaceWatchDisposer for JavaScriptTypeScriptWorkspaceWatchRegistry {
     }
 }
 
+impl WorkspaceWatchDisposer for WorkspaceFileChangeWatchRegistry {
+    fn stop_workspace_watch(&self, root_path: &str) {
+        self.stop(root_path);
+    }
+}
+
 impl LanguageServerDisposer for JavaScriptTypeScriptLanguageServerRegistry {
     fn stop_language_server(&self, root_path: &str) {
         self.stop(root_path);
@@ -159,6 +170,8 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let index = RecordingRootDisposer::new("index", [&root_a_key, &root_b_key], &calls);
         let watch = RecordingRootDisposer::new("watch", [&root_a_key, &root_b_key], &calls);
+        let file_watch =
+            RecordingRootDisposer::new("file-watch", [&root_a_key, &root_b_key], &calls);
         let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_a_key, &root_b_key], &calls);
         let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_a_key, &root_b_key], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&root_a, &root_b], &calls);
@@ -169,6 +182,7 @@ mod tests {
                 index_lifecycle: &index,
                 javascript_typescript_language_servers: &js_lsp,
                 javascript_typescript_watch_registry: &watch,
+                workspace_file_change_watch_registry: &file_watch,
                 php_language_servers: &php_lsp,
                 terminal_sessions: &terminals,
             },
@@ -179,6 +193,8 @@ mod tests {
         assert!(index.contains(&root_b_key));
         assert!(!watch.contains(&root_a_key));
         assert!(watch.contains(&root_b_key));
+        assert!(!file_watch.contains(&root_a_key));
+        assert!(file_watch.contains(&root_b_key));
         assert!(!js_lsp.contains(&root_a_key));
         assert!(js_lsp.contains(&root_b_key));
         assert!(!php_lsp.contains(&root_a_key));
@@ -190,6 +206,7 @@ mod tests {
             &[
                 "index:/workspace-a",
                 "watch:/workspace-a",
+                "file-watch:/workspace-a",
                 "js-lsp:/workspace-a",
                 "php-lsp:/workspace-a",
                 "terminal:/workspace-a",
@@ -204,6 +221,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let index = RecordingRootDisposer::new("index", [&root_key], &calls);
         let watch = RecordingRootDisposer::new("watch", [&root_key], &calls);
+        let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
         let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
         let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
         let terminals =
@@ -215,6 +233,7 @@ mod tests {
                 index_lifecycle: &index,
                 javascript_typescript_language_servers: &js_lsp,
                 javascript_typescript_watch_registry: &watch,
+                workspace_file_change_watch_registry: &file_watch,
                 php_language_servers: &php_lsp,
                 terminal_sessions: &terminals,
             },
@@ -224,6 +243,7 @@ mod tests {
         assert_eq!(error, "terminal lock failed");
         assert!(!index.contains(&root_key));
         assert!(!watch.contains(&root_key));
+        assert!(!file_watch.contains(&root_key));
         assert!(!js_lsp.contains(&root_key));
         assert!(!php_lsp.contains(&root_key));
     }
@@ -235,6 +255,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let index = RecordingRootDisposer::new("index", [&root_key], &calls);
         let watch = RecordingRootDisposer::new("watch", [&root_key], &calls);
+        let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
         let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
         let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&root], &calls);
@@ -245,6 +266,7 @@ mod tests {
                 index_lifecycle: &index,
                 javascript_typescript_language_servers: &js_lsp,
                 javascript_typescript_watch_registry: &watch,
+                workspace_file_change_watch_registry: &file_watch,
                 php_language_servers: &php_lsp,
                 terminal_sessions: &terminals,
             },
@@ -256,6 +278,7 @@ mod tests {
             &[
                 "index:/missing-workspace",
                 "watch:/missing-workspace",
+                "file-watch:/missing-workspace",
                 "js-lsp:/missing-workspace",
                 "php-lsp:/missing-workspace",
                 "terminal:/missing-workspace",
@@ -279,6 +302,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let index = RecordingRootDisposer::new("index", [&root_key], &calls);
         let watch = RecordingRootDisposer::new("watch", [&root_key], &calls);
+        let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
         let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
         let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&alias_root], &calls);
@@ -291,6 +315,7 @@ mod tests {
                 index_lifecycle: &index,
                 javascript_typescript_language_servers: &js_lsp,
                 javascript_typescript_watch_registry: &watch,
+                workspace_file_change_watch_registry: &file_watch,
                 php_language_servers: &php_lsp,
                 terminal_sessions: &terminals,
             },
@@ -299,6 +324,7 @@ mod tests {
 
         assert!(!index.contains(&root_key));
         assert!(!watch.contains(&root_key));
+        assert!(!file_watch.contains(&root_key));
         assert!(!js_lsp.contains(&root_key));
         assert!(!php_lsp.contains(&root_key));
         assert!(!terminals.contains(&alias_root));
@@ -307,6 +333,7 @@ mod tests {
             &[
                 format!("index:{root_key}"),
                 format!("watch:{root_key}"),
+                format!("file-watch:{root_key}"),
                 format!("js-lsp:{root_key}"),
                 format!("php-lsp:{root_key}"),
                 format!("terminal:{}", alias_root.to_string_lossy()),

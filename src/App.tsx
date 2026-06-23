@@ -91,6 +91,7 @@ import {
   TauriLanguageServerWorkspaceEditGateway,
 } from "./infrastructure/tauriLanguageServerWorkspaceEditGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
+import { TauriWorkspaceFileChangeGateway } from "./infrastructure/tauriWorkspaceFileChangeGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
 import { TauriGitGateway } from "./infrastructure/tauriGitGateway";
@@ -106,8 +107,10 @@ import "./App.css";
 
 const workspaceGateway = new TauriWorkspaceGateway();
 const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
+const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
 const workspaceGateways = {
   detection: workspaceGateway,
+  fileChanges: workspaceFileChangeGateway,
   fileSearch: workspaceGateway,
   files: workspaceGateway,
   phpTools: workspaceGateway,

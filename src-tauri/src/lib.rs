@@ -28,6 +28,7 @@ mod terminal_session;
 mod tools;
 mod trust;
 mod workspace;
+pub mod workspace_file_watcher;
 mod workspace_runtime;
 
 use git::{
@@ -47,6 +48,7 @@ use index_scan::{
 };
 use job_scheduler::WorkspaceIndexLifecycle;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
+use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use lsp::{
     file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
@@ -198,6 +200,10 @@ fn shutdown_runtime_processes(app: &AppHandle) {
         watch_registry.stop_all();
     }
 
+    if let Some(watch_registry) = app.try_state::<WorkspaceFileChangeWatchRegistry>() {
+        watch_registry.stop_all();
+    }
+
     if let Some(registry) = app.try_state::<PhpLanguageServerRegistry>() {
         let _ = registry.stop_all();
     }
@@ -241,6 +247,7 @@ fn dispose_workspace_root(
     index_lifecycle: State<'_, WorkspaceIndexLifecycle>,
     javascript_typescript_language_servers: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     javascript_typescript_watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+    workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
     php_language_servers: State<'_, PhpLanguageServerRegistry>,
     terminal_sessions: State<'_, TerminalSupervisor>,
 ) -> Result<(), String> {
@@ -252,6 +259,7 @@ fn dispose_workspace_root(
             index_lifecycle: &*index_lifecycle,
             javascript_typescript_language_servers: &*javascript_typescript_language_servers,
             javascript_typescript_watch_registry: &*javascript_typescript_watch_registry,
+            workspace_file_change_watch_registry: &*workspace_file_change_watch_registry,
             php_language_servers: &*php_language_servers,
             terminal_sessions: &*terminal_sessions,
         },
@@ -324,6 +332,16 @@ fn initialize_workspace_index(
     let root = canonicalize_workspace_root(&root_path)?;
     let index = open_workspace_index(&app, &root)?;
     index.summary().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn start_workspace_file_watch(
+    root_path: String,
+    app: AppHandle,
+    workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
+) -> Result<(), String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    workspace_file_change_watch_registry.start(&root.to_string_lossy(), app)
 }
 
 #[tauri::command]
@@ -5091,6 +5109,7 @@ pub fn run() {
         .manage(PhpLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
+        .manage(WorkspaceFileChangeWatchRegistry::new())
         .manage(WorkspaceIndexLifecycle::new())
         .manage(TerminalSupervisor::new())
         .plugin(tauri_plugin_dialog::init())
@@ -5121,6 +5140,7 @@ pub fn run() {
             get_smart_mode_state,
             get_workspace_trust,
             initialize_workspace_index,
+            start_workspace_file_watch,
             list_terminal_profiles,
             open_javascript_typescript_language_server_log,
             parse_php_file_outline,

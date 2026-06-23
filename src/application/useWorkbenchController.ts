@@ -152,6 +152,11 @@ import {
   removeCachedLanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntimeStatusCache";
 import { isJavaScriptTypeScriptWatchedPath } from "../domain/javascriptTypeScriptWatchedFiles";
+import type {
+  WorkspaceFileChangeEvent,
+  WorkspaceFileChangeGateway,
+  WorkspaceFileChangeUnsubscribeFn,
+} from "../domain/workspaceFileChange";
 import {
   normalizedWorkspaceRootKey,
   workspaceRootKeysEqual,
@@ -473,6 +478,7 @@ import {
 
 export interface WorkbenchWorkspaceGateways {
   detection: WorkspaceDetectionGateway;
+  fileChanges: WorkspaceFileChangeGateway;
   fileSearch: FileSearchGateway;
   files: WorkspaceFileGateway;
   phpTools: PhpToolGateway;
@@ -521,6 +527,11 @@ interface PhpLaravelTargetCacheBucket {
 // by workspace root and reset on workspace switch and on index reindex so it
 // can never leak across project tabs or serve stale targets after a reindex.
 const PHP_LARAVEL_TARGET_CACHE_TTL_MS = 30_000;
+
+// Coalescing window for directory reloads triggered by external filesystem
+// changes so a burst (e.g. `git checkout`) reloads each affected directory
+// once instead of thrashing the tree on every event.
+const WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS = 120;
 
 interface PhpClassMemberReadResult {
   content: string;
@@ -768,6 +779,7 @@ export function useWorkbenchController(
 ) {
   const {
     detection: workspaceDetection,
+    fileChanges: workspaceFileChangeGateway,
     fileSearch,
     files: workspaceFiles,
     phpTools: phpToolGateway,
@@ -1071,6 +1083,10 @@ export function useWorkbenchController(
   >({});
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const documentsRef = useRef<Record<string, EditorDocument>>({});
+  const pendingWorkspaceDirectoryRefreshesRef = useRef<Set<string>>(new Set());
+  const workspaceDirectoryRefreshTimerRef = useRef<
+    ReturnType<typeof setTimeout> | null
+  >(null);
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
   const activeEditorPositionRef = useRef<EditorPosition | null>(null);
@@ -19419,6 +19435,92 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  // External filesystem changes (delete / rename / create performed outside the
+  // editor) arrive in bursts — e.g. a `git checkout` rewrites many files at
+  // once. Coalesce the resulting directory reloads behind a short timer and
+  // re-check the active root before every reload so a workspace switch
+  // mid-burst can never refresh another project's tree.
+  const flushPendingWorkspaceDirectoryRefreshes = useCallback(() => {
+    workspaceDirectoryRefreshTimerRef.current = null;
+    const directories = Array.from(
+      pendingWorkspaceDirectoryRefreshesRef.current,
+    );
+    pendingWorkspaceDirectoryRefreshesRef.current = new Set();
+
+    directories.forEach((directory) => {
+      if (
+        !workspacePathBelongsToRoot(directory, currentWorkspaceRootRef.current)
+      ) {
+        return;
+      }
+
+      void refreshDirectory(directory);
+    });
+  }, [refreshDirectory]);
+
+  const queueWorkspaceDirectoryRefresh = useCallback(
+    (directory: string) => {
+      pendingWorkspaceDirectoryRefreshesRef.current.add(directory);
+
+      if (workspaceDirectoryRefreshTimerRef.current) {
+        return;
+      }
+
+      workspaceDirectoryRefreshTimerRef.current = setTimeout(() => {
+        flushPendingWorkspaceDirectoryRefreshes();
+      }, WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS);
+    },
+    [flushPendingWorkspaceDirectoryRefreshes],
+  );
+
+  const handleExternalRemovedPath = useCallback(
+    (requestedRoot: string, removedPath: string) => {
+      closeDocument(removedPath);
+      clearLanguageServerDiagnosticsForPath(requestedRoot, removedPath);
+      filePrefetchCacheRef.current.invalidate(removedPath);
+      queueWorkspaceDirectoryRefresh(getParentPath(removedPath));
+    },
+    [
+      clearLanguageServerDiagnosticsForPath,
+      closeDocument,
+      queueWorkspaceDirectoryRefresh,
+    ],
+  );
+
+  const handleWorkspaceFileChange = useCallback(
+    (event: WorkspaceFileChangeEvent) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      // Per-workspace isolation: never apply a change reported for a workspace
+      // other than the one currently active in this tab.
+      if (
+        !requestedRoot ||
+        !workspaceRootKeysEqual(requestedRoot, event.rootPath)
+      ) {
+        return;
+      }
+
+      if (event.kind === "deleted") {
+        handleExternalRemovedPath(requestedRoot, event.path);
+        return;
+      }
+
+      if (event.kind === "renamed") {
+        if (event.previousPath) {
+          handleExternalRemovedPath(requestedRoot, event.previousPath);
+        }
+
+        queueWorkspaceDirectoryRefresh(getParentPath(event.path));
+        return;
+      }
+
+      if (event.kind === "created" || event.kind === "modified") {
+        queueWorkspaceDirectoryRefresh(getParentPath(event.path));
+      }
+    },
+    [handleExternalRemovedPath, queueWorkspaceDirectoryRefresh],
+  );
+
   const toggleSmartMode = useCallback(async () => {
     const nextMode = shouldStartLanguageServer(intelligenceMode)
       ? "basic"
@@ -22369,6 +22471,84 @@ export function useWorkbenchController(
       unsubscribe?.();
     };
   }, [handleMetadataScanCompletion, indexProgressGateway, reportError, workspaceRoot]);
+
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: WorkspaceFileChangeUnsubscribeFn | null = null;
+    const subscriptionRoot = workspaceRoot;
+
+    if (!subscriptionRoot) {
+      return () => {
+        active = false;
+      };
+    }
+
+    void workspaceFileChangeGateway
+      .startWatching(subscriptionRoot)
+      .catch((error) => {
+        if (
+          !active ||
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            subscriptionRoot,
+          )
+        ) {
+          return;
+        }
+
+        reportError("Workspace", error);
+      });
+
+    workspaceFileChangeGateway
+      .subscribeFileChanges((event) => {
+        if (!active) {
+          return;
+        }
+
+        handleWorkspaceFileChange(event);
+      })
+      .then((dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+
+        unsubscribe = dispose;
+      })
+      .catch((error) => {
+        if (
+          !active ||
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            subscriptionRoot,
+          )
+        ) {
+          return;
+        }
+
+        reportError("Workspace", error);
+      });
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [
+    handleWorkspaceFileChange,
+    reportError,
+    workspaceFileChangeGateway,
+    workspaceRoot,
+  ]);
+
+  useEffect(
+    () => () => {
+      if (workspaceDirectoryRefreshTimerRef.current) {
+        clearTimeout(workspaceDirectoryRefreshTimerRef.current);
+        workspaceDirectoryRefreshTimerRef.current = null;
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
