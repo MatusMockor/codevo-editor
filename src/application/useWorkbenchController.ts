@@ -414,6 +414,7 @@ import { planExtractVariable } from "../domain/phpExtractVariable";
 import { organizePhpImports } from "../domain/phpImportsOrganizer";
 import {
   renderImplementMethodsStubs,
+  renderOverrideMethodsStubs,
   renderUseImports,
 } from "../domain/phpCodeGen";
 import {
@@ -14962,6 +14963,123 @@ export function useWorkbenchController(
     [readNavigationFileContent, resolvePhpClassSourcePaths],
   );
 
+  // Walks the PARENT CLASS CHAIN of `source` (the `extends` target, then its
+  // own parent, …) collecting the concrete methods that the current class may
+  // override (PhpStorm "Override Methods"). A method is overridable when it is
+  // non-abstract, non-final, non-private and not the constructor. The nearest
+  // declaration of a given name wins, so once a name is seen it is not re-added
+  // from a more-distant ancestor (matching real override resolution); a name
+  // declared `final` / `private` / `abstract` anywhere in the chain is recorded
+  // so deeper ancestors cannot resurface it. Per-workspace isolation: the
+  // caller's `isRequestedRootActive` guard is re-checked after EVERY await and
+  // the walk is abandoned (returns `null`) the moment the requested root is no
+  // longer active, so stale cross-file results never leak into another tab.
+  const collectPhpOverridableParentMethods = useCallback(
+    async (
+      source: string,
+      isRequestedRootActive: () => boolean,
+    ): Promise<Map<string, AbstractMemberToImplement> | null> => {
+      const overridableMembers = new Map<string, AbstractMemberToImplement>();
+      const seenMemberNames = new Set<string>();
+      const visitedClassNames = new Set<string>();
+
+      const collectParent = async (
+        ownerSource: string,
+        reference: string,
+      ): Promise<boolean> => {
+        const resolvedClassName = resolvePhpClassName(ownerSource, reference);
+
+        if (!resolvedClassName) {
+          return true;
+        }
+
+        const normalizedClassName = resolvedClassName
+          .trim()
+          .replace(/^\\+/, "");
+        const visitedKey = normalizedClassName.toLowerCase();
+
+        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+          return true;
+        }
+
+        visitedClassNames.add(visitedKey);
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        for (const path of await resolvePhpClassSourcePaths(
+          normalizedClassName,
+        )) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          try {
+            const content = await readNavigationFileContent(path);
+
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            const structure = parsePhpClassStructure(
+              content,
+              shortPhpName(normalizedClassName),
+            );
+
+            for (const method of structure.methods) {
+              const memberKey = method.name.toLowerCase();
+
+              if (seenMemberNames.has(memberKey)) {
+                continue;
+              }
+
+              seenMemberNames.add(memberKey);
+
+              if (!isPhpOverridableParentMethod(method)) {
+                continue;
+              }
+
+              overridableMembers.set(memberKey, {
+                declaringSource: content,
+                member: method,
+              });
+            }
+
+            const parentReference = phpExtendsClassName(content);
+
+            if (parentReference) {
+              return collectParent(content, parentReference);
+            }
+
+            return true;
+          } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            continue;
+          }
+        }
+
+        return true;
+      };
+
+      const parentReference = phpExtendsClassName(source);
+
+      if (!parentReference) {
+        return overridableMembers;
+      }
+
+      if (!(await collectParent(source, parentReference))) {
+        return null;
+      }
+
+      return overridableMembers;
+    },
+    [readNavigationFileContent, resolvePhpClassSourcePaths],
+  );
+
   const providePhpCodeActions = useCallback(
     async (
       source: string,
@@ -15016,6 +15134,21 @@ export function useWorkbenchController(
         actions.push(implementMethodsAction);
       }
 
+      const overrideMethodsAction = await phpOverrideMethodsCodeAction(
+        source,
+        structure,
+        collectPhpOverridableParentMethods,
+        isRequestedRootActive,
+      );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      if (overrideMethodsAction) {
+        actions.push(overrideMethodsAction);
+      }
+
       const accessorsAction = phpGenerateAccessorsCodeAction(source, structure);
 
       if (accessorsAction) {
@@ -15046,7 +15179,11 @@ export function useWorkbenchController(
 
       return actions;
     },
-    [collectPhpAbstractMembersToImplement, workspaceRoot],
+    [
+      collectPhpAbstractMembersToImplement,
+      collectPhpOverridableParentMethods,
+      workspaceRoot,
+    ],
   );
 
   // Powers Cmd+Click / native "Go to Definition" on Laravel global string-helper
@@ -24338,6 +24475,94 @@ async function phpImplementMethodsCodeAction(
   }
 
   return { edits, title: "Implement methods" };
+}
+
+type PhpOverridableParentMethodsCollector = (
+  source: string,
+  isRequestedRootActive: () => boolean,
+) => Promise<Map<string, AbstractMemberToImplement> | null>;
+
+/**
+ * Decides whether a parent method may be surfaced by "Override methods". A
+ * method is overridable when it is concrete (a body to delegate to via
+ * `parent::`), not sealed (`final`), not `private` (private members are not
+ * inherited / overridable) and not the constructor (PhpStorm excludes
+ * `__construct` from override generation — it is a creation concern, not a
+ * behavioural override).
+ */
+function isPhpOverridableParentMethod(member: PhpMethodMember): boolean {
+  if (member.isAbstract || member.isFinal) {
+    return false;
+  }
+
+  if (member.visibility === "private") {
+    return false;
+  }
+
+  return member.name.toLowerCase() !== "__construct";
+}
+
+/**
+ * Builds the "Override methods" code action by resolving the concrete methods
+ * inherited from the parent class chain (cross-file, hence async) that the
+ * current class has not yet overridden. Each stub delegates to `parent::` so
+ * the inherited behaviour is preserved by default. Returns `null` when the
+ * class has no parent, when resolution is dropped for a stale workspace, or
+ * when nothing overridable remains.
+ */
+async function phpOverrideMethodsCodeAction(
+  source: string,
+  structure: PhpClassStructure,
+  collect: PhpOverridableParentMethodsCollector,
+  isRequestedRootActive: () => boolean,
+): Promise<PhpCodeActionDescriptor | null> {
+  if (!phpExtendsClassName(source)) {
+    return null;
+  }
+
+  const overridableMembers = await collect(source, isRequestedRootActive);
+
+  if (!isRequestedRootActive() || !overridableMembers) {
+    return null;
+  }
+
+  const declaredNames = new Set(
+    structure.methods.map((method) => method.name.toLowerCase()),
+  );
+  const missingMembers = [...overridableMembers.entries()]
+    .filter(([memberKey]) => !declaredNames.has(memberKey))
+    .map(([, entry]) => entry);
+
+  if (missingMembers.length === 0) {
+    return null;
+  }
+
+  const insertionPoint = findClassBodyInsertionOffset(source);
+
+  if (!insertionPoint) {
+    return null;
+  }
+
+  const stubs = renderOverrideMethodsStubs(
+    missingMembers.map((entry) => entry.member),
+  );
+  const leadingBlankLine = insertionPoint.needsLeadingBlankLine ? "\n" : "";
+  const trailingBlankLine = insertionPoint.needsTrailingBlankLine ? "\n" : "";
+  const insertionPosition = offsetToPosition(source, insertionPoint.offset);
+  const edits: PhpCodeActionTextEdit[] = [
+    {
+      range: zeroLengthPhpEditRange(insertionPosition),
+      text: `${leadingBlankLine}${stubs}\n${trailingBlankLine}`,
+    },
+  ];
+
+  const importEdit = phpImplementMethodsImportEdit(source, missingMembers);
+
+  if (importEdit) {
+    edits.unshift(importEdit);
+  }
+
+  return { edits, title: "Override methods" };
 }
 
 /**

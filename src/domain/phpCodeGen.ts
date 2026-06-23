@@ -63,6 +63,46 @@ export function renderImplementMethodsStubs(
     .join("\n\n");
 }
 
+/**
+ * Renders an OVERRIDE stub for a concrete parent method (PhpStorm "Override
+ * Methods"). Unlike `renderMethodStub` (which implements abstract/interface
+ * members with a placeholder body), an override:
+ *  - PRESERVES the parent's visibility (`public` / `protected`) and the
+ *    `static` modifier — overriding must not narrow visibility, and a static
+ *    override stays static.
+ *  - delegates to the parent via `parent::method(...)`, forwarding every
+ *    parameter by name. A variadic parameter is spread (`...$rest`); a by-ref
+ *    parameter is forwarded as a plain argument (the `&` lives only in the
+ *    signature, never at the call site).
+ *  - `return`s the delegated value unless the return type is `void` / `never`
+ *    (those must not return a value).
+ *  - carries an `@inheritDoc` PHPDoc block (PhpStorm convention) so the
+ *    inherited documentation is reused.
+ * The `abstract` / `final` modifiers are never emitted on the override.
+ */
+export function renderOverrideMethodStub(
+  member: PhpMethodMember,
+  options: RenderMethodStubOptions = {},
+): string {
+  const indent = options.indent ?? DEFAULT_INDENT;
+
+  const header = `${indent}${renderOverrideSignature(member)}`;
+  const body = renderOverrideBody(member, indent);
+  const stub = [header, `${indent}{`, ...body, `${indent}}`].join("\n");
+  const docBlock = renderInheritDocBlock(indent);
+
+  return `${docBlock}\n${stub}`;
+}
+
+export function renderOverrideMethodsStubs(
+  members: PhpMethodMember[],
+  options: RenderMethodStubOptions = {},
+): string {
+  return members
+    .map((member) => renderOverrideMethodStub(member, options))
+    .join("\n\n");
+}
+
 export function renderUseImports(fqns: string[]): string {
   const normalized = fqns
     .map(stripLeadingBackslash)
@@ -81,6 +121,36 @@ function renderSignature(member: PhpMethodMember): string {
   const returnSuffix = member.returnType ? `: ${member.returnType}` : "";
 
   return `public ${staticKeyword}function ${member.name}(${params})${returnSuffix}`;
+}
+
+function renderOverrideSignature(member: PhpMethodMember): string {
+  const staticKeyword = member.isStatic ? "static " : "";
+  const params = member.parameters.map(renderParameter).join(", ");
+  const returnSuffix = member.returnType ? `: ${member.returnType}` : "";
+
+  return `${member.visibility} ${staticKeyword}function ${member.name}(${params})${returnSuffix}`;
+}
+
+function renderOverrideBody(member: PhpMethodMember, indent: string): string[] {
+  const bodyIndent = `${indent}${BODY_STEP}`;
+  const args = member.parameters.map(renderParentCallArgument).join(", ");
+  const call = `parent::${member.name}(${args});`;
+
+  if (isNoReturnType(member.returnType)) {
+    return [`${bodyIndent}${call}`];
+  }
+
+  return [`${bodyIndent}return ${call}`];
+}
+
+function renderParentCallArgument(parameter: PhpStructuredParameter): string {
+  const spread = parameter.isVariadic ? "..." : "";
+
+  return `${spread}${parameter.name}`;
+}
+
+function renderInheritDocBlock(indent: string): string {
+  return [`${indent}/**`, `${indent} * @inheritDoc`, `${indent} */`].join("\n");
 }
 
 function renderParameter(parameter: PhpStructuredParameter): string {

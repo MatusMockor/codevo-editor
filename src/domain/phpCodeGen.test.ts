@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   renderImplementMethodsStubs,
   renderMethodStub,
+  renderOverrideMethodStub,
+  renderOverrideMethodsStubs,
   renderUseImports,
 } from "./phpCodeGen";
 import type {
@@ -412,5 +414,224 @@ describe("renderUseImports", () => {
     expect(imports).toBe(
       ["use App\\apple;", "use App\\Banana;", "use App\\Zebra;"].join("\n"),
     );
+  });
+});
+
+describe("renderOverrideMethodStub", () => {
+  it("renders a returning override that delegates to parent::", () => {
+    const stub = renderOverrideMethodStub(
+      method({ name: "handle", isAbstract: false, returnType: "string" }),
+    );
+
+    expect(stub).toBe(
+      [
+        "    /**",
+        "     * @inheritDoc",
+        "     */",
+        "    public function handle(): string",
+        "    {",
+        "        return parent::handle();",
+        "    }",
+      ].join("\n"),
+    );
+  });
+
+  it("renders a void override that calls parent:: without returning", () => {
+    const stub = renderOverrideMethodStub(
+      method({ name: "boot", isAbstract: false, returnType: "void" }),
+    );
+
+    expect(stub).toBe(
+      [
+        "    /**",
+        "     * @inheritDoc",
+        "     */",
+        "    public function boot(): void",
+        "    {",
+        "        parent::boot();",
+        "    }",
+      ].join("\n"),
+    );
+  });
+
+  it("treats a never return type as a non-returning parent call", () => {
+    const stub = renderOverrideMethodStub(
+      method({ name: "fail", isAbstract: false, returnType: "never" }),
+    );
+
+    expect(stub).toContain("        parent::fail();");
+    expect(stub).not.toContain("return parent::fail();");
+  });
+
+  it("returns from parent:: when the method has no declared return type", () => {
+    const stub = renderOverrideMethodStub(
+      method({ name: "value", isAbstract: false, returnType: null }),
+    );
+
+    expect(stub).toContain("        return parent::value();");
+  });
+
+  it("preserves protected visibility on the override", () => {
+    const stub = renderOverrideMethodStub(
+      method({
+        name: "guarded",
+        isAbstract: false,
+        visibility: "protected",
+        returnType: "void",
+      }),
+    );
+
+    expect(stub).toContain("    protected function guarded(): void");
+    expect(stub).toContain("        parent::guarded();");
+    expect(stub).not.toContain("public function guarded");
+  });
+
+  it("preserves the static modifier and calls parent:: statically", () => {
+    const stub = renderOverrideMethodStub(
+      method({
+        name: "make",
+        isAbstract: false,
+        isStatic: true,
+        returnType: "static",
+      }),
+    );
+
+    expect(stub).toContain("    public static function make(): static");
+    expect(stub).toContain("        return parent::make();");
+  });
+
+  it("never emits abstract or final keywords on the override", () => {
+    const stub = renderOverrideMethodStub(
+      method({
+        name: "go",
+        isAbstract: false,
+        isFinal: true,
+        returnType: "void",
+      }),
+    );
+
+    expect(stub).not.toContain("abstract");
+    expect(stub).not.toContain("final");
+    expect(stub).toContain("    public function go(): void");
+  });
+
+  it("reproduces parameters verbatim and forwards them to parent::", () => {
+    const stub = renderOverrideMethodStub(
+      method({
+        name: "go",
+        isAbstract: false,
+        parameters: [
+          param({ name: "$a", type: "?User" }),
+          param({ name: "$b", type: "int|string", defaultValue: "0" }),
+        ],
+        returnType: "void",
+      }),
+    );
+
+    expect(stub).toContain(
+      "    public function go(?User $a, int|string $b = 0): void",
+    );
+    expect(stub).toContain("        parent::go($a, $b);");
+  });
+
+  it("spreads a variadic argument into the parent:: call", () => {
+    const stub = renderOverrideMethodStub(
+      method({
+        name: "sum",
+        isAbstract: false,
+        parameters: [param({ name: "$nums", type: "int", isVariadic: true })],
+        returnType: "int",
+      }),
+    );
+
+    expect(stub).toContain("    public function sum(int ...$nums): int");
+    expect(stub).toContain("        return parent::sum(...$nums);");
+  });
+
+  it("forwards a by-reference parameter as a plain argument", () => {
+    const stub = renderOverrideMethodStub(
+      method({
+        name: "fill",
+        isAbstract: false,
+        parameters: [param({ name: "$ref", type: "array", isByRef: true })],
+        returnType: "void",
+      }),
+    );
+
+    expect(stub).toContain("    public function fill(array &$ref): void");
+    expect(stub).toContain("        parent::fill($ref);");
+  });
+
+  it("spreads a by-reference variadic parameter into the parent:: call", () => {
+    const stub = renderOverrideMethodStub(
+      method({
+        name: "collect",
+        isAbstract: false,
+        parameters: [
+          param({
+            name: "$rest",
+            type: "string",
+            isByRef: true,
+            isVariadic: true,
+          }),
+        ],
+        returnType: "void",
+      }),
+    );
+
+    expect(stub).toContain("    public function collect(string &...$rest): void");
+    expect(stub).toContain("        parent::collect(...$rest);");
+  });
+
+  it("honours a custom indent with a fixed 4-space body step", () => {
+    const stub = renderOverrideMethodStub(
+      method({ name: "boot", isAbstract: false, returnType: "void" }),
+      { indent: "  " },
+    );
+
+    expect(stub).toBe(
+      [
+        "  /**",
+        "   * @inheritDoc",
+        "   */",
+        "  public function boot(): void",
+        "  {",
+        "      parent::boot();",
+        "  }",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("renderOverrideMethodsStubs", () => {
+  it("joins multiple override stubs with a single blank line between them", () => {
+    const stubs = renderOverrideMethodsStubs([
+      method({ name: "first", isAbstract: false, returnType: "void" }),
+      method({ name: "second", isAbstract: false, returnType: "void" }),
+    ]);
+
+    expect(stubs).toBe(
+      [
+        "    /**",
+        "     * @inheritDoc",
+        "     */",
+        "    public function first(): void",
+        "    {",
+        "        parent::first();",
+        "    }",
+        "",
+        "    /**",
+        "     * @inheritDoc",
+        "     */",
+        "    public function second(): void",
+        "    {",
+        "        parent::second();",
+        "    }",
+      ].join("\n"),
+    );
+  });
+
+  it("returns an empty string for no members", () => {
+    expect(renderOverrideMethodsStubs([])).toBe("");
   });
 });

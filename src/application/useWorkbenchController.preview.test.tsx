@@ -43314,6 +43314,307 @@ interface GreeterContract
     await expect(actionsPromise).resolves.toEqual([]);
   });
 
+  it("offers an override-methods code action for concrete parent methods", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(string $name): string
+    {
+        return $name;
+    }
+
+    protected function boot(): void
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const overrideAction = actions.find(
+      (action) => action.title === "Override methods",
+    );
+    expect(overrideAction).toBeDefined();
+    const overrideText = overrideAction?.edits[0]?.text ?? "";
+    expect(overrideText).toContain(
+      "public function handle(string $name): string",
+    );
+    expect(overrideText).toContain("return parent::handle($name);");
+    expect(overrideText).toContain("protected function boot(): void");
+    expect(overrideText).toContain("parent::boot();");
+    expect(overrideText).toContain("@inheritDoc");
+  });
+
+  it("omits final, private and already-overridden parent methods from the override action", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function alreadyOverridden(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    final public function sealed(): void
+    {
+    }
+
+    private function hidden(): void
+    {
+    }
+
+    public function alreadyOverridden(): void
+    {
+    }
+
+    public function overridable(): int
+    {
+        return 1;
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const overrideAction = actions.find(
+      (action) => action.title === "Override methods",
+    );
+    expect(overrideAction).toBeDefined();
+    const overrideText = overrideAction?.edits[0]?.text ?? "";
+    expect(overrideText).toContain("public function overridable(): int");
+    expect(overrideText).toContain("return parent::overridable();");
+    expect(overrideText).not.toContain("sealed");
+    expect(overrideText).not.toContain("hidden");
+    expect(overrideText).not.toContain("alreadyOverridden");
+  });
+
+  it("offers no override-methods code action for a class without a parent", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions.some((action) => action.title === "Override methods")).toBe(
+      false,
+    );
+  });
+
+  it("offers no override-methods code action when the parent exposes nothing overridable", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return `<?php
+
+namespace App\\Services;
+
+abstract class BaseService
+{
+    abstract public function handle(): void;
+
+    final public function sealed(): void
+    {
+    }
+
+    private function hidden(): void
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions.some((action) => action.title === "Override methods")).toBe(
+      false,
+    );
+  });
+
+  it("drops stale override-methods code actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Child.php";
+    const parentPath = "/workspace-a/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+}
+`;
+    const parentRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === parentPath) {
+        return parentRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(parentPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    parentRead.resolve(`<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
   it("offers a generate getters and setters action for properties without accessors", async () => {
     const classPath = "/workspace/app/Models/Account.php";
     const classSource = `<?php
