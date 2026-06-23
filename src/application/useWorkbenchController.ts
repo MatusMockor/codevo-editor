@@ -221,6 +221,10 @@ import {
 } from "../domain/phpFrameworkLaravel";
 import { detectLaravelStringLiteralHelper } from "../domain/laravelStringLiteralHelpers";
 import {
+  detectLaravelRouteModelBindingAt,
+  phpModelNamespacePrefixes,
+} from "../domain/laravelRouteModelBinding";
+import {
   resolveLaravelConfigTarget,
   resolveLaravelEnvTarget,
   resolveLaravelTransTarget,
@@ -15186,6 +15190,99 @@ export function useWorkbenchController(
     ],
   );
 
+  // Resolves a PHP class name (e.g. `App\Models\User`) to a navigation target:
+  // the indexed-symbol position when the workspace is indexed, otherwise the
+  // class declaration line in the first existing PSR-4 candidate file. Returns
+  // false (no navigation) when the class cannot be resolved. Carries the
+  // per-workspace isolation guards (requested-root capture + re-check after each
+  // await) so stale results are dropped on tab switch. Declared before its
+  // callers (providePhpLaravelDefinition) so the useCallback reference is
+  // initialised first.
+  const openPhpClassTarget = useCallback(
+    async (className: string, label: string): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const requestedSourcePath = activeDocument?.path ?? "";
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
+        return false;
+      }
+
+      if (shouldIndexWorkspace(intelligenceMode)) {
+        const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
+          requestedRoot,
+          className,
+          25,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        const indexedTarget = bestIndexedSymbolMatch(
+          indexedSymbols,
+          className,
+          requestedSourcePath,
+        );
+
+        if (indexedTarget) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          return openNavigationTarget(
+            indexedTarget.path,
+            editorPositionFromProjectSymbol(indexedTarget),
+            label,
+          );
+        }
+      }
+
+      for (const path of phpClassPathCandidates(
+        requestedRoot,
+        requestedDescriptor.php,
+        className,
+      )) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        try {
+          const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          return openNavigationTarget(
+            path,
+            phpNamedTypePosition(content, shortPhpName(className)),
+            label,
+          );
+        } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          continue;
+        }
+      }
+
+      return false;
+    },
+    [
+      activeDocument,
+      intelligenceMode,
+      openNavigationTarget,
+      projectSymbolSearch,
+      readNavigationFileContent,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
   // Powers Cmd+Click / native "Go to Definition" on Laravel global string-helper
   // literals (config / view / __ / trans / env / route). Monaco's definition provider
   // delegates here; because the editor opens files through its own tab system
@@ -15206,6 +15303,39 @@ export function useWorkbenchController(
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (!isLaravelFrameworkActive || !requestedRoot) {
+        return false;
+      }
+
+      // Implicit route model binding: a `{user}` segment in a `Route::<verb>`
+      // URI string binds to the `User` Eloquent model by convention (Laravel
+      // Studly-cases the parameter name; it does NOT singularise it). We try the
+      // modern `App\Models\<Studly>` location first, then the legacy `App\<Studly>`
+      // one. openPhpClassTarget carries the indexed-symbol lookup, candidate-path
+      // resolution, and per-workspace isolation guards, and navigates only when a
+      // class file exists — so an unresolvable parameter conservatively does
+      // nothing. Detection runs before the string-helper branch because a route
+      // URI literal is never a global helper argument.
+      const routeBinding = detectLaravelRouteModelBindingAt(source, offset);
+
+      if (routeBinding) {
+        const modelNamespaces =
+          phpModelNamespacePrefixes(workspaceDescriptor?.php);
+
+        for (const namespace of modelNamespaces) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          const handled = await openPhpClassTarget(
+            `${namespace}${routeBinding.modelShortName}`,
+            routeBinding.modelShortName,
+          );
+
+          if (handled) {
+            return true;
+          }
+        }
+
         return false;
       }
 
@@ -15316,6 +15446,8 @@ export function useWorkbenchController(
       findPhpLaravelViewTarget,
       isLaravelFrameworkActive,
       openNavigationTarget,
+      openPhpClassTarget,
+      workspaceDescriptor,
       workspaceRoot,
     ],
   );
@@ -15547,91 +15679,6 @@ export function useWorkbenchController(
       return [];
     },
     [collectBladeComponentNames, collectPhpLaravelViewTargets, workspaceRoot],
-  );
-
-  const openPhpClassTarget = useCallback(
-    async (className: string, label: string): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const requestedDescriptor = workspaceDescriptor;
-      const requestedSourcePath = activeDocument?.path ?? "";
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot || !requestedDescriptor?.php) {
-        return false;
-      }
-
-      if (shouldIndexWorkspace(intelligenceMode)) {
-        const indexedSymbols = await projectSymbolSearch.searchProjectSymbols(
-          requestedRoot,
-          className,
-          25,
-        );
-
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        const indexedTarget = bestIndexedSymbolMatch(
-          indexedSymbols,
-          className,
-          requestedSourcePath,
-        );
-
-        if (indexedTarget) {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return openNavigationTarget(
-            indexedTarget.path,
-            editorPositionFromProjectSymbol(indexedTarget),
-            label,
-          );
-        }
-      }
-
-      for (const path of phpClassPathCandidates(
-        requestedRoot,
-        requestedDescriptor.php,
-        className,
-      )) {
-        if (!isRequestedRootActive()) {
-          return false;
-        }
-
-        try {
-          const content = await readNavigationFileContent(path);
-
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          return openNavigationTarget(
-            path,
-            phpNamedTypePosition(content, shortPhpName(className)),
-            label,
-          );
-        } catch {
-          if (!isRequestedRootActive()) {
-            return false;
-          }
-
-          continue;
-        }
-      }
-
-      return false;
-    },
-    [
-      activeDocument,
-      intelligenceMode,
-      openNavigationTarget,
-      projectSymbolSearch,
-      readNavigationFileContent,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
   );
 
   const openPhpMethodHintTarget = useCallback(

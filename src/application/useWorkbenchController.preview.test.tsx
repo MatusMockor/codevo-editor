@@ -40452,6 +40452,230 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
       });
     });
 
+    it("navigates a route parameter to its implicitly bound model", async () => {
+      const routesPath = "/workspace/routes/web.php";
+      const modelPath = "/workspace/app/Models/User.php";
+      const routesSource = `<?php
+Route::get('/users/{user}', [UserController::class, 'show']);
+`;
+      const modelSource = `<?php
+
+namespace App\\Models;
+
+class User extends Model
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          if (path === modelPath) {
+            return modelSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{user}") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(modelPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: modelPath,
+        position: {
+          column: 7,
+          lineNumber: 5,
+        },
+      });
+    });
+
+    it("falls back to a legacy flat-namespaced model for a route parameter", async () => {
+      const routesPath = "/workspace/routes/web.php";
+      const modelsModelPath = "/workspace/app/Models/Project.php";
+      const legacyModelPath = "/workspace/app/Project.php";
+      const routesSource = `<?php
+Route::get('/projects/{project}', [ProjectController::class, 'show']);
+`;
+      const legacyModelSource = `<?php
+
+namespace App;
+
+class Project extends Model
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          if (path === legacyModelPath) {
+            return legacyModelSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{project}") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(legacyModelPath);
+      expect(getWorkbench().activePath).not.toBe(modelsModelPath);
+    });
+
+    it("does not navigate a route parameter when no bound model exists", async () => {
+      const routesPath = "/workspace/routes/web.php";
+      const routesSource = `<?php
+Route::get('/widgets/{widget}', [WidgetController::class, 'show']);
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{widget}") + 2,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(routesPath);
+    });
+
+    it("stops stale route parameter model navigation after switching project tabs", async () => {
+      const routesPath = "/workspace-a/routes/web.php";
+      const modelPath = "/workspace-a/app/Models/User.php";
+      const routesSource = `<?php
+Route::get('/users/{user}', [UserController::class, 'show']);
+`;
+      const staleModelRead = createDeferred<string>();
+      let modelReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          if (path === modelPath) {
+            modelReadCount += 1;
+            return staleModelRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: { ...phpWorkspaceDescriptor(), rootPath: "/workspace-a" },
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = true;
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{user}") + 2,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(modelReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleModelRead.resolve(`<?php
+
+namespace App\\Models;
+
+class User extends Model
+{
+}
+`);
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(modelPath);
+    });
+
     it("does not navigate when the resolved Laravel file does not exist", async () => {
       const controllerPath =
         "/workspace/app/Http/Controllers/AppController.php";
