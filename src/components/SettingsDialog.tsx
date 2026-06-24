@@ -1,5 +1,5 @@
 import { Settings2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   defaultShortcutForCommand,
   keymapCommands,
@@ -8,7 +8,6 @@ import {
 } from "../domain/keymap";
 import {
   appThemeOptions,
-  defaultEditorFontFamily,
   maxEditorFontSize,
   minEditorFontSize,
   normalizeEditorFontFamily,
@@ -25,6 +24,7 @@ import {
   type StatusBarItemVisibility,
   type WorkspaceSettings,
 } from "../domain/settings";
+import type { SystemFontGateway } from "../domain/systemFonts";
 import type { WorkspaceTrustState } from "../domain/trust";
 import type {
   IntelligenceMode,
@@ -44,6 +44,7 @@ interface SettingsDialogProps {
   initialSection?: SettingsSection;
   isOpen: boolean;
   phpTools: PhpToolAvailability | null;
+  systemFontGateway?: SystemFontGateway;
   workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceRoot: string | null;
   workspaceSettings: WorkspaceSettings;
@@ -53,6 +54,10 @@ interface SettingsDialogProps {
   onRestartJavaScriptTypeScriptService(): Promise<void>;
   onSave(input: SettingsSaveInput): Promise<void>;
 }
+
+const emptySystemFontGateway: SystemFontGateway = {
+  listMonospaceFontFamilies: async () => [],
+};
 
 const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: "general", label: "General" },
@@ -71,6 +76,7 @@ export function SettingsDialog({
   onRestartJavaScriptTypeScriptService,
   onSave,
   phpTools,
+  systemFontGateway = emptySystemFontGateway,
   workspaceDescriptor,
   workspaceRoot,
   workspaceSettings,
@@ -374,6 +380,7 @@ export function SettingsDialog({
               {activeSection === "appearance" ? (
                 <AppearanceSettings
                   appSettings={draftAppSettings}
+                  systemFontGateway={systemFontGateway}
                   onChangeEditorFontFamily={(editorFontFamily) =>
                     updateAppSettings({
                       ...draftAppSettingsRef.current,
@@ -879,6 +886,7 @@ function IndexSettings({
 
 interface AppearanceSettingsProps {
   appSettings: AppSettings;
+  systemFontGateway: SystemFontGateway;
   onChangeEditorFontFamily(value: string): void;
   onChangeEditorFontLigatures(enabled: boolean): void;
   onChangeEditorFontSize(value: number): void;
@@ -887,16 +895,13 @@ interface AppearanceSettingsProps {
 
 function AppearanceSettings({
   appSettings,
+  systemFontGateway,
   onChangeEditorFontFamily,
   onChangeEditorFontLigatures,
   onChangeEditorFontSize,
   onChangeTheme,
 }: AppearanceSettingsProps) {
-  const [fontFamilyOptions, setFontFamilyOptions] = useState(
-    defaultEditorFontFamilyOptions,
-  );
-  const queryLocalFonts = (globalThis as LocalFontQueryGlobal).queryLocalFonts;
-  const canQueryLocalFonts = typeof queryLocalFonts === "function";
+  const [fontFamilyOptions, setFontFamilyOptions] = useState<string[]>([]);
   const visibleFontFamilyOptions = useMemo(
     () =>
       uniqueSortedStrings([
@@ -906,24 +911,18 @@ function AppearanceSettings({
     [appSettings.editorFontFamily, fontFamilyOptions],
   );
 
-  const loadInstalledFonts = async () => {
-    if (!queryLocalFonts) {
-      return;
-    }
-
+  const loadInstalledFonts = useCallback(async () => {
     try {
-      const localFonts = await queryLocalFonts();
-      const localFamilies = localFonts
-        .map((font) => font.family.trim())
-        .filter(Boolean);
-
-      setFontFamilyOptions((current) =>
-        uniqueSortedStrings([...current, ...localFamilies]),
-      );
+      const localFamilies = await systemFontGateway.listMonospaceFontFamilies();
+      setFontFamilyOptions(uniqueSortedStrings(localFamilies));
     } catch {
-      setFontFamilyOptions(defaultEditorFontFamilyOptions);
+      setFontFamilyOptions([]);
     }
-  };
+  }, [systemFontGateway]);
+
+  useEffect(() => {
+    void loadInstalledFonts();
+  }, [loadInstalledFonts]);
 
   return (
     <div className="settings-group">
@@ -961,11 +960,10 @@ function AppearanceSettings({
 
       <div className="settings-actions">
         <button
-          disabled={!canQueryLocalFonts}
           onClick={() => void loadInstalledFonts()}
           type="button"
         >
-          Load installed fonts
+          Refresh fonts
         </button>
       </div>
 
@@ -995,33 +993,6 @@ function AppearanceSettings({
     </div>
   );
 }
-
-interface LocalFontData {
-  family: string;
-}
-
-type LocalFontQueryGlobal = typeof globalThis & {
-  queryLocalFonts?: () => Promise<LocalFontData[]>;
-};
-
-const defaultEditorFontFamilyOptions = uniqueSortedStrings([
-  defaultEditorFontFamily,
-  "Berkeley Mono",
-  "Cascadia Code",
-  "Consolas",
-  "Fira Code",
-  "Hack",
-  "IBM Plex Mono",
-  "Iosevka",
-  "JetBrains Mono",
-  "Menlo",
-  "Monaco",
-  "Roboto Mono",
-  "SFMono-Regular",
-  "Source Code Pro",
-  "Ubuntu Mono",
-  "monospace",
-]);
 
 function uniqueSortedStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))

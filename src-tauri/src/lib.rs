@@ -102,7 +102,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
@@ -189,6 +189,26 @@ fn install_managed_phpactor(app: AppHandle, root: String) {
 fn quit_application(app: AppHandle) {
     shutdown_runtime_processes(&app);
     app.exit(0);
+}
+
+#[tauri::command]
+fn list_monospace_font_families() -> Vec<String> {
+    let mut database = fontdb::Database::new();
+    database.load_system_fonts();
+
+    let mut families = BTreeSet::new();
+
+    for face in database.faces().filter(|face| face.monospaced) {
+        for (family, _) in &face.families {
+            let trimmed = family.trim();
+
+            if !trimmed.is_empty() {
+                families.insert(trimmed.to_string());
+            }
+        }
+    }
+
+    families.into_iter().collect()
 }
 
 fn shutdown_runtime_processes(app: &AppHandle) {
@@ -5140,6 +5160,7 @@ pub fn run() {
             get_smart_mode_state,
             get_workspace_trust,
             initialize_workspace_index,
+            list_monospace_font_families,
             start_workspace_file_watch,
             list_terminal_profiles,
             open_javascript_typescript_language_server_log,

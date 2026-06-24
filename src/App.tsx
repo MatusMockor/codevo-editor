@@ -78,6 +78,7 @@ import {
   TauriLanguageServerFeaturesGateway,
 } from "./infrastructure/tauriLanguageServerFeaturesGateway";
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
+import { TauriSystemFontGateway } from "./infrastructure/tauriSystemFontGateway";
 import {
   JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
   TauriLanguageServerRuntimeGateway,
@@ -175,6 +176,7 @@ const terminalGateway = new TauriTerminalGateway();
 const workspaceRuntimeLifecycleGateway =
   new TauriWorkspaceRuntimeLifecycleGateway();
 const settingsGateway = new BrowserSettingsGateway();
+const systemFontGateway = new TauriSystemFontGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 const EMPTY_FILE_STATUSES_BY_PATH: Record<string, GitChangeStatus> = {};
 
@@ -1064,6 +1066,7 @@ function App() {
           )
         }
         phpTools={workbench.phpTools}
+        systemFontGateway={systemFontGateway}
         workspaceDescriptor={workbench.workspaceDescriptor}
         workspaceRoot={workbench.workspaceRoot}
         workspaceSettings={workbench.workspaceSettings}

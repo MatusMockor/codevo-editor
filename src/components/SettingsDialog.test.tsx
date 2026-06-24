@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { defaultKeymapSettings } from "../domain/keymap";
+import type { SystemFontGateway } from "../domain/systemFonts";
 import { SettingsDialog } from "./SettingsDialog";
 
 describe("SettingsDialog", () => {
@@ -295,7 +296,15 @@ describe("SettingsDialog", () => {
     expect(selectWithLabel("Font family")).not.toBeNull();
   });
 
-  it("renders editor font controls in Appearance settings", async () => {
+  it("loads monospace font families from the system font gateway", async () => {
+    const systemFontGateway: SystemFontGateway = {
+      listMonospaceFontFamilies: vi.fn(async () => [
+        "Iosevka",
+        "Fira Code",
+        "Iosevka",
+      ]),
+    };
+
     await act(async () => {
       root.render(
         <SettingsDialog
@@ -306,6 +315,7 @@ describe("SettingsDialog", () => {
           onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={vi.fn(async () => undefined)}
           phpTools={null}
+          systemFontGateway={systemFontGateway}
           workspaceDescriptor={null}
           workspaceRoot="/workspace"
           workspaceSettings={defaultWorkspaceSettings()}
@@ -323,19 +333,23 @@ describe("SettingsDialog", () => {
     });
 
     expect(selectWithLabel("Theme")).not.toBeNull();
+    expect(systemFontGateway.listMonospaceFontFamilies).toHaveBeenCalled();
     const fontFamilySelect = selectWithLabel("Font family");
-    expect(fontFamilySelect.options.length).toBeGreaterThan(1);
-    expect(
-      Array.from(fontFamilySelect.options).some(
-        (option) => option.value === "Fira Code",
-      ),
-    ).toBe(true);
+    expect(Array.from(fontFamilySelect.options).map((option) => option.value))
+      .toEqual([
+        "Fira Code",
+        "Iosevka",
+        defaultAppSettings().editorFontFamily,
+      ]);
     expect(inputWithLabel("Font size").type).toBe("number");
     expect(checkboxWithLabel("Font ligatures").checked).toBe(false);
   });
 
   it("persists editor font appearance changes", async () => {
     const onSave = vi.fn(async () => undefined);
+    const systemFontGateway: SystemFontGateway = {
+      listMonospaceFontFamilies: vi.fn(async () => ["Fira Code"]),
+    };
 
     await act(async () => {
       root.render(
@@ -347,6 +361,7 @@ describe("SettingsDialog", () => {
           onRestartJavaScriptTypeScriptService={vi.fn()}
           onSave={onSave}
           phpTools={null}
+          systemFontGateway={systemFontGateway}
           workspaceDescriptor={null}
           workspaceRoot="/workspace"
           workspaceSettings={defaultWorkspaceSettings()}
