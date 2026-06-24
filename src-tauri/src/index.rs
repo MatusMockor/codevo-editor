@@ -565,6 +565,20 @@ fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
     // so the at-most-last-transaction durability trade-off is acceptable and removes a large
     // share of the fsync cost incurred while indexing large workspaces.
     connection.pragma_update(None, "synchronous", "NORMAL")?;
+    // The following pragmas soften the cost of the symbol-search full scan + sort on large
+    // Laravel workspaces (tens of thousands of symbols). They are pure RAM/IO tuning and change
+    // no on-disk format, so the index stays a rebuildable per-workspace cache.
+    //
+    // cache_size = -16000 -> ~16 MiB page cache (negative = KiB). Keeps far more of
+    // workspace_symbols resident than SQLite's tiny ~2 MiB default while a query scans it.
+    connection.pragma_update(None, "cache_size", -16_000)?;
+    // mmap_size = 256 MiB -> read the database via memory-mapped IO, avoiding per-page read()
+    // syscall + buffer-copy overhead during the scan. SQLite caps this at its compile-time
+    // SQLITE_MAX_MMAP_SIZE if smaller; that is harmless.
+    connection.pragma_update(None, "mmap_size", 268_435_456_i64)?;
+    // temp_store = MEMORY -> the ORDER BY sort scratch lives in RAM instead of spilling to a
+    // temp file on disk, which matters for the per-keystroke debounced symbol search sort.
+    connection.pragma_update(None, "temp_store", "MEMORY")?;
     Ok(())
 }
 
@@ -1030,6 +1044,18 @@ mod tests {
             .connection()
             .query_row("PRAGMA synchronous", [], |row| row.get(0))
             .expect("synchronous");
+        let cache_size: i64 = index
+            .connection()
+            .query_row("PRAGMA cache_size", [], |row| row.get(0))
+            .expect("cache size");
+        let mmap_size: i64 = index
+            .connection()
+            .query_row("PRAGMA mmap_size", [], |row| row.get(0))
+            .expect("mmap size");
+        let temp_store: i64 = index
+            .connection()
+            .query_row("PRAGMA temp_store", [], |row| row.get(0))
+            .expect("temp store");
         let migration_count: i64 = index
             .connection()
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
@@ -1041,6 +1067,14 @@ mod tests {
         assert_eq!(busy_timeout, 5_000);
         // synchronous = NORMAL (1) keeps WAL safe while removing a per-commit fsync.
         assert_eq!(synchronous, 1);
+        // cache_size is stored as the negative KiB request (~16 MiB) we configure, so the page
+        // cache no longer scales with SQLite's tiny default while scanning workspace_symbols.
+        assert_eq!(cache_size, -16_000);
+        // mmap_size > 0 confirms memory-mapped reads are enabled (the effective value may be
+        // capped below the request by SQLITE_MAX_MMAP_SIZE, so we only assert it is on).
+        assert!(mmap_size > 0, "mmap_size should be enabled, got {mmap_size}");
+        // temp_store = MEMORY (2) keeps the symbol-search sort scratch in RAM, not on disk.
+        assert_eq!(temp_store, 2);
         assert_eq!(migration_count, 2);
         assert_eq!(index.summary().expect("summary").schema_version, 2);
     }
