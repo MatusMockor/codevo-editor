@@ -43,6 +43,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "Shift+F12",
+    id: "editor.findReferences",
+    label: "Find All References",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+R",
     id: "editor.fileStructure",
     label: "File Structure",
@@ -52,6 +58,12 @@ export const keymapCommands = [
     defaultShortcut: "Cmd+T",
     id: "editor.goToSymbol",
     label: "Go to Symbol in Workspace",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "Shift+Alt+F",
+    id: "editor.formatDocument",
+    label: "Format Document",
   },
   {
     category: "Editor",
@@ -154,6 +166,12 @@ export const keymapCommands = [
     defaultShortcut: "Cmd+J",
     id: "panel.toggle",
     label: "Toggle Bottom Panel",
+  },
+  {
+    category: "Workbench",
+    defaultShortcut: "Cmd+Shift+T",
+    id: "panel.toggleTodo",
+    label: "Toggle TODO Panel",
   },
   {
     category: "Terminal",

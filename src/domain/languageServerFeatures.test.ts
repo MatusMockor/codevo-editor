@@ -13,6 +13,7 @@ describe("canUseLanguageServerFeature", () => {
     const capabilities: LanguageServerCapabilities = {
       callHierarchy: false,
       codeAction: false,
+      codeActionResolve: false,
       codeLens: false,
       completion: false,
       declaration: false,

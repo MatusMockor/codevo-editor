@@ -1,5 +1,6 @@
 import {
   FolderOpen,
+  ListChecks,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -32,6 +33,8 @@ import { QuickOpen } from "./components/QuickOpen";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar, type IdeActivityState } from "./components/StatusBar";
 import { TextSearch } from "./components/TextSearch";
+import { ReferencesPanel } from "./components/ReferencesPanel";
+import { TodoPanel } from "./components/TodoPanel";
 import { TypeHierarchy } from "./components/TypeHierarchy";
 import { WindowChrome } from "./components/WindowChrome";
 import { WorkspaceSymbols } from "./components/WorkspaceSymbols";
@@ -88,6 +91,7 @@ import {
   TauriLanguageServerWorkspaceEditGateway,
 } from "./infrastructure/tauriLanguageServerWorkspaceEditGateway";
 import { TauriIndexProgressGateway } from "./infrastructure/tauriIndexProgressGateway";
+import { TauriWorkspaceFileChangeGateway } from "./infrastructure/tauriWorkspaceFileChangeGateway";
 import { TauriPhpFileOutlineGateway } from "./infrastructure/tauriPhpFileOutlineGateway";
 import { TauriProjectSymbolSearchGateway } from "./infrastructure/tauriProjectSymbolSearchGateway";
 import { TauriGitGateway } from "./infrastructure/tauriGitGateway";
@@ -98,12 +102,15 @@ import { TauriTerminalGateway } from "./infrastructure/tauriTerminalGateway";
 import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWorkspaceRuntimeLifecycleGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
+import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
 import "./App.css";
 
 const workspaceGateway = new TauriWorkspaceGateway();
 const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
+const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
 const workspaceGateways = {
   detection: workspaceGateway,
+  fileChanges: workspaceFileChangeGateway,
   fileSearch: workspaceGateway,
   files: workspaceGateway,
   phpTools: workspaceGateway,
@@ -171,8 +178,27 @@ const settingsGateway = new BrowserSettingsGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 const EMPTY_FILE_STATUSES_BY_PATH: Record<string, GitChangeStatus> = {};
 
+// Warm the Shiki highlighter in the background as soon as the app boots so the
+// first opened file gets correct syntax colors immediately instead of showing
+// the fallback theme for ~300ms while the highlighter bundle loads and inits.
+//
+// `createAppHighlighter` is an idempotent singleton (it caches and returns the
+// same promise), so this preload only ever triggers one load. The result is
+// intentionally ignored here — `setupShikiTokenization` later awaits the same
+// cached promise on first file open (cache hit). Rejections are swallowed so a
+// preload failure can never crash boot; the real consumer still surfaces errors.
+export function preloadSyntaxHighlighter(): void {
+  void createAppHighlighter().catch(() => {
+    // Ignore — the highlighter is lazily re-attempted by setupShikiTokenization,
+    // which handles and logs its own errors when the first file is opened.
+  });
+}
+
 function App() {
   const prefersLightTheme = usePrefersLightTheme();
+  useEffect(() => {
+    preloadSyntaxHighlighter();
+  }, []);
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(152);
   const [activeFileRevealSignal, setActiveFileRevealSignal] = useState(0);
@@ -534,6 +560,14 @@ function App() {
           <Search aria-hidden="true" size={20} />
         </button>
         <button
+          disabled={!workbench.workspaceRoot}
+          onClick={workbench.openTodoPanel}
+          title="TODO comments"
+          type="button"
+        >
+          <ListChecks aria-hidden="true" size={20} />
+        </button>
+        <button
           className="activity-bar-secondary"
           onClick={workbench.openSettingsPanel}
           title="Settings"
@@ -771,6 +805,9 @@ function App() {
               workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
             }
             formatOnPaste={workbench.workspaceSettings.formatOnPaste}
+            isLanguageServerDocumentSynced={
+              workbench.isLanguageServerDocumentSynced
+            }
             javaScriptTypeScriptLanguageServerFeaturesGateway={
               javaScriptTypeScriptLanguageServerFeaturesGateway
             }
@@ -832,6 +869,10 @@ function App() {
             onRevealTargetHandled={workbench.clearEditorRevealTarget}
             onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
             phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
+            provideBladeCompletions={workbench.provideBladeCompletions}
+            provideBladeDefinition={workbench.provideBladeDefinition}
+            providePhpCodeActions={workbench.providePhpCodeActions}
+            providePhpLaravelDefinition={workbench.providePhpLaravelDefinition}
             providePhpMethodCompletions={workbench.providePhpMethodCompletions}
             providePhpMethodSignature={workbench.providePhpMethodSignature}
             workspaceRoot={workbench.workspaceRoot}
@@ -971,6 +1012,26 @@ function App() {
         onClose={workbench.closeTypeHierarchy}
         onOpen={workbench.openTypeHierarchyRow}
         view={workbench.typeHierarchyView}
+      />
+
+      <ReferencesPanel
+        isOpen={Boolean(workbench.referencesView)}
+        onClose={workbench.closeReferencesPanel}
+        onOpen={workbench.openReferenceRow}
+        view={workbench.referencesView}
+        workspaceRoot={workbench.workspaceRoot}
+      />
+
+      <TodoPanel
+        isLoading={workbench.workspaceTodosLoading}
+        isOpen={workbench.todoPanelOpen}
+        onClose={workbench.closeTodoPanel}
+        onOpenTodo={(todo) => {
+          workbench.closeTodoPanel();
+          void workbench.openWorkspaceTodo(todo);
+        }}
+        onRefresh={() => void workbench.refreshWorkspaceTodos()}
+        todos={workbench.workspaceTodos}
       />
 
       <LanguageServerSetup

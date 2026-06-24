@@ -40,6 +40,36 @@ describe("languageServerDiagnostics", () => {
     expect(shouldApplyLanguageServerDiagnostics(event(4), 2, 4)).toBe(false);
   });
 
+  it("applies a clear (count=0) carrying the analysis version already applied", () => {
+    // BUG 1: phpactor publishes diagnostics asynchronously keyed by the analysis
+    // version (here v1), NOT the live document version (v2 after a didChange).
+    // A clear (count=0) arriving at v1 — equal to the last APPLIED diagnostic
+    // version — must still be applied so the stale "1 error" marker disappears.
+    const lastAppliedDiagnosticVersion = 1;
+    expect(
+      shouldApplyLanguageServerDiagnostics(
+        event(1),
+        1,
+        lastAppliedDiagnosticVersion,
+      ),
+    ).toBe(true);
+  });
+
+  it("applies a fresh phpactor publication newer than the last applied", () => {
+    // No diagnostic applied yet (undefined) accepts any version.
+    expect(shouldApplyLanguageServerDiagnostics(event(1), 1, undefined)).toBe(
+      true,
+    );
+    // A strictly newer analysis version is always applied.
+    expect(shouldApplyLanguageServerDiagnostics(event(2), 1, 1)).toBe(true);
+  });
+
+  it("drops a diagnostic older than the last applied diagnostic version", () => {
+    // Protection: once a v2 diagnostic has been applied, a late v1 publication
+    // for the same document must be dropped so it cannot resurrect stale state.
+    expect(shouldApplyLanguageServerDiagnostics(event(1), 1, 2)).toBe(false);
+  });
+
   it("rejects diagnostics from another workspace root", () => {
     expect(
       shouldApplyLanguageServerDiagnostics(

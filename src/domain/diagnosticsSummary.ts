@@ -50,3 +50,36 @@ export function summarizeDiagnostics(
 
   return { errors, warnings };
 }
+
+interface DiagnosticSeverityLike {
+  severity: "error" | "warning" | "information" | "hint";
+}
+
+/**
+ * Summarizes diagnostics straight from the (uncapped) per-path diagnostics
+ * source that also feeds editor markers. Counting here — rather than from the
+ * notices list — keeps the status-bar error/warning count truthful even when
+ * the notices panel is capped to protect the main thread. `information` and
+ * `hint` severities are not counted, mirroring the notice severity mapping.
+ */
+export function summarizeDiagnosticsByPath(
+  diagnosticsByPath: Record<string, DiagnosticSeverityLike[]>,
+): DiagnosticsSummary {
+  let errors = 0;
+  let warnings = 0;
+
+  for (const diagnostics of Object.values(diagnosticsByPath)) {
+    for (const diagnostic of diagnostics) {
+      if (diagnostic.severity === "error") {
+        errors += 1;
+        continue;
+      }
+
+      if (diagnostic.severity === "warning") {
+        warnings += 1;
+      }
+    }
+  }
+
+  return { errors, warnings };
+}

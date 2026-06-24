@@ -106,6 +106,7 @@ function running(sessionId: number): LanguageServerRuntimeStatus {
     capabilities: {
       callHierarchy: true,
       codeAction: true,
+      codeActionResolve: true,
       codeLens: true,
       completion: true,
       declaration: true,

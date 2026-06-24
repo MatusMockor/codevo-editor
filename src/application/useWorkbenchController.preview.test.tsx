@@ -8,6 +8,7 @@ import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { emptyGitStatus, gitChangeKey, type GitGateway } from "../domain/git";
 import { callHierarchyRows } from "../domain/callHierarchy";
 import { typeHierarchyRows } from "../domain/typeHierarchy";
+import { referenceRows } from "../domain/referencesView";
 import {
   useWorkbenchController,
   type WorkbenchWorkspaceGateways,
@@ -56,6 +57,7 @@ import {
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
+import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import type {
   FileEntry,
   FileSearchResult,
@@ -699,6 +701,153 @@ describe("useWorkbenchController preview tabs", () => {
     expect(languageServerGateway.planPhpLanguageServer).not.toHaveBeenCalled();
     expect(getWorkbench().languageServerPlan).toBeNull();
     expect(getWorkbench().phpTools).toBeNull();
+  });
+
+  it("warms up the PHP probe at open before the directory load resolves in IDE mode", async () => {
+    // Warmup: in IDE mode for a PHP project, the phpactor handshake latency
+    // (composer/autoload scan) dominates time-to-ready. The open-time probe
+    // (detectPhpTools -> plan -> autostart) only needs the workspace descriptor
+    // to know the project is PHP; it must NOT be serialized behind the
+    // directory load / session restore. Firing it as soon as detection
+    // confirms a PHP project lets the handshake run in the background while the
+    // user navigates.
+    const workspaceDirectory = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace") {
+        return workspaceDirectory.promise;
+      }
+
+      return [];
+    });
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(
+        async (rootPath) =>
+          ({
+            ...phpactorLanguageServerPlan(),
+            message: `PHPactor ${rootPath} ready`,
+          }) satisfies LanguageServerPlan,
+      ),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      phpToolGateway,
+      readDirectory,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+
+    // The directory load is still pending, but the PHP probe must already have
+    // fired so the phpactor handshake starts warming up immediately.
+    await vi.waitFor(() => {
+      expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith("/workspace");
+    });
+    await vi.waitFor(() => {
+      expect(languageServerGateway.planPhpLanguageServer).toHaveBeenCalledWith(
+        "/workspace",
+        defaultPhpLanguageServerOptions(),
+      );
+    });
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().intelligenceMode).toBe("fullSmart");
+
+    // Let the deferred directory load settle so teardown is clean.
+    await act(async () => {
+      workspaceDirectory.resolve([]);
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+  });
+
+  it("does not warm up the PHP probe at open for a PHP project in basic mode", async () => {
+    // The basic-mode defer (P2b) must be preserved: warmup only applies when
+    // IDE mode is on. In basic mode the probe stays deferred even though
+    // detection confirms a PHP project.
+    const workspaceDirectory = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace") {
+        return workspaceDirectory.promise;
+      }
+
+      return [];
+    });
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async () =>
+          ({
+            command: null,
+            initializeRequest: null,
+            message: "JavaScript/TypeScript language server unavailable in test.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          }) satisfies LanguageServerPlan,
+      ),
+      planPhpLanguageServer: vi.fn(
+        async (rootPath) =>
+          ({
+            ...phpactorLanguageServerPlan(),
+            message: `PHPactor ${rootPath} ready`,
+          }) satisfies LanguageServerPlan,
+      ),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      phpToolGateway,
+      readDirectory,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+
+    await vi.waitFor(() => {
+      expect(getWorkbench().intelligenceMode).toBe("basic");
+    });
+    await flushAsyncTurns(24);
+
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
+    expect(languageServerGateway.planPhpLanguageServer).not.toHaveBeenCalled();
+
+    await act(async () => {
+      workspaceDirectory.resolve([]);
+      await Promise.resolve();
+    });
+    await flushAsyncTurns(24);
+
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
   });
 
   it("runs the deferred PHP probe and surfaces the IDE engine notice when switching a PHP project to IDE mode", async () => {
@@ -1757,6 +1906,224 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().isOpeningFile).toBe(false);
   });
 
+  it("re-reads disk when re-opening a document whose saved content is empty", async () => {
+    const path = "/workspace/src/User.php";
+    const contentsByPath: Record<string, string> = {
+      [path]: "",
+    };
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toBe("");
+    expect(getWorkbench().activeDocument?.savedContent).toBe("");
+
+    contentsByPath[path] = "<?php\nclass User {}\n";
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\nclass User {}\n",
+    );
+    expect(getWorkbench().activeDocument?.savedContent).toBe(
+      "<?php\nclass User {}\n",
+    );
+  });
+
+  it("keeps unsaved edits when re-opening a document with an empty saved content", async () => {
+    const path = "/workspace/src/Draft.php";
+    const contentsByPath: Record<string, string> = {
+      [path]: "",
+    };
+    const readTextFile = vi.fn(
+      async (requestedPath: string) => contentsByPath[requestedPath] ?? "",
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "Draft.php",
+        path,
+        relativePath: "src/Draft.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      getWorkbench().updateActiveDocument("<?php\n// work in progress\n");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\n// work in progress\n",
+    );
+
+    readTextFile.mockClear();
+    contentsByPath[path] = "<?php\n// disk would overwrite\n";
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "Draft.php",
+        path,
+        relativePath: "src/Draft.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(readTextFile).not.toHaveBeenCalled();
+    expect(getWorkbench().activeDocument?.content).toBe(
+      "<?php\n// work in progress\n",
+    );
+  });
+
+  it("drops an empty-document re-read after switching project tabs", async () => {
+    const path = "/workspace-a/src/User.php";
+    const read = createDeferred<string>();
+    const contentsByPath: Record<string, string> = {
+      [path]: "",
+    };
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath !== path) {
+        return `<?php\n// ${requestedPath}\n`;
+      }
+
+      if (contentsByPath[path] === "") {
+        return "";
+      }
+
+      return read.promise;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    contentsByPath[path] = "<?php\nclass User {}\n";
+
+    let reopen: Promise<void> = Promise.resolve();
+    await act(async () => {
+      reopen = getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      read.resolve("<?php\nclass User {}\n");
+      await reopen;
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activeDocument?.path).not.toBe(path);
+  });
+
+  it("keeps an empty document open when the re-read fails", async () => {
+    const path = "/workspace/src/User.php";
+    let failNextRead = false;
+    const readTextFile = vi.fn(async () => {
+      if (failNextRead) {
+        throw new Error("EBUSY: file is locked");
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openSearchResult({
+        name: "User.php",
+        path,
+        relativePath: "src/User.php",
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.content).toBe("");
+
+    failNextRead = true;
+
+    let opened: boolean | undefined;
+    await act(async () => {
+      opened = await getWorkbench().openFile({
+        kind: "file",
+        name: "User.php",
+        path,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(opened).toBe(true);
+    expect(getWorkbench().quickOpenOpen).toBe(false);
+    expect(getWorkbench().activeDocument?.path).toBe(path);
+    expect(getWorkbench().activeDocument?.content).toBe("");
+  });
+
   it("cancels pending file opens while closing the active project tab", async () => {
     const path = "/workspace-a/src/User.php";
     const openFile = createDeferred<string>();
@@ -2515,6 +2882,797 @@ describe("useWorkbenchController preview tabs", () => {
       errors: 0,
       warnings: 0,
     });
+  });
+
+  it("clears diagnostics for a deleted PHP document and sends didClose", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 701,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Undefined variable",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 701,
+        uri: fileUriFromPath(path),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(
+      path,
+    );
+    expect(
+      dependencies.languageServerDocumentSyncGateway.didClose,
+    ).toHaveBeenCalledWith("/workspace", path);
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
+  it("caps the per-document diagnostic notices without dropping markers", async () => {
+    // STABILITY: a single Laravel file can publish hundreds of diagnostics.
+    // Mapping every one to a notice and re-rendering the notices panel freezes
+    // the main thread, so notices are capped with a truthful "N more" indicator.
+    // Editor markers come from a separate, uncapped source and must keep ALL of
+    // them.
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 731,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const uri = fileUriFromPath(path);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    const diagnostics = Array.from({ length: 300 }, (_, index) => ({
+      character: 0,
+      line: index,
+      message: `Diagnostic ${index}`,
+      severity: "error" as const,
+      source: "phpactor",
+    }));
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics,
+        rootPath: "/workspace",
+        sessionId: 731,
+        uri,
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    const groupNotices = getWorkbench().notices.filter(
+      (notice) =>
+        notice.groupKey === `language-server-diagnostics:${uri}`,
+    );
+
+    // Notices are bounded: 100 diagnostics + 1 overflow indicator, never 300.
+    expect(groupNotices).toHaveLength(101);
+    const overflow = groupNotices[groupNotices.length - 1];
+    expect(overflow.severity).toBe("info");
+    // The hidden count is truthful (300 - 100 = 200), not a lie about "100".
+    expect(overflow.message).toContain("200 more");
+
+    // Markers (the separate, uncapped source) keep ALL 300 diagnostics so no
+    // squiggle is lost.
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(
+      300,
+    );
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 300,
+      warnings: 0,
+    });
+  });
+
+  it("does not send a debounced didChange after the document was closed", async () => {
+    // STABILITY: the 150ms didChange debounce timer can fire and enqueue its
+    // sync operation while an earlier sync (here a held didOpen) is still in
+    // flight. If closeDocument runs in the meantime, the document is removed
+    // from the synced set and a didClose is sent; the queued didChange must then
+    // be dropped so it never targets a closed document (UnknownDocument/desync).
+    const didOpen = createDeferred<void>();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 741,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    // Hold the didOpen sync so the per-document sync queue stays busy; any
+    // didChange enqueued afterwards is blocked behind it until we resolve it.
+    vi.mocked(dependencies.languageServerDocumentSyncGateway.didOpen).mockReturnValue(
+      didOpen.promise,
+    );
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    // Edit the document, then let the 150ms debounce elapse so the didChange
+    // timer fires and enqueues its (queued, blocked) sync operation.
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nclass User\n{\n}\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+
+    // Close the document: this removes it from the synced set and enqueues a
+    // didClose behind the still-blocked didChange.
+    act(() => {
+      getWorkbench().closeDocument(path);
+    });
+
+    // Release the held didOpen so the queue drains: didChange must be skipped.
+    act(() => {
+      didOpen.resolve(undefined);
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      dependencies.languageServerDocumentSyncGateway.didChange,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.languageServerDocumentSyncGateway.didClose,
+    ).toHaveBeenCalledWith("/workspace", path);
+  });
+
+  it("applies a phpactor clear carrying the analysis version after the document version advanced", async () => {
+    // BUG 1: phpactor publishes diagnostics asynchronously keyed by the analysis
+    // version. After a didChange bumps the live document version to 2, phpactor
+    // can still publish the clear (count=0) for its in-flight analysis at the
+    // older analysis version (1). Comparing against the document version dropped
+    // that clear, leaving the stale "1 error" marker visible. Comparing against
+    // the last APPLIED diagnostic version instead lets the clear through.
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 711,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    // phpactor analysed the opened document (version 1) and reported one error.
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Invalid class",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 711,
+        uri: fileUriFromPath(path),
+        version: 1,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+
+    // The user edits the document; the live document version advances to 2 via a
+    // debounced didChange.
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nclass User\n{\n}\n");
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 180));
+    });
+    await flushAsyncTurns(24);
+
+    // phpactor finishes the in-flight analysis it started for version 1 and
+    // publishes the clear at that analysis version, even though the live
+    // document is now at version 2.
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [],
+        rootPath: "/workspace",
+        sessionId: 711,
+        uri: fileUriFromPath(path),
+        version: 1,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(0);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "phpactor" &&
+          notice.message.includes("Invalid class"),
+      ),
+    ).toBe(false);
+  });
+
+  it("drops a phpactor publication older than the last applied diagnostic", async () => {
+    // BUG 1 protection: once a newer analysis version has been applied, a late
+    // publication carrying an older analysis version must be dropped so it
+    // cannot resurrect stale diagnostics.
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 712,
+    };
+    const path = "/workspace/app/Models/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Newer analysis error",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 712,
+        uri: fileUriFromPath(path),
+        version: 5,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+
+    // A late publication from an older analysis version must be ignored.
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [],
+        rootPath: "/workspace",
+        sessionId: 712,
+        uri: fileUriFromPath(path),
+        version: 3,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+  });
+
+  it("clears stale diagnostics for the old path when renaming a PHP document", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 711,
+    };
+    const oldPath = "/workspace/app/Models/User.php";
+    const newPath = "/workspace/app/Models/Account.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway: {
+        getStatus: vi.fn(async () => runningStatus),
+        openLog: vi.fn(async () => null),
+        start: vi.fn(async () => runningStatus),
+        stop: vi.fn(async (rootPath) => ({
+          kind: "stopped" as const,
+          rootPath,
+        })),
+        subscribeStatus: vi.fn(async () => () => undefined),
+      },
+      readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Undefined variable",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 711,
+        uri: fileUriFromPath(oldPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toHaveLength(1);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.php");
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
+  it("clears stale diagnostics for the old path when renaming a TypeScript document", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 712,
+    };
+    const oldPath = "/workspace/src/User.ts";
+    const newPath = "/workspace/src/Account.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === oldPath) {
+          return "export class User {}\n";
+        }
+
+        return `// ${requestedPath}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Type mismatch",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 712,
+        uri: fileUriFromPath(oldPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toHaveLength(1);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(getWorkbench().languageServerDiagnosticsByPath[oldPath]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
+  it("clears diagnostics for a deleted TypeScript document and sends didClose", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const javaScriptTypeScriptLanguageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway =
+      {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 702,
+    };
+    const path = "/workspace/src/User.ts";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "export class User {}\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.ts"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Type mismatch",
+            severity: "error",
+            source: "tsserver",
+          },
+        ],
+        rootPath: "/workspace",
+        sessionId: 702,
+        uri: fileUriFromPath(path),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 1,
+      warnings: 0,
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.workspaceGateways.files.deletePath).toHaveBeenCalledWith(
+      path,
+    );
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      path,
+    );
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+    expect(getWorkbench().diagnosticsSummary).toEqual({
+      errors: 0,
+      warnings: 0,
+    });
+  });
+
+  it("does not clear another project tab's cached diagnostics when deleting a file in the active tab", async () => {
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 801)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, 801)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const activePath = "/workspace-a/app/Models/User.php";
+    const inactivePath = "/workspace-b/app/Models/Post.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerDiagnosticsGateway,
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) => `<?php\n// ${requestedPath}\n`),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(activePath, "User.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-b", 802));
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Active error",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-a",
+        sessionId: 801,
+        uri: fileUriFromPath(activePath),
+        version: null,
+      });
+      publishDiagnostics?.({
+        diagnostics: [
+          {
+            character: 0,
+            line: 0,
+            message: "Background error",
+            severity: "error",
+            source: "phpactor",
+          },
+        ],
+        rootPath: "/workspace-b",
+        sessionId: 802,
+        uri: fileUriFromPath(inactivePath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.delete",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[activePath],
+    ).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[inactivePath],
+    ).toHaveLength(1);
   });
 
   it("navigates next and previous through active workspace problems with wrap-around", async () => {
@@ -5300,6 +6458,298 @@ describe("useWorkbenchController preview tabs", () => {
       vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
     ).toBeLessThan(
       vi.mocked(syncGateway.didChange).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("re-opens open PHP documents after the phpactor runtime restarts with a new session", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(61)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus(61)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus(61),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    vi.mocked(syncGateway.didOpen).mockClear();
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(62));
+    });
+    await flushAsyncTurns(24);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+  });
+
+  it("re-opens then changes a PHP document edited after the phpactor runtime restarts", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(63)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus(63)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus(63),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    vi.mocked(syncGateway.didOpen).mockClear();
+    vi.mocked(syncGateway.didChange).mockClear();
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(64));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n$comment->forceDelete();\n");
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().flushPendingLanguageServerDocument(path);
+    });
+    await flushAsyncTurns(4);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+    expect(syncGateway.didChange).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        path,
+        text: "<?php\n$comment->forceDelete();\n",
+      }),
+    );
+    expect(
+      vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(syncGateway.didChange).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("re-opens then saves a PHP document saved after the phpactor runtime restarts", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningStatus = (sessionId: number): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async () => runningStatus(65)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus(65)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath === path ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus(65),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    vi.mocked(syncGateway.didOpen).mockClear();
+    vi.mocked(syncGateway.didSave).mockClear();
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus(66));
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+    await flushAsyncTurns(24);
+
+    expect(syncGateway.didOpen).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+    expect(syncGateway.didSave).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path }),
+    );
+    expect(
+      vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(syncGateway.didSave).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not re-open a PHP document for a project tab left before the phpactor restart", async () => {
+    let publishRuntimeStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
+      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, 67)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, 67)),
+      stop: vi.fn(async (rootPath) => ({ kind: "stopped" as const, rootPath })),
+      subscribeStatus: vi.fn(async (listener) => {
+        publishRuntimeStatus = listener;
+        return () => undefined;
+      }),
+    };
+    const path = "/workspace-a/app/Http/Controllers/CommentController.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerRuntimeGateway,
+      readTextFile: vi.fn(async (requestedPath: string) =>
+        requestedPath.endsWith(".php") ? "<?php\n$comment->load();\n" : "",
+      ),
+      runtimeStatus: runningStatus("/workspace-a", 67),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const syncGateway = dependencies.documentSyncGateway;
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(path, "CommentController.php"),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ path }),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+
+    vi.mocked(syncGateway.didOpen).mockClear();
+
+    act(() => {
+      publishRuntimeStatus?.(runningStatus("/workspace-a", 68));
+    });
+    await flushAsyncTurns(24);
+
+    expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
+      "/workspace-a",
+      expect.objectContaining({ path }),
     );
   });
 
@@ -13085,6 +14535,230 @@ describe("useWorkbenchController preview tabs", () => {
         lineNumber: 10,
       },
     });
+  });
+
+  it("aggregates PHP references into the panel and navigates a clicked row", async () => {
+    const path = "/workspace/app/Services/UserService.php";
+    const callerPath = "/workspace/app/Http/Controllers/UserController.php";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        references: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 220,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.references).mockResolvedValue([
+      {
+        uri: fileUriFromPath(path),
+        range: range(6, 20, 6, 28),
+      },
+      {
+        uri: fileUriFromPath(callerPath),
+        range: range(9, 15, 9, 23),
+      },
+    ]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === callerPath) {
+          return "<?php\n\n$user = $service->loadUser();\n";
+        }
+
+        return "<?php\n\nclass UserService\n{\n    public function loadUser(): string\n    {\n        return 'Ada';\n    }\n}\n";
+      }),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 5,
+      });
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.findReferences",
+    );
+    expect(command?.isEnabled(getWorkbench().commandContext)).toBe(true);
+
+    await act(async () => {
+      await command?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(languageServerFeaturesGateway.references).toHaveBeenCalledWith(
+      "/workspace",
+      {
+        character: 24,
+        line: 4,
+        path,
+      },
+    );
+    expect(getWorkbench().referencesView?.symbol).toBe("loadUser");
+    expect(getWorkbench().referencesView?.locations).toHaveLength(2);
+
+    const rows = referenceRows(getWorkbench().referencesView!, "/workspace");
+    const callerRow = rows.find((row) => row.path === callerPath);
+    expect(callerRow).toBeDefined();
+
+    await act(async () => {
+      await getWorkbench().openReferenceRow(callerRow!);
+    });
+
+    expect(getWorkbench().referencesView).toBeNull();
+    expect(getWorkbench().activePath).toBe(callerPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: callerPath,
+      position: {
+        column: 16,
+        lineNumber: 10,
+      },
+    });
+  });
+
+  it("shows an empty PHP references panel when the symbol has no references", async () => {
+    const path = "/workspace/app/Services/UserService.php";
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        references: true,
+      },
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 221,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.references).mockResolvedValue([]);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(
+        async () =>
+          "<?php\n\nclass UserService\n{\n    public function loadUser(): string\n    {\n        return 'Ada';\n    }\n}\n",
+      ),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 5,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.findReferences")
+        ?.run();
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().referencesView?.symbol).toBe("loadUser");
+    expect(getWorkbench().referencesView?.locations).toHaveLength(0);
+  });
+
+  it("drops stale PHP references results after switching project tabs", async () => {
+    const path = "/workspace-a/app/Services/UserService.php";
+    const references =
+      createDeferred<
+        Awaited<ReturnType<LanguageServerFeaturesGateway["references"]>>
+      >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        references: true,
+      },
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 222,
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.references).mockImplementationOnce(
+      async () => references.promise,
+    );
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async () => "<?php\nclass UserService {}\n"),
+      runtimeStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition({
+        column: 25,
+        lineNumber: 1,
+      });
+    });
+
+    let commandResolved = false;
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      const runResult = getWorkbench()
+        .commands.find((candidate) => candidate.id === "editor.findReferences")
+        ?.run();
+      commandPromise = Promise.resolve(runResult).then(() => {
+        commandResolved = true;
+      });
+    });
+    await flushAsyncTurns(4);
+
+    expect(languageServerFeaturesGateway.references).toHaveBeenCalledWith(
+      "/workspace-a",
+      {
+        character: 24,
+        line: 0,
+        path,
+      },
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(4);
+
+    references.resolve([
+      {
+        uri: fileUriFromPath(path),
+        range: range(0, 6, 0, 17),
+      },
+    ]);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(12);
+
+    expect(commandResolved).toBe(true);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().referencesView).toBeNull();
   });
 
   it("keeps PHP call hierarchy open for rows from inactive project tabs", async () => {
@@ -33454,6 +35128,309 @@ return [
     ]);
   });
 
+  it("reuses cached Laravel config targets across repeated completions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
+    const configRoot = "/workspace/config";
+    const appConfigPath = "/workspace/config/app.php";
+    const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.na');
+    }
+}
+`;
+    const appConfigSource = `<?php
+
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+];
+`;
+    const readDirectory = vi.fn(async (path: string) =>
+      path === configRoot ? [fileEntry(appConfigPath, "app.php")] : [],
+    );
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPath) {
+        return controllerSource;
+      }
+
+      if (path === appConfigPath) {
+        return appConfigSource;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "AppController.php"),
+      );
+    });
+
+    const expected = [
+      {
+        declaringClassName: "config/app.php",
+        insertText: "name",
+        kind: "config",
+        name: "app.name",
+        parameters: "",
+        returnType: null,
+      },
+    ];
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "app.na"),
+      ),
+    ).resolves.toEqual(expected);
+
+    const configDirectoryReadsAfterFirst = readDirectory.mock.calls.filter(
+      ([path]) => path === configRoot,
+    ).length;
+    const configFileReadsAfterFirst = readTextFile.mock.calls.filter(
+      ([path]) => path === appConfigPath,
+    ).length;
+    expect(configDirectoryReadsAfterFirst).toBeGreaterThan(0);
+    expect(configFileReadsAfterFirst).toBeGreaterThan(0);
+
+    // Second completion for the same workspace must serve cached targets and
+    // never re-scan the config directory or re-read config files.
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "app.na"),
+      ),
+    ).resolves.toEqual(expected);
+
+    expect(
+      readDirectory.mock.calls.filter(([path]) => path === configRoot).length,
+    ).toBe(configDirectoryReadsAfterFirst);
+    expect(
+      readTextFile.mock.calls.filter(([path]) => path === appConfigPath).length,
+    ).toBe(configFileReadsAfterFirst);
+  });
+
+  it("reuses cached Laravel view targets across repeated completions", async () => {
+    const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
+    const viewsRoot = "/workspace/resources/views";
+    const commentsDirectory = "/workspace/resources/views/comments";
+    const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): mixed
+    {
+        return view('comments.sh');
+    }
+}
+`;
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === viewsRoot) {
+        return [directoryEntry(commentsDirectory, "comments")];
+      }
+
+      if (path === commentsDirectory) {
+        return [
+          fileEntry(
+            "/workspace/resources/views/comments/show.blade.php",
+            "show.blade.php",
+          ),
+        ];
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      readTextFile: vi.fn(async (path: string) =>
+        path === controllerPath ? controllerSource : "",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPath, "CommentController.php"),
+      );
+    });
+
+    const expected = [
+      {
+        declaringClassName: "resources/views/comments/show.blade.php",
+        insertText: "show",
+        kind: "view",
+        name: "comments.show",
+        parameters: "",
+        returnType: null,
+      },
+    ];
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.sh"),
+      ),
+    ).resolves.toEqual(expected);
+
+    const viewsRootReadsAfterFirst = readDirectory.mock.calls.filter(
+      ([path]) => path === viewsRoot,
+    ).length;
+    expect(viewsRootReadsAfterFirst).toBeGreaterThan(0);
+
+    // Second completion for the same workspace must serve cached targets and
+    // never re-walk the resources/views directory tree.
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource,
+        positionAfter(controllerSource, "comments.sh"),
+      ),
+    ).resolves.toEqual(expected);
+
+    expect(
+      readDirectory.mock.calls.filter(([path]) => path === viewsRoot).length,
+    ).toBe(viewsRootReadsAfterFirst);
+  });
+
+  it("rescans Laravel config targets after switching project tabs", async () => {
+    const controllerPathA =
+      "/workspace-a/app/Http/Controllers/AppController.php";
+    const controllerPathB =
+      "/workspace-b/app/Http/Controllers/AppController.php";
+    const configRootA = "/workspace-a/config";
+    const configRootB = "/workspace-b/config";
+    const appConfigPathA = "/workspace-a/config/alpha.php";
+    const appConfigPathB = "/workspace-b/config/beta.php";
+    const controllerSource = (workspace: string) => `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('${workspace}.na');
+    }
+}
+`;
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === configRootA) {
+        return [fileEntry(appConfigPathA, "alpha.php")];
+      }
+
+      if (path === configRootB) {
+        return [fileEntry(appConfigPathB, "beta.php")];
+      }
+
+      return [];
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === controllerPathA) {
+        return controllerSource("alpha");
+      }
+
+      if (path === controllerPathB) {
+        return controllerSource("beta");
+      }
+
+      if (path === appConfigPathA) {
+        return `<?php\n\nreturn [\n    'name' => 'Alpha',\n];\n`;
+      }
+
+      if (path === appConfigPathB) {
+        return `<?php\n\nreturn [\n    'name' => 'Beta',\n];\n`;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory,
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPathA, "AppController.php"),
+      );
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource("alpha"),
+        positionAfter(controllerSource("alpha"), "alpha.na"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/alpha.php",
+        insertText: "name",
+        kind: "config",
+        name: "alpha.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(
+        fileEntry(controllerPathB, "AppController.php"),
+      );
+    });
+
+    // The cache is keyed by workspace root and reset on switch, so workspace B
+    // must scan its own config and never serve workspace A's cached targets.
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        controllerSource("beta"),
+        positionAfter(controllerSource("beta"), "beta.na"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "config/beta.php",
+        insertText: "name",
+        kind: "config",
+        name: "beta.name",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      readDirectory.mock.calls.some(([path]) => path === configRootB),
+    ).toBe(true);
+  });
+
   it("suggests Laravel config repository keys", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/AppController.php";
     const configRoot = "/workspace/config";
@@ -38416,6 +40393,1968 @@ class AppController
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  describe("Laravel string-helper Cmd+Click definition", () => {
+    it("navigates a config literal to the config file key line", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const appConfigPath = "/workspace/config/app.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.name');
+    }
+}
+`;
+      const appConfigSource = `<?php
+
+return [
+    'name' => env('APP_NAME', 'Laravel'),
+];
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === appConfigPath) {
+            return appConfigSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("app.name") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(appConfigPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: appConfigPath,
+        position: {
+          column: 6,
+          lineNumber: 4,
+        },
+      });
+    });
+
+    it("navigates a view literal to its Blade file", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/DashboardController.php";
+      const bladePath = "/workspace/resources/views/admin/dashboard.blade.php";
+      const controllerSource = `<?php
+
+class DashboardController
+{
+    public function show(): mixed
+    {
+        return view('admin.dashboard');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === bladePath) {
+            return "<h1>Dashboard</h1>\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "DashboardController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("admin.dashboard") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: bladePath,
+        position: {
+          column: 1,
+          lineNumber: 1,
+        },
+      });
+    });
+
+    it("navigates a trans literal to the lang file key line", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const langBase = "/workspace/lang";
+      const langRoot = "/workspace/lang/en";
+      const messagesPath = "/workspace/lang/en/messages.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function label(): string
+    {
+        return __('messages.welcome');
+    }
+}
+`;
+      const messagesSource = `<?php
+
+return [
+    'welcome' => 'Welcome',
+];
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readDirectory: vi.fn(async (path: string) =>
+          path === langBase ? [directoryEntry(langRoot, "en")] : [],
+        ),
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === messagesPath) {
+            return messagesSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("messages.welcome") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(messagesPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: messagesPath,
+        position: {
+          column: 6,
+          lineNumber: 4,
+        },
+      });
+    });
+
+    it("navigates a route literal to its named route definition", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/CommentController.php";
+      const routesPath = "/workspace/routes/web.php";
+      const controllerSource = `<?php
+
+class CommentController
+{
+    public function show(): string
+    {
+        return route('comments.show');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === routesPath) {
+            return `<?php
+Route::get('/comments/{comment}', [CommentController::class, 'show'])
+    ->name('comments.show');
+`;
+          }
+
+          return `<?php\n// ${path}\n`;
+        }),
+        searchText: vi.fn(async (_root, query) =>
+          query === "->name("
+            ? [
+                {
+                  column: 5,
+                  lineNumber: 3,
+                  lineText: "    ->name('comments.show');",
+                  path: routesPath,
+                  relativePath: "routes/web.php",
+                },
+              ]
+            : [],
+        ),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "CommentController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("comments.show") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(routesPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: routesPath,
+        position: {
+          column: 13,
+          lineNumber: 3,
+        },
+      });
+    });
+
+    it("navigates a route parameter to its implicitly bound model", async () => {
+      const routesPath = "/workspace/routes/web.php";
+      const modelPath = "/workspace/app/Models/User.php";
+      const routesSource = `<?php
+Route::get('/users/{user}', [UserController::class, 'show']);
+`;
+      const modelSource = `<?php
+
+namespace App\\Models;
+
+class User extends Model
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          if (path === modelPath) {
+            return modelSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{user}") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(modelPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: modelPath,
+        position: {
+          column: 7,
+          lineNumber: 5,
+        },
+      });
+    });
+
+    it("falls back to a legacy flat-namespaced model for a route parameter", async () => {
+      const routesPath = "/workspace/routes/web.php";
+      const modelsModelPath = "/workspace/app/Models/Project.php";
+      const legacyModelPath = "/workspace/app/Project.php";
+      const routesSource = `<?php
+Route::get('/projects/{project}', [ProjectController::class, 'show']);
+`;
+      const legacyModelSource = `<?php
+
+namespace App;
+
+class Project extends Model
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          if (path === legacyModelPath) {
+            return legacyModelSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{project}") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(legacyModelPath);
+      expect(getWorkbench().activePath).not.toBe(modelsModelPath);
+    });
+
+    it("does not navigate a route parameter when no bound model exists", async () => {
+      const routesPath = "/workspace/routes/web.php";
+      const routesSource = `<?php
+Route::get('/widgets/{widget}', [WidgetController::class, 'show']);
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{widget}") + 2,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(routesPath);
+    });
+
+    it("stops stale route parameter model navigation after switching project tabs", async () => {
+      const routesPath = "/workspace-a/routes/web.php";
+      const modelPath = "/workspace-a/app/Models/User.php";
+      const routesSource = `<?php
+Route::get('/users/{user}', [UserController::class, 'show']);
+`;
+      const staleModelRead = createDeferred<string>();
+      let modelReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === routesPath) {
+            return routesSource;
+          }
+
+          if (path === modelPath) {
+            modelReadCount += 1;
+            return staleModelRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: { ...phpWorkspaceDescriptor(), rootPath: "/workspace-a" },
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(routesPath, "web.php"));
+      });
+
+      let handled = true;
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          routesSource,
+          routesSource.indexOf("{user}") + 2,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(modelReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleModelRead.resolve(`<?php
+
+namespace App\\Models;
+
+class User extends Model
+{
+}
+`);
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(modelPath);
+    });
+
+    it("does not navigate when the resolved Laravel file does not exist", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const missingConfigPath = "/workspace/config/missing.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('missing.key');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === missingConfigPath) {
+            throw new Error(`Missing ${path}`);
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("missing.key") + 1,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(controllerPath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("returns false when the offset is not inside a Laravel helper literal", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return strtoupper('app.name');
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("app.name") + 1,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(controllerPath);
+    });
+
+    it("drops a stale config navigation after switching project tabs mid-read", async () => {
+      const controllerPath =
+        "/workspace-a/app/Http/Controllers/AppController.php";
+      const appConfigPath = "/workspace-a/config/app.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.name');
+    }
+}
+`;
+      const staleConfigRead = createDeferred<string>();
+      let configReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === appConfigPath) {
+            configReadCount += 1;
+            return staleConfigRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("app.name") + 1,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(configReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleConfigRead.resolve(`<?php
+
+return [
+    'name' => 'Stale',
+];
+`);
+      let handled = true;
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(appConfigPath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("drops a stale view navigation after switching project tabs mid-read", async () => {
+      const controllerPath =
+        "/workspace-a/app/Http/Controllers/DashboardController.php";
+      const bladePath =
+        "/workspace-a/resources/views/admin/dashboard.blade.php";
+      const controllerSource = `<?php
+
+class DashboardController
+{
+    public function show(): mixed
+    {
+        return view('admin.dashboard');
+    }
+}
+`;
+      const staleBladeRead = createDeferred<string>();
+      let bladeReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === bladePath) {
+            bladeReadCount += 1;
+            return staleBladeRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "DashboardController.php"),
+        );
+      });
+
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("admin.dashboard") + 1,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(bladeReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleBladeRead.resolve("<h1>Dashboard</h1>\n");
+      let handled = true;
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+  });
+
+  describe("Laravel Job/Event dispatch Cmd+Click definition", () => {
+    it("navigates a dispatch(new Job) helper call to the job handle method", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/PodcastController.php";
+      const jobPath = "/workspace/app/Jobs/ProcessPodcast.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Jobs\\ProcessPodcast;
+
+class PodcastController
+{
+    public function store()
+    {
+        dispatch(new ProcessPodcast($podcast));
+    }
+}
+`;
+      const jobSource = `<?php
+
+namespace App\\Jobs;
+
+class ProcessPodcast
+{
+    public function handle()
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === jobPath) {
+            return jobSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "PodcastController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("ProcessPodcast($podcast") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(jobPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: jobPath,
+        position: {
+          column: 21,
+          lineNumber: 7,
+        },
+      });
+    });
+
+    it("navigates a static Job::dispatchSync call to the job handle method", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/PodcastController.php";
+      const jobPath = "/workspace/app/Jobs/ProcessPodcast.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Jobs\\ProcessPodcast;
+
+class PodcastController
+{
+    public function store()
+    {
+        ProcessPodcast::dispatchSync($podcast);
+    }
+}
+`;
+      const jobSource = `<?php
+
+namespace App\\Jobs;
+
+class ProcessPodcast
+{
+    public function handle()
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === jobPath) {
+            return jobSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "PodcastController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("ProcessPodcast::dispatchSync") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(jobPath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(7);
+    });
+
+    it("falls back to the job class declaration when handle is missing", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/PodcastController.php";
+      const jobPath = "/workspace/app/Jobs/ProcessPodcast.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Jobs\\ProcessPodcast;
+
+class PodcastController
+{
+    public function store()
+    {
+        dispatch(new ProcessPodcast($podcast));
+    }
+}
+`;
+      const jobSource = `<?php
+
+namespace App\\Jobs;
+
+class ProcessPodcast
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === jobPath) {
+            return jobSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "PodcastController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("ProcessPodcast($podcast") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(jobPath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(5);
+    });
+
+    it("does not navigate when the dispatched job class cannot be resolved", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/PodcastController.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Jobs\\ProcessPodcast;
+
+class PodcastController
+{
+    public function store()
+    {
+        dispatch(new ProcessPodcast($podcast));
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          throw new Error(`Missing ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "PodcastController.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("ProcessPodcast($podcast") + 2,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(controllerPath);
+    });
+
+    it("navigates an event(new Event) helper call to the listener handle method", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/OrderController.php";
+      const providerPath = "/workspace/app/Providers/EventServiceProvider.php";
+      const listenerPath =
+        "/workspace/app/Listeners/SendShipmentNotification.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        event(new OrderShipped($order));
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Events\\OrderShipped;
+use App\\Listeners\\SendShipmentNotification;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderShipped::class => [
+            SendShipmentNotification::class,
+        ],
+    ];
+}
+`;
+      const listenerSource = `<?php
+
+namespace App\\Listeners;
+
+class SendShipmentNotification
+{
+    public function handle($event)
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          if (path === listenerPath) {
+            return listenerSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped($order") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(listenerPath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(7);
+    });
+
+    it("navigates an event to an __invoke listener", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/OrderController.php";
+      const providerPath = "/workspace/app/Providers/EventServiceProvider.php";
+      const listenerPath =
+        "/workspace/app/Listeners/SendShipmentNotification.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        event(new OrderShipped($order));
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Events\\OrderShipped;
+use App\\Listeners\\SendShipmentNotification;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderShipped::class => [
+            SendShipmentNotification::class,
+        ],
+    ];
+}
+`;
+      const listenerSource = `<?php
+
+namespace App\\Listeners;
+
+class SendShipmentNotification
+{
+    public function __invoke($event)
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          if (path === listenerPath) {
+            return listenerSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped($order") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(listenerPath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(7);
+    });
+
+    it("navigates to the first resolvable listener when an event has multiple", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/OrderController.php";
+      const providerPath = "/workspace/app/Providers/EventServiceProvider.php";
+      const firstListenerPath =
+        "/workspace/app/Listeners/SendShipmentNotification.php";
+      const secondListenerPath =
+        "/workspace/app/Listeners/UpdateInventory.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        OrderShipped::dispatch($order);
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Events\\OrderShipped;
+use App\\Listeners\\SendShipmentNotification;
+use App\\Listeners\\UpdateInventory;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderShipped::class => [
+            SendShipmentNotification::class,
+            UpdateInventory::class,
+        ],
+    ];
+}
+`;
+      const firstListenerSource = `<?php
+
+namespace App\\Listeners;
+
+class SendShipmentNotification
+{
+    public function handle($event)
+    {
+    }
+}
+`;
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return providerSource;
+        }
+
+        if (path === firstListenerPath) {
+          return firstListenerSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped::dispatch") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(firstListenerPath);
+      expect(getWorkbench().activePath).not.toBe(secondListenerPath);
+    });
+
+    it("does not navigate an event with no listener mapping", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/OrderController.php";
+      const providerPath = "/workspace/app/Providers/EventServiceProvider.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        event(new OrderShipped($order));
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [];
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped($order") + 2,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(controllerPath);
+    });
+
+    it("stops stale event listener navigation after switching project tabs", async () => {
+      const controllerPath =
+        "/workspace-a/app/Http/Controllers/OrderController.php";
+      const providerPath =
+        "/workspace-a/app/Providers/EventServiceProvider.php";
+      const listenerPath =
+        "/workspace-a/app/Listeners/SendShipmentNotification.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        event(new OrderShipped($order));
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Events\\OrderShipped;
+use App\\Listeners\\SendShipmentNotification;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderShipped::class => [
+            SendShipmentNotification::class,
+        ],
+    ];
+}
+`;
+      const staleListenerRead = createDeferred<string>();
+      let listenerReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          if (path === listenerPath) {
+            listenerReadCount += 1;
+            return staleListenerRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: {
+          ...phpWorkspaceDescriptor(),
+          rootPath: "/workspace-a",
+        },
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = true;
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped($order") + 2,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(listenerReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleListenerRead.resolve(`<?php
+
+namespace App\\Listeners;
+
+class SendShipmentNotification
+{
+    public function handle($event)
+    {
+    }
+}
+`);
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(listenerPath);
+    });
+  });
+
+  describe("Blade Cmd+Click definition and completion", () => {
+    it("navigates an @include directive to the referenced view file", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const partialPath = "/workspace/resources/views/partials/alert.blade.php";
+      const bladeSource = "@include('partials.alert')\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === partialPath) {
+            return "<div>Alert</div>\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("partials.alert") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(partialPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: partialPath,
+        position: { column: 1, lineNumber: 1 },
+      });
+    });
+
+    it("navigates an <x-...> component tag to its component view file", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      // The flat candidate (forms/input.blade.php) is intentionally absent so the
+      // resolver must fall through to the directory index candidate.
+      const componentPath =
+        "/workspace/resources/views/components/forms/input/index.blade.php";
+      const bladeSource = "<x-forms.input name=\"email\" />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === componentPath) {
+            return "<input />\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("forms.input") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(componentPath);
+    });
+
+    it("navigates an <x-...> component to its class-based PHP file when no blade view exists", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      // Only the class-based component file exists; the anonymous blade
+      // candidates are absent so the resolver must fall through to the PHP class.
+      const componentClassPath = "/workspace/app/View/Components/Alert.php";
+      const bladeSource = "<x-alert />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === componentClassPath) {
+            return "<?php\n\nnamespace App\\View\\Components;\n\nclass Alert {}\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("alert") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(componentClassPath);
+    });
+
+    it("prefers the anonymous blade view over the class-based PHP file when both exist", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const componentBladePath =
+        "/workspace/resources/views/components/alert.blade.php";
+      const componentClassPath = "/workspace/app/View/Components/Alert.php";
+      const bladeSource = "<x-alert />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === componentBladePath) {
+            return "<div>Alert</div>\n";
+          }
+
+          if (path === componentClassPath) {
+            return "<?php\n\nnamespace App\\View\\Components;\n\nclass Alert {}\n";
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("alert") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(componentBladePath);
+    });
+
+    it("does not navigate an <x-...> component when neither blade nor class file exists", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const bladeSource = "<x-alert />\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("alert") + 1,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("does not navigate when the referenced Blade view does not exist", async () => {
+      const bladePath = "/workspace/resources/views/show.blade.php";
+      const bladeSource = "@include('partials.missing')\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("partials.missing") + 1,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(bladePath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("drops a stale Blade view navigation after switching project tabs mid-read", async () => {
+      const bladePath = "/workspace-a/resources/views/show.blade.php";
+      const partialPath =
+        "/workspace-a/resources/views/partials/alert.blade.php";
+      const bladeSource = "@include('partials.alert')\n";
+      const stalePartialRead = createDeferred<string>();
+      let partialReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === bladePath) {
+            return bladeSource;
+          }
+
+          if (path === partialPath) {
+            partialReadCount += 1;
+            return stalePartialRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(fileEntry(bladePath, "show.blade.php"));
+      });
+
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().provideBladeDefinition(
+          bladeSource,
+          bladeSource.indexOf("partials.alert") + 1,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(partialReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      stalePartialRead.resolve("<div>Alert</div>\n");
+      let handled = true;
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(partialPath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("suggests Blade directives after an @ prefix", async () => {
+      const bladeSource = "@inc\n";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+          column: 5,
+          lineNumber: 1,
+        });
+      });
+
+      const labels = completions.map((completion) => completion.label);
+      expect(labels).toContain("@include");
+      expect(labels).toContain("@includeIf");
+      expect(completions.every((completion) => completion.kind === "directive")).toBe(
+        true,
+      );
+      const include = completions.find(
+        (completion) => completion.label === "@include",
+      );
+      expect(include).toEqual(
+        expect.objectContaining({
+          insertText: "include",
+          replaceEnd: bladeSource.indexOf("@inc") + 4,
+          replaceStart: bladeSource.indexOf("@inc") + 1,
+        }),
+      );
+    });
+
+    it("suggests Blade view names inside an @include literal", async () => {
+      const bladeSource = "@include('comments')\n";
+      const viewsRoot = "/workspace/resources/views";
+      const commentsDirectory = "/workspace/resources/views/comments";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readDirectory: vi.fn(async (path: string) => {
+          if (path === viewsRoot) {
+            return [directoryEntry(commentsDirectory, "comments")];
+          }
+
+          if (path === commentsDirectory) {
+            return [
+              fileEntry(
+                `${commentsDirectory}/index.blade.php`,
+                "index.blade.php",
+              ),
+              fileEntry(`${commentsDirectory}/show.blade.php`, "show.blade.php"),
+            ];
+          }
+
+          return [];
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+          column: bladeSource.indexOf("')") + 1,
+          lineNumber: 1,
+        });
+      });
+
+      const labels = completions.map((completion) => completion.label).sort();
+      expect(labels).toEqual(["comments.index", "comments.show"]);
+      expect(completions.every((completion) => completion.kind === "view")).toBe(
+        true,
+      );
+    });
+
+    it("suggests Blade component names inside an <x- tag", async () => {
+      const bladeSource = "<x-fo\n";
+      const componentsRoot = "/workspace/resources/views/components";
+      const formsDirectory =
+        "/workspace/resources/views/components/forms";
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readDirectory: vi.fn(async (path: string) => {
+          if (path === componentsRoot) {
+            return [directoryEntry(formsDirectory, "forms")];
+          }
+
+          if (path === formsDirectory) {
+            return [
+              fileEntry(`${formsDirectory}/input.blade.php`, "input.blade.php"),
+              fileEntry(`${formsDirectory}/select.blade.php`, "select.blade.php"),
+            ];
+          }
+
+          return [];
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("fullSmart");
+      });
+
+      let completions: Awaited<
+        ReturnType<WorkbenchController["provideBladeCompletions"]>
+      > = [];
+      await act(async () => {
+        completions = await getWorkbench().provideBladeCompletions(bladeSource, {
+          column: bladeSource.indexOf("\n") + 1,
+          lineNumber: 1,
+        });
+      });
+
+      const labels = completions.map((completion) => completion.label).sort();
+      expect(labels).toEqual(["forms.input", "forms.select"]);
+      expect(
+        completions.every((completion) => completion.kind === "component"),
+      ).toBe(true);
+    });
+  });
+
   it("suggests Laravel Blade views inside view helper strings", async () => {
     const controllerPath = "/workspace/app/Http/Controllers/CommentController.php";
     const viewsRoot = "/workspace/resources/views";
@@ -40319,6 +44258,2064 @@ final class InvoiceAdapter
 
     expect(getWorkbench().settingsOpen).toBe(true);
     expect(getWorkbench().settingsInitialSection).toBe("appearance");
+  it("offers an implement-methods code action for an unimplemented interface", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+
+namespace App\\Contracts;
+
+  it("offers an implement-methods code action for an unimplemented interface", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(string $name): string;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.title).toBe("Implement methods");
+    const insertEdit = actions[0]?.edits[0];
+    expect(insertEdit?.text).toContain(
+      "public function greet(string $name): string",
+    );
+    expect(insertEdit?.range).toEqual({
+      endColumn: 1,
+      endLineNumber: 9,
+      startColumn: 1,
+      startLineNumber: 9,
+    });
+  });
+
+  it("adds a use import for stub types that are not imported in the class", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+
+namespace App\\Contracts;
+
+use App\\Models\\Greeting;
+
+interface GreeterContract
+{
+    public function greet(): Greeting;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions).toHaveLength(1);
+    const importEdit = actions[0]?.edits.find((edit) =>
+      edit.text.includes("use App\\Models\\Greeting;"),
+    );
+    expect(importEdit).toBeDefined();
+    const stubEdit = actions[0]?.edits.find((edit) =>
+      edit.text.includes("public function greet(): Greeting"),
+    );
+    expect(stubEdit).toBeDefined();
+  });
+
+  it("offers no implement-methods code action when every interface method is implemented", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+    public function greet(string $name): string
+    {
+        return $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === interfacePath) {
+          return `<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(string $name): string;
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpCodeActions(classSource),
+    ).resolves.toEqual([]);
+  });
+
+  it("offers no implement-methods code action for a class without supertypes", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    await expect(
+      getWorkbench().providePhpCodeActions(classSource),
+    ).resolves.toEqual([]);
+  });
+
+  it("drops stale implement-methods code actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Greeter.php";
+    const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+}
+`;
+    const interfaceRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === interfacePath) {
+        return interfaceRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(interfacePath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    interfaceRead.resolve(`<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(string $name): string;
+}
+`);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
+  it("offers an override-methods code action for concrete parent methods", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(string $name): string
+    {
+        return $name;
+    }
+
+    protected function boot(): void
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const overrideAction = actions.find(
+      (action) => action.title === "Override methods",
+    );
+    expect(overrideAction).toBeDefined();
+    const overrideText = overrideAction?.edits[0]?.text ?? "";
+    expect(overrideText).toContain(
+      "public function handle(string $name): string",
+    );
+    expect(overrideText).toContain("return parent::handle($name);");
+    expect(overrideText).toContain("protected function boot(): void");
+    expect(overrideText).toContain("parent::boot();");
+    expect(overrideText).toContain("@inheritDoc");
+  });
+
+  it("omits final, private and already-overridden parent methods from the override action", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+    public function alreadyOverridden(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return `<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    final public function sealed(): void
+    {
+    }
+
+    private function hidden(): void
+    {
+    }
+
+    public function alreadyOverridden(): void
+    {
+    }
+
+    public function overridable(): int
+    {
+        return 1;
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const overrideAction = actions.find(
+      (action) => action.title === "Override methods",
+    );
+    expect(overrideAction).toBeDefined();
+    const overrideText = overrideAction?.edits[0]?.text ?? "";
+    expect(overrideText).toContain("public function overridable(): int");
+    expect(overrideText).toContain("return parent::overridable();");
+    expect(overrideText).not.toContain("sealed");
+    expect(overrideText).not.toContain("hidden");
+    expect(overrideText).not.toContain("alreadyOverridden");
+  });
+
+  it("offers no override-methods code action for a class without a parent", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions.some((action) => action.title === "Override methods")).toBe(
+      false,
+    );
+  });
+
+  it("offers no override-methods code action when the parent exposes nothing overridable", async () => {
+    const classPath = "/workspace/app/Services/Child.php";
+    const parentPath = "/workspace/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        if (path === parentPath) {
+          return `<?php
+
+namespace App\\Services;
+
+abstract class BaseService
+{
+    abstract public function handle(): void;
+
+    final public function sealed(): void
+    {
+    }
+
+    private function hidden(): void
+    {
+    }
+}
+`;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions.some((action) => action.title === "Override methods")).toBe(
+      false,
+    );
+  });
+
+  it("drops stale override-methods code actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Child.php";
+    const parentPath = "/workspace-a/app/Services/BaseService.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Child extends BaseService
+{
+}
+`;
+    const parentRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === parentPath) {
+        return parentRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Child.php"));
+    });
+
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(parentPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    parentRead.resolve(`<?php
+
+namespace App\\Services;
+
+class BaseService
+{
+    public function handle(): void
+    {
+    }
+}
+`);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
+  it("offers a generate getters and setters action for properties without accessors", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    private int $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const accessorAction = actions.find(
+      (action) => action.title === "Generate getters and setters",
+    );
+    expect(accessorAction).toBeDefined();
+    const accessorText = accessorAction?.edits[0]?.text ?? "";
+    expect(accessorText).toContain("public function getName(): string");
+    expect(accessorText).toContain(
+      "public function setName(string $name): void",
+    );
+    expect(accessorText).toContain("public function getBalance(): int");
+  });
+
+  it("offers no generate getters and setters action when every property has accessors", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    public function getName(): string
+    {
+        return $this->name;
+    }
+
+    public function setName(string $name): void
+    {
+        $this->name = $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(
+      actions.some((action) => action.title === "Generate getters and setters"),
+    ).toBe(false);
+  });
+
+  it("offers a generate constructor action for a class with properties and no constructor", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    private int $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const constructorAction = actions.find(
+      (action) => action.title === "Generate constructor",
+    );
+    expect(constructorAction).toBeDefined();
+    const constructorText = constructorAction?.edits[0]?.text ?? "";
+    expect(constructorText).toContain(
+      "public function __construct(string $name, int $balance)",
+    );
+    expect(constructorText).toContain("$this->name = $name;");
+    expect(constructorText).toContain("$this->balance = $balance;");
+  });
+
+  it("offers both classic and promoted constructor actions for a class with properties and no constructor", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    private int $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const classicAction = actions.find(
+      (action) => action.title === "Generate constructor",
+    );
+    expect(classicAction).toBeDefined();
+
+    const promotedAction = actions.find(
+      (action) => action.title === "Generate constructor with promotion",
+    );
+    expect(promotedAction).toBeDefined();
+    const promotedText = promotedAction?.edits[0]?.text ?? "";
+    expect(promotedText).toContain("private string $name,");
+    expect(promotedText).toContain("private int $balance,");
+    // Promotion keeps the body empty (no `$this->` assignments).
+    expect(promotedText).not.toContain("$this->name = $name;");
+  });
+
+  it("offers no promoted constructor action when the class already has a constructor", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    public function __construct(string $name)
+    {
+        $this->name = $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(
+      actions.some(
+        (action) => action.title === "Generate constructor with promotion",
+      ),
+    ).toBe(false);
+  });
+
+  it("offers no generate constructor action when the class already has a constructor", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+class Account
+{
+    private string $name;
+
+    public function __construct(string $name)
+    {
+        $this->name = $name;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(
+      actions.some((action) => action.title === "Generate constructor"),
+    ).toBe(false);
+  });
+
+  it("offers an optimize imports action when an import is unused", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+use App\\Support\\Unused;
+use App\\Support\\Money;
+
+class Account
+{
+    private Money $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const optimizeAction = actions.find(
+      (action) => action.title === "Optimize imports",
+    );
+    expect(optimizeAction).toBeDefined();
+    const optimizeText = optimizeAction?.edits[0]?.text ?? "";
+    expect(optimizeText).toContain("use App\\Support\\Money;");
+    expect(optimizeText).not.toContain("Unused");
+  });
+
+  it("offers no optimize imports action when imports are already clean", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+use App\\Support\\Money;
+
+class Account
+{
+    private Money $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions.some((action) => action.title === "Optimize imports")).toBe(
+      false,
+    );
+  });
+
+  it("does not offer optimize imports when a comment sits between use statements", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+use App\\Support\\Unused;
+// keep this note about Money
+use App\\Support\\Money;
+
+class Account
+{
+    private Money $balance;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    expect(actions.some((action) => action.title === "Optimize imports")).toBe(
+      false,
+    );
+  });
+
+  it("replaces the use block with an empty string when every import is unused", async () => {
+    const classPath = "/workspace/app/Models/Account.php";
+    const classSource = `<?php
+
+namespace App\\Models;
+
+use App\\Support\\Unused;
+
+class Account
+{
+    private string $name;
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === classPath) {
+          return classSource;
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Account.php"));
+    });
+
+    const actions = await getWorkbench().providePhpCodeActions(classSource);
+
+    const optimizeAction = actions.find(
+      (action) => action.title === "Optimize imports",
+    );
+    expect(optimizeAction).toBeDefined();
+    const optimizeEdit = optimizeAction?.edits[0];
+    expect(optimizeEdit?.text).toBe("");
+    expect(optimizeEdit?.range.startLineNumber).toBe(5);
+    expect(optimizeEdit?.range.endLineNumber).toBe(5);
+  });
+
+  it("drops stale generate-constructor code actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Greeter.php";
+    const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+    private string $name;
+}
+`;
+    const interfaceRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === interfacePath) {
+        return interfaceRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(interfacePath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    interfaceRead.resolve(`<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(string $name): string;
+}
+`);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
+  it("offers a create-method code action when the cursor is on a missing $this method", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $this->doWork(1, 'x');
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("doWork");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createMethod = actions.find(
+      (action) => action.title === "Create method 'doWork'",
+    );
+    expect(createMethod).toBeDefined();
+    const stubText = createMethod?.edits[0]?.text ?? "";
+    expect(stubText).toContain("private function doWork(int $arg0, string $arg1)");
+  });
+
+  it("offers a create-property code action when the cursor is on a missing $this property", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        echo $this->status;
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("status");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const createProperty = actions.find(
+      (action) => action.title === "Create property 'status'",
+    );
+    expect(createProperty).toBeDefined();
+    expect(createProperty?.edits[0]?.text ?? "").toContain("private $status;");
+  });
+
+  it("offers no create-method action when the $this method already exists", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): void
+    {
+        $this->doWork();
+    }
+
+    private function doWork(): void
+    {
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("doWork");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title.startsWith("Create method")),
+    ).toBe(false);
+  });
+
+  it("offers an extract-variable code action for a selected expression", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): int
+    {
+        return price() + tax();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const start = classSource.indexOf("price()");
+    const end = classSource.indexOf("tax()") + "tax()".length;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end,
+      start,
+    });
+
+    const extract = actions.find((action) => action.title === "Extract variable");
+    expect(extract).toBeDefined();
+    expect(extract?.edits).toHaveLength(2);
+    const declaration = extract?.edits.find((edit) =>
+      edit.text.includes("$extracted = price() + tax();"),
+    );
+    expect(declaration).toBeDefined();
+    const replacement = extract?.edits.find(
+      (edit) => edit.text === "$extracted",
+    );
+    expect(replacement).toBeDefined();
+  });
+
+  it("offers no extract-variable action when the selection is empty", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function run(): int
+    {
+        return price() + tax();
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("price()");
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some((action) => action.title === "Extract variable"),
+    ).toBe(false);
+  });
+
+  it("offers an introduce-constant code action when the cursor is on a literal", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): string
+    {
+        return 'Hello world';
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("'Hello world'") + 2;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const introduce = actions.find(
+      (action) => action.title === "Introduce constant",
+    );
+    expect(introduce).toBeDefined();
+    expect(introduce?.edits).toHaveLength(2);
+    const declaration = introduce?.edits.find((edit) =>
+      edit.text.includes("private const HELLO_WORLD = 'Hello world';"),
+    );
+    expect(declaration).toBeDefined();
+    const replacement = introduce?.edits.find(
+      (edit) => edit.text === "self::HELLO_WORLD",
+    );
+    expect(replacement).toBeDefined();
+  });
+
+  it("offers an introduce-field code action when the cursor is on a literal", async () => {
+    const classPath = "/workspace/app/Services/Greeter.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+class Greeter
+{
+    public function greet(): string
+    {
+        return 'Hello world';
+    }
+}
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === classPath ? classSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("'Hello world'") + 2;
+    const actions = await getWorkbench().providePhpCodeActions(classSource, {
+      end: offset,
+      start: offset,
+    });
+
+    const introduce = actions.find(
+      (action) => action.title === "Introduce field",
+    );
+    expect(introduce).toBeDefined();
+    expect(introduce?.edits).toHaveLength(2);
+    const declaration = introduce?.edits.find((edit) =>
+      edit.text.includes("private string $helloWorld = 'Hello world';"),
+    );
+    expect(declaration).toBeDefined();
+    const replacement = introduce?.edits.find(
+      (edit) => edit.text === "$this->helloWorld",
+    );
+    expect(replacement).toBeDefined();
+  });
+
+  it("offers no introduce-constant or introduce-field action outside a class", async () => {
+    const filePath = "/workspace/script.php";
+    const fileSource = `<?php
+
+$greeting = 'Hello world';
+`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) =>
+        path === filePath ? fileSource : `<?php\n// ${path}\n`,
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(filePath, "script.php"));
+    });
+
+    const offset = fileSource.indexOf("'Hello world'") + 2;
+    const actions = await getWorkbench().providePhpCodeActions(fileSource, {
+      end: offset,
+      start: offset,
+    });
+
+    expect(
+      actions.some(
+        (action) =>
+          action.title === "Introduce constant" ||
+          action.title === "Introduce field",
+      ),
+    ).toBe(false);
+  });
+
+  it("drops stale introduce-constant code actions after switching project tabs", async () => {
+    const classPath = "/workspace-a/app/Services/Greeter.php";
+    const interfacePath = "/workspace-a/app/Contracts/GreeterContract.php";
+    const classSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\GreeterContract;
+
+class Greeter implements GreeterContract
+{
+    public function greet(): string
+    {
+        return 'Hello world';
+    }
+}
+`;
+    const interfaceRead = createDeferred<string>();
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === classPath) {
+        return classSource;
+      }
+
+      if (path === interfacePath) {
+        return interfaceRead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(classPath, "Greeter.php"));
+    });
+
+    const offset = classSource.indexOf("'Hello world'") + 2;
+    let actionsPromise:
+      | ReturnType<WorkbenchController["providePhpCodeActions"]>
+      | null = null;
+    await act(async () => {
+      actionsPromise = getWorkbench().providePhpCodeActions(classSource, {
+        end: offset,
+        start: offset,
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(readTextFile).toHaveBeenCalledWith(interfacePath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    interfaceRead.resolve(`<?php
+
+namespace App\\Contracts;
+
+interface GreeterContract
+{
+    public function greet(): string;
+}
+`);
+
+    expect(actionsPromise).not.toBeNull();
+    await expect(actionsPromise).resolves.toEqual([]);
+  });
+
+  it("aggregates TODO comments across workspace source files and skips dependency directories", async () => {
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace") {
+        return [
+          directoryEntry("/workspace/app", "app"),
+          directoryEntry("/workspace/vendor", "vendor"),
+          directoryEntry("/workspace/node_modules", "node_modules"),
+          fileEntry("/workspace/composer.lock", "composer.lock"),
+        ];
+      }
+
+      if (path === "/workspace/app") {
+        return [
+          fileEntry("/workspace/app/UserController.php", "UserController.php"),
+          fileEntry("/workspace/app/helper.ts", "helper.ts"),
+        ];
+      }
+
+      throw new Error(`unexpected directory read: ${path}`);
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === "/workspace/app/UserController.php") {
+        return "<?php\n// TODO: wire the controller\nclass UserController {}\n";
+      }
+
+      if (path === "/workspace/app/helper.ts") {
+        return "// FIXME drop legacy path\nexport const value = 1;\n";
+      }
+
+      return `// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+
+    await act(async () => {
+      await getWorkbench().refreshWorkspaceTodos();
+    });
+
+    const todos = getWorkbench().workspaceTodos;
+
+    expect(todos).toHaveLength(2);
+    expect(todos).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          filePath: "/workspace/app/UserController.php",
+          relativePath: "app/UserController.php",
+          tag: "TODO",
+          text: "wire the controller",
+          line: 2,
+        }),
+        expect.objectContaining({
+          filePath: "/workspace/app/helper.ts",
+          relativePath: "app/helper.ts",
+          tag: "FIXME",
+          text: "drop legacy path",
+          line: 1,
+        }),
+      ]),
+    );
+    expect(getWorkbench().workspaceTodosLoading).toBe(false);
+    expect(readDirectory).not.toHaveBeenCalledWith("/workspace/vendor");
+    expect(readDirectory).not.toHaveBeenCalledWith("/workspace/node_modules");
+    expect(readTextFile).not.toHaveBeenCalledWith("/workspace/composer.lock");
+  });
+
+  it("drops TODO scan results when the workspace tab switches mid-scan", async () => {
+    const workspaceARead = createDeferred<string>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace-a") {
+        return [fileEntry("/workspace-a/Todo.php", "Todo.php")];
+      }
+
+      if (path === "/workspace-b") {
+        return [fileEntry("/workspace-b/Other.php", "Other.php")];
+      }
+
+      throw new Error(`unexpected directory read: ${path}`);
+    });
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === "/workspace-a/Todo.php") {
+        return workspaceARead.promise;
+      }
+
+      return `<?php\n// ${path}\n`;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory,
+      readTextFile,
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+    let scanPromise: Promise<void> | null = null;
+    act(() => {
+      scanPromise = getWorkbench().refreshWorkspaceTodos();
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+
+    await act(async () => {
+      workspaceARead.resolve(
+        "<?php\n// TODO: stale workspace-a comment\nclass Todo {}\n",
+      );
+      await scanPromise;
+      await Promise.resolve();
+    });
+
+    // The stale /workspace-a comment must never appear inside /workspace-b.
+    expect(
+      getWorkbench().workspaceTodos.some((todo) =>
+        todo.filePath.startsWith("/workspace-a"),
+      ),
+    ).toBe(false);
+    expect(getWorkbench().workspaceTodos).toEqual([]);
+  });
+
+  it("closes the tab, clears diagnostics and refreshes the tree on an external delete", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const readDirectory = vi.fn(async () => []);
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    readDirectory.mockClear();
+    expect(publishFileChange).not.toBeNull();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "deleted",
+        path: "/workspace/src/User.php",
+        relativePath: "src/User.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    await flushWorkspaceDirectoryRefresh();
+
+    expect(getWorkbench().openDocuments).toHaveLength(0);
+    expect(readDirectory).toHaveBeenCalledWith("/workspace/src");
+  });
+
+  it("ignores external file changes from a workspace that is not active", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const readDirectory = vi.fn(async () => []);
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    readDirectory.mockClear();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "deleted",
+        path: "/other/src/User.php",
+        relativePath: "src/User.php",
+        rootPath: "/other",
+      });
+      await flushAsyncTurns();
+    });
+
+    // The tab for the active workspace must stay open and the active tree must
+    // not be refreshed for an inactive workspace's change.
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+    expect(readDirectory).not.toHaveBeenCalled();
+  });
+
+  it("closes the tab for the previous path on an external rename", async () => {
+    let publishFileChange:
+      | ((event: WorkspaceFileChangeEvent) => void)
+      | null = null;
+    const readDirectory = vi.fn(async () => []);
+    const workspaceFileChangeGateway: WorkbenchWorkspaceGateways["fileChanges"] =
+      {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async (listener) => {
+          publishFileChange = listener;
+          return () => undefined;
+        }),
+      };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+      workspaceFileChangeGateway,
+    });
+    await flushAsyncTurns();
+
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    readDirectory.mockClear();
+
+    await act(async () => {
+      publishFileChange?.({
+        kind: "renamed",
+        path: "/workspace/src/Account.php",
+        previousPath: "/workspace/src/User.php",
+        previousRelativePath: "src/User.php",
+        relativePath: "src/Account.php",
+        rootPath: "/workspace",
+      });
+      await flushAsyncTurns();
+    });
+
+    await flushWorkspaceDirectoryRefresh();
+
+    expect(getWorkbench().openDocuments).toHaveLength(0);
+    expect(readDirectory).toHaveBeenCalledWith("/workspace/src");
+  });
+
+  it("generates a PHPUnit test skeleton for the active PHP class and opens it", async () => {
+    const sourcePath = "/workspace/app/Services/InvoiceService.php";
+    const testPath = "/workspace/tests/Unit/Services/InvoiceServiceTest.php";
+    const sourceContent = [
+      "<?php",
+      "",
+      "namespace App\\Services;",
+      "",
+      "class InvoiceService",
+      "{",
+      "    public function calculate(): int { return 0; }",
+      "    public function refund(): bool { return true; }",
+      "}",
+      "",
+    ].join("\n");
+    const files = new Map<string, string>([[sourcePath, sourceContent]]);
+    const readTextFile = vi.fn(async (path: string) => {
+      const content = files.get(path);
+
+      if (content === undefined) {
+        throw new Error(`missing: ${path}`);
+      }
+
+      return content;
+    });
+    const writeTextFile = vi.fn(async (path: string, content: string) => {
+      files.set(path, content);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceFiles: { writeTextFile },
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "InvoiceService.php"));
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "php.generateTest");
+      await flushAsyncTurns();
+    });
+
+    void dependencies;
+    expect(writeTextFile).toHaveBeenCalledTimes(1);
+    const [writtenPath, writtenContent] = writeTextFile.mock.calls[0] as [
+      string,
+      string,
+    ];
+    expect(writtenPath).toBe(testPath);
+    expect(writtenContent).toContain("namespace Tests\\Unit\\Services;");
+    expect(writtenContent).toContain("use Tests\\TestCase;");
+    expect(writtenContent).toContain(
+      "class InvoiceServiceTest extends TestCase",
+    );
+    expect(writtenContent).toContain("public function testCalculate(): void");
+    expect(writtenContent).toContain("public function testRefund(): void");
+    expect(writtenContent).toContain("$this->markTestIncomplete();");
+    expect(getWorkbench().activePath).toBe(testPath);
+  });
+
+  it("opens an existing test file instead of overwriting it", async () => {
+    const sourcePath = "/workspace/app/Services/InvoiceService.php";
+    const testPath = "/workspace/tests/Unit/Services/InvoiceServiceTest.php";
+    const existingTest = "<?php\n// existing test that must be preserved\n";
+    const sourceContent = [
+      "<?php",
+      "",
+      "namespace App\\Services;",
+      "",
+      "class InvoiceService",
+      "{",
+      "    public function calculate(): int { return 0; }",
+      "}",
+      "",
+    ].join("\n");
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === sourcePath) {
+        return sourceContent;
+      }
+
+      if (path === testPath) {
+        return existingTest;
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "InvoiceService.php"));
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "php.generateTest");
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(testPath);
+    expect(getWorkbench().activeDocument?.content).toBe(existingTest);
+  });
+
+  it("does not generate a test when the active document is not a class", async () => {
+    const sourcePath = "/workspace/app/Contracts/InvoiceContract.php";
+    const sourceContent = [
+      "<?php",
+      "",
+      "namespace App\\Contracts;",
+      "",
+      "interface InvoiceContract",
+      "{",
+      "    public function calculate(): int;",
+      "}",
+      "",
+    ].join("\n");
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => sourceContent),
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(sourcePath, "InvoiceContract.php"),
+      );
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "php.generateTest");
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
+    expect(getWorkbench().activePath).toBe(sourcePath);
+  });
+
+  it("drops a stale test generation when the workspace switches mid-flight", async () => {
+    const sourcePath = "/workspace-a/app/Services/InvoiceService.php";
+    const sourceContent = [
+      "<?php",
+      "",
+      "namespace App\\Services;",
+      "",
+      "class InvoiceService",
+      "{",
+      "    public function calculate(): int { return 0; }",
+      "}",
+      "",
+    ].join("\n");
+    let releaseExistenceCheck: (() => void) | null = null;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === sourcePath) {
+        return sourceContent;
+      }
+
+      await new Promise<void>((resolve) => {
+        releaseExistenceCheck = resolve;
+      });
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(sourcePath, "InvoiceService.php"),
+      );
+    });
+
+    let generation: Promise<unknown> | null = null;
+    act(() => {
+      generation = runCommand(getWorkbench(), "php.generateTest");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+      await flushAsyncTurns();
+    });
+
+    await act(async () => {
+      releaseExistenceCheck?.();
+      await generation;
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
   });
 
   function renderController({
@@ -40347,6 +46344,8 @@ final class InvoiceAdapter
     smartModeGateway,
     workspaceDetectionGateway,
     workspaceDescriptor,
+    workspaceFileChangeGateway,
+    workspaceFiles,
     workspaceRuntimeLifecycleGateway,
     workspaceSettings = defaultWorkspaceSettings(),
     workspaceTrustGateway,
@@ -40384,6 +46383,8 @@ final class InvoiceAdapter
     smartModeGateway?: SmartModeGateway;
     workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
     workspaceDescriptor?: WorkspaceDescriptor;
+    workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
+    workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"]>;
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
     workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
     workspaceTrustGateway?: WorkspaceTrustGateway;
@@ -40415,6 +46416,8 @@ final class InvoiceAdapter
       smartModeGateway,
       workspaceDetectionGateway,
       workspaceDescriptor,
+      workspaceFileChangeGateway,
+      workspaceFiles,
       workspaceRuntimeLifecycleGateway,
       workspaceSettings,
       workspaceTrustGateway,
@@ -40505,6 +46508,8 @@ function createControllerDependencies({
   smartModeGateway,
   workspaceDetectionGateway,
   workspaceDescriptor,
+  workspaceFileChangeGateway,
+  workspaceFiles,
   workspaceRuntimeLifecycleGateway,
   workspaceSettings,
   workspaceTrustGateway,
@@ -40542,6 +46547,8 @@ function createControllerDependencies({
   smartModeGateway?: SmartModeGateway;
   workspaceDetectionGateway?: WorkbenchWorkspaceGateways["detection"];
   workspaceDescriptor?: WorkspaceDescriptor;
+  workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
+  workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"]>;
   workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
   workspaceTrustGateway?: WorkspaceTrustGateway;
@@ -40562,6 +46569,11 @@ function createControllerDependencies({
           rootPath: path,
         })),
       },
+    fileChanges:
+      workspaceFileChangeGateway ?? {
+        startWatching: vi.fn(async () => undefined),
+        subscribeFileChanges: vi.fn(async () => () => undefined),
+      },
     fileSearch: {
       searchFiles,
     },
@@ -40574,6 +46586,7 @@ function createControllerDependencies({
       readTextFile,
       renamePath: vi.fn(async () => undefined),
       writeTextFile: vi.fn(async () => undefined),
+      ...workspaceFiles,
     },
     phpTools:
       phpToolGateway ?? {
@@ -40862,6 +46875,15 @@ async function flushAsyncTurns(count = 12): Promise<void> {
   });
 }
 
+async function flushWorkspaceDirectoryRefresh(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 150);
+    });
+  });
+  await flushAsyncTurns();
+}
+
 async function flushFilePrefetch(): Promise<void> {
   await act(async () => {
     await new Promise<void>((resolve) => {
@@ -41015,6 +47037,19 @@ function phpProjectDescriptor(
     ],
     ...overrides,
   };
+}
+
+function runCommand(
+  workbench: WorkbenchController,
+  id: string,
+): Promise<void> {
+  const command = workbench.commands.find((entry) => entry.id === id);
+
+  if (!command) {
+    throw new Error(`Command not registered: ${id}`);
+  }
+
+  return Promise.resolve(command.run());
 }
 
 function fileEntry(path: string, name: string): FileEntry {

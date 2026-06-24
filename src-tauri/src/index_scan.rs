@@ -1,5 +1,5 @@
 use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
-use crate::index::{SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore};
+use crate::index::{BatchOutcome, SqliteWorkspaceIndex, WorkspaceFileRecord, WorkspaceIndexStore};
 use crate::job_scheduler::WorkspaceIndexLifecycleToken;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,6 +13,10 @@ use std::{
 
 pub const METADATA_SCAN_COMPLETED_EVENT: &str = "index://metadata-scan-completed";
 const MAX_SCAN_HEALTH_DETAILS: usize = 100;
+/// Number of file metadata rows written per batched SQLite transaction during the initial scan.
+/// One commit (one WAL fsync) per batch instead of per file is the main indexing speedup; the
+/// bound keeps the transaction short enough to honour lifecycle cancellation between batches.
+const SCAN_WRITE_BATCH_SIZE: usize = 500;
 
 pub trait MetadataLanguageDetector: Send + Sync {
     fn language_for_path(&self, path: &Path) -> String;
@@ -499,11 +503,44 @@ fn scan_background_workspace(
     let collection = scanner.collect_path(root_path, root_path)?;
     ensure_scan_current(lifecycle_token)?;
 
-    for record in &collection.records {
-        guarded_scan_write(lifecycle_token, || index.upsert_file(record))?;
+    for batch in collection.records.chunks(SCAN_WRITE_BATCH_SIZE) {
+        // Re-check the lifecycle token BEFORE each batch (not just at the end) so a workspace
+        // switch cancels the scan promptly; already-committed batches remain a valid partial
+        // index, and we never open a transaction past a cancellation point.
+        ensure_scan_current(lifecycle_token)?;
+        guarded_scan_batch(&index, lifecycle_token, |store| {
+            for record in batch {
+                store.upsert_file(record)?;
+            }
+            Ok(())
+        })?;
     }
 
     Ok(collection.report)
+}
+
+/// Writes one batch in a single transaction whose COMMIT is gated by the lifecycle token, so the
+/// commit is atomic with the current-generation check (no batch can land after a workspace cancel).
+/// A cancelled batch is rolled back and surfaced as `Cancelled`.
+fn guarded_scan_batch(
+    index: &SqliteWorkspaceIndex,
+    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
+    action: impl FnOnce(&SqliteWorkspaceIndex) -> rusqlite::Result<()>,
+) -> Result<(), MetadataScanError> {
+    let Some(token) = lifecycle_token else {
+        return index
+            .with_batch_transaction(action)
+            .map_err(MetadataScanError::Store);
+    };
+
+    let outcome = index
+        .with_guarded_batch_transaction(action, |commit| token.run_if_current(commit))
+        .map_err(MetadataScanError::Store)?;
+
+    match outcome {
+        BatchOutcome::Committed(()) => Ok(()),
+        BatchOutcome::RolledBack => Err(MetadataScanError::Cancelled),
+    }
 }
 
 fn ensure_scan_current(
@@ -520,19 +557,6 @@ fn lifecycle_token_is_current(lifecycle_token: Option<&WorkspaceIndexLifecycleTo
     match lifecycle_token {
         Some(token) => token.is_current(),
         None => true,
-    }
-}
-
-fn guarded_scan_write<T>(
-    lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
-    action: impl FnOnce() -> rusqlite::Result<T>,
-) -> Result<T, MetadataScanError> {
-    match lifecycle_token {
-        Some(token) => match token.run_if_current(action) {
-            Some(result) => result.map_err(MetadataScanError::Store),
-            None => Err(MetadataScanError::Cancelled),
-        },
-        None => action().map_err(MetadataScanError::Store),
     }
 }
 
@@ -776,6 +800,25 @@ mod tests {
 
         assert!(matches!(error, super::MetadataScanError::Cancelled));
         assert_eq!(index.summary().expect("summary").file_count, 0);
+    }
+
+    #[test]
+    fn background_scan_writes_all_files_across_batch_boundaries() {
+        // More files than one write batch (SCAN_WRITE_BATCH_SIZE): the batched scan must still
+        // persist every metadata row across batch boundaries.
+        let file_count = super::SCAN_WRITE_BATCH_SIZE + 25;
+        let root = temp_workspace("scan-batch-boundary");
+        let database_path = temp_database_path("scan-batch-boundary");
+        for index in 0..file_count {
+            fs::write(root.join(format!("File{index}.php")), "<?php").expect("source file");
+        }
+
+        let report = super::scan_background_workspace(&root, &database_path, None)
+            .expect("background scan");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+
+        assert_eq!(report.indexed_files, file_count);
+        assert_eq!(index.summary().expect("summary").file_count as usize, file_count);
     }
 
     #[test]

@@ -77,7 +77,53 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   editor: null as FakeEditor | null,
   monaco: null as ReturnType<typeof createMonaco> | null,
   props: null as { options?: Record<string, unknown> } | null,
+  registeredContext: null as {
+    isDocumentSynced?: (rootPath: string, path: string) => boolean;
+    provideBladeCompletions?: (
+      source: string,
+      position: { column: number; lineNumber: number },
+    ) => unknown;
+    provideBladeDefinition?: (source: string, offset: number) => unknown;
+    providePhpCodeActions?: (
+      source: string,
+      range: { end: number; start: number },
+    ) => unknown;
+    providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
+  } | null,
 }));
+
+vi.mock("./languageServerMonacoProviders", async () => {
+  const actual = await vi.importActual<
+    typeof import("./languageServerMonacoProviders")
+  >("./languageServerMonacoProviders");
+
+  return {
+    ...actual,
+    registerLanguageServerMonacoProviders: (
+      monaco: unknown,
+      context: {
+        isDocumentSynced?: (rootPath: string, path: string) => boolean;
+        provideBladeCompletions?: (
+          source: string,
+          position: { column: number; lineNumber: number },
+        ) => unknown;
+        provideBladeDefinition?: (source: string, offset: number) => unknown;
+        providePhpCodeActions?: (source: string) => unknown;
+        providePhpLaravelDefinition?: (source: string, offset: number) => unknown;
+      },
+    ) => {
+      editorSurfaceMocks.registeredContext = context;
+      return actual.registerLanguageServerMonacoProviders(
+        monaco as Parameters<
+          typeof actual.registerLanguageServerMonacoProviders
+        >[0],
+        context as Parameters<
+          typeof actual.registerLanguageServerMonacoProviders
+        >[1],
+      );
+    },
+  };
+});
 
 vi.mock("@monaco-editor/react", async () => {
   const React = await import("react");
@@ -118,6 +164,7 @@ describe("EditorSurface", () => {
     editorSurfaceMocks.editor = null;
     editorSurfaceMocks.monaco = null;
     editorSurfaceMocks.props = null;
+    editorSurfaceMocks.registeredContext = null;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -189,6 +236,225 @@ describe("EditorSurface", () => {
         suggestOnTriggerCharacters: true,
       }),
     );
+  });
+
+  it("forwards providePhpCodeActions into the language server provider context", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass Example {}\n",
+      language: "php",
+      name: "Example.php",
+      path: "/workspace/app/Example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const providePhpCodeActions = vi.fn(async () => []);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpCodeActions={providePhpCodeActions}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const context = editorSurfaceMocks.registeredContext;
+
+    expect(context?.providePhpCodeActions).toEqual(expect.any(Function));
+
+    await context?.providePhpCodeActions?.("<?php\nclass Example {}\n", {
+      end: 7,
+      start: 7,
+    });
+
+    expect(providePhpCodeActions).toHaveBeenCalledWith(
+      "<?php\nclass Example {}\n",
+      { end: 7, start: 7 },
+    );
+  });
+
+  it("forwards providePhpLaravelDefinition into the language server provider context", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\n$value = config('app.name');\n",
+      language: "php",
+      name: "Service.php",
+      path: "/workspace/app/Service.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const providePhpLaravelDefinition = vi.fn(async () => true);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpLaravelDefinition={providePhpLaravelDefinition}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const context = editorSurfaceMocks.registeredContext;
+
+    expect(context?.providePhpLaravelDefinition).toEqual(expect.any(Function));
+
+    await context?.providePhpLaravelDefinition?.(
+      "<?php\n$value = config('app.name');\n",
+      24,
+    );
+
+    expect(providePhpLaravelDefinition).toHaveBeenCalledWith(
+      "<?php\n$value = config('app.name');\n",
+      24,
+    );
+  });
+
+  it("forwards blade definition and completion callbacks into the provider context", async () => {
+    const bladeSource = "@include('partials.alert')\n";
+    const activeDocument: EditorDocument = {
+      content: bladeSource,
+      language: "blade",
+      name: "show.blade.php",
+      path: "/workspace/resources/views/show.blade.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const provideBladeDefinition = vi.fn(async () => true);
+    const provideBladeCompletions = vi.fn(async () => [
+      {
+        insertText: "include",
+        kind: "directive" as const,
+        label: "@include",
+      },
+    ]);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          provideBladeCompletions={provideBladeCompletions}
+          provideBladeDefinition={provideBladeDefinition}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const context = editorSurfaceMocks.registeredContext;
+
+    expect(context?.provideBladeDefinition).toEqual(expect.any(Function));
+    expect(context?.provideBladeCompletions).toEqual(expect.any(Function));
+
+    await context?.provideBladeDefinition?.(bladeSource, 12);
+    await context?.provideBladeCompletions?.(bladeSource, {
+      column: 12,
+      lineNumber: 1,
+    });
+
+    expect(provideBladeDefinition).toHaveBeenCalledWith(bladeSource, 12);
+    expect(provideBladeCompletions).toHaveBeenCalledWith(bladeSource, {
+      column: 12,
+      lineNumber: 1,
+    });
   });
 
   it("enables bracket pair colorization and sticky scroll like VS Code", async () => {
@@ -1681,6 +1947,88 @@ interface ParserFactory
     );
   });
 
+  it("formats the active document through the formatting provider with Shift+Alt+F", async () => {
+    const activeDocument: EditorDocument = {
+      content: "export class UserService {}\n",
+      language: "typescript",
+      name: "UserService.ts",
+      path: "/workspace/src/UserService.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings("linux")}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const formatDocumentAction = editor.addAction.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.id === "mockor.formatDocument");
+
+    expect(formatDocumentAction).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
+        ],
+        label: "Format Document",
+      }),
+    );
+
+    formatDocumentAction.run();
+
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.formatDocument",
+      {},
+    );
+
+    editor.trigger.mockClear();
+    editor.getModel.mockReturnValueOnce(null);
+
+    formatDocumentAction.run();
+
+    expect(editor.trigger).not.toHaveBeenCalled();
+  });
+
   it("notifies when the editor panel receives focus back", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",
@@ -2477,6 +2825,220 @@ interface ParserFactory
     ).toHaveBeenCalled();
   });
 
+  it("does not fetch breadcrumb document symbols for a PHP document before it is synced", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass Example {}\n",
+      language: "php",
+      name: "Example.php",
+      path: "/workspace/app/Example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const gateway = languageServerFeaturesGateway();
+    const documentSymbolsMock = vi.fn(async () => []);
+    gateway.documentSymbols =
+      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          isLanguageServerDocumentSynced={vi.fn(() => false)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={gateway}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    expect(documentSymbolsMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches breadcrumb document symbols for a PHP document once it becomes synced", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass Example {}\n",
+      language: "php",
+      name: "Example.php",
+      path: "/workspace/app/Example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const gateway = languageServerFeaturesGateway();
+    const documentSymbolsMock = vi.fn(async () => []);
+    gateway.documentSymbols =
+      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+
+    let synced = false;
+    const isLanguageServerDocumentSynced = vi.fn(() => synced);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          isLanguageServerDocumentSynced={isLanguageServerDocumentSynced}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={gateway}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    expect(documentSymbolsMock).not.toHaveBeenCalled();
+
+    synced = true;
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    });
+
+    expect(documentSymbolsMock).toHaveBeenCalledWith(
+      "/workspace",
+      activeDocument.path,
+    );
+
+    // The poll must stop once the document is synced and the fetch ran, so the
+    // breadcrumb fetch is not re-issued on every subsequent tick.
+    const callsAfterSync = documentSymbolsMock.mock.calls.length;
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    expect(documentSymbolsMock.mock.calls.length).toBe(callsAfterSync);
+  });
+
+  it("forwards isLanguageServerDocumentSynced into the language server provider context", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass Example {}\n",
+      language: "php",
+      name: "Example.php",
+      path: "/workspace/app/Example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const isLanguageServerDocumentSynced = vi.fn(() => true);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          isLanguageServerDocumentSynced={isLanguageServerDocumentSynced}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const context = editorSurfaceMocks.registeredContext;
+
+    expect(context?.isDocumentSynced).toEqual(expect.any(Function));
+
+    expect(context?.isDocumentSynced?.("/workspace", activeDocument.path)).toBe(
+      true,
+    );
+    expect(isLanguageServerDocumentSynced).toHaveBeenCalledWith(
+      activeDocument.path,
+    );
+  });
+
   it("keeps the Monaco editor mounted and overlays an opening state while a file is being opened", async () => {
     const model: FakeModel = {
       uri: {
@@ -2783,6 +3345,7 @@ function createMonaco(model: FakeModel) {
       BracketRight: 6,
       Enter: 8,
       KeyB: 1,
+      KeyF: 10,
       KeyO: 2,
       KeyP: 3,
       KeyR: 4,

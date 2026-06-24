@@ -28,6 +28,7 @@ mod terminal_session;
 mod tools;
 mod trust;
 mod workspace;
+pub mod workspace_file_watcher;
 mod workspace_runtime;
 
 use git::{
@@ -47,6 +48,7 @@ use index_scan::{
 };
 use job_scheduler::WorkspaceIndexLifecycle;
 use js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
+use workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use lsp::{
     file_uri, JavaScriptTypeScriptLanguageServerPlanner, JsonRpcNotification, JsonRpcRequest,
     LanguageServerCommand, LanguageServerPlan, LanguageServerPlanStatus, LanguageServerPlanner,
@@ -86,7 +88,7 @@ use lsp_features::{
 use lsp_session::{
     language_server_status_payload, AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
     JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRuntimeStatus,
-    PhpLanguageServerRegistry, RefreshSink, StatusSink, WorkspaceEditSink,
+    PhpLanguageServerRegistry, RefreshSink, RestartController, StatusSink, WorkspaceEditSink,
 };
 use php_file_outline::{
     build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineSymbolRecord,
@@ -198,6 +200,10 @@ fn shutdown_runtime_processes(app: &AppHandle) {
         watch_registry.stop_all();
     }
 
+    if let Some(watch_registry) = app.try_state::<WorkspaceFileChangeWatchRegistry>() {
+        watch_registry.stop_all();
+    }
+
     if let Some(registry) = app.try_state::<PhpLanguageServerRegistry>() {
         let _ = registry.stop_all();
     }
@@ -241,6 +247,7 @@ fn dispose_workspace_root(
     index_lifecycle: State<'_, WorkspaceIndexLifecycle>,
     javascript_typescript_language_servers: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     javascript_typescript_watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
+    workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
     php_language_servers: State<'_, PhpLanguageServerRegistry>,
     terminal_sessions: State<'_, TerminalSupervisor>,
 ) -> Result<(), String> {
@@ -252,6 +259,7 @@ fn dispose_workspace_root(
             index_lifecycle: &*index_lifecycle,
             javascript_typescript_language_servers: &*javascript_typescript_language_servers,
             javascript_typescript_watch_registry: &*javascript_typescript_watch_registry,
+            workspace_file_change_watch_registry: &*workspace_file_change_watch_registry,
             php_language_servers: &*php_language_servers,
             terminal_sessions: &*terminal_sessions,
         },
@@ -324,6 +332,16 @@ fn initialize_workspace_index(
     let root = canonicalize_workspace_root(&root_path)?;
     let index = open_workspace_index(&app, &root)?;
     index.summary().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn start_workspace_file_watch(
+    root_path: String,
+    app: AppHandle,
+    workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
+) -> Result<(), String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    workspace_file_change_watch_registry.start(&root.to_string_lossy(), app)
 }
 
 #[tauri::command]
@@ -1580,15 +1598,16 @@ fn start_php_language_server(
     let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
     let refresh_sink: Arc<dyn RefreshSink> = event_sink;
 
-    let status = registry.start_with_event_sinks(
+    let status = registry.start_with_auto_restart(
         &root_path,
         &command,
         &initialize_request,
-        &ChildServerProcessSpawner,
+        Arc::new(ChildServerProcessSpawner),
         status_sink,
         diagnostics_sink,
         workspace_edit_sink,
         refresh_sink,
+        Arc::new(RestartController::default()),
     )?;
 
     Ok(language_server_status_payload(&root_path, status))
@@ -1635,15 +1654,16 @@ fn start_javascript_typescript_language_server(
     let workspace_edit_sink: Arc<dyn WorkspaceEditSink> = event_sink.clone();
     let refresh_sink: Arc<dyn RefreshSink> = event_sink;
 
-    let status = registry.start_with_event_sinks(
+    let status = registry.start_with_auto_restart(
         &root_path,
         &command,
         &initialize_request,
-        &ChildServerProcessSpawner,
+        Arc::new(ChildServerProcessSpawner),
         status_sink,
         diagnostics_sink,
         workspace_edit_sink,
         refresh_sink,
+        Arc::new(RestartController::default()),
     )?;
 
     if matches!(status, LanguageServerRuntimeStatus::Running { .. }) {
@@ -2292,6 +2312,22 @@ fn javascript_typescript_text_document_code_actions(
     filter_lsp_code_actions_to_workspace(&root_path, parse_code_action_result(&result)?)
 }
 
+/// Whether the running server advertises `codeActionProvider.resolveProvider`.
+///
+/// Some servers (notably phpactor) advertise `codeActionProvider` but ship lazy
+/// code actions without a `codeAction/resolve` handler. Sending the resolve
+/// request anyway returns a JSON-RPC "Handler codeAction/resolve not found"
+/// error that surfaces to the user as a confusing notice. When this returns
+/// `false` the resolve request must be skipped and the action returned
+/// unchanged.
+fn lsp_status_supports_code_action_resolve(status: &LanguageServerRuntimeStatus) -> bool {
+    matches!(
+        status,
+        LanguageServerRuntimeStatus::Running { capabilities, .. }
+            if capabilities.code_action_resolve
+    )
+}
+
 #[tauri::command]
 fn text_document_code_action_resolve(
     root_path: String,
@@ -2299,6 +2335,10 @@ fn text_document_code_action_resolve(
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeAction, String> {
     ensure_lsp_code_action_payload_in_workspace(&root_path, &action)?;
+
+    if !lsp_status_supports_code_action_resolve(&registry.status(&root_path)) {
+        return Ok(action);
+    }
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_action(&action);
@@ -2319,6 +2359,10 @@ fn javascript_typescript_text_document_code_action_resolve(
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerCodeAction, String> {
     ensure_lsp_code_action_payload_in_workspace(&root_path, &action)?;
+
+    if !lsp_status_supports_code_action_resolve(&registry.status(&root_path)) {
+        return Ok(action);
+    }
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_code_action(&action);
@@ -3707,11 +3751,13 @@ mod tests {
         filter_lsp_locations_to_workspace, filter_lsp_outgoing_calls_to_workspace,
         filter_lsp_type_hierarchy_items_to_workspace, filter_lsp_workspace_edit_to_workspace,
         filter_lsp_workspace_symbols_to_workspace,
-        javascript_typescript_did_change_configuration_settings, normalize_path,
-        parse_definition_result, parse_javascript_typescript_navigation_locations_result,
-        path_from_file_uri, workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        javascript_typescript_did_change_configuration_settings,
+        lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
+        parse_javascript_typescript_navigation_locations_result, path_from_file_uri,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::lsp::file_uri;
+    use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
         LanguageServerCallHierarchyItem, LanguageServerCodeAction, LanguageServerCodeActionCommand,
@@ -4226,6 +4272,40 @@ mod tests {
             &outside_uri_item
         )
         .is_err());
+    }
+
+    #[test]
+    fn code_action_resolve_is_gated_on_server_resolve_capability() {
+        let running_with_resolve = LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: LanguageServerCapabilities {
+                code_action: true,
+                code_action_resolve: true,
+                ..LanguageServerCapabilities::default()
+            },
+        };
+        assert!(lsp_status_supports_code_action_resolve(
+            &running_with_resolve
+        ));
+
+        let running_without_resolve = LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: LanguageServerCapabilities {
+                code_action: true,
+                code_action_resolve: false,
+                ..LanguageServerCapabilities::default()
+            },
+        };
+        assert!(!lsp_status_supports_code_action_resolve(
+            &running_without_resolve
+        ));
+
+        assert!(!lsp_status_supports_code_action_resolve(
+            &LanguageServerRuntimeStatus::Starting { session_id: 1 }
+        ));
+        assert!(!lsp_status_supports_code_action_resolve(
+            &LanguageServerRuntimeStatus::Stopped
+        ));
     }
 
     #[test]
@@ -5029,6 +5109,7 @@ pub fn run() {
         .manage(PhpLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
+        .manage(WorkspaceFileChangeWatchRegistry::new())
         .manage(WorkspaceIndexLifecycle::new())
         .manage(TerminalSupervisor::new())
         .plugin(tauri_plugin_dialog::init())
@@ -5059,6 +5140,7 @@ pub fn run() {
             get_smart_mode_state,
             get_workspace_trust,
             initialize_workspace_index,
+            start_workspace_file_watch,
             list_terminal_profiles,
             open_javascript_typescript_language_server_log,
             parse_php_file_outline,

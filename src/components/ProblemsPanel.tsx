@@ -1,5 +1,9 @@
-import { AlertCircle, Info, TriangleAlert } from "lucide-react";
+import { AlertCircle, Info, ListFilter, TriangleAlert } from "lucide-react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
+
+function isOverflowNotice(notice: WorkbenchNotice): boolean {
+  return notice.kind === "overflow";
+}
 
 interface ProblemsPanelProps {
   isActive: boolean;
@@ -22,22 +26,38 @@ export function ProblemsPanel({
       {notices.length === 0 ? (
         <p>No problems</p>
       ) : (
-        notices.map((notice) =>
-          notice.navigationTarget ? (
-            <button
-              className={`problem-row ${notice.severity}`}
-              key={notice.id}
-              onClick={() => onOpenNotice(notice)}
-              type="button"
-            >
-              <ProblemRowContent notice={notice} />
-            </button>
-          ) : (
+        notices.map((notice) => {
+          if (isOverflowNotice(notice)) {
+            return (
+              <div
+                className="problem-row overflow"
+                data-testid="diagnostics-overflow"
+                key={notice.id}
+              >
+                <ProblemRowContent notice={notice} />
+              </div>
+            );
+          }
+
+          if (notice.navigationTarget) {
+            return (
+              <button
+                className={`problem-row ${notice.severity}`}
+                key={notice.id}
+                onClick={() => onOpenNotice(notice)}
+                type="button"
+              >
+                <ProblemRowContent notice={notice} />
+              </button>
+            );
+          }
+
+          return (
             <div className={`problem-row ${notice.severity}`} key={notice.id}>
               <ProblemRowContent notice={notice} />
             </div>
-          ),
-        )
+          );
+        })
       )}
     </div>
   );
@@ -46,7 +66,11 @@ export function ProblemsPanel({
 function ProblemRowContent({ notice }: { notice: WorkbenchNotice }) {
   return (
     <>
-      {getNoticeIcon(notice.severity)}
+      {isOverflowNotice(notice) ? (
+        <ListFilter aria-hidden="true" size={15} />
+      ) : (
+        getNoticeIcon(notice.severity)
+      )}
       <span>
         <strong>{notice.source}</strong>
         <small>{notice.message}</small>

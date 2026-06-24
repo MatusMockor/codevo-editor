@@ -103,6 +103,7 @@ describe("languageServerCapabilities", () => {
     expect(languageServerCapabilities(status("running"))).toEqual({
       callHierarchy: true,
       codeAction: true,
+      codeActionResolve: true,
       codeLens: true,
       completion: true,
       declaration: true,
@@ -188,6 +189,7 @@ function status(
         capabilities: {
           callHierarchy: true,
           codeAction: true,
+          codeActionResolve: true,
           codeLens: true,
           completion: true,
           declaration: true,

@@ -7,6 +7,7 @@ import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 export interface LanguageServerCapabilities {
   callHierarchy: boolean;
   codeAction: boolean;
+  codeActionResolve: boolean;
   codeLens: boolean;
   declaration: boolean;
   hover: boolean;
@@ -306,6 +307,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
   return {
     callHierarchy: false,
     codeAction: false,
+    codeActionResolve: false,
     codeLens: false,
     declaration: false,
     completion: false,

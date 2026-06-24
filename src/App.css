@@ -2344,6 +2344,17 @@ button.problem-row:focus-visible {
   color: var(--color-success);
 }
 
+.problem-row.overflow {
+  border: 1px dashed var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text-subtle);
+  font-style: italic;
+}
+
+.problem-row.overflow strong {
+  color: var(--color-text-subtle);
+}
+
 .problem-row span {
   display: grid;
   min-width: 0;
@@ -2885,6 +2896,307 @@ button.problem-row:focus-visible {
 .call-hierarchy-row small {
   color: var(--color-text-subtle);
   font-size: 12px;
+}
+
+.references-panel {
+  width: min(680px, calc(100vw - 36px));
+  max-height: min(520px, calc(100vh - 96px));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-modal);
+  box-shadow: var(--shadow-pop);
+  outline: 0;
+}
+
+.references-panel-header {
+  display: grid;
+  min-height: 50px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-strong);
+  padding: 7px 13px;
+}
+
+.references-panel-header span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.references-panel-header strong,
+.references-panel-header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.references-panel-header strong {
+  font-size: 15px;
+}
+
+.references-panel-header small {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.references-panel-header svg {
+  color: var(--color-text-subtle);
+}
+
+.references-panel-results {
+  max-height: min(470px, calc(100vh - 146px));
+  overflow: auto;
+  padding: 7px 8px 9px;
+}
+
+.references-panel-group + .references-panel-group {
+  margin-top: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 7px;
+}
+
+.references-panel-group h2 {
+  margin: 0 0 4px;
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.references-panel-empty {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.references-panel-row {
+  display: grid;
+  width: 100%;
+  min-height: 38px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.references-panel-row:hover {
+  background: var(--color-hover);
+}
+
+.references-panel-row.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+}
+
+.references-panel-row svg {
+  color: var(--color-accent);
+}
+
+.references-panel-row span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.references-panel-row strong,
+.references-panel-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.references-panel-row strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.references-panel-row small {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
+.todo-panel {
+  width: min(680px, calc(100vw - 36px));
+  max-height: min(540px, calc(100vh - 96px));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-modal);
+  box-shadow: var(--shadow-pop);
+  outline: 0;
+}
+
+.todo-panel-header {
+  display: grid;
+  min-height: 50px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-strong);
+  padding: 7px 13px;
+}
+
+.todo-panel-header span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.todo-panel-header strong {
+  font-size: 15px;
+}
+
+.todo-panel-header small {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.todo-panel-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  width: 28px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.todo-panel-action:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-text-strong);
+}
+
+.todo-panel-action:disabled {
+  color: var(--color-disabled);
+  cursor: not-allowed;
+}
+
+.todo-panel-results {
+  max-height: min(488px, calc(100vh - 146px));
+  overflow: auto;
+  padding: 7px 8px 9px;
+}
+
+.todo-panel-group + .todo-panel-group {
+  margin-top: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 7px;
+}
+
+.todo-panel-group h2 {
+  margin: 0 0 4px;
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.todo-panel-empty {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.todo-panel-row {
+  display: grid;
+  width: 100%;
+  min-height: 38px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.todo-panel-row:hover {
+  background: var(--color-hover);
+}
+
+.todo-panel-row.active {
+  background: var(--color-accent-soft);
+  color: var(--color-text-strong);
+}
+
+.todo-panel-row svg {
+  color: var(--color-accent);
+}
+
+.todo-panel-row span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.todo-panel-row strong,
+.todo-panel-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-panel-row strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.todo-panel-row small {
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
+.todo-tag {
+  flex: none;
+  border-radius: 4px;
+  background: var(--color-control);
+  color: var(--color-text-subtle);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  text-transform: uppercase;
+}
+
+.todo-tag.fixme,
+.todo-tag.bug,
+.todo-tag.xxx {
+  background: var(--color-error);
+  color: #fff;
+}
+
+.todo-tag.hack {
+  background: var(--color-warning);
+  color: #000;
 }
 
 .implementation-choice {

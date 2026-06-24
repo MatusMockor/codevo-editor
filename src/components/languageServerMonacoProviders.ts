@@ -74,6 +74,37 @@ export interface PhpWorkspaceEditApplicationContext {
   editedOpenPaths: string[];
   rootPath: string;
 }
+
+export interface PhpCodeActionTextEditRange {
+  endColumn: number;
+  endLineNumber: number;
+  startColumn: number;
+  startLineNumber: number;
+}
+
+export interface PhpCodeActionTextEdit {
+  range: PhpCodeActionTextEditRange;
+  text: string;
+}
+
+export interface PhpCodeActionDescriptor {
+  edits: PhpCodeActionTextEdit[];
+  kind?: string;
+  title: string;
+}
+
+/**
+ * The cursor / selection that a PHP code-action request covers, expressed as
+ * 0-based character offsets into the source. `start === end` denotes an empty
+ * selection (a bare cursor); a non-empty selection has `start < end`. These
+ * power the position-aware actions ("Create method / property from usage" reads
+ * the cursor offset; "Extract variable" reads the selection span) while the
+ * existing class-level actions ignore it.
+ */
+export interface PhpCodeActionRange {
+  end: number;
+  start: number;
+}
 export type PhpWorkspaceEditApplier = (
   edit: LanguageServerWorkspaceEdit,
   context: PhpWorkspaceEditApplicationContext,
@@ -155,6 +186,29 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
   ],
 } satisfies Monaco.languages.SemanticTokensLegend;
 
+/**
+ * A single Blade completion item produced by the controller. Blade has no
+ * managed language server (its syntax is Shiki's job), so completions are pure
+ * data the Monaco provider maps to `Monaco.languages.CompletionItem`. The kind
+ * picks the Monaco icon (directive → keyword, view → file, component → field).
+ */
+export type BladeCompletionKind = "directive" | "view" | "component";
+
+export interface BladeCompletion {
+  detail?: string;
+  insertText: string;
+  kind: BladeCompletionKind;
+  label: string;
+  /**
+   * Optional 0-based character offset span the item replaces. When omitted the
+   * provider falls back to the word Monaco computed at the cursor. Used so a
+   * `@inc` directive completion replaces the whole `@inc` token (including the
+   * `@`) and a `<x-fo` component completion replaces the dotted component name.
+   */
+  replaceStart?: number;
+  replaceEnd?: number;
+}
+
 export interface LanguageServerMonacoProviderContext {
   applyWorkspaceEdit?: PhpWorkspaceEditApplier;
   featuresGateway: LanguageServerFeaturesGateway;
@@ -162,7 +216,57 @@ export interface LanguageServerMonacoProviderContext {
   getActiveDocument(): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
+  /**
+   * Reports whether `path` has already been opened on the language server (its
+   * `didOpen` was sent) for `rootPath`. Used to gate the `documentSymbol`
+   * request so an outline / breadcrumb fetch never races ahead of the document
+   * sync and triggers an `UnknownDocument` error. When omitted the provider
+   * does not gate (the controller's `flushPendingDocumentChange` still opens the
+   * document on demand for interactive requests).
+   */
+  isDocumentSynced?(rootPath: string, path: string): boolean;
   limitNavigationResultsToOpenModels?: boolean;
+  /**
+   * Resolves and navigates to the Blade target (a view referenced by
+   * `@include`/`@extends`/…, or an `<x-...>` component) at `offset` inside a
+   * `.blade.php` document. Like {@link providePhpLaravelDefinition}, the
+   * controller performs the navigation itself and resolves `true` when it
+   * handled the request (so the Monaco provider returns `null`); it resolves
+   * `false` when the offset is not a resolvable Blade reference. Per-project
+   * isolation lives in the controller (requested-root capture + re-check after
+   * each file read), so a tab switch mid-resolution drops the result.
+   */
+  provideBladeDefinition?(source: string, offset: number): Promise<boolean>;
+  /**
+   * Produces Blade completions for the cursor at `position` inside a
+   * `.blade.php` document: `@directive` names, view names for
+   * `@include`/`@extends`/… literals, and `<x-...>` component names. Re-checks
+   * the active workspace after directory scans (per-project isolation).
+   */
+  provideBladeCompletions?(
+    source: string,
+    position: MonacoPosition,
+  ): Promise<BladeCompletion[]>;
+  providePhpCodeActions?(
+    source: string,
+    range: PhpCodeActionRange,
+  ): Promise<PhpCodeActionDescriptor[]>;
+  /**
+   * Resolves and navigates to the target of a Laravel global string-helper
+   * literal (`config`, `view`, `__`/`trans`, `env`) located at `offset`.
+   *
+   * Because the editor hosts a single Monaco model and opens files through its
+   * own tab system (`limitNavigationResultsToOpenModels`), the callback performs
+   * the navigation itself and resolves `true` when it handled the request. The
+   * definition provider then returns `null` so Monaco does not also attempt to
+   * navigate to a — possibly not-yet-open — model. It resolves `false` when the
+   * offset is not a (resolvable) Laravel literal, leaving the regular phpactor
+   * definition flow untouched.
+   */
+  providePhpLaravelDefinition?(
+    source: string,
+    offset: number,
+  ): Promise<boolean>;
   providePhpMethodCompletions?(
     source: string,
     position: MonacoPosition,
@@ -524,6 +628,25 @@ export function registerLanguageServerMonacoProviders(
           provideDocumentRangeSemanticTokens(context, model, range),
       })
     : { dispose: () => undefined };
+  // Blade (`.blade.php`) has no managed language server — its syntax is owned by
+  // Shiki. We register exactly two Monaco providers for the "blade" language:
+  // go-to-definition (view / component navigation) and completion (directives,
+  // view names, component names). Both delegate the workspace-aware resolution
+  // to controller callbacks that carry the per-project isolation guards.
+  const bladeDefinition = monaco.languages.registerDefinitionProvider
+    ? monaco.languages.registerDefinitionProvider("blade", {
+        provideDefinition: (model, position) =>
+          provideBladeDefinition(context, model, position),
+      })
+    : { dispose: () => undefined };
+  const bladeCompletion = monaco.languages.registerCompletionItemProvider(
+    "blade",
+    {
+      triggerCharacters: ["@", "'", "\"", "-", "."],
+      provideCompletionItems: (model, position) =>
+        provideBladeCompletionItems(monaco, context, model, position),
+    },
+  );
 
   return {
     dispose: () => {
@@ -557,8 +680,229 @@ export function registerLanguageServerMonacoProviders(
       linkedEditingRange.dispose();
       semanticTokens.dispose();
       rangeSemanticTokens.dispose();
+      bladeDefinition.dispose();
+      bladeCompletion.dispose();
     },
   };
+}
+
+/**
+ * Go-to-definition for a `.blade.php` document: delegates to the controller's
+ * Blade resolver, which navigates to the view / component file and resolves
+ * `true` when it handled the offset (so Monaco does not also navigate). Returns
+ * `null` either way — Blade has no LSP locations to surface. The controller
+ * enforces per-project isolation; this wrapper additionally drops the result if
+ * the active workspace changed during the await.
+ */
+async function provideBladeDefinition(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.Location[] | null> {
+  if (!context.provideBladeDefinition) {
+    return null;
+  }
+
+  const documentContext = activeBladeDocumentContext(context, model);
+
+  if (!documentContext) {
+    return null;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    await context.provideBladeDefinition(source, offset);
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+  }
+
+  return null;
+}
+
+async function provideBladeCompletionItems(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<Monaco.languages.CompletionList> {
+  if (!context.provideBladeCompletions) {
+    return { suggestions: [] };
+  }
+
+  const documentContext = activeBladeDocumentContext(context, model);
+
+  if (!documentContext) {
+    return { suggestions: [] };
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const word = model.getWordUntilPosition(position);
+  const fallbackRange = bladeCompletionFallbackRange(position, word);
+
+  try {
+    const completions = await context.provideBladeCompletions(source, position);
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return { suggestions: [] };
+    }
+
+    return {
+      suggestions: completions.map((completion, index) =>
+        toMonacoBladeCompletion(
+          monaco,
+          model,
+          source,
+          fallbackRange,
+          completion,
+          index,
+        ),
+      ),
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return { suggestions: [] };
+  }
+}
+
+function toMonacoBladeCompletion(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  source: string,
+  fallbackRange: Monaco.IRange,
+  completion: BladeCompletion,
+  index: number,
+): Monaco.languages.CompletionItem {
+  const range =
+    completion.replaceStart != null && completion.replaceEnd != null
+      ? bladeReplaceRange(
+          monaco,
+          model,
+          source,
+          completion.replaceStart,
+          completion.replaceEnd,
+        )
+      : fallbackRange;
+
+  return {
+    detail: completion.detail,
+    insertText: completion.insertText,
+    kind: monacoBladeCompletionKind(monaco, completion.kind),
+    label: completion.label,
+    range,
+    sortText: `0_${String(index).padStart(4, "0")}`,
+  };
+}
+
+function monacoBladeCompletionKind(
+  monaco: MonacoApi,
+  kind: BladeCompletionKind,
+): Monaco.languages.CompletionItemKind {
+  if (kind === "view") {
+    return monaco.languages.CompletionItemKind.File;
+  }
+
+  if (kind === "component") {
+    return monaco.languages.CompletionItemKind.Field;
+  }
+
+  return monaco.languages.CompletionItemKind.Keyword;
+}
+
+function bladeCompletionFallbackRange(
+  position: MonacoPosition,
+  word: { endColumn: number; startColumn: number },
+): Monaco.IRange {
+  return {
+    endColumn: word.endColumn,
+    endLineNumber: position.lineNumber,
+    startColumn: word.startColumn,
+    startLineNumber: position.lineNumber,
+  };
+}
+
+/**
+ * Converts a 0-based character offset span into a Monaco range using the model's
+ * own offset/position mapping when available, falling back to a manual scan of
+ * `source` so the provider stays testable with a stubbed model.
+ */
+function bladeReplaceRange(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  source: string,
+  startOffset: number,
+  endOffset: number,
+): Monaco.IRange {
+  const start = monacoPositionAtOffset(model, source, startOffset);
+  const end = monacoPositionAtOffset(model, source, endOffset);
+
+  return new monaco.Range(
+    start.lineNumber,
+    start.column,
+    end.lineNumber,
+    end.column,
+  );
+}
+
+function monacoPositionAtOffset(
+  model: MonacoModel,
+  source: string,
+  offset: number,
+): { column: number; lineNumber: number } {
+  const positionAt = (
+    model as MonacoModel & {
+      getPositionAt?: (value: number) => MonacoPosition;
+    }
+  ).getPositionAt;
+
+  if (typeof positionAt === "function") {
+    const position = positionAt.call(model, offset);
+
+    return { column: position.column, lineNumber: position.lineNumber };
+  }
+
+  const clamped = Math.max(0, Math.min(offset, source.length));
+  const before = source.slice(0, clamped);
+  const lineNumber = before.split("\n").length;
+  const lineStart = before.lastIndexOf("\n") + 1;
+
+  return { column: clamped - lineStart + 1, lineNumber };
+}
+
+/**
+ * Mirrors {@link activePhpDocumentContext} for the "blade" language. Blade has
+ * no language-server runtime, so no session is required: the context only needs
+ * the active document, the requested workspace root (for the post-await
+ * isolation re-check), and a confirmed model/document path match.
+ */
+function activeBladeDocumentContext(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+) {
+  const activeDocument = context.getActiveDocument();
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (!activeDocument || !rootPath) {
+    return null;
+  }
+
+  if (activeDocument.language !== "blade") {
+    return null;
+  }
+
+  const path = modelPath(model);
+
+  if (!path || path !== activeDocument.path) {
+    return null;
+  }
+
+  return { activeDocument, path, rootPath };
 }
 
 async function prepareRename(
@@ -702,6 +1046,10 @@ async function provideDefinition(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.Location[] | null> {
+  if (await provideLaravelStringLiteralDefinition(context, model, position)) {
+    return null;
+  }
+
   return provideNavigationLocations(
     monaco,
     context,
@@ -711,6 +1059,65 @@ async function provideDefinition(
     (rootPath, requestPosition) =>
       context.featuresGateway.definition(rootPath, requestPosition),
   );
+}
+
+/**
+ * Attempts Laravel global string-helper navigation (config / view / trans / env)
+ * for a PHP document. Returns `true` when the request was handled (the target
+ * file was opened by the controller), so the caller stops and Monaco does not
+ * navigate. Per-project isolation is enforced inside the controller callback,
+ * which re-checks the active workspace after each await and drops stale results.
+ */
+async function provideLaravelStringLiteralDefinition(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+): Promise<boolean> {
+  if (!context.providePhpLaravelDefinition) {
+    return false;
+  }
+
+  const documentContext = activePhpDocumentContext(context, model);
+
+  if (!documentContext) {
+    return false;
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offset = offsetAtMonacoPosition(source, position);
+
+  try {
+    return await context.providePhpLaravelDefinition(source, offset);
+  } catch (error) {
+    if (isPhpDocumentContextActive(context, documentContext)) {
+      context.reportError(error);
+    }
+
+    return false;
+  }
+}
+
+/**
+ * Converts a 1-based Monaco position into a 0-based character offset into
+ * `source`. Lines beyond the source resolve to its end; columns beyond a line
+ * clamp to that line's end.
+ */
+function offsetAtMonacoPosition(source: string, position: MonacoPosition): number {
+  const lines = source.split("\n");
+  const targetLine = Math.max(0, position.lineNumber - 1);
+  let offset = 0;
+
+  for (let line = 0; line < targetLine && line < lines.length; line += 1) {
+    offset += (lines[line]?.length ?? 0) + 1;
+  }
+
+  if (targetLine >= lines.length) {
+    return source.length;
+  }
+
+  const column = Math.max(0, position.column - 1);
+
+  return offset + Math.min(column, lines[targetLine]?.length ?? 0);
 }
 
 async function provideImplementation(
@@ -939,6 +1346,16 @@ async function provideDocumentSymbols(
   const request = featureDocumentRequestContext(context, model, "documentSymbol");
 
   if (!request) {
+    return null;
+  }
+
+  // BUG 2: skip the request until the document has been opened on the server.
+  // An outline / breadcrumb DocumentSymbol fetch can otherwise fire before the
+  // document's `didOpen` is sent, which phpactor answers with UnknownDocument.
+  if (
+    context.isDocumentSynced &&
+    !context.isDocumentSynced(request.rootPath, request.path)
+  ) {
     return null;
   }
 
@@ -1463,14 +1880,32 @@ async function provideCodeActions(
     actionContext,
   );
   const request = featureDocumentRequestContext(context, model, "codeAction");
+  const phpDocumentContext = activePhpDocumentContext(context, model);
+  const phpActions = context.providePhpCodeActions
+    ? await providePhpSourceCodeActions(
+        monaco,
+        context,
+        model,
+        range,
+        actionContext,
+        phpDocumentContext,
+      )
+    : [];
+  // PHP actions resolve from a different workspace-aware flow than the LSP
+  // request; re-validate their document context at EVERY return so a workspace
+  // switch during any later await drops them (per-project isolation).
+  const activePhpActions = () =>
+    phpDocumentContext && isPhpDocumentContextActive(context, phpDocumentContext)
+      ? phpActions
+      : [];
 
   if (!request) {
-    return codeActionList(localActions);
+    return codeActionList([...activePhpActions(), ...localActions]);
   }
 
   try {
     if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
-      return codeActionList(localActions);
+      return codeActionList([...activePhpActions(), ...localActions]);
     }
 
     const actions = await context.featuresGateway.codeActions(
@@ -1481,7 +1916,7 @@ async function provideCodeActions(
     );
 
     if (!isFeatureRequestActive(context, request)) {
-      return codeActionList(localActions);
+      return codeActionList([...activePhpActions(), ...localActions]);
     }
 
     return codeActionList([
@@ -1495,13 +1930,121 @@ async function provideCodeActions(
           actionContext,
         ),
       ),
+      ...activePhpActions(),
       ...localActions,
     ]);
   } catch (error) {
     reportErrorForActiveRequest(context, request, error);
 
-    return codeActionList(localActions);
+    return codeActionList([...activePhpActions(), ...localActions]);
   }
+}
+
+async function providePhpSourceCodeActions(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  range: Monaco.Range,
+  actionContext: Monaco.languages.CodeActionContext,
+  documentContext: ReturnType<typeof activePhpDocumentContext>,
+): Promise<Monaco.languages.CodeAction[]> {
+  if (!context.providePhpCodeActions) {
+    return [];
+  }
+
+  if (!phpSourceCodeActionKindRequested(actionContext.only)) {
+    return [];
+  }
+
+  if (!documentContext) {
+    return [];
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+  const offsetRange = phpCodeActionOffsetRange(source, range);
+
+  try {
+    const descriptors = await context.providePhpCodeActions(source, offsetRange);
+
+    if (!isPhpDocumentContextActive(context, documentContext)) {
+      return [];
+    }
+
+    return descriptors.map((descriptor) =>
+      toPhpCodeAction(monaco, model, descriptor),
+    );
+  } catch (error) {
+    if (isPhpDocumentContextActive(context, documentContext)) {
+      context.reportError(error);
+    }
+
+    return [];
+  }
+}
+
+/**
+ * The synthesized PHP code actions are class-body refactors ("Implement
+ * methods", "Generate constructor/accessors", "Optimize imports", "Create
+ * method/property from usage") plus the "Extract variable" refactor. Honour
+ * Monaco's `only` filter: an unfiltered request and quickfix/refactor-scoped
+ * requests both qualify; any other narrow scope (e.g. `source.organizeImports`)
+ * is left to the language server so we never surface an off-context action.
+ */
+function phpSourceCodeActionKindRequested(only: string | undefined): boolean {
+  if (!only) {
+    return true;
+  }
+
+  return only.startsWith("quickfix") || only.startsWith("refactor");
+}
+
+/**
+ * Converts the Monaco selection range Monaco hands the code-action provider into
+ * the 0-based character offset span the controller's position-aware actions
+ * consume. An empty selection collapses to `start === end` (the bare cursor).
+ */
+function phpCodeActionOffsetRange(
+  source: string,
+  range: Monaco.Range,
+): PhpCodeActionRange {
+  const start = offsetAtMonacoPosition(source, {
+    column: range.startColumn,
+    lineNumber: range.startLineNumber,
+  } as MonacoPosition);
+  const end = offsetAtMonacoPosition(source, {
+    column: range.endColumn,
+    lineNumber: range.endLineNumber,
+  } as MonacoPosition);
+
+  return start <= end ? { end, start } : { end: start, start: end };
+}
+
+function toPhpCodeAction(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  descriptor: PhpCodeActionDescriptor,
+): Monaco.languages.CodeAction {
+  const versionId = model.getVersionId();
+
+  return {
+    edit: {
+      edits: descriptor.edits.map((edit) => ({
+        resource: model.uri,
+        textEdit: {
+          range: new monaco.Range(
+            edit.range.startLineNumber,
+            edit.range.startColumn,
+            edit.range.endLineNumber,
+            edit.range.endColumn,
+          ),
+          text: edit.text,
+        },
+        versionId,
+      })),
+    },
+    kind: descriptor.kind ?? "quickfix",
+    title: descriptor.title,
+  };
 }
 
 async function resolveCodeAction(
@@ -1521,6 +2064,10 @@ async function resolveCodeAction(
       backedAction.__languageServerSessionId,
     )
   ) {
+    return action;
+  }
+
+  if (isLanguageServerActionAlreadyResolved(backedAction.__languageServerAction)) {
     return action;
   }
 
@@ -1558,6 +2105,10 @@ async function resolveCodeAction(
 
     return mapped ? { ...action, ...mapped } : action;
   } catch (error) {
+    if (isUnsupportedCodeActionResolveError(error)) {
+      return action;
+    }
+
     if (
       isStoredLanguageServerPayloadActive(
         context,
@@ -1570,6 +2121,39 @@ async function resolveCodeAction(
 
     return action;
   }
+}
+
+/**
+ * A lazy LSP code action can be applied directly once it already carries an
+ * inline `edit` or a `command`; only `data`-only actions still need a
+ * `codeAction/resolve` round-trip. Our own PHP actions (Implement / Override
+ * methods, getters, constructor) always ship an inline `edit`, so this guard
+ * keeps them working without an extra resolve request — and avoids asking a
+ * server that does not support `codeAction/resolve` to fill in what is already
+ * present.
+ */
+function isLanguageServerActionAlreadyResolved(
+  action: LanguageServerCodeAction,
+): boolean {
+  return Boolean(action.edit) || Boolean(action.command);
+}
+
+/**
+ * Some servers (e.g. phpactor) advertise `codeActionProvider` but ship lazy
+ * actions without a `codeAction/resolve` handler. Resolving such an edit-less
+ * action surfaces a JSON-RPC "Handler codeAction/resolve not found" error. The
+ * Rust side already skips the resolve request when the server does not advertise
+ * `resolveProvider`; this guard is the matching client-side defence so the user
+ * never sees a confusing "Handler not found" notice when an edit-less action
+ * simply cannot be resolved.
+ */
+function isUnsupportedCodeActionResolveError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+
+  return /codeAction\/resolve.*not found|not found.*codeAction\/resolve/i.test(
+    message,
+  );
 }
 
 function provideLocalCodeActions(

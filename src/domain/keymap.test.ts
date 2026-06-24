@@ -35,6 +35,60 @@ describe("keymap", () => {
     });
   });
 
+  it("defaults the TODO panel toggle to the platform primary modifier", () => {
+    expect(defaultShortcutForCommand("panel.toggleTodo", "mac")).toBe(
+      "Cmd+Shift+T",
+    );
+    expect(defaultShortcutForCommand("panel.toggleTodo", "linux")).toBe(
+      "Ctrl+Shift+T",
+    );
+    expect(defaultKeymapSettings("mac")["panel.toggleTodo"]).toBe(
+      "Cmd+Shift+T",
+    );
+  });
+
+  it("defaults find all references to Shift+F12 on every platform", () => {
+    expect(defaultShortcutForCommand("editor.findReferences", "mac")).toBe(
+      "Shift+F12",
+    );
+    expect(defaultShortcutForCommand("editor.findReferences", "linux")).toBe(
+      "Shift+F12",
+    );
+    expect(defaultShortcutForCommand("editor.findReferences", "windows")).toBe(
+      "Shift+F12",
+    );
+    expect(defaultKeymapSettings("mac")["editor.findReferences"]).toBe(
+      "Shift+F12",
+    );
+  });
+
+  it("defaults the format document shortcut to Shift+Alt+F on every platform", () => {
+    expect(defaultShortcutForCommand("editor.formatDocument", "mac")).toBe(
+      "Shift+Alt+F",
+    );
+    expect(defaultShortcutForCommand("editor.formatDocument", "linux")).toBe(
+      "Shift+Alt+F",
+    );
+    expect(defaultShortcutForCommand("editor.formatDocument", "windows")).toBe(
+      "Shift+Alt+F",
+    );
+    expect(defaultKeymapSettings("mac")["editor.formatDocument"]).toBe(
+      "Shift+Alt+F",
+    );
+  });
+
+  it("matches the format document shortcut against Shift+Alt+F", () => {
+    expect(
+      matchesShortcut(
+        keyEvent({ key: "f", altKey: true, shiftKey: true }),
+        "Shift+Alt+F",
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(keyEvent({ key: "f", altKey: true }), "Shift+Alt+F"),
+    ).toBe(false);
+  });
+
   it("uses Ctrl defaults on non-Mac platforms", () => {
     expect(defaultShortcutForCommand("editor.save", "linux")).toBe("Ctrl+S");
     expect(defaultShortcutForCommand("editor.save", "windows")).toBe("Ctrl+S");
