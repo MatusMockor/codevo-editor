@@ -41,7 +41,7 @@ import {
 } from "../domain/languageServerDocumentSync";
 import { Breadcrumbs } from "./Breadcrumbs";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
-import { phpImplementationGutterTargets } from "../domain/phpImplementationGutterTargets";
+import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type {
   PhpSyntaxDiagnostic,
@@ -250,6 +250,15 @@ function EditorSurfaceComponent({
   const changeHunksRef = useRef(changeHunks);
   const implementationGutterDecorationIdsRef = useRef<string[]>([]);
   const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
+  // Caches gutter targets so navigating back to an unchanged PHP file reuses
+  // the previous parse instead of re-scanning the whole file on the navigation
+  // commit. A content change re-parses and refreshes glyphs. Cross-tab safety
+  // does not rely on per-tab instances (this surface is reused across tabs): it
+  // is keyed by absolute document path, which is globally unique per workspace
+  // root, plus full content, so a hit can never serve another file's targets.
+  const implementationGutterTargetsCacheRef = useRef(
+    new PhpImplementationGutterTargetsCache(),
+  );
   const diagnosticOverviewDecorationIdsRef = useRef<string[]>([]);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
   const bladeCompletionsRef = useRef(provideBladeCompletions);
@@ -965,7 +974,10 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const targets = phpImplementationGutterTargets(activeDocument.content);
+    const targets = implementationGutterTargetsCacheRef.current.resolve(
+      activeDocument.path,
+      activeDocument.content,
+    );
     implementationGutterTargetsRef.current = new Map(
       targets.map((target) => [target.position.lineNumber, target.position]),
     );

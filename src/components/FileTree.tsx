@@ -42,7 +42,7 @@ interface FileTreeProps {
   onCancelPrefetchFile?(entry: FileEntry): void;
 }
 
-export function FileTree({
+function FileTreeComponent({
   rootPath,
   entriesByDirectory,
   fileStatusesByPath,
@@ -289,6 +289,13 @@ export function FileTree({
     </nav>
   );
 }
+
+// Memoized so App re-renders driven by unrelated state (LSP diagnostics
+// streaming re-publishing per open document, terminal output, etc.) do not
+// force a full tree re-render mid-scroll. Every prop is referentially stable
+// across those renders: state Sets/Records keep identity until mutated, and
+// the callbacks are useCallback-stable in the workbench controller.
+export const FileTree = memo(FileTreeComponent);
 
 function measureTreeViewportHeight(container: HTMLElement): number {
   return Math.max(

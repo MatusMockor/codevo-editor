@@ -17,16 +17,17 @@ const abstractMethodDeclarationPattern =
 export function phpImplementationGutterTargets(
   source: string,
 ): PhpImplementationGutterTarget[] {
+  const lineStartOffsets = computeLineStartOffsets(source);
   const targets: PhpImplementationGutterTarget[] = [];
 
   targets.push(
-    ...targetsFromDeclarations(source, {
+    ...targetsFromDeclarations(source, lineStartOffsets, {
       declarationPattern: interfaceDeclarationPattern,
       methodPattern: interfaceMethodDeclarationPattern,
     }),
   );
   targets.push(
-    ...targetsFromDeclarations(source, {
+    ...targetsFromDeclarations(source, lineStartOffsets, {
       declarationPattern: abstractClassDeclarationPattern,
       methodPattern: abstractMethodDeclarationPattern,
     }),
@@ -37,6 +38,7 @@ export function phpImplementationGutterTargets(
 
 function targetsFromDeclarations(
   source: string,
+  lineStartOffsets: number[],
   {
     declarationPattern,
     methodPattern,
@@ -60,7 +62,7 @@ function targetsFromDeclarations(
 
       targets.push({
         methodName,
-        position: lineColumnAt(source, methodOffset),
+        position: lineColumnAt(lineStartOffsets, methodOffset),
       });
     }
   }
@@ -92,21 +94,44 @@ function matchingBraceOffset(source: string, openBrace: number): number | null {
   return null;
 }
 
-function lineColumnAt(source: string, offset: number): EditorPosition {
-  let lineNumber = 1;
-  let lineStart = 0;
+// Precompute the byte offset at which each line starts, once per source, so
+// converting a method offset to a line/column is an O(log lines) binary search
+// instead of an O(offset) rescan. Without this the gutter scan is
+// O(file x methods); with it the dominant cost is a single O(file) pass.
+function computeLineStartOffsets(source: string): number[] {
+  const lineStartOffsets = [0];
 
-  for (let index = 0; index < offset; index += 1) {
+  for (let index = 0; index < source.length; index += 1) {
     if (source[index] !== "\n") {
       continue;
     }
 
-    lineNumber += 1;
-    lineStart = index + 1;
+    lineStartOffsets.push(index + 1);
+  }
+
+  return lineStartOffsets;
+}
+
+function lineColumnAt(
+  lineStartOffsets: number[],
+  offset: number,
+): EditorPosition {
+  let low = 0;
+  let high = lineStartOffsets.length - 1;
+
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+
+    if (lineStartOffsets[mid] <= offset) {
+      low = mid;
+      continue;
+    }
+
+    high = mid - 1;
   }
 
   return {
-    column: offset - lineStart + 1,
-    lineNumber,
+    column: offset - lineStartOffsets[low] + 1,
+    lineNumber: low + 1,
   };
 }

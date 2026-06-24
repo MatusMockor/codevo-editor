@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
+import type { ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileTree } from "./FileTree";
@@ -165,6 +166,59 @@ describe("FileTree", () => {
       animationFrame.restore();
       viewport.restore();
     }
+  });
+
+  it("does not re-render when the parent re-renders with identical props", async () => {
+    // The component calls `expandedDirectories.has(entry.path)` for every
+    // rendered row, so spying on that method counts how often the memoized
+    // tree renders. Diagnostics streaming re-renders the App with unchanged
+    // FileTree props, and this guards that the tree no longer re-renders then.
+    const expandedDirectories = new Set<string>();
+    const hasSpy = vi.spyOn(expandedDirectories, "has");
+    const stableProps: ComponentProps<typeof FileTree> = {
+      rootPath: "/workspace",
+      entriesByDirectory: {
+        "/workspace": [
+          fileEntry("/workspace/src", "src", "directory"),
+          fileEntry("/workspace/User.php", "User.php", "file"),
+        ],
+      },
+      expandedDirectories,
+      loadingDirectories: new Set<string>(),
+      activePath: null,
+      revealActivePath: false,
+      revealActivePathSignal: 0,
+      onOpenFile: vi.fn(),
+      onPreviewFile: vi.fn(),
+      onToggleDirectory: vi.fn(),
+      onPrefetchFile: vi.fn(),
+      onCancelPrefetchFile: vi.fn(),
+    };
+
+    let forceParentRender: (value: number) => void = () => undefined;
+
+    function Parent() {
+      const [, setTick] = useState(0);
+      forceParentRender = setTick;
+      return <FileTree {...stableProps} />;
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    const callsAfterMount = hasSpy.mock.calls.length;
+    expect(callsAfterMount).toBeGreaterThan(0);
+
+    await act(async () => {
+      forceParentRender(1);
+      await Promise.resolve();
+    });
+
+    expect(hasSpy.mock.calls.length).toBe(callsAfterMount);
+
+    hasSpy.mockRestore();
   });
 
   function rowByLabel(label: string): HTMLButtonElement {

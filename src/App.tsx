@@ -271,9 +271,12 @@ function App() {
   // openDocuments is replaced on every keystroke (fresh document objects), so we
   // re-derive the path array only when the actual set of open paths changes,
   // keeping the dispose effect from re-running on each character typed.
-  const openDocumentPathsKey = workbench.openDocuments
-    .map((document) => document.path)
-    .join("\n");
+  // Keyed on openDocuments identity so the O(N) map/join only runs when that
+  // array changes, not on every App render (e.g. LSP diagnostics streaming).
+  const openDocumentPathsKey = useMemo(
+    () => workbench.openDocuments.map((document) => document.path).join("\n"),
+    [workbench.openDocuments],
+  );
   // Depends on the joined key (a stable string), not openDocuments, so the
   // memoized array identity changes only when the set of open paths changes.
   const openDocumentPaths = useMemo(
@@ -288,12 +291,21 @@ function App() {
   // navigationHistory is reset/restored per workspace tab. Keyed on the joined
   // string so the dispose effect re-runs only when the reachable path set
   // actually changes, not on every cursor move that pushes a same-file location.
-  const navigationHistoryPathsKey = [
-    ...workbench.navigationHistory.backStack,
-    ...workbench.navigationHistory.forwardStack,
-  ]
-    .map((location) => location.path)
-    .join("\n");
+  // Keyed on the back/forward stack identities so the O(N) spread/map/join
+  // only runs when navigation history changes, not on every App render.
+  const navigationHistoryPathsKey = useMemo(
+    () =>
+      [
+        ...workbench.navigationHistory.backStack,
+        ...workbench.navigationHistory.forwardStack,
+      ]
+        .map((location) => location.path)
+        .join("\n"),
+    [
+      workbench.navigationHistory.backStack,
+      workbench.navigationHistory.forwardStack,
+    ],
+  );
   const navigationHistoryPaths = useMemo(
     () =>
       Array.from(
