@@ -17105,6 +17105,42 @@ export function useWorkbenchController(
         }
       }
 
+      // A plainly typed property (e.g. `private PostRepository $postRepository`)
+      // navigates to its declared TYPE class, matching PhpStorm's "go to the
+      // class the property holds" behaviour, before falling back to the property
+      // declaration line. Eloquent relations and model attributes are handled by
+      // the steps above (they return early), so this only fires for ordinary
+      // class-typed properties. The property type is resolved through
+      // resolvePhpExpressionType so private/protected/promoted/docblock-typed
+      // properties all work; scalar/union-typed properties resolve to no class
+      // FQCN and fall through to the declaration target below.
+      if (propertyExists) {
+        const propertyTypeClassName = await resolvePhpExpressionType(
+          activeDocument.content,
+          position,
+          `${context.receiverExpression || `$${context.variableName}`}->${context.propertyName}`,
+        );
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (propertyTypeClassName) {
+          const typeClassOpened = await openPhpClassTarget(
+            propertyTypeClassName,
+            shortPhpName(propertyTypeClassName),
+          );
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (typeClassOpened) {
+            return true;
+          }
+        }
+      }
+
       if (propertyExists) {
         const propertyTargetOpened = await openDirectPhpPropertyTarget(
           receiverType,
@@ -17133,6 +17169,7 @@ export function useWorkbenchController(
       activeDocument,
       openDirectPhpPropertyTarget,
       openDirectPhpMethodTarget,
+      openPhpClassTarget,
       openPhpLaravelModelAttributeTarget,
       phpClassHierarchyHasProperty,
       resolvePhpExpressionType,

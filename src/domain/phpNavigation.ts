@@ -408,8 +408,36 @@ export function phpIdentifierContextAt(
 
   return {
     kind: "classIdentifier",
-    name: identifier.name,
+    name: qualifiedClassIdentifierAtOffset(source, offset) ?? identifier.name,
   };
+}
+
+/**
+ * Returns the full namespace-qualified class token surrounding `offset`
+ * (e.g. `\App\Models\Baz` or `App\Models\Baz`), spanning every `\`-separated
+ * segment, or `null` when the offset is not inside such a token. Used only for
+ * the `classIdentifier` fallback so a Cmd+Click on any segment of a qualified
+ * type reference (docblock `@var`/`@param`/`@return` or a type-hint) resolves
+ * the whole FQN rather than a single segment. Method/property/static-call
+ * classification keeps using the single-segment {@link identifierAtOffset} so
+ * qualified static receivers (`\App\Models\Album::find()`) are not hijacked.
+ */
+function qualifiedClassIdentifierAtOffset(
+  source: string,
+  offset: number,
+): string | null {
+  for (const match of source.matchAll(
+    /\\?[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*/g,
+  )) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+
+    if (offset >= start && offset <= end) {
+      return match[0].includes("\\") ? match[0] : null;
+    }
+  }
+
+  return null;
 }
 
 /**

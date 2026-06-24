@@ -46871,6 +46871,187 @@ interface GreeterContract
     expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
   });
 
+  it("navigates a typed member property to its declared type class", async () => {
+    const servicePath = "/workspace/app/Services/PostService.php";
+    const repositoryPath = "/workspace/app/Repositories/PostRepository.php";
+    const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Repositories\\PostRepository;
+
+class PostService
+{
+    private PostRepository $postRepository;
+
+    public function index(): void
+    {
+        $this->postRepository->getFilteredPosts();
+    }
+}
+`;
+    const repositorySource = `<?php
+
+namespace App\\Repositories;
+
+class PostRepository
+{
+    public function getFilteredPosts(): array
+    {
+        return [];
+    }
+}
+`;
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === servicePath) {
+        return serviceSource;
+      }
+
+      if (requestedPath === repositoryPath) {
+        return repositorySource;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(servicePath, "PostService.php"));
+    });
+    await flushAsyncTurns(24);
+
+    const chainPropertyEnd = positionAfter(
+      serviceSource,
+      "$this->postRepository->getFilteredPosts",
+    );
+
+    act(() => {
+      // Cursor on the `postRepository` member property in
+      // `$this->postRepository->getFilteredPosts()`.
+      getWorkbench().updateActiveEditorPosition({
+        column: chainPropertyEnd.column - "->getFilteredPosts".length,
+        lineNumber: chainPropertyEnd.lineNumber,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().goToDefinition();
+    });
+    await flushAsyncTurns(24);
+
+    // Navigates to the PostRepository CLASS declaration (its type), not the
+    // property declaration line in PostService.
+    expect(getWorkbench().activePath).toBe(repositoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: repositoryPath,
+      position: {
+        column: 7,
+        lineNumber: lineNumberOf(repositorySource, "class PostRepository"),
+      },
+    });
+  });
+
+  it("still navigates a member chain method call to the resolved method", async () => {
+    const servicePath = "/workspace/app/Services/PostService.php";
+    const repositoryPath = "/workspace/app/Repositories/PostRepository.php";
+    const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Repositories\\PostRepository;
+
+class PostService
+{
+    private PostRepository $postRepository;
+
+    public function index(): void
+    {
+        $this->postRepository->getFilteredPosts();
+    }
+}
+`;
+    const repositorySource = `<?php
+
+namespace App\\Repositories;
+
+class PostRepository
+{
+    public function getFilteredPosts(): array
+    {
+        return [];
+    }
+}
+`;
+    const readTextFile = vi.fn(async (requestedPath: string) => {
+      if (requestedPath === servicePath) {
+        return serviceSource;
+      }
+
+      if (requestedPath === repositoryPath) {
+        return repositorySource;
+      }
+
+      return "";
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(servicePath, "PostService.php"));
+    });
+    await flushAsyncTurns(24);
+
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(serviceSource, "getFilteredPosts"),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().goToDefinition();
+    });
+    await flushAsyncTurns(24);
+
+    // The chained method call resolves to the method declaration (its name
+    // position), NOT the PostRepository class declaration - member-property
+    // type-class navigation must not hijack method-call navigation.
+    const methodNameEnd = positionAfter(
+      repositorySource,
+      "function getFilteredPosts",
+    );
+
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: repositoryPath,
+      position: {
+        column: methodNameEnd.column - "getFilteredPosts".length,
+        lineNumber: methodNameEnd.lineNumber,
+      },
+    });
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
     gitGateway,

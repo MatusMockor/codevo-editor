@@ -801,8 +801,14 @@ function phpDeclaredPropertyType(
   source: string,
   propertyName: string,
 ): string | null {
+  // Anchor on a genuine property declaration: a visibility keyword followed by a
+  // PHP type and the `$name`. Plain `function __construct(Type $name)` params share
+  // the property name but are NOT properties, so the captured type segment must not
+  // span the parameter list — exclude `(` and `)` from it so the `function ...(`
+  // context can never be mistaken for a property type (root cause of the previous
+  // "last match wins" garbage like `function __construct(PostRepository`).
   const pattern = new RegExp(
-    `(?:^|\\n)\\s*(?:public|protected|private)\\s+(?:readonly\\s+)?(?:static\\s+)?([^\\n;=]+?)\\s+\\$${escapeRegExp(
+    `(?:^|\\n)\\s*(?:public|protected|private)\\s+(?:readonly\\s+)?(?:static\\s+)?([^\\n;=()]+?)\\s+\\$${escapeRegExp(
       propertyName,
     )}\\b`,
     "g",

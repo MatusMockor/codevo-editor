@@ -1723,6 +1723,140 @@ class PageService
       phpClassIdentifierNameAt(source, source.indexOf("find") + 2),
     ).toBeNull();
   });
+
+  it("captures a leading-backslash qualified class name in a docblock @var", () => {
+    const source = `<?php
+
+class PageService
+{
+    /** @var \\App\\Models\\Baz */
+    private $baz;
+}
+`;
+
+    expect(
+      phpClassIdentifierNameAt(source, source.indexOf("App\\Models\\Baz") + 7),
+    ).toBe("\\App\\Models\\Baz");
+  });
+
+  it("captures a qualified class name from any segment in a type-hint", () => {
+    const source = `<?php
+
+class PageService
+{
+    public function __construct(private App\\Models\\Baz $baz)
+    {
+    }
+}
+`;
+
+    expect(
+      phpClassIdentifierNameAt(
+        source,
+        source.indexOf("App\\Models\\Baz") + 1,
+      ),
+    ).toBe("App\\Models\\Baz");
+    expect(
+      phpClassIdentifierNameAt(
+        source,
+        source.indexOf("App\\Models\\Baz") + "App\\Models\\".length,
+      ),
+    ).toBe("App\\Models\\Baz");
+  });
+
+  it("resolves a qualified docblock @var class name through the FQN resolver", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+class PageService
+{
+    /** @var \\App\\Models\\Baz */
+    private $baz;
+}
+`;
+
+    const name = phpClassIdentifierNameAt(
+      source,
+      source.indexOf("Models") + 1,
+    );
+
+    expect(name).toBe("\\App\\Models\\Baz");
+    expect(resolvePhpClassName(source, name ?? "")).toBe("App\\Models\\Baz");
+  });
+
+  it("resolves a relative qualified class name against the current namespace", () => {
+    const source = `<?php
+
+namespace App;
+
+class PageService
+{
+    /** @var Models\\Baz */
+    private $baz;
+}
+`;
+
+    const name = phpClassIdentifierNameAt(
+      source,
+      source.indexOf("Models\\Baz") + 1,
+    );
+
+    expect(name).toBe("Models\\Baz");
+    expect(resolvePhpClassName(source, name ?? "")).toBe("App\\Models\\Baz");
+  });
+
+  it("keeps treating a bare imported class name as a class identifier", () => {
+    const source = `<?php
+
+namespace App\\Services;
+
+use App\\Models\\Foo;
+
+class PageService
+{
+    /** @var Foo */
+    private $foo;
+}
+`;
+
+    const name = phpClassIdentifierNameAt(source, source.indexOf("@var Foo") + 6);
+
+    expect(name).toBe("Foo");
+    expect(resolvePhpClassName(source, name ?? "")).toBe("App\\Models\\Foo");
+  });
+
+  it("does not hijack a qualified static method call as a class identifier", () => {
+    const source = `<?php\n\n\\App\\Models\\Album::whereNull('parent_id');\n`;
+
+    expect(
+      phpClassIdentifierNameAt(
+        source,
+        source.indexOf("whereNull") + 2,
+      ),
+    ).toBeNull();
+    expect(
+      phpIdentifierContextAt(
+        source,
+        positionAfter(source, "\\App\\Models\\Album::whereNull"),
+      ),
+    ).toEqual({
+      className: "App\\Models\\Album",
+      kind: "staticMethodCall",
+      methodName: "whereNull",
+    });
+  });
+
+  it("does not hijack a qualified method call on a member chain", () => {
+    const source = `<?php\n\n$this->postRepository->getFilteredPosts();\n`;
+
+    expect(
+      phpClassIdentifierNameAt(
+        source,
+        source.indexOf("getFilteredPosts") + 2,
+      ),
+    ).toBeNull();
+  });
 });
 
 function phpProjectDescriptor(): PhpProjectDescriptor {

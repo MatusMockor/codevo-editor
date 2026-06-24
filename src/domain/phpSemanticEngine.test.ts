@@ -88,6 +88,110 @@ class CommentController
     );
   });
 
+  it("resolves property type from the property declaration, not a same-named plain constructor param", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+class PostController
+{
+    private PostRepository $postRepository;
+
+    public function __construct(PostRepository $postRepository)
+    {
+        $this->postRepository = $postRepository;
+    }
+}
+`;
+
+    expect(phpThisPropertyType(source, "postRepository")).toBe(
+      "PostRepository",
+    );
+  });
+
+  it("resolves property type from a multi-line plain constructor with a same-named param", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+class PostController
+{
+    private PostRepository $postRepository;
+
+    public function __construct(
+        PostRepository $postRepository,
+        LoggerInterface $logger,
+    ) {
+        $this->postRepository = $postRepository;
+    }
+}
+`;
+
+    expect(phpThisPropertyType(source, "postRepository")).toBe(
+      "PostRepository",
+    );
+  });
+
+  it("resolves promoted constructor property type when no class-body property exists", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+class PostController
+{
+    public function __construct(
+        private PostRepository $postRepository,
+    ) {}
+}
+`;
+
+    expect(phpThisPropertyType(source, "postRepository")).toBe(
+      "PostRepository",
+    );
+  });
+
+  it("resolves readonly, static, nullable and union property declaration types", () => {
+    const source = `<?php
+namespace App\\Models;
+
+class PostController
+{
+    private readonly PostRepository $readonlyRepository;
+    protected static CacheStore $sharedCache;
+    private ?PostRepository $nullableRepository;
+    private PostRepository|LegacyRepository $unionRepository;
+
+    public function __construct(
+        PostRepository $readonlyRepository,
+        CacheStore $sharedCache,
+        PostRepository $nullableRepository,
+        LegacyRepository $unionRepository,
+    ) {}
+}
+`;
+
+    expect(phpThisPropertyType(source, "readonlyRepository")).toBe(
+      "PostRepository",
+    );
+    expect(phpThisPropertyType(source, "sharedCache")).toBe("CacheStore");
+    expect(phpThisPropertyType(source, "nullableRepository")).toBe(
+      "PostRepository",
+    );
+    expect(phpThisPropertyType(source, "unionRepository")).toBe(
+      "PostRepository",
+    );
+  });
+
+  it("does not resolve a plain constructor param that is not a class property", () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+class PostController
+{
+    public function __construct(PostRepository $postRepository) {}
+}
+`;
+
+    expect(phpThisPropertyType(source, "postRepository")).toBeNull();
+  });
+
   it("resolves receiver expressions from scope symbols", () => {
     expect(
       phpReceiverExpressionTypeInSource(source, { column: 20, lineNumber: 22 }, "$this"),
