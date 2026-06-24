@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, createElement, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -77,6 +77,7 @@ interface FakeMouseDownEvent {
 const editorSurfaceMocks = vi.hoisted(() => ({
   editor: null as FakeEditor | null,
   monaco: null as ReturnType<typeof createMonaco> | null,
+  renderCount: 0,
   props: null as { options?: Record<string, unknown> } | null,
   registeredContext: null as {
     isDocumentSynced?: (rootPath: string, path: string) => boolean;
@@ -134,6 +135,7 @@ vi.mock("@monaco-editor/react", async () => {
       onMount(editor: FakeEditor, monaco: ReturnType<typeof createMonaco>): void;
       options?: Record<string, unknown>;
     }) {
+      editorSurfaceMocks.renderCount += 1;
       React.useEffect(() => {
         if (!editorSurfaceMocks.editor || !editorSurfaceMocks.monaco) {
           throw new Error("EditorSurface test Monaco mocks were not prepared.");
@@ -164,6 +166,7 @@ describe("EditorSurface", () => {
     host.remove();
     editorSurfaceMocks.editor = null;
     editorSurfaceMocks.monaco = null;
+    editorSurfaceMocks.renderCount = 0;
     editorSurfaceMocks.props = null;
     editorSurfaceMocks.registeredContext = null;
     vi.restoreAllMocks();
@@ -3651,6 +3654,184 @@ interface ParserFactory
     expect(loading).not.toBeNull();
     expect(loading).toBeDefined();
   });
+
+  it("skips re-rendering when an unrelated parent update leaves its props referentially equal", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    let triggerUnrelatedRender: () => void = () => undefined;
+
+    function MemoGuardHarness() {
+      const [unrelatedCounter, setUnrelatedCounter] = useState(0);
+      triggerUnrelatedRender = () => setUnrelatedCounter((value) => value + 1);
+
+      // Build a fresh element on every render but reuse the same, referentially
+      // stable prop bag. Without a memo boundary the function component would
+      // re-render on each parent update; with memo the shallow-equal props let
+      // React skip it. The unrelated counter only affects the wrapper div.
+      return createElement(
+        "div",
+        { "data-unrelated": unrelatedCounter },
+        createElement(EditorSurface, stableMemoGuardProps),
+      );
+    }
+
+    await act(async () => {
+      root.render(createElement(MemoGuardHarness));
+      await Promise.resolve();
+    });
+
+    const rendersAfterMount = editorSurfaceMocks.renderCount;
+    expect(rendersAfterMount).toBeGreaterThan(0);
+
+    await act(async () => {
+      triggerUnrelatedRender();
+      await Promise.resolve();
+    });
+
+    // memo skips the EditorSurface render because every prop is referentially
+    // equal, so the unrelated parent update does not re-render the surface.
+    expect(editorSurfaceMocks.renderCount).toBe(rendersAfterMount);
+  });
+
+  it("re-renders the Monaco surface when the active document content changes", async () => {
+    const initialDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const updatedDocument: EditorDocument = {
+      ...initialDocument,
+      content: "const value = 2;\n",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: initialDocument.path,
+        path: initialDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const renderSurface = (document: EditorDocument) =>
+      root.render(memoGuardSurface(document));
+
+    await act(async () => {
+      renderSurface(initialDocument);
+      await Promise.resolve();
+    });
+
+    expect(
+      (editorSurfaceMocks.props as { value?: string } | null)?.value,
+    ).toBe(initialDocument.content);
+
+    await act(async () => {
+      renderSurface(updatedDocument);
+      await Promise.resolve();
+    });
+
+    expect(
+      (editorSurfaceMocks.props as { value?: string } | null)?.value,
+    ).toBe(updatedDocument.content);
+  });
+
+  it("invokes the focus handler the parent supplies for the active file reveal signal", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const onEditorFocused = vi.fn();
+
+    await act(async () => {
+      root.render(memoGuardSurface(activeDocument, { onEditorFocused }));
+      await Promise.resolve();
+    });
+
+    const panel = queryRequired<HTMLElement>(host, '[role="tabpanel"]');
+    act(() => {
+      panel.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    expect(onEditorFocused).toHaveBeenCalled();
+  });
+});
+
+function memoGuardProps(
+  activeDocument: EditorDocument,
+  overrides: Partial<{ onEditorFocused: () => void }> = {},
+) {
+  return {
+    activeDocument,
+    changeHunks: [],
+    editorRevealTarget: null,
+    flushPendingLanguageServerDocument: vi.fn(async () => undefined),
+    languageServerDiagnosticsByPath: {},
+    javaScriptTypeScriptValidationEnabled: true,
+    languageServerFeaturesGateway: languageServerFeaturesGateway(),
+    languageServerRuntimeStatus: null,
+    keymap: defaultKeymapSettings(),
+    monacoTheme: "calm-dark" as const,
+    onChange: vi.fn(),
+    onCloseActiveTab: vi.fn(),
+    onCursorPositionChange: vi.fn(),
+    onGoBack: vi.fn(),
+    onGoForward: vi.fn(),
+    onGoToDefinition: vi.fn(),
+    onGoToImplementationAt: vi.fn(),
+    onEditorFocused: overrides.onEditorFocused ?? vi.fn(),
+    onLanguageServerError: vi.fn(),
+    onOpenClass: vi.fn(),
+    onOpenFile: vi.fn(),
+    onOpenFileStructure: vi.fn(),
+    onRevealTargetHandled: vi.fn(),
+    onRevertChangeHunk: vi.fn(),
+    phpSyntaxDiagnosticsGateway: { validate: vi.fn(async () => []) },
+    providePhpMethodCompletions: vi.fn(async () => []),
+    providePhpMethodSignature: vi.fn(async () => null),
+  };
+}
+
+function memoGuardSurface(
+  activeDocument: EditorDocument,
+  overrides: Partial<{ onEditorFocused: () => void }> = {},
+): ReactNode {
+  return createElement(EditorSurface, memoGuardProps(activeDocument, overrides));
+}
+
+// A single, referentially stable prop bag so that an unrelated parent re-render
+// keeps every prop identical (shallow-equal) and the memo boundary can skip.
+const stableMemoGuardProps = memoGuardProps({
+  content: "const value = 1;\n",
+  language: "typescript",
+  name: "example.ts",
+  path: "/workspace/src/example.ts",
+  savedContent: "",
 });
 
 function createEditor(model: FakeModel): FakeEditor {

@@ -1,7 +1,7 @@
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { RotateCcw, X } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import type * as Monaco from "monaco-editor";
 import type {
   EditorChangeHunk,
@@ -169,7 +169,7 @@ interface EditorSurfaceProps {
   ): Promise<PhpMethodSignature | null>;
 }
 
-export function EditorSurface({
+function EditorSurfaceComponent({
   activeDocument,
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
@@ -1347,6 +1347,11 @@ export function EditorSurface({
     </div>
   );
 }
+
+// IDE events (index progress, runtime status, …) re-render App without touching
+// the editor's props. memo lets the surface skip those renders, re-rendering
+// only when one of its props actually changes (active document, diagnostics, …).
+export const EditorSurface = memo(EditorSurfaceComponent);
 
 function editorActionForMenuCommand(command: EditorMenuCommand): string {
   switch (command) {

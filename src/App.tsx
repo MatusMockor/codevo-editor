@@ -44,6 +44,7 @@ import {
   type LanguageServerRuntimeStatus,
 } from "./domain/languageServerRuntime";
 import { shouldStartLanguageServer } from "./domain/intelligence";
+import type { EditorPosition } from "./domain/languageServerFeatures";
 import type { LanguageServerPlan } from "./domain/languageServer";
 import {
   indexProgressLabel,
@@ -523,6 +524,49 @@ function App() {
   const showProblemsPanel = useCallback(() => {
     workbench.showBottomPanelView("problems");
   }, [workbench.showBottomPanelView]);
+  const closeActiveTab = useCallback(() => {
+    if (workbench.activeDocument) {
+      workbench.closeDocument(workbench.activeDocument.path);
+    }
+  }, [workbench.activeDocument, workbench.closeDocument]);
+  const goBack = useCallback(() => {
+    void workbench.navigateBackward();
+  }, [workbench.navigateBackward]);
+  const goForward = useCallback(() => {
+    void workbench.navigateForwardInHistory();
+  }, [workbench.navigateForwardInHistory]);
+  const goToDefinition = useCallback(() => {
+    void workbench.goToDefinition();
+  }, [workbench.goToDefinition]);
+  const goToImplementationAt = useCallback(
+    (position: EditorPosition) => {
+      void workbench.goToImplementationAt(position);
+    },
+    [workbench.goToImplementationAt],
+  );
+  const markActiveFileRevealSignal = useCallback(() => {
+    setActiveFileRevealSignal((current) => current + 1);
+  }, []);
+  const openClass = useCallback(() => {
+    if (workbench.workspaceRoot) {
+      workbench.setQuickOpenOpen(false);
+      workbench.setClassOpenOpen(true);
+    }
+  }, [
+    workbench.workspaceRoot,
+    workbench.setQuickOpenOpen,
+    workbench.setClassOpenOpen,
+  ]);
+  const openFile = useCallback(() => {
+    if (workbench.workspaceRoot) {
+      workbench.setClassOpenOpen(false);
+      workbench.setQuickOpenOpen(true);
+    }
+  }, [
+    workbench.workspaceRoot,
+    workbench.setClassOpenOpen,
+    workbench.setQuickOpenOpen,
+  ]);
   const editorMenuCommandContext = useMemo(() => {
     if (editorMenuCommandRunner) {
       return workbench.commandContext;
@@ -843,34 +887,16 @@ function App() {
             phpLanguageServerWorkspaceEditGateway={
               phpLanguageServerWorkspaceEditGateway
             }
-            onCloseActiveTab={() => {
-              if (workbench.activeDocument) {
-                workbench.closeDocument(workbench.activeDocument.path);
-              }
-            }}
+            onCloseActiveTab={closeActiveTab}
             onCursorPositionChange={workbench.updateActiveEditorPosition}
             onEditorMenuCommandRunnerChange={updateEditorMenuCommandRunner}
-            onGoBack={() => void workbench.navigateBackward()}
-            onGoForward={() => void workbench.navigateForwardInHistory()}
-            onGoToDefinition={() => void workbench.goToDefinition()}
-            onGoToImplementationAt={(position) =>
-              void workbench.goToImplementationAt(position)
-            }
-            onEditorFocused={() =>
-              setActiveFileRevealSignal((current) => current + 1)
-            }
-            onOpenClass={() => {
-              if (workbench.workspaceRoot) {
-                workbench.setQuickOpenOpen(false);
-                workbench.setClassOpenOpen(true);
-              }
-            }}
-            onOpenFile={() => {
-              if (workbench.workspaceRoot) {
-                workbench.setClassOpenOpen(false);
-                workbench.setQuickOpenOpen(true);
-              }
-            }}
+            onGoBack={goBack}
+            onGoForward={goForward}
+            onGoToDefinition={goToDefinition}
+            onGoToImplementationAt={goToImplementationAt}
+            onEditorFocused={markActiveFileRevealSignal}
+            onOpenClass={openClass}
+            onOpenFile={openFile}
             onOpenFileStructure={workbench.openFileStructure}
             onChange={workbench.updateActiveDocument}
             onLanguageServerError={workbench.reportLanguageServerError}
