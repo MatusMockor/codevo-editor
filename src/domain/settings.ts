@@ -186,6 +186,10 @@ export function normalizeEditorFontFamily(value: unknown): string {
   return normalized;
 }
 
+export function monacoFontLigaturesForEditorSetting(enabled: boolean): string {
+  return enabled ? '"liga" on, "calt" on' : '"liga" off, "calt" off';
+}
+
 export function defaultWorkspaceSettings(): WorkspaceSettings {
   return {
     autoSave: true,

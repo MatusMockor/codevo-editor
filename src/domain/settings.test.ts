@@ -8,6 +8,7 @@ import {
   maxEditorFontSize,
   minEditorFontSize,
   monacoThemeForAppTheme,
+  monacoFontLigaturesForEditorSetting,
   normalizeAppSettings,
   normalizeEditorFontSize,
   normalizeWorkspaceSession,
@@ -207,6 +208,17 @@ describe("normalizeAppSettings", () => {
       defaultAppSettings(),
     );
     expect(normalizeAppSettings(null)).toEqual(defaultAppSettings());
+  });
+});
+
+describe("monacoFontLigaturesForEditorSetting", () => {
+  it("maps the boolean app setting to explicit Monaco font feature settings", () => {
+    expect(monacoFontLigaturesForEditorSetting(true)).toBe(
+      '"liga" on, "calt" on',
+    );
+    expect(monacoFontLigaturesForEditorSetting(false)).toBe(
+      '"liga" off, "calt" off',
+    );
   });
 });
 

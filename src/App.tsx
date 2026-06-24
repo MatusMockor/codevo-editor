@@ -781,6 +781,9 @@ function App() {
             diff={workbench.gitDiffPreview}
             isLoading={workbench.gitDiffLoading}
             monacoTheme={monacoTheme}
+            editorFontFamily={workbench.appSettings.editorFontFamily}
+            editorFontLigatures={workbench.appSettings.editorFontLigatures}
+            editorFontSize={workbench.appSettings.editorFontSize}
             onClose={workbench.closeGitDiffPreview}
           />
         ) : (

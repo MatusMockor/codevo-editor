@@ -18,11 +18,16 @@ interface FakeMonaco {
 }
 
 const gitDiffPreviewMocks = vi.hoisted(() => ({
+  diffEditor: {
+    updateOptions: vi.fn(),
+  },
   monaco: null as FakeMonaco | null,
   props: null as
     | {
         beforeMount?: (monaco: unknown) => void;
         loading?: unknown;
+        onMount?: (editor: { updateOptions: ReturnType<typeof vi.fn> }) => void;
+        options?: Record<string, unknown>;
         theme?: unknown;
       }
     | null,
@@ -35,6 +40,8 @@ vi.mock("@monaco-editor/react", async () => {
     DiffEditor: function DiffEditorMock(props: {
       beforeMount?: (monaco: unknown) => void;
       loading?: unknown;
+      onMount?: (editor: { updateOptions: ReturnType<typeof vi.fn> }) => void;
+      options?: Record<string, unknown>;
       theme?: unknown;
     }) {
       React.useEffect(() => {
@@ -44,6 +51,7 @@ vi.mock("@monaco-editor/react", async () => {
 
         gitDiffPreviewMocks.props = props;
         props.beforeMount?.(gitDiffPreviewMocks.monaco);
+        props.onMount?.(gitDiffPreviewMocks.diffEditor);
       }, [props]);
 
       return React.createElement("div", { "data-testid": "diff-editor" });
@@ -67,6 +75,7 @@ describe("GitDiffPreview", () => {
     host.remove();
     gitDiffPreviewMocks.monaco = null;
     gitDiffPreviewMocks.props = null;
+    gitDiffPreviewMocks.diffEditor.updateOptions.mockReset();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -131,6 +140,41 @@ describe("GitDiffPreview", () => {
     const loading = gitDiffPreviewMocks.props?.loading;
     expect(loading).not.toBeNull();
     expect(loading).toBeDefined();
+  });
+
+  it("uses the provided editor font settings without changing the font family", async () => {
+    gitDiffPreviewMocks.monaco = createMonaco();
+
+    await act(async () => {
+      root.render(
+        <GitDiffPreview
+          diff={diff()}
+          editorFontFamily="Consolas, monospace"
+          editorFontLigatures={true}
+          editorFontSize={18}
+          isLoading={false}
+          monacoTheme="calm-dark"
+          onClose={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(gitDiffPreviewMocks.props?.options).toEqual(
+      expect.objectContaining({
+        fontFamily: "Consolas, monospace",
+        fontLigatures: '"liga" on, "calt" on',
+        fontSize: 18,
+      }),
+    );
+
+    expect(gitDiffPreviewMocks.diffEditor.updateOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fontFamily: "Consolas, monospace",
+        fontLigatures: '"liga" on, "calt" on',
+        fontSize: 18,
+      }),
+    );
   });
 });
 

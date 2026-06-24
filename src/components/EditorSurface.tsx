@@ -62,6 +62,7 @@ import {
   defaultEditorFontFamily,
   defaultEditorFontLigatures,
   defaultEditorFontSize,
+  monacoFontLigaturesForEditorSetting,
   type MonacoAppTheme,
 } from "../domain/settings";
 import {
@@ -222,6 +223,8 @@ export function EditorSurface({
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
     useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoFontLigatures =
+    monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
   const runtimeStatusRef = useRef(languageServerRuntimeStatus);
   const javaScriptTypeScriptRuntimeStatusRef = useRef(
@@ -518,6 +521,18 @@ export function EditorSurface({
     setEditorApi(_editor);
     setMonacoApi(monaco);
   };
+
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    editorApi.updateOptions({
+      fontFamily: editorFontFamily,
+      fontLigatures: monacoFontLigatures,
+      fontSize: editorFontSize,
+    });
+  }, [editorApi, editorFontFamily, monacoFontLigatures, editorFontSize]);
 
   useEffect(() => {
     if (!editorApi) {
@@ -1229,7 +1244,7 @@ export function EditorSurface({
           domReadOnly: isReadOnly,
           formatOnPaste,
           fontFamily: editorFontFamily,
-          fontLigatures: editorFontLigatures,
+          fontLigatures: monacoFontLigatures,
           fontSize: editorFontSize,
           glyphMargin: true,
           insertSpaces: true,
