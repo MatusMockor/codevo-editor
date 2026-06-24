@@ -44258,33 +44258,7 @@ final class InvoiceAdapter
 
     expect(getWorkbench().settingsOpen).toBe(true);
     expect(getWorkbench().settingsInitialSection).toBe("appearance");
-  it("offers an implement-methods code action for an unimplemented interface", async () => {
-    const classPath = "/workspace/app/Services/Greeter.php";
-    const interfacePath = "/workspace/app/Contracts/GreeterContract.php";
-    const classSource = `<?php
-
-namespace App\\Services;
-
-use App\\Contracts\\GreeterContract;
-
-class Greeter implements GreeterContract
-{
-}
-`;
-    const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace",
-      },
-      readTextFile: vi.fn(async (path: string) => {
-        if (path === classPath) {
-          return classSource;
-        }
-
-        if (path === interfacePath) {
-          return `<?php
-
-namespace App\\Contracts;
+  });
 
   it("offers an implement-methods code action for an unimplemented interface", async () => {
     const classPath = "/workspace/app/Services/Greeter.php";
