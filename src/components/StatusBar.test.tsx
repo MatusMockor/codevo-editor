@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultStatusBarItemVisibility } from "../domain/settings";
@@ -151,5 +151,62 @@ describe("StatusBar", () => {
     expect(host.textContent).toContain(
       "example-web · JS/TS · Inferred (partial) · npm",
     );
+  });
+
+  it("does not re-render when the parent re-renders with identical props", async () => {
+    // The footer reads `statusBar.activePath` during every render, so a getter
+    // spy on that property counts how often the memoized footer renders.
+    const statusBar = defaultStatusBarItemVisibility();
+    let activePathReads = 0;
+    const realActivePath = statusBar.activePath;
+    Object.defineProperty(statusBar, "activePath", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        activePathReads += 1;
+        return realActivePath;
+      },
+    });
+
+    const stableProps: React.ComponentProps<typeof StatusBar> = {
+      activeLanguage: "php",
+      activePath: "/workspace/app/Service.php",
+      dirtyCount: 0,
+      ideActivityLabel: null,
+      ideActivityState: null,
+      intelligenceMode: "fullSmart",
+      message: null,
+      onChangeVisibility: vi.fn(),
+      onShowProblems: vi.fn(),
+      statusBar,
+      workspaceInfoLabel: null,
+      workspaceRoot: "/workspace",
+      workspaceTrustLabel: "Trusted",
+    };
+
+    let forceParentRender: (value: number) => void = () => undefined;
+
+    function Parent() {
+      const [, setTick] = useState(0);
+      forceParentRender = setTick;
+      return <StatusBar {...stableProps} />;
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    const readsAfterMount = activePathReads;
+    expect(readsAfterMount).toBeGreaterThan(0);
+
+    await act(async () => {
+      forceParentRender(1);
+      await Promise.resolve();
+    });
+
+    // React.memo prevents the footer from re-rendering when every prop is
+    // referentially unchanged, so `statusBar.activePath` is never read again.
+    expect(activePathReads).toBe(readsAfterMount);
   });
 });

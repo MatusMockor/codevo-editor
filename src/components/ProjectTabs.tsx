@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { memo } from "react";
 import type { MouseEvent } from "react";
 
 interface ProjectTabsProps {
@@ -8,7 +9,7 @@ interface ProjectTabsProps {
   workspaceTabs: string[];
 }
 
-export function ProjectTabs({
+function ProjectTabsComponent({
   activeRoot,
   onActivate,
   onClose,
@@ -64,6 +65,8 @@ export function ProjectTabs({
     </nav>
   );
 }
+
+export const ProjectTabs = memo(ProjectTabsComponent);
 
 function workspaceTabLabel(path: string): string {
   const normalized = path.trim().split("\\").join("/");

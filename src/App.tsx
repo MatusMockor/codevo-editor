@@ -520,6 +520,9 @@ function App() {
     },
     [editorMenuCommandRunner],
   );
+  const showProblemsPanel = useCallback(() => {
+    workbench.showBottomPanelView("problems");
+  }, [workbench.showBottomPanelView]);
   const editorMenuCommandContext = useMemo(() => {
     if (editorMenuCommandRunner) {
       return workbench.commandContext;
@@ -914,7 +917,7 @@ function App() {
         intelligenceMode={workbench.intelligenceMode}
         message={workbench.message}
         onChangeVisibility={workbench.setStatusBarItemVisibility}
-        onShowProblems={() => workbench.showBottomPanelView("problems")}
+        onShowProblems={showProblemsPanel}
         statusBar={workbench.workspaceSettings.statusBar}
         warningCount={workbench.diagnosticsSummary.warnings}
         workspaceRoot={workbench.workspaceRoot}

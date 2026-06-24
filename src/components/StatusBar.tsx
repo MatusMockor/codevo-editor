@@ -1,5 +1,5 @@
 import { CircleX, TriangleAlert } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
 import type {
   StatusBarItemVisibility,
@@ -42,7 +42,7 @@ const statusBarItems: Array<{
   { key: "message", label: "Messages" },
 ];
 
-export function StatusBar({
+function StatusBarComponent({
   activeLanguage,
   activePath,
   dirtyCount,
@@ -186,6 +186,8 @@ export function StatusBar({
     </footer>
   );
 }
+
+export const StatusBar = memo(StatusBarComponent);
 
 export type IdeActivityState = "active" | "idle" | "problem" | "scanning";
 

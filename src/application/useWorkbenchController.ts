@@ -1146,9 +1146,13 @@ export function useWorkbenchController(
     () => visibleEditorPaths(openPaths, previewPath),
     [openPaths, previewPath],
   );
-  const openDocuments = openDocumentPaths
-    .map((path) => documents[path])
-    .filter((document): document is EditorDocument => Boolean(document));
+  const openDocuments = useMemo(
+    () =>
+      openDocumentPaths
+        .map((path) => documents[path])
+        .filter((document): document is EditorDocument => Boolean(document)),
+    [documents, openDocumentPaths],
+  );
   const dirtyCount = openDocuments.filter(
     (document) => !document.readOnly && isDirty(document),
   ).length;

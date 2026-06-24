@@ -1,4 +1,5 @@
 import { Circle, X } from "lucide-react";
+import { memo } from "react";
 import type { KeyboardEvent } from "react";
 import type { MouseEvent } from "react";
 import type { EditorDocument } from "../domain/workspace";
@@ -20,7 +21,7 @@ interface EditorTabsProps {
   onPin(path: string): void;
 }
 
-export function EditorTabs({
+function EditorTabsComponent({
   documents,
   fileStatusesByPath,
   activePath,
@@ -118,6 +119,8 @@ export function EditorTabs({
     </div>
   );
 }
+
+export const EditorTabs = memo(EditorTabsComponent);
 
 function getNextTabIndex(
   currentIndex: number,
