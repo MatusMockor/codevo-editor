@@ -57,6 +57,7 @@ interface FakeEditor {
   setPosition: ReturnType<typeof vi.fn>;
   setSelection: ReturnType<typeof vi.fn>;
   trigger: ReturnType<typeof vi.fn>;
+  updateOptions: ReturnType<typeof vi.fn>;
 }
 
 interface FakeMouseDownEvent {
@@ -932,7 +933,7 @@ describe("EditorSurface", () => {
     );
   });
 
-  it("uses the provided editor font size for the Monaco fontSize option", async () => {
+  it("preserves the provided editor font family in Monaco options", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
       language: "typescript",
@@ -954,6 +955,8 @@ describe("EditorSurface", () => {
         <EditorSurface
           activeDocument={activeDocument}
           changeHunks={[]}
+          editorFontFamily="Consolas, monospace"
+          editorFontLigatures={true}
           editorFontSize={22}
           editorRevealTarget={null}
           flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
@@ -986,6 +989,16 @@ describe("EditorSurface", () => {
 
     expect(editorSurfaceMocks.props?.options).toEqual(
       expect.objectContaining({
+        fontFamily: "Consolas, monospace",
+        fontLigatures: '"liga" on, "calt" on',
+        fontSize: 22,
+      }),
+    );
+
+    expect(editorSurfaceMocks.editor.updateOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fontFamily: "Consolas, monospace",
+        fontLigatures: '"liga" on, "calt" on',
         fontSize: 22,
       }),
     );
@@ -3302,6 +3315,7 @@ function createEditor(model: FakeModel): FakeEditor {
       selection = nextSelection;
     }),
     trigger: vi.fn(),
+    updateOptions: vi.fn(),
   };
 
   return editor;

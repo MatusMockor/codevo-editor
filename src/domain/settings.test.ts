@@ -8,6 +8,7 @@ import {
   maxEditorFontSize,
   minEditorFontSize,
   monacoThemeForAppTheme,
+  monacoFontLigaturesForEditorSetting,
   normalizeAppSettings,
   normalizeEditorFontSize,
   normalizeWorkspaceSession,
@@ -22,6 +23,9 @@ import { defaultKeymapSettings } from "./keymap";
 describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
     expect(defaultAppSettings()).toEqual({
+      editorFontFamily:
+        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
@@ -77,6 +81,9 @@ describe("settings defaults", () => {
 describe("normalizeAppSettings", () => {
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
+      editorFontFamily:
+        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: "/project",
@@ -86,6 +93,8 @@ describe("normalizeAppSettings", () => {
     });
     expect(
       normalizeAppSettings({
+        editorFontFamily: "Fira Code",
+        editorFontLigatures: true,
         editorFontSize: 18,
         keymap: { "editor.save": "Cmd+Shift+S" },
         recentWorkspacePath: null,
@@ -94,6 +103,8 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
     ).toEqual({
+      editorFontFamily: "Fira Code, monospace",
+      editorFontLigatures: true,
       editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
@@ -110,6 +121,9 @@ describe("normalizeAppSettings", () => {
         theme: "ayuMirage",
       }),
     ).toEqual({
+      editorFontFamily:
+        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
@@ -137,6 +151,53 @@ describe("normalizeAppSettings", () => {
     ).toBe(defaultEditorFontSize);
   });
 
+  it("falls back persisted editor font family and ligatures when invalid", () => {
+    expect(
+      normalizeAppSettings({
+        editorFontFamily: "  ",
+        editorFontLigatures: "true",
+      }),
+    ).toEqual({
+      editorFontFamily:
+        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontLigatures: false,
+      editorFontSize: 14,
+      keymap: defaultKeymapSettings(),
+      recentWorkspacePath: null,
+      runtimePolicy: "keepAlive",
+      theme: "dark",
+      workspaceTabs: [],
+    });
+    expect(
+      normalizeAppSettings({
+        editorFontFamily: 42,
+        editorFontLigatures: true,
+      }).editorFontFamily,
+    ).toBe(
+      "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    );
+  });
+
+  it("normalizes editor font family case for known aliases", () => {
+    expect(
+      normalizeAppSettings({ editorFontFamily: "fira code" }).editorFontFamily,
+    ).toBe("Fira Code, monospace");
+  });
+
+  it("adds a monospace fallback for a single editor font family", () => {
+    expect(
+      normalizeAppSettings({ editorFontFamily: "Iosevka" }).editorFontFamily,
+    ).toBe("Iosevka, monospace");
+    expect(
+      normalizeAppSettings({ editorFontFamily: "monospace" }).editorFontFamily,
+    ).toBe("monospace");
+    expect(
+      normalizeAppSettings({
+        editorFontFamily: "Iosevka, Fira Code",
+      }).editorFontFamily,
+    ).toBe("Iosevka, Fira Code");
+  });
+
   it("deduplicates workspace tabs by normalized root key", () => {
     expect(
       normalizeAppSettings({
@@ -144,6 +205,9 @@ describe("normalizeAppSettings", () => {
         workspaceTabs: ["/project/api/", "/project/web", "/project/api"],
       }),
     ).toEqual({
+      editorFontFamily:
+        "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: "/project/api",
@@ -158,6 +222,17 @@ describe("normalizeAppSettings", () => {
       defaultAppSettings(),
     );
     expect(normalizeAppSettings(null)).toEqual(defaultAppSettings());
+  });
+});
+
+describe("monacoFontLigaturesForEditorSetting", () => {
+  it("maps the boolean app setting to explicit Monaco font feature settings", () => {
+    expect(monacoFontLigaturesForEditorSetting(true)).toBe(
+      '"liga" on, "calt" on',
+    );
+    expect(monacoFontLigaturesForEditorSetting(false)).toBe(
+      '"liga" off, "calt" off',
+    );
   });
 });
 

@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { defaultKeymapSettings } from "../domain/keymap";
+import type { SystemFontGateway } from "../domain/systemFonts";
 import { SettingsDialog } from "./SettingsDialog";
 
 describe("SettingsDialog", () => {
@@ -268,6 +269,216 @@ describe("SettingsDialog", () => {
     });
 
     expect(inputWithLabel("Save File").placeholder).toBe("Ctrl+S");
+  });
+
+  it("opens directly to the requested settings section", async () => {
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="appearance"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(settingsSectionButton("Appearance").ariaSelected).toBe("true");
+    expect(selectWithLabel("Font family")).not.toBeNull();
+  });
+
+  it("loads monospace font families from the system font gateway", async () => {
+    const systemFontGateway: SystemFontGateway = {
+      listMonospaceFontFamilies: vi.fn(async () => [
+        "Iosevka",
+        "Fira Code",
+        "Iosevka",
+      ]),
+    };
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          systemFontGateway={systemFontGateway}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      settingsSectionButton("Appearance").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    expect(selectWithLabel("Theme")).not.toBeNull();
+    expect(systemFontGateway.listMonospaceFontFamilies).toHaveBeenCalled();
+    await waitForFontFamilyOptions([
+      "Fira Code",
+      "Iosevka",
+      defaultAppSettings().editorFontFamily,
+    ]);
+    expect(inputWithLabel("Font size").type).toBe("number");
+    expect(checkboxWithLabel("Font ligatures").checked).toBe(false);
+  });
+
+  it("ignores stale font family refresh results", async () => {
+    let resolveInitialFonts: (fontFamilies: string[]) => void = () => undefined;
+    const initialFonts = new Promise<string[]>((resolve) => {
+      resolveInitialFonts = resolve;
+    });
+    const systemFontGateway: SystemFontGateway = {
+      listMonospaceFontFamilies: vi
+        .fn<() => Promise<string[]>>()
+        .mockReturnValueOnce(initialFonts)
+        .mockResolvedValueOnce(["Iosevka"]),
+    };
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="appearance"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={vi.fn(async () => undefined)}
+          phpTools={null}
+          systemFontGateway={systemFontGateway}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      refreshFontsButton().dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    await waitForFontFamilyOptions([
+      "Iosevka",
+      defaultAppSettings().editorFontFamily,
+    ]);
+
+    await act(async () => {
+      resolveInitialFonts(["Fira Code"]);
+    });
+
+    await waitForFontFamilyOptions([
+      "Iosevka",
+      defaultAppSettings().editorFontFamily,
+    ]);
+  });
+
+  it("persists editor font appearance changes", async () => {
+    const onSave = vi.fn(async () => undefined);
+    const systemFontGateway: SystemFontGateway = {
+      listMonospaceFontFamilies: vi.fn(async () => ["Fira Code"]),
+    };
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          systemFontGateway={systemFontGateway}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      settingsSectionButton("Appearance").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    await waitForFontFamilyOptions([
+      "Fira Code",
+      defaultAppSettings().editorFontFamily,
+    ]);
+
+    await act(async () => {
+      selectWithLabel("Font family").value = "Fira Code";
+      selectWithLabel("Font family").dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontFamily: "Fira Code, monospace",
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("Font size"), "16", "change");
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontFamily: "Fira Code, monospace",
+        editorFontSize: 16,
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+
+    await act(async () => {
+      checkboxWithLabel("Font ligatures").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontFamily: "Fira Code, monospace",
+        editorFontLigatures: true,
+        editorFontSize: 16,
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
   });
 
   it("persists TypeScript version preference changes", async () => {
@@ -621,6 +832,56 @@ describe("SettingsDialog", () => {
     }
 
     return input;
+  }
+
+  function changeInputValue(
+    input: HTMLInputElement,
+    value: string,
+    eventName = "input",
+  ): void {
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+
+    valueSetter?.call(input, value);
+    input.dispatchEvent(new Event(eventName, { bubbles: true }));
+  }
+
+  function selectWithLabel(labelText: string): HTMLSelectElement {
+    const labels = Array.from(host.querySelectorAll("label"));
+    const label = labels.find((item) => item.textContent?.includes(labelText));
+    const select = label?.querySelector<HTMLSelectElement>("select");
+
+    if (!select) {
+      throw new Error(`${labelText} select was not rendered.`);
+    }
+
+    return select;
+  }
+
+  function refreshFontsButton(): HTMLButtonElement {
+    const button = Array.from(host.querySelectorAll("button")).find((item) =>
+      item.textContent?.includes("Refresh fonts"),
+    );
+
+    if (!button) {
+      throw new Error("Refresh fonts button was not rendered.");
+    }
+
+    return button;
+  }
+
+  async function waitForFontFamilyOptions(
+    expectedOptions: string[],
+  ): Promise<void> {
+    await vi.waitFor(() => {
+      expect(
+        Array.from(selectWithLabel("Font family").options).map(
+          (option) => option.value,
+        ),
+      ).toEqual(expectedOptions);
+    });
   }
 
   function checkboxWithLabel(labelText: string): HTMLInputElement {

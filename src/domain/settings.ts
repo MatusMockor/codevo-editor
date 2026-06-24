@@ -41,12 +41,59 @@ export type JavaScriptTypeScriptVersionPreference = "bundled" | "workspace";
 export type PhpBackendPreference = "auto" | "phpactor" | "intelephense";
 export type WorkspaceSessionBottomPanelView = "index" | "problems" | "terminal";
 export type WorkspaceSessionSidebarView = "files" | "git" | "php";
+export type SettingsSection =
+  | "general"
+  | "keymap"
+  | "php"
+  | "index"
+  | "appearance";
 
+export const defaultEditorFontFamily =
+  "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+export const defaultEditorFontLigatures = false;
 export const defaultEditorFontSize = 14;
 export const minEditorFontSize = 8;
 export const maxEditorFontSize = 40;
+const editorFontFamilyAliases = [
+  "Berkeley Mono",
+  "Cascadia Code",
+  "Consolas",
+  "Fira Code",
+  "Hack",
+  "IBM Plex Mono",
+  "Iosevka",
+  "JetBrains Mono",
+  "Menlo",
+  "Monaco",
+  "Roboto Mono",
+  "SFMono-Regular",
+  "Source Code Pro",
+  "Ubuntu Mono",
+  "monospace",
+] as const;
+const editorFontFamilyAliasesByLower = new Map(
+  editorFontFamilyAliases.map((fontFamily) => [
+    fontFamily.toLowerCase(),
+    fontFamily,
+  ]),
+);
+const genericEditorFontFamilies = new Set([
+  "cursive",
+  "fantasy",
+  "math",
+  "monospace",
+  "sans-serif",
+  "serif",
+  "system-ui",
+  "ui-monospace",
+  "ui-rounded",
+  "ui-sans-serif",
+  "ui-serif",
+]);
 
 export interface AppSettings {
+  editorFontFamily: string;
+  editorFontLigatures: boolean;
   editorFontSize: number;
   keymap: KeymapSettings;
   recentWorkspacePath: string | null;
@@ -108,6 +155,8 @@ export interface SettingsGateway {
 
 export function defaultAppSettings(): AppSettings {
   return {
+    editorFontFamily: defaultEditorFontFamily,
+    editorFontLigatures: defaultEditorFontLigatures,
     editorFontSize: defaultEditorFontSize,
     keymap: defaultKeymapSettings(),
     recentWorkspacePath: null,
@@ -125,6 +174,39 @@ export function normalizeEditorFontSize(value: unknown): number {
   const rounded = Math.floor(value);
 
   return Math.min(Math.max(rounded, minEditorFontSize), maxEditorFontSize);
+}
+
+export function normalizeEditorFontFamily(value: unknown): string {
+  if (typeof value !== "string") {
+    return defaultEditorFontFamily;
+  }
+
+  const normalizedFamilies = value
+    .split(",")
+    .map((fontFamily) => fontFamily.trim())
+    .filter(Boolean)
+    .map(
+      (fontFamily) =>
+        editorFontFamilyAliasesByLower.get(fontFamily.toLowerCase()) ??
+        fontFamily,
+    );
+
+  if (normalizedFamilies.length === 0) {
+    return defaultEditorFontFamily;
+  }
+
+  if (
+    normalizedFamilies.length === 1 &&
+    !genericEditorFontFamilies.has(normalizedFamilies[0].toLowerCase())
+  ) {
+    return `${normalizedFamilies[0]}, monospace`;
+  }
+
+  return normalizedFamilies.join(", ");
+}
+
+export function monacoFontLigaturesForEditorSetting(enabled: boolean): string {
+  return enabled ? '"liga" on, "calt" on' : '"liga" off, "calt" off';
 }
 
 export function defaultWorkspaceSettings(): WorkspaceSettings {
@@ -189,6 +271,14 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     value.editorFontSize === undefined
       ? defaults.editorFontSize
       : normalizeEditorFontSize(value.editorFontSize);
+  const editorFontFamily =
+    value.editorFontFamily === undefined
+      ? defaults.editorFontFamily
+      : normalizeEditorFontFamily(value.editorFontFamily);
+  const editorFontLigatures = normalizeBoolean(
+    value.editorFontLigatures,
+    defaults.editorFontLigatures,
+  );
   const keymap = normalizeKeymapSettings(value.keymap);
   const runtimePolicy = isBackgroundRuntimePolicy(value.runtimePolicy)
     ? value.runtimePolicy
@@ -200,6 +290,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   );
 
   return {
+    editorFontFamily,
+    editorFontLigatures,
     editorFontSize,
     keymap,
     recentWorkspacePath,

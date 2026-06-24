@@ -78,6 +78,7 @@ import {
   TauriLanguageServerFeaturesGateway,
 } from "./infrastructure/tauriLanguageServerFeaturesGateway";
 import { TauriLanguageServerGateway } from "./infrastructure/tauriLanguageServerGateway";
+import { TauriSystemFontGateway } from "./infrastructure/tauriSystemFontGateway";
 import {
   JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
   TauriLanguageServerRuntimeGateway,
@@ -175,6 +176,7 @@ const terminalGateway = new TauriTerminalGateway();
 const workspaceRuntimeLifecycleGateway =
   new TauriWorkspaceRuntimeLifecycleGateway();
 const settingsGateway = new BrowserSettingsGateway();
+const systemFontGateway = new TauriSystemFontGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 const EMPTY_FILE_STATUSES_BY_PATH: Record<string, GitChangeStatus> = {};
 
@@ -781,11 +783,16 @@ function App() {
             diff={workbench.gitDiffPreview}
             isLoading={workbench.gitDiffLoading}
             monacoTheme={monacoTheme}
+            editorFontFamily={workbench.appSettings.editorFontFamily}
+            editorFontLigatures={workbench.appSettings.editorFontLigatures}
+            editorFontSize={workbench.appSettings.editorFontSize}
             onClose={workbench.closeGitDiffPreview}
           />
         ) : (
           <EditorSurface
             activeDocument={workbench.activeDocument}
+            editorFontFamily={workbench.appSettings.editorFontFamily}
+            editorFontLigatures={workbench.appSettings.editorFontLigatures}
             editorFontSize={workbench.appSettings.editorFontSize}
             isOpeningFile={workbench.isOpeningFile}
             applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
@@ -1042,6 +1049,7 @@ function App() {
 
       <SettingsDialog
         appSettings={workbench.appSettings}
+        initialSection={workbench.settingsInitialSection}
         isOpen={workbench.settingsOpen}
         onClose={() => workbench.setSettingsOpen(false)}
         onOpenJavaScriptTypeScriptServiceLog={
@@ -1058,6 +1066,7 @@ function App() {
           )
         }
         phpTools={workbench.phpTools}
+        systemFontGateway={systemFontGateway}
         workspaceDescriptor={workbench.workspaceDescriptor}
         workspaceRoot={workbench.workspaceRoot}
         workspaceSettings={workbench.workspaceSettings}

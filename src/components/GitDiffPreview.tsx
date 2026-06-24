@@ -1,6 +1,14 @@
 import { DiffEditor } from "@monaco-editor/react";
 import { X } from "lucide-react";
-import type { MonacoAppTheme } from "../domain/settings";
+import { useEffect, useState } from "react";
+import type * as Monaco from "monaco-editor";
+import {
+  defaultEditorFontFamily,
+  defaultEditorFontLigatures,
+  defaultEditorFontSize,
+  monacoFontLigaturesForEditorSetting,
+  type MonacoAppTheme,
+} from "../domain/settings";
 import type { GitFileDiff } from "../domain/git";
 import {
   applyImmediateFallbackTheme,
@@ -11,6 +19,9 @@ interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
   isLoading: boolean;
   monacoTheme: MonacoAppTheme;
+  editorFontFamily?: string;
+  editorFontLigatures?: boolean;
+  editorFontSize?: number;
   onClose(): void;
 }
 
@@ -18,8 +29,29 @@ export function GitDiffPreview({
   diff,
   isLoading,
   monacoTheme,
+  editorFontFamily = defaultEditorFontFamily,
+  editorFontLigatures = defaultEditorFontLigatures,
+  editorFontSize = defaultEditorFontSize,
   onClose,
 }: GitDiffPreviewProps) {
+  const [diffEditor, setDiffEditor] = useState<
+    Monaco.editor.IStandaloneDiffEditor | null
+  >(null);
+  const monacoFontLigatures =
+    monacoFontLigaturesForEditorSetting(editorFontLigatures);
+
+  useEffect(() => {
+    if (!diffEditor) {
+      return;
+    }
+
+    diffEditor.updateOptions({
+      fontFamily: editorFontFamily,
+      fontLigatures: monacoFontLigatures,
+      fontSize: editorFontSize,
+    });
+  }, [diffEditor, editorFontFamily, monacoFontLigatures, editorFontSize]);
+
   if (isLoading) {
     return (
       <div className="empty-editor">
@@ -49,6 +81,7 @@ export function GitDiffPreview({
       </header>
       <div className="editor-panel">
         <DiffEditor
+          onMount={(editor) => setDiffEditor(editor)}
           beforeMount={(monaco) => {
             // Apply a matching built-in dark/light theme synchronously so the
             // diff editor paints the correct background on its first frame.
@@ -67,9 +100,9 @@ export function GitDiffPreview({
           original={diff.originalContent}
           options={{
             automaticLayout: true,
-            fontFamily:
-              "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-            fontSize: 13,
+            fontFamily: editorFontFamily,
+            fontLigatures: monacoFontLigatures,
+            fontSize: editorFontSize,
             lineHeight: 20,
             minimap: { enabled: false },
             originalEditable: false,
