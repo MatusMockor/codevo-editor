@@ -190,11 +190,10 @@ where
             return unavailable_intelephense_plan(message);
         }
 
-        let configured_phpactor = settings.phpactor_path.as_ref().map(|path| ToolLocation {
-            executable: "phpactor".to_string(),
-            path: path.clone(),
-            source: ToolSource::Path,
-        });
+        let configured_phpactor = settings
+            .phpactor_path
+            .as_ref()
+            .and_then(|path| configured_phpactor_location(path));
 
         let Some(phpactor) = configured_phpactor.as_ref().or(tools.phpactor.as_ref()) else {
             return unavailable_plan(
@@ -777,6 +776,46 @@ fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn configured_phpactor_location(path: &str) -> Option<ToolLocation> {
+    let configured_path = Path::new(path);
+
+    if !is_launchable_file(configured_path) {
+        return None;
+    }
+
+    Some(ToolLocation {
+        executable: configured_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("phpactor")
+            .to_string(),
+        path: path.to_string(),
+        source: ToolSource::Path,
+    })
+}
+
+fn is_launchable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        metadata.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -884,11 +923,12 @@ mod tests {
     #[test]
     fn configured_phpactor_path_wins_over_detected_phpactor() {
         let root = create_temp_dir("lsp-configured-phpactor");
-        let configured_phpactor = root
-            .join("custom-tools")
-            .join("phpactor")
-            .to_string_lossy()
-            .to_string();
+        let configured_phpactor_path = root.join("custom-tools").join("phpactor");
+        fs::create_dir_all(configured_phpactor_path.parent().expect("custom tools dir"))
+            .expect("create custom tools dir");
+        fs::write(&configured_phpactor_path, "").expect("write configured phpactor");
+        make_executable(&configured_phpactor_path);
+        let configured_phpactor = configured_phpactor_path.to_string_lossy().to_string();
         let planner = PhpactorLanguageServerPlanner::new();
         let plan = planner.plan(
             &root,
@@ -905,6 +945,41 @@ mod tests {
         assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
         let command = plan.command.expect("language server command");
         assert_eq!(command.executable, configured_phpactor);
+        assert_eq!(command.args, vec!["language-server"]);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn missing_configured_phpactor_path_falls_back_to_detected_phpactor() {
+        let root = create_temp_dir("lsp-missing-configured-phpactor");
+        let planner = PhpactorLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            true,
+            &php_descriptor(&root),
+            &tools_with_phpactor(&root),
+            &PhpLanguageServerSettings {
+                backend: PhpBackendPreference::Auto,
+                intelephense_path: None,
+                phpactor_path: Some(
+                    root.join("missing")
+                        .join("phpactor")
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+            },
+        );
+
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
+        let command = plan.command.expect("language server command");
+        assert_eq!(
+            command.executable,
+            root.join("vendor")
+                .join("bin")
+                .join("phpactor")
+                .to_string_lossy()
+                .to_string()
+        );
         assert_eq!(command.args, vec!["language-server"]);
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -1365,4 +1440,16 @@ mod tests {
         fs::create_dir_all(&path).expect("create temp dir");
         path
     }
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("set executable permissions");
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_path: &Path) {}
 }

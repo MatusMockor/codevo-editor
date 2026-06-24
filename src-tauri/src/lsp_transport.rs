@@ -8,6 +8,7 @@ pub fn write_message<W: Write>(writer: &mut W, payload: &[u8]) -> io::Result<()>
 
 pub fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
     let mut content_length = None;
+    let mut in_header_block = false;
 
     loop {
         let mut line = String::new();
@@ -20,6 +21,10 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
         let trimmed = line.trim_end_matches(['\r', '\n']);
 
         if trimmed.is_empty() {
+            if !in_header_block {
+                continue;
+            }
+
             break;
         }
 
@@ -27,10 +32,16 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
             continue;
         };
 
+        if name.eq_ignore_ascii_case("Content-Type") {
+            in_header_block = true;
+            continue;
+        }
+
         if !name.eq_ignore_ascii_case("Content-Length") {
             continue;
         }
 
+        in_header_block = true;
         content_length =
             value.trim().parse::<usize>().map(Some).map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length")
@@ -104,8 +115,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_content_length() {
-        let mut reader = Cursor::new(b"X-Test: ok\r\n\r\nbody".to_vec());
+    fn skips_startup_noise_before_headers() {
+        let mut reader = Cursor::new(
+            b"\nWarning: PHP Startup: Unable to load dynamic library 'imagick.so'\n  detail line\n\nContent-Type: application/vscode-jsonrpc; charset=utf8\r\nContent-Length: 2\r\n\r\nok"
+                .to_vec(),
+        );
+
+        assert_eq!(
+            read_message(&mut reader)
+                .expect("read message")
+                .expect("body"),
+            b"ok"
+        );
+    }
+
+    #[test]
+    fn accepts_content_type_before_content_length() {
+        let mut reader = Cursor::new(
+            b"Content-Type: application/vscode-jsonrpc; charset=utf8\r\nContent-Length: 2\r\n\r\nok"
+                .to_vec(),
+        );
+
+        assert_eq!(
+            read_message(&mut reader)
+                .expect("read message")
+                .expect("body"),
+            b"ok"
+        );
+    }
+
+    #[test]
+    fn rejects_lsp_header_block_missing_content_length() {
+        let mut reader = Cursor::new(
+            b"Content-Type: application/vscode-jsonrpc; charset=utf8\r\n\r\nbody".to_vec(),
+        );
 
         let error = read_message(&mut reader).expect_err("missing length should fail");
 
