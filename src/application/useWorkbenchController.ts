@@ -230,6 +230,12 @@ import {
   phpModelNamespacePrefixes,
 } from "../domain/laravelRouteModelBinding";
 import {
+  phpEventServiceProviderClassNames,
+  phpLaravelDispatchTargetAt,
+  phpLaravelEventListenerMap,
+  type PhpLaravelDispatchTarget,
+} from "../domain/phpLaravelDispatch";
+import {
   resolveLaravelConfigTarget,
   resolveLaravelEnvTarget,
   resolveLaravelTransTarget,
@@ -15506,6 +15512,212 @@ export function useWorkbenchController(
     ],
   );
 
+  // Navigates a Laravel job / listener class reference to its entry method:
+  // `handle()` (jobs and most listeners), then `__invoke()` (single-action
+  // listeners), then the class declaration as a last resort (via
+  // openPhpClassTarget). Resolves the class file with resolvePhpClassSourcePaths
+  // and looks up the method line directly; both this callback and the helpers it
+  // reuses capture the requested root and re-check it after each await so a tab
+  // switch mid-resolution drops stale results (per-workspace isolation).
+  const openPhpLaravelHandlerTarget = useCallback(
+    async (className: string, shortName: string): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot) {
+        return false;
+      }
+
+      for (const path of await resolvePhpClassSourcePaths(className)) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        let content: string;
+
+        try {
+          content = await readNavigationFileContent(path);
+        } catch {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          continue;
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        const methodPosition =
+          phpMethodPositionOrNull(content, "handle") ??
+          phpMethodPositionOrNull(content, "__invoke");
+
+        if (!methodPosition) {
+          continue;
+        }
+
+        return openNavigationTarget(path, methodPosition, `${shortName}`);
+      }
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      return openPhpClassTarget(className, shortName);
+    },
+    [
+      openNavigationTarget,
+      openPhpClassTarget,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+      workspaceRoot,
+    ],
+  );
+
+  // Resolves the listeners registered for an event in the project's
+  // EventServiceProvider `$listen` map and navigates to the FIRST resolvable
+  // listener's handler. The editor opens files through its own single-model tab
+  // system, so it navigates to one target rather than surfacing a Monaco
+  // multi-location picker. Per-workspace isolation: the requested root is
+  // captured up front and re-checked after every file read (provider + each
+  // listener resolution) so a tab switch mid-resolution drops stale results.
+  const goToPhpLaravelEventListenerDefinition = useCallback(
+    async (eventClassName: string): Promise<boolean> => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.php) {
+        return false;
+      }
+
+      const normalizedEventClassName = eventClassName.toLowerCase();
+      const listenerClassNames: string[] = [];
+
+      for (const providerClassName of phpEventServiceProviderClassNames(
+        requestedDescriptor.php,
+      )) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        for (const path of await resolvePhpClassSourcePaths(providerClassName)) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          let providerSource: string;
+
+          try {
+            providerSource = await readNavigationFileContent(path);
+          } catch {
+            if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            continue;
+          }
+
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          const listenerMap = phpLaravelEventListenerMap(providerSource);
+
+          for (const [mappedEvent, listeners] of listenerMap) {
+            const resolvedMappedEvent = resolvePhpClassName(
+              providerSource,
+              mappedEvent,
+            );
+
+            if (
+              resolvedMappedEvent?.toLowerCase() !== normalizedEventClassName
+            ) {
+              continue;
+            }
+
+            for (const listener of listeners) {
+              const resolvedListener = resolvePhpClassName(
+                providerSource,
+                listener,
+              );
+
+              if (resolvedListener) {
+                listenerClassNames.push(resolvedListener);
+              }
+            }
+          }
+        }
+
+        if (listenerClassNames.length > 0) {
+          break;
+        }
+      }
+
+      for (const listenerClassName of listenerClassNames) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        if (
+          await openPhpLaravelHandlerTarget(
+            listenerClassName,
+            shortPhpName(listenerClassName),
+          )
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    },
+    [
+      openPhpLaravelHandlerTarget,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  // Orchestrates Cmd+Click navigation on a Laravel dispatch site:
+  //   - `event(new X)` / `Event::dispatch(new X)` → X's registered listeners.
+  //   - `dispatch(new X)` / `X::dispatchSync(...)` → X's `handle()` (the job).
+  //   - bare `X::dispatch(...)` is ambiguous (jobs and events share the
+  //     Dispatchable trait); resolve listeners first, fall back to job handle.
+  const goToPhpLaravelDispatchDefinition = useCallback(
+    async (
+      source: string,
+      target: PhpLaravelDispatchTarget,
+    ): Promise<boolean> => {
+      const resolvedClassName = resolvePhpClassName(source, target.className);
+
+      if (!resolvedClassName) {
+        return false;
+      }
+
+      const shortName = shortPhpName(resolvedClassName);
+
+      if (target.kind === "event") {
+        return goToPhpLaravelEventListenerDefinition(resolvedClassName);
+      }
+
+      if (target.kind === "job") {
+        return openPhpLaravelHandlerTarget(resolvedClassName, shortName);
+      }
+
+      if (await goToPhpLaravelEventListenerDefinition(resolvedClassName)) {
+        return true;
+      }
+
+      return openPhpLaravelHandlerTarget(resolvedClassName, shortName);
+    },
+    [goToPhpLaravelEventListenerDefinition, openPhpLaravelHandlerTarget],
+  );
+
   // Powers Cmd+Click / native "Go to Definition" on Laravel global string-helper
   // literals (config / view / __ / trans / env / route). Monaco's definition provider
   // delegates here; because the editor opens files through its own tab system
@@ -15560,6 +15772,21 @@ export function useWorkbenchController(
         }
 
         return false;
+      }
+
+      // Job / Event dispatch navigation: `dispatch(new Job)` / `Job::dispatch()`
+      // → the job's `handle()`; `event(new Event)` / `Event::dispatch(new X)`
+      // → the event's registered listeners. Detection is pure; the resolution
+      // helper carries the per-workspace isolation guards. Runs before the
+      // string-helper branch because a dispatch site is never a string literal.
+      const dispatchTarget = phpLaravelDispatchTargetAt(source, offset);
+
+      if (dispatchTarget) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
+        return goToPhpLaravelDispatchDefinition(source, dispatchTarget);
       }
 
       const match = detectLaravelStringLiteralHelper(source, offset);
@@ -15667,6 +15894,7 @@ export function useWorkbenchController(
       findPhpLaravelEnvTarget,
       findPhpLaravelTranslationTarget,
       findPhpLaravelViewTarget,
+      goToPhpLaravelDispatchDefinition,
       isLaravelFrameworkActive,
       openNavigationTarget,
       openPhpClassTarget,

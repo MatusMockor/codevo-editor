@@ -41158,6 +41158,737 @@ class DashboardController
     });
   });
 
+  describe("Laravel Job/Event dispatch Cmd+Click definition", () => {
+    it("navigates a dispatch(new Job) helper call to the job handle method", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/PodcastController.php";
+      const jobPath = "/workspace/app/Jobs/ProcessPodcast.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Jobs\\ProcessPodcast;
+
+class PodcastController
+{
+    public function store()
+    {
+        dispatch(new ProcessPodcast($podcast));
+    }
+}
+`;
+      const jobSource = `<?php
+
+namespace App\\Jobs;
+
+class ProcessPodcast
+{
+    public function handle()
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === jobPath) {
+            return jobSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "PodcastController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("ProcessPodcast($podcast") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(jobPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: jobPath,
+        position: {
+          column: 21,
+          lineNumber: 7,
+        },
+      });
+    });
+
+    it("navigates a static Job::dispatchSync call to the job handle method", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/PodcastController.php";
+      const jobPath = "/workspace/app/Jobs/ProcessPodcast.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Jobs\\ProcessPodcast;
+
+class PodcastController
+{
+    public function store()
+    {
+        ProcessPodcast::dispatchSync($podcast);
+    }
+}
+`;
+      const jobSource = `<?php
+
+namespace App\\Jobs;
+
+class ProcessPodcast
+{
+    public function handle()
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === jobPath) {
+            return jobSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "PodcastController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("ProcessPodcast::dispatchSync") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(jobPath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(7);
+    });
+
+    it("falls back to the job class declaration when handle is missing", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/PodcastController.php";
+      const jobPath = "/workspace/app/Jobs/ProcessPodcast.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Jobs\\ProcessPodcast;
+
+class PodcastController
+{
+    public function store()
+    {
+        dispatch(new ProcessPodcast($podcast));
+    }
+}
+`;
+      const jobSource = `<?php
+
+namespace App\\Jobs;
+
+class ProcessPodcast
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === jobPath) {
+            return jobSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "PodcastController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("ProcessPodcast($podcast") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(jobPath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(5);
+    });
+
+    it("does not navigate when the dispatched job class cannot be resolved", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/PodcastController.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Jobs\\ProcessPodcast;
+
+class PodcastController
+{
+    public function store()
+    {
+        dispatch(new ProcessPodcast($podcast));
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          throw new Error(`Missing ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "PodcastController.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("ProcessPodcast($podcast") + 2,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(controllerPath);
+    });
+
+    it("navigates an event(new Event) helper call to the listener handle method", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/OrderController.php";
+      const providerPath = "/workspace/app/Providers/EventServiceProvider.php";
+      const listenerPath =
+        "/workspace/app/Listeners/SendShipmentNotification.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        event(new OrderShipped($order));
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Events\\OrderShipped;
+use App\\Listeners\\SendShipmentNotification;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderShipped::class => [
+            SendShipmentNotification::class,
+        ],
+    ];
+}
+`;
+      const listenerSource = `<?php
+
+namespace App\\Listeners;
+
+class SendShipmentNotification
+{
+    public function handle($event)
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          if (path === listenerPath) {
+            return listenerSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped($order") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(listenerPath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(7);
+    });
+
+    it("navigates an event to an __invoke listener", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/OrderController.php";
+      const providerPath = "/workspace/app/Providers/EventServiceProvider.php";
+      const listenerPath =
+        "/workspace/app/Listeners/SendShipmentNotification.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        event(new OrderShipped($order));
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Events\\OrderShipped;
+use App\\Listeners\\SendShipmentNotification;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderShipped::class => [
+            SendShipmentNotification::class,
+        ],
+    ];
+}
+`;
+      const listenerSource = `<?php
+
+namespace App\\Listeners;
+
+class SendShipmentNotification
+{
+    public function __invoke($event)
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          if (path === listenerPath) {
+            return listenerSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped($order") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(listenerPath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(7);
+    });
+
+    it("navigates to the first resolvable listener when an event has multiple", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/OrderController.php";
+      const providerPath = "/workspace/app/Providers/EventServiceProvider.php";
+      const firstListenerPath =
+        "/workspace/app/Listeners/SendShipmentNotification.php";
+      const secondListenerPath =
+        "/workspace/app/Listeners/UpdateInventory.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        OrderShipped::dispatch($order);
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Events\\OrderShipped;
+use App\\Listeners\\SendShipmentNotification;
+use App\\Listeners\\UpdateInventory;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderShipped::class => [
+            SendShipmentNotification::class,
+            UpdateInventory::class,
+        ],
+    ];
+}
+`;
+      const firstListenerSource = `<?php
+
+namespace App\\Listeners;
+
+class SendShipmentNotification
+{
+    public function handle($event)
+    {
+    }
+}
+`;
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === controllerPath) {
+          return controllerSource;
+        }
+
+        if (path === providerPath) {
+          return providerSource;
+        }
+
+        if (path === firstListenerPath) {
+          return firstListenerSource;
+        }
+
+        throw new Error(`Unexpected read ${path}`);
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped::dispatch") + 2,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(firstListenerPath);
+      expect(getWorkbench().activePath).not.toBe(secondListenerPath);
+    });
+
+    it("does not navigate an event with no listener mapping", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/OrderController.php";
+      const providerPath = "/workspace/app/Providers/EventServiceProvider.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        event(new OrderShipped($order));
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [];
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped($order") + 2,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(controllerPath);
+    });
+
+    it("stops stale event listener navigation after switching project tabs", async () => {
+      const controllerPath =
+        "/workspace-a/app/Http/Controllers/OrderController.php";
+      const providerPath =
+        "/workspace-a/app/Providers/EventServiceProvider.php";
+      const listenerPath =
+        "/workspace-a/app/Listeners/SendShipmentNotification.php";
+      const controllerSource = `<?php
+
+namespace App\\Http\\Controllers;
+
+use App\\Events\\OrderShipped;
+
+class OrderController
+{
+    public function ship()
+    {
+        event(new OrderShipped($order));
+    }
+}
+`;
+      const providerSource = `<?php
+
+namespace App\\Providers;
+
+use App\\Events\\OrderShipped;
+use App\\Listeners\\SendShipmentNotification;
+
+class EventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        OrderShipped::class => [
+            SendShipmentNotification::class,
+        ],
+    ];
+}
+`;
+      const staleListenerRead = createDeferred<string>();
+      let listenerReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === providerPath) {
+            return providerSource;
+          }
+
+          if (path === listenerPath) {
+            listenerReadCount += 1;
+            return staleListenerRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: {
+          ...phpWorkspaceDescriptor(),
+          rootPath: "/workspace-a",
+        },
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+      });
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "OrderController.php"),
+        );
+      });
+
+      let handled = true;
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          controllerSource,
+          controllerSource.indexOf("OrderShipped($order") + 2,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(listenerReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleListenerRead.resolve(`<?php
+
+namespace App\\Listeners;
+
+class SendShipmentNotification
+{
+    public function handle($event)
+    {
+    }
+}
+`);
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(listenerPath);
+    });
+  });
+
   describe("Blade Cmd+Click definition and completion", () => {
     it("navigates an @include directive to the referenced view file", async () => {
       const bladePath = "/workspace/resources/views/show.blade.php";
