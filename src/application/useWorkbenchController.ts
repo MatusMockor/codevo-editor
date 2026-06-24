@@ -394,6 +394,7 @@ import {
   phpFrameworkProvidersForProject,
 } from "../domain/phpFrameworkProviders";
 import {
+  phpClassIdentifierNameAt,
   phpClassPathCandidates,
   phpCurrentTypeKind,
   phpDocMethodPositionOrNull,
@@ -15753,7 +15754,7 @@ export function useWorkbenchController(
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!isLaravelFrameworkActive || !requestedRoot) {
+      if (!requestedRoot) {
         return false;
       }
 
@@ -15766,7 +15767,9 @@ export function useWorkbenchController(
       // class file exists — so an unresolvable parameter conservatively does
       // nothing. Detection runs before the string-helper branch because a route
       // URI literal is never a global helper argument.
-      const routeBinding = detectLaravelRouteModelBindingAt(source, offset);
+      const routeBinding = isLaravelFrameworkActive
+        ? detectLaravelRouteModelBindingAt(source, offset)
+        : null;
 
       if (routeBinding) {
         const modelNamespaces =
@@ -15795,7 +15798,11 @@ export function useWorkbenchController(
       // → the event's registered listeners. Detection is pure; the resolution
       // helper carries the per-workspace isolation guards. Runs before the
       // string-helper branch because a dispatch site is never a string literal.
-      const dispatchTarget = phpLaravelDispatchTargetAt(source, offset);
+      // It also runs BEFORE the plain class-identifier branch so a dispatch site
+      // navigates to handle()/listeners rather than the class declaration.
+      const dispatchTarget = isLaravelFrameworkActive
+        ? phpLaravelDispatchTargetAt(source, offset)
+        : null;
 
       if (dispatchTarget) {
         if (!isRequestedRootActive()) {
@@ -15803,6 +15810,44 @@ export function useWorkbenchController(
         }
 
         return goToPhpLaravelDispatchDefinition(source, dispatchTarget);
+      }
+
+      // Class / interface / trait / enum type reference (e.g. a
+      // constructor-promoted property or parameter type-hint). The editor opens
+      // files through its own tab system and limits native navigation to
+      // already-open models, so phpactor locations for an unopened type file are
+      // discarded — meaning Cmd+Click on a type would otherwise be dead. We
+      // resolve the type with our deterministic use/namespace resolver and open
+      // the declaration ourselves, returning `true` so Monaco does not also
+      // navigate. This is framework-agnostic PHP, so it does NOT require
+      // isLaravelFrameworkActive; it runs AFTER the Laravel route/dispatch
+      // branches so those keep precedence over a plain class reference.
+      // openPhpClassTarget carries the per-workspace isolation guards
+      // (requested-root capture + re-check after each await); an unresolvable
+      // type resolves to nothing and we fall through to the Laravel string-helper
+      // branches / phpactor (conservative).
+      const classIdentifierName = phpClassIdentifierNameAt(source, offset);
+
+      if (classIdentifierName) {
+        const resolvedClassName = resolvePhpClassName(
+          source,
+          classIdentifierName,
+        );
+
+        if (resolvedClassName) {
+          const handledClassTarget = await openPhpClassTarget(
+            resolvedClassName,
+            classIdentifierName,
+          );
+
+          if (handledClassTarget) {
+            return true;
+          }
+        }
+      }
+
+      if (!isLaravelFrameworkActive) {
+        return false;
       }
 
       const match = detectLaravelStringLiteralHelper(source, offset);
@@ -18124,9 +18169,22 @@ export function useWorkbenchController(
       return openPhpClassTarget(className, context.className);
     }
 
+    if (context.kind === "classIdentifier") {
+      // A bare class / interface / trait / enum type reference (e.g. a
+      // constructor-promoted property or parameter type-hint). Resolve it with
+      // our deterministic use/namespace resolver and open the declaration line
+      // BEFORE phpactor, so type navigation works regardless of the indexed
+      // workspace gate. goToPhpClassIdentifierDefinition carries the
+      // per-workspace isolation guards (requested-root capture + re-check after
+      // each await) via openPhpClassTarget, and returns false for an
+      // unresolvable type so the phpactor fallback still runs.
+      return goToPhpClassIdentifierDefinition(context.name);
+    }
+
     return false;
   }, [
     activeDocument,
+    goToPhpClassIdentifierDefinition,
     goToPhpLaravelCacheStoreDefinition,
     goToPhpLaravelBroadcastConnectionDefinition,
     goToPhpLaravelConfigDefinition,

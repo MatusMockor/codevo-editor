@@ -412,6 +412,31 @@ export function phpIdentifierContextAt(
   };
 }
 
+/**
+ * Returns the bare class / interface / trait / enum type identifier under
+ * `offset` (e.g. a constructor-promoted property or parameter type-hint), or
+ * `null` when the offset is not on such a reference. Reuses
+ * {@link phpIdentifierContextAt}'s classification so method calls, property
+ * accesses, static calls, Laravel route actions, and string-literal helpers are
+ * all excluded — only the framework-agnostic `classIdentifier` fallback yields a
+ * name. Offset-based so Cmd+Click definition providers can call it directly.
+ */
+export function phpClassIdentifierNameAt(
+  source: string,
+  offset: number,
+): string | null {
+  const context = phpIdentifierContextAt(
+    source,
+    editorPositionAtOffset(source, offset),
+  );
+
+  if (context?.kind !== "classIdentifier") {
+    return null;
+  }
+
+  return context.name;
+}
+
 export function phpLaravelRelationStringCompletionContextAt(
   source: string,
   position: EditorPosition,

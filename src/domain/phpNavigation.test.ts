@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  phpClassIdentifierNameAt,
   phpClassPathCandidates,
   phpDocPropertyPositionOrNull,
   phpDocMethodPositionOrNull,
@@ -1659,6 +1660,68 @@ class Request
     expect(
       phpIdentifierContextAt(source, positionAfter(source, "$m")),
     ).not.toMatchObject({ kind: "laravelMiddlewareAliasString" });
+  });
+
+  it("returns the class identifier name for a property type-hint", () => {
+    const source = `<?php
+
+class PageService
+{
+    public function __construct(private PageRepository $pageRepository)
+    {
+    }
+}
+`;
+
+    expect(
+      phpClassIdentifierNameAt(
+        source,
+        source.indexOf("private PageRepository") + 12,
+      ),
+    ).toBe("PageRepository");
+  });
+
+  it("returns the interface identifier name for a parameter type-hint", () => {
+    const source = `<?php
+
+class PageService
+{
+    public function __construct(private PageRepositoryInterface $repository)
+    {
+    }
+}
+`;
+
+    expect(
+      phpClassIdentifierNameAt(
+        source,
+        source.indexOf("private PageRepositoryInterface") + 12,
+      ),
+    ).toBe("PageRepositoryInterface");
+  });
+
+  it("returns null for a method call rather than a class identifier", () => {
+    const source = `<?php\n\n$repository->findPage();\n`;
+
+    expect(
+      phpClassIdentifierNameAt(source, source.indexOf("findPage") + 2),
+    ).toBeNull();
+  });
+
+  it("returns null for a member property access rather than a class identifier", () => {
+    const source = `<?php\n\n$comment->parent;\n`;
+
+    expect(
+      phpClassIdentifierNameAt(source, source.indexOf("parent") + 2),
+    ).toBeNull();
+  });
+
+  it("returns null for a static method call rather than a class identifier", () => {
+    const source = `<?php\n\nUser::find(1);\n`;
+
+    expect(
+      phpClassIdentifierNameAt(source, source.indexOf("find") + 2),
+    ).toBeNull();
   });
 });
 

@@ -21040,6 +21040,311 @@ export abstract class BaseAdapter implements PlatformAdapter {
     expect(getWorkbench().editorRevealTarget).toBeNull();
   });
 
+  it("navigates a class type-hint to its definition without Smart Index", async () => {
+    const servicePath = "/workspace/app/Services/PageService.php";
+    const repositoryPath = "/workspace/app/Repositories/PageRepository.php";
+    const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Repositories\\PageRepository;
+
+class PageService
+{
+    public function __construct(private PageRepository $pageRepository)
+    {
+    }
+}
+`;
+    const repositorySource = `<?php
+
+namespace App\\Repositories;
+
+class PageRepository
+{
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === servicePath) {
+        return serviceSource;
+      }
+
+      if (path === repositoryPath) {
+        return repositorySource;
+      }
+
+      throw new Error(`Unexpected read ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(serviceSource, "private PageReposit"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(repositoryPath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: repositoryPath,
+      position: {
+        column: 7,
+        lineNumber: lineNumberOf(repositorySource, "class PageRepository"),
+      },
+    });
+  });
+
+  it("navigates an interface type-hint to its definition without Smart Index", async () => {
+    const servicePath = "/workspace/app/Services/PageService.php";
+    const interfacePath =
+      "/workspace/app/Contracts/PageRepositoryInterface.php";
+    const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\PageRepositoryInterface;
+
+class PageService
+{
+    public function __construct(
+        private PageRepositoryInterface $pageRepository,
+    ) {
+    }
+}
+`;
+    const interfaceSource = `<?php
+
+namespace App\\Contracts;
+
+interface PageRepositoryInterface
+{
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === servicePath) {
+        return serviceSource;
+      }
+
+      if (path === interfacePath) {
+        return interfaceSource;
+      }
+
+      throw new Error(`Unexpected read ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().intelligenceMode).toBe("basic");
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(serviceSource, "private PageRepositoryInterf"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(interfacePath);
+    expect(getWorkbench().editorRevealTarget).toEqual({
+      path: interfacePath,
+      position: {
+        column: 11,
+        lineNumber: lineNumberOf(interfaceSource, "interface PageRepositoryInterface"),
+      },
+    });
+  });
+
+  it("does not navigate a type-hint with no resolvable class without Smart Index", async () => {
+    const servicePath = "/workspace/app/Services/PageService.php";
+    const serviceSource = `<?php
+
+namespace App\\Services;
+
+class PageService
+{
+    public function __construct(private UnknownDependency $unknown)
+    {
+    }
+}
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === servicePath) {
+        return serviceSource;
+      }
+
+      throw new Error(`Unexpected read ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(serviceSource, "private UnknownDepend"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(getWorkbench().activePath).toBe(servicePath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
+  it("drops stale contextual PHP type-hint class targets after switching project tabs", async () => {
+    const servicePath = "/workspace-a/app/Services/PageService.php";
+    const repositoryPath = "/workspace-a/app/Repositories/PageRepository.php";
+    const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Repositories\\PageRepository;
+
+class PageService
+{
+    public function __construct(private PageRepository $pageRepository)
+    {
+    }
+}
+`;
+    const staleRepositoryRead = createDeferred<string>();
+    let repositoryReadCount = 0;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === servicePath) {
+        return serviceSource;
+      }
+
+      if (path === repositoryPath) {
+        repositoryReadCount += 1;
+        return staleRepositoryRead.promise;
+      }
+
+      throw new Error(`Unexpected read ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+      },
+      workspaceDescriptor: {
+        ...phpWorkspaceDescriptor(),
+        rootPath: "/workspace-a",
+      },
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(servicePath, "PageService.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(serviceSource, "private PageReposit"),
+      );
+    });
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "editor.goToDefinition",
+    );
+    let commandPromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      commandPromise = Promise.resolve(command?.run());
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(repositoryReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    staleRepositoryRead.resolve(`<?php
+
+namespace App\\Repositories;
+
+class PageRepository
+{
+}
+`);
+    await act(async () => {
+      await commandPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().activePath).not.toBe(repositoryPath);
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+  });
+
   it("drops stale contextual PHP method targets after switching project tabs", async () => {
     const controllerPath = "/workspace-a/app/Http/Controllers/CommentController.php";
     const targetPath = "/external/shared/CommentsService.php";
@@ -40893,6 +41198,280 @@ class User extends Model
       expect(handled).toBe(false);
       expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
       expect(getWorkbench().activePath).not.toBe(modelPath);
+    });
+
+    it("navigates a class type-hint to its definition on Cmd+Click", async () => {
+      const servicePath = "/workspace/app/Services/PageService.php";
+      const repositoryPath =
+        "/workspace/app/Repositories/PageRepository.php";
+      const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Repositories\\PageRepository;
+
+class PageService
+{
+    public function __construct(private PageRepository $pageRepository)
+    {
+    }
+}
+`;
+      const repositorySource = `<?php
+
+namespace App\\Repositories;
+
+class PageRepository
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === servicePath) {
+            return serviceSource;
+          }
+
+          if (path === repositoryPath) {
+            return repositorySource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(servicePath, "PageService.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          serviceSource,
+          serviceSource.indexOf("private PageRepository") + 12,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(repositoryPath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: repositoryPath,
+        position: {
+          column: 7,
+          lineNumber: lineNumberOf(repositorySource, "class PageRepository"),
+        },
+      });
+    });
+
+    it("navigates an interface type-hint to its definition on Cmd+Click", async () => {
+      const servicePath = "/workspace/app/Services/PageService.php";
+      const interfacePath =
+        "/workspace/app/Contracts/PageRepositoryInterface.php";
+      const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\PageRepositoryInterface;
+
+class PageService
+{
+    public function __construct(
+        private PageRepositoryInterface $pageRepository,
+    ) {
+    }
+}
+`;
+      const interfaceSource = `<?php
+
+namespace App\\Contracts;
+
+interface PageRepositoryInterface
+{
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === servicePath) {
+            return serviceSource;
+          }
+
+          if (path === interfacePath) {
+            return interfaceSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(servicePath, "PageService.php"),
+        );
+      });
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          serviceSource,
+          serviceSource.indexOf("private PageRepositoryInterface") + 12,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(interfacePath);
+      expect(getWorkbench().editorRevealTarget).toEqual({
+        path: interfacePath,
+        position: {
+          column: 11,
+          lineNumber: lineNumberOf(
+            interfaceSource,
+            "interface PageRepositoryInterface",
+          ),
+        },
+      });
+    });
+
+    it("does not handle an unresolvable type-hint on Cmd+Click", async () => {
+      const servicePath = "/workspace/app/Services/PageService.php";
+      const serviceSource = `<?php
+
+namespace App\\Services;
+
+class PageService
+{
+    public function __construct(private UnknownDependency $unknown)
+    {
+    }
+}
+`;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === servicePath) {
+            return serviceSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(servicePath, "PageService.php"),
+        );
+      });
+
+      let handled = true;
+      await act(async () => {
+        handled = await getWorkbench().providePhpLaravelDefinition(
+          serviceSource,
+          serviceSource.indexOf("private UnknownDependency") + 12,
+        );
+      });
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().activePath).toBe(servicePath);
+      expect(getWorkbench().editorRevealTarget).toBeNull();
+    });
+
+    it("stops stale Cmd+Click type-hint navigation after switching project tabs", async () => {
+      const servicePath = "/workspace-a/app/Services/PageService.php";
+      const repositoryPath =
+        "/workspace-a/app/Repositories/PageRepository.php";
+      const serviceSource = `<?php
+
+namespace App\\Services;
+
+use App\\Repositories\\PageRepository;
+
+class PageService
+{
+    public function __construct(private PageRepository $pageRepository)
+    {
+    }
+}
+`;
+      const staleRepositoryRead = createDeferred<string>();
+      let repositoryReadCount = 0;
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace-a",
+          workspaceTabs: ["/workspace-a", "/workspace-b"],
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === servicePath) {
+            return serviceSource;
+          }
+
+          if (path === repositoryPath) {
+            repositoryReadCount += 1;
+            return staleRepositoryRead.promise;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: {
+          ...phpWorkspaceDescriptor(),
+          rootPath: "/workspace-a",
+        },
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().openFile(
+          fileEntry(servicePath, "PageService.php"),
+        );
+      });
+
+      let handled = true;
+      let definitionPromise: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        definitionPromise = getWorkbench().providePhpLaravelDefinition(
+          serviceSource,
+          serviceSource.indexOf("private PageRepository") + 12,
+        );
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => {
+        expect(repositoryReadCount).toBe(1);
+      });
+
+      await act(async () => {
+        await getWorkbench().activateWorkspaceTab("/workspace-b");
+      });
+      await flushAsyncTurns();
+
+      staleRepositoryRead.resolve(`<?php
+
+namespace App\\Repositories;
+
+class PageRepository
+{
+}
+`);
+      await act(async () => {
+        handled = await definitionPromise;
+      });
+      await flushAsyncTurns(24);
+
+      expect(handled).toBe(false);
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+      expect(getWorkbench().activePath).not.toBe(repositoryPath);
     });
 
     it("does not navigate when the resolved Laravel file does not exist", async () => {
