@@ -1593,6 +1593,392 @@ interface ParserFactory
     ]);
   });
 
+  it("does not re-set language-server markers on a keystroke when diagnostics are unchanged", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const value = 1;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    const diagnostics = {
+      [activeDocument.path]: [
+        {
+          character: 6,
+          endCharacter: 11,
+          endLine: 0,
+          line: 0,
+          message: "unused",
+          severity: "warning" as const,
+          source: "typescript",
+        },
+      ],
+    };
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(activeDocument);
+
+    const languageServerMarkerCalls = () =>
+      monaco.editor.setModelMarkers.mock.calls.filter(
+        ([, owner]) => owner === "php-language-server",
+      );
+
+    expect(languageServerMarkerCalls().length).toBeGreaterThan(0);
+    monaco.editor.setModelMarkers.mockClear();
+
+    // Simulate a keystroke: useWorkbenchController hands EditorSurface a brand
+    // new activeDocument object (same path, mutated content) while the
+    // diagnostics map keeps its identity. The marker effect must NOT churn.
+    await renderWith({ ...activeDocument, content: "const value = 12;\n" });
+
+    expect(languageServerMarkerCalls()).toHaveLength(0);
+  });
+
+  it("re-applies language-server markers when diagnostics actually change", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "user.ts",
+      path: "/workspace/src/user.ts",
+      savedContent: "const value = 1;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = monaco;
+
+    const renderWith = async (
+      diagnostics: Record<string, unknown[]>,
+    ) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics as never}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith({});
+    monaco.editor.setModelMarkers.mockClear();
+
+    await renderWith({
+      [activeDocument.path]: [
+        {
+          character: 6,
+          endCharacter: 11,
+          endLine: 0,
+          line: 0,
+          message: "unused",
+          severity: "warning",
+          source: "typescript",
+        },
+      ],
+    });
+
+    const languageServerMarkerCall =
+      monaco.editor.setModelMarkers.mock.calls.find(
+        ([, owner]) => owner === "php-language-server",
+      );
+    expect(languageServerMarkerCall?.[2]).toHaveLength(1);
+  });
+
+  it("applies markers to a newly opened model that already has diagnostics", async () => {
+    const firstDocument: EditorDocument = {
+      content: "const a = 1;\n",
+      language: "typescript",
+      name: "a.ts",
+      path: "/workspace/src/a.ts",
+      savedContent: "const a = 1;\n",
+    };
+    const secondDocument: EditorDocument = {
+      content: "const b = 2;\n",
+      language: "typescript",
+      name: "b.ts",
+      path: "/workspace/src/b.ts",
+      savedContent: "const b = 2;\n",
+    };
+    const firstModel: FakeModel = {
+      uri: { fsPath: firstDocument.path, path: firstDocument.path },
+    };
+    const secondModel: FakeModel = {
+      uri: { fsPath: secondDocument.path, path: secondDocument.path },
+    };
+
+    let openModels: FakeModel[] = [firstModel];
+    const monaco = createMonaco(firstModel);
+    monaco.editor.getModels = vi.fn(() => openModels);
+    editorSurfaceMocks.editor = createEditor(firstModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    const diagnostics = {
+      [secondDocument.path]: [
+        {
+          character: 6,
+          endCharacter: 7,
+          endLine: 0,
+          line: 0,
+          message: "unused b",
+          severity: "warning" as const,
+          source: "typescript",
+        },
+      ],
+    };
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={diagnostics}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(firstDocument);
+    monaco.editor.setModelMarkers.mockClear();
+
+    // Open b.ts: it joins the live model set and becomes the active document.
+    openModels = [firstModel, secondModel];
+    await renderWith(secondDocument);
+
+    const secondModelMarkerCall =
+      monaco.editor.setModelMarkers.mock.calls.find(
+        ([target, owner]) =>
+          target === secondModel && owner === "php-language-server",
+      );
+    expect(secondModelMarkerCall?.[2]).toHaveLength(1);
+  });
+
+  it("prunes per-path caches when a document is closed", async () => {
+    const closingDocument: EditorDocument = {
+      content: "export class Closing {\n  render() {}\n}\n",
+      language: "typescript",
+      name: "Closing.tsx",
+      path: "/workspace/src/Closing.tsx",
+      savedContent: "",
+    };
+    const remainingDocument: EditorDocument = {
+      content: "export const remaining = 1;\n",
+      language: "typescript",
+      name: "Remaining.ts",
+      path: "/workspace/src/Remaining.ts",
+      savedContent: "",
+    };
+    const closingModel: FakeModel = {
+      getValue: vi.fn(() => closingDocument.content),
+      uri: { fsPath: closingDocument.path, path: closingDocument.path },
+    };
+    const remainingModel: FakeModel = {
+      getValue: vi.fn(() => remainingDocument.content),
+      uri: { fsPath: remainingDocument.path, path: remainingDocument.path },
+    };
+
+    let openModels: FakeModel[] = [closingModel];
+    const monaco = createMonaco(closingModel);
+    monaco.editor.getModels = vi.fn(() => openModels);
+    editorSurfaceMocks.editor = createEditor(closingModel);
+    editorSurfaceMocks.monaco = monaco;
+
+    const gateway = languageServerFeaturesGateway();
+    const closingSymbols: LanguageServerDocumentSymbol[] = [
+      {
+        children: [],
+        containerName: null,
+        detail: null,
+        kind: 5,
+        name: "Closing",
+        range: { start: { line: 0, character: 0 }, end: { line: 2, character: 1 } },
+        selectionRange: {
+          start: { line: 0, character: 13 },
+          end: { line: 0, character: 20 },
+        },
+      },
+    ];
+    const documentSymbolsMock = vi.fn(async (_root: string, path: string) =>
+      path === closingDocument.path ? closingSymbols : [],
+    );
+    gateway.documentSymbols =
+      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+
+    const renderWith = async (document: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={document}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            javaScriptTypeScriptLanguageServerFeaturesGateway={gateway}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+            workspaceRoot="/workspace"
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(closingDocument);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    // The breadcrumb cache is populated for the closing document.
+    const initialLabels = Array.from(
+      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
+    expect(initialLabels).toContain("Closing");
+
+    // Close Closing.tsx: it leaves the live model set; Remaining.ts is active.
+    openModels = [remainingModel];
+    editorSurfaceMocks.editor = createEditor(remainingModel);
+    monaco.editor.getModels = vi.fn(() => openModels);
+    await renderWith(remainingDocument);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    // Re-open Closing.tsx, but have the document-symbols fetch never resolve so
+    // the breadcrumb can only show stale cached symbols. If the cache was
+    // pruned on close, no stale "Closing" segment is rendered.
+    documentSymbolsMock.mockImplementation(
+      () => new Promise(() => undefined) as Promise<LanguageServerDocumentSymbol[]>,
+    );
+    openModels = [closingModel];
+    editorSurfaceMocks.editor = createEditor(closingModel);
+    monaco.editor.getModels = vi.fn(() => openModels);
+    await renderWith(closingDocument);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const reopenedLabels = Array.from(
+      host.querySelectorAll<HTMLElement>(".breadcrumb-segment"),
+    ).map((segment) => segment.textContent);
+    // The breadcrumb bar is rendered (filename segment present) but the stale
+    // "Closing" symbol segment is gone, proving the cache entry was pruned on
+    // close rather than the breadcrumb simply being absent.
+    expect(reopenedLabels).toContain("Closing.tsx");
+    expect(reopenedLabels).not.toContain("Closing");
+  });
+
   it("registers guarded Option+Enter quick fix/context actions", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php echo $user;",

@@ -1052,7 +1052,41 @@ export function EditorSurface({
         ),
       );
     });
-  }, [activeDocument, languageServerDiagnosticsByPath, monacoApi]);
+    // Re-key on the active document's *path* (a stable string), not its object
+    // identity. `activeDocument` is replaced with a fresh `{ ...doc, content }`
+    // on every keystroke, which would otherwise remap+re-set markers for every
+    // open model on each character typed even though diagnostics are unchanged.
+    // The path still changes when a new file is opened/activated, so a freshly
+    // opened model that already has diagnostics still gets its markers; real
+    // diagnostic changes are covered by the `languageServerDiagnosticsByPath`
+    // dependency.
+  }, [activeDocument?.path, languageServerDiagnosticsByPath, monacoApi]);
+
+  useEffect(() => {
+    if (!monacoApi) {
+      return;
+    }
+
+    // EditorSurface lives for the whole app session, so the per-path caches grow
+    // without bound as distinct files are visited. Prune entries whose model is
+    // no longer open (the live Monaco model set is the source of truth for "open
+    // documents") to stop the slow leak. Keyed on the active path so it re-runs
+    // when files are opened, closed, or switched. Conservative by construction:
+    // entries for still-open paths are never dropped.
+    const openPaths = new Set(
+      monacoApi.editor
+        .getModels()
+        .map((model) => modelPath(model))
+        .filter((path): path is string => path !== null),
+    );
+
+    setSyntaxDiagnosticsByPath((current) =>
+      pruneClosedPaths(current, openPaths),
+    );
+    setBreadcrumbSymbolsByPath((current) =>
+      pruneClosedPaths(current, openPaths),
+    );
+  }, [activeDocument?.path, monacoApi]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -1934,6 +1968,21 @@ function syntaxDiagnosticEndColumn(diagnostic: PhpSyntaxDiagnostic): number {
   }
 
   return diagnostic.endCharacter + 1;
+}
+
+function pruneClosedPaths<Value>(
+  cache: Record<string, Value>,
+  openPaths: Set<string>,
+): Record<string, Value> {
+  const stalePaths = Object.keys(cache).filter((path) => !openPaths.has(path));
+
+  if (stalePaths.length === 0) {
+    return cache;
+  }
+
+  const next = { ...cache };
+  stalePaths.forEach((path) => delete next[path]);
+  return next;
 }
 
 function modelForPath(
