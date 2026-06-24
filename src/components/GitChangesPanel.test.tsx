@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as gitDomain from "../domain/git";
 import { gitChangeKey, type GitChangedFile, type GitStatus } from "../domain/git";
 import { GitChangesPanel } from "./GitChangesPanel";
 
@@ -247,6 +248,107 @@ describe("GitChangesPanel", () => {
     });
 
     expect(onCommitAndPush).toHaveBeenCalled();
+  });
+
+  it("does not recompute groups or re-render when the parent re-renders with identical props", async () => {
+    const groupSpy = vi.spyOn(gitDomain, "groupGitChanges");
+    const stableProps: React.ComponentProps<typeof GitChangesPanel> = {
+      activeChange: null,
+      commitMessage: "feat: update",
+      gitOperationLoading: false,
+      includedChangePaths: new Set<string>(),
+      isLoading: false,
+      onCommit: vi.fn(),
+      onCommitAndPush: vi.fn(),
+      onCommitMessageChange: vi.fn(),
+      onOpenChange: vi.fn(),
+      onPreviewChange: vi.fn(),
+      onRefresh: vi.fn(),
+      onRevertChanges: vi.fn(),
+      onStageChanges: vi.fn(),
+      onToggleChangeIncluded: vi.fn(),
+      onUnstageChanges: vi.fn(),
+      rootPath: "/workspace",
+      status: gitStatus([gitChange("modified", "src/User.php", true)]),
+    };
+
+    let forceParentRender: (value: number) => void = () => undefined;
+
+    function Parent() {
+      const [, setTick] = useState(0);
+      forceParentRender = setTick;
+      return <GitChangesPanel {...stableProps} />;
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    expect(groupSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      forceParentRender(1);
+      await Promise.resolve();
+    });
+
+    // React.memo skips the re-render because every prop is referentially
+    // unchanged, so the memoized groups are never recomputed.
+    expect(groupSpy).toHaveBeenCalledTimes(1);
+
+    groupSpy.mockRestore();
+  });
+
+  it("memoizes groups across a re-render that keeps status.changes identity", async () => {
+    const groupSpy = vi.spyOn(gitDomain, "groupGitChanges");
+    const status = gitStatus([gitChange("modified", "src/User.php", true)]);
+
+    let setMessage: (value: string) => void = () => undefined;
+
+    function Parent() {
+      const [commitMessage, updateMessage] = useState("feat: a");
+      setMessage = updateMessage;
+      return (
+        <GitChangesPanel
+          activeChange={null}
+          commitMessage={commitMessage}
+          gitOperationLoading={false}
+          includedChangePaths={new Set<string>()}
+          isLoading={false}
+          onCommit={vi.fn()}
+          onCommitAndPush={vi.fn()}
+          onCommitMessageChange={vi.fn()}
+          onOpenChange={vi.fn()}
+          onPreviewChange={vi.fn()}
+          onRefresh={vi.fn()}
+          onRevertChanges={vi.fn()}
+          onStageChanges={vi.fn()}
+          onToggleChangeIncluded={vi.fn()}
+          onUnstageChanges={vi.fn()}
+          rootPath="/workspace"
+          status={status}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(<Parent />);
+      await Promise.resolve();
+    });
+
+    expect(groupSpy).toHaveBeenCalledTimes(1);
+
+    // A real prop change (commitMessage) forces the panel to re-render past
+    // React.memo, but `status.changes` keeps its reference, so useMemo reuses
+    // the previously computed groups instead of recomputing them.
+    await act(async () => {
+      setMessage("feat: b");
+      await Promise.resolve();
+    });
+
+    expect(groupSpy).toHaveBeenCalledTimes(1);
+
+    groupSpy.mockRestore();
   });
 
   async function renderPanel(

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { PhpTree, PhpTreeNode } from "../domain/phpTree";
 import { PhpTreeRows } from "./PhpTreeRows";
 
@@ -11,7 +12,7 @@ interface PhpTreePanelProps {
   tree: PhpTree;
 }
 
-export function PhpTreePanel({
+function PhpTreePanelComponent({
   activePath,
   expandedNodeIds,
   isLoading,
@@ -57,3 +58,5 @@ export function PhpTreePanel({
     </nav>
   );
 }
+
+export const PhpTreePanel = memo(PhpTreePanelComponent);

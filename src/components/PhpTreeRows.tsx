@@ -1,5 +1,5 @@
 import { ChevronRight, FileCode2 } from "lucide-react";
-import type { CSSProperties } from "react";
+import { memo, type CSSProperties } from "react";
 import type { PhpTreeNode } from "../domain/phpTree";
 
 interface PhpTreeRowsProps {
@@ -11,7 +11,7 @@ interface PhpTreeRowsProps {
   onToggleNode(id: string): void;
 }
 
-export function PhpTreeRows({
+function PhpTreeRowsComponent({
   activePath,
   expandedNodeIds,
   level,
@@ -36,6 +36,8 @@ export function PhpTreeRows({
   );
 }
 
+export const PhpTreeRows = memo(PhpTreeRowsComponent);
+
 interface PhpTreeEntryProps {
   activePath: string | null;
   expandedNodeIds: Set<string>;
@@ -45,7 +47,7 @@ interface PhpTreeEntryProps {
   onToggleNode(id: string): void;
 }
 
-function PhpTreeEntry({
+const PhpTreeEntry = memo(function PhpTreeEntry({
   activePath,
   expandedNodeIds,
   level,
@@ -99,7 +101,7 @@ function PhpTreeEntry({
       ) : null}
     </div>
   );
-}
+});
 
 function getChevronClassName(hasChildren: boolean, isExpanded: boolean): string {
   if (!hasChildren) {

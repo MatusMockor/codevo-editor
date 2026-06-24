@@ -93,6 +93,80 @@ describe("FileTree", () => {
     });
   });
 
+  it("does not remeasure layout while scrolling the virtualized tree", () => {
+    const animationFrame = installAnimationFrameMock();
+    const viewport = mockElementViewportHeight(360);
+
+    try {
+      renderTree({
+        entriesByDirectory: {
+          "/workspace": phpFileEntries(120),
+        },
+      });
+      act(() => {
+        animationFrame.flush();
+      });
+      viewport.getBoundingClientRect.mockClear();
+
+      const tree = host.querySelector<HTMLElement>(
+        '[aria-label="Workspace files"]',
+      );
+      expect(tree).not.toBeNull();
+
+      act(() => {
+        if (!tree) {
+          return;
+        }
+
+        tree.scrollTop = 128;
+        tree.dispatchEvent(new Event("scroll", { bubbles: true }));
+        animationFrame.flush();
+      });
+
+      act(() => {
+        if (!tree) {
+          return;
+        }
+
+        tree.scrollTop = 256;
+        tree.dispatchEvent(new Event("scroll", { bubbles: true }));
+        animationFrame.flush();
+      });
+
+      expect(viewport.getBoundingClientRect).not.toHaveBeenCalled();
+    } finally {
+      animationFrame.restore();
+      viewport.restore();
+    }
+  });
+
+  it("renders more virtual rows after measuring the real viewport height", () => {
+    const animationFrame = installAnimationFrameMock();
+    let measuredHeight = 0;
+    const viewport = mockElementViewportHeight(() => measuredHeight);
+
+    try {
+      renderTree({
+        entriesByDirectory: {
+          "/workspace": phpFileEntries(80),
+        },
+      });
+
+      expect(host.querySelectorAll(".tree-row")).toHaveLength(28);
+
+      measuredHeight = 960;
+
+      act(() => {
+        animationFrame.flush();
+      });
+
+      expect(host.querySelectorAll(".tree-row")).toHaveLength(46);
+    } finally {
+      animationFrame.restore();
+      viewport.restore();
+    }
+  });
+
   function rowByLabel(label: string): HTMLButtonElement {
     const rows = [...host.querySelectorAll<HTMLButtonElement>(".tree-row")];
     const match = rows.find((row) => row.textContent?.includes(label));
@@ -111,4 +185,117 @@ function fileEntry(
   kind: "directory" | "file",
 ): FileEntry {
   return { kind, name, path };
+}
+
+function phpFileEntries(count: number): FileEntry[] {
+  return Array.from({ length: count }, (_value, index) =>
+    fileEntry(`/workspace/File${index}.php`, `File${index}.php`, "file"),
+  );
+}
+
+function installAnimationFrameMock() {
+  const originalRequestAnimationFrame = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "requestAnimationFrame",
+  );
+  const originalCancelAnimationFrame = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "cancelAnimationFrame",
+  );
+  const callbacks = new Map<number, FrameRequestCallback>();
+  let nextHandle = 1;
+
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: vi.fn((callback: FrameRequestCallback) => {
+      const handle = nextHandle;
+      nextHandle += 1;
+      callbacks.set(handle, callback);
+
+      return handle;
+    }),
+    writable: true,
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: vi.fn((handle: number) => {
+      callbacks.delete(handle);
+    }),
+    writable: true,
+  });
+
+  return {
+    flush() {
+      const pendingCallbacks = [...callbacks.values()];
+      callbacks.clear();
+
+      for (const callback of pendingCallbacks) {
+        callback(0);
+      }
+    },
+    restore() {
+      callbacks.clear();
+      restoreProperty(
+        globalThis,
+        "requestAnimationFrame",
+        originalRequestAnimationFrame,
+      );
+      restoreProperty(
+        globalThis,
+        "cancelAnimationFrame",
+        originalCancelAnimationFrame,
+      );
+    },
+  };
+}
+
+function mockElementViewportHeight(height: number | (() => number)) {
+  const originalGetBoundingClientRect = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "getBoundingClientRect",
+  );
+  const getBoundingClientRect = vi.fn(() => {
+    const measuredHeight = typeof height === "function" ? height() : height;
+
+    return {
+      bottom: measuredHeight,
+      height: measuredHeight,
+      left: 0,
+      right: 240,
+      top: 0,
+      width: 240,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+  });
+
+  Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: getBoundingClientRect,
+  });
+
+  return {
+    getBoundingClientRect,
+    restore() {
+      restoreProperty(
+        HTMLElement.prototype,
+        "getBoundingClientRect",
+        originalGetBoundingClientRect,
+      );
+    },
+  };
+}
+
+function restoreProperty(
+  target: object,
+  property: PropertyKey,
+  descriptor: PropertyDescriptor | undefined,
+): void {
+  if (descriptor) {
+    Object.defineProperty(target, property, descriptor);
+    return;
+  }
+
+  Reflect.deleteProperty(target, property);
 }
